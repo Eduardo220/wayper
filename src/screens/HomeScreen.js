@@ -116,7 +116,7 @@ export default function HomeScreen() {
         showsUserLocation={true}
       >
         {route.length > 0 && (
-          <Polyline coordinates={route} strokeWidth={5} strokeColor="#00BFFF" />
+          <Polyline coordinates={route} strokeWidth={5} strokeColor="#b701ffff" />
         )}
         <Marker coordinate={location} title="Você" />
       </MapView>
