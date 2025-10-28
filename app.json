@@ -1,5 +1,6 @@
 {
   "expo": {
+    "scheme": "wayper",
     "name": "wayper",
     "slug": "wayper",
     "version": "1.0.0",
@@ -16,6 +17,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.wayper.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -24,6 +26,14 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "9fcacdf5-6972-47d9-81b9-19810cb93c3f"
+      }
     }
   }
 }
