@@ -1,45 +1,69 @@
 import React, { useEffect, useState } from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import HomeScreen from "./src/screens/HomeScreen";
-import LoginScreen from "./src/screens/LoginScreen";
+import { createDrawerNavigator } from "@react-navigation/drawer";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./src/firebaseConfig";
 
-const Stack = createNativeStackNavigator();
+import HomeScreen from "./src/screens/HomeScreen";
+import LoginScreen from "./src/screens/LoginScreen";
+import ProfileScreen from "./src/screens/ProfileScreen";
+import RankingScreen from "./src/screens/RankingScreen";
+import FriendsScreen from "./src/screens/FriendsScreen";
+import ClubsScreen from "./src/screens/ClubScreen"; // Corrigido para bater com o import
+import CustomDrawer from "./src/components/CustomDrawer";
 
-// 👇 Altera essa flag pra true quando quiser ativar o login
+const Stack = createNativeStackNavigator();
+const Drawer = createDrawerNavigator();
+
+// 👇 Alternar pra true quando quiser exigir login
 const USE_AUTH = false;
+
+function DrawerRoutes() {
+  return (
+    <Drawer.Navigator
+      drawerContent={(props) => <CustomDrawer {...props} />}
+      screenOptions={{
+        headerShown: true,
+        drawerType: "slide",
+        drawerActiveTintColor: "#00b894",
+        drawerStyle: { backgroundColor: "#f9f9f9", width: 250 },
+      }}
+      initialRouteName="Mapa" // 🔹 Tela inicial do Drawer
+    >
+      <Drawer.Screen name="Mapa" component={HomeScreen} />
+      <Drawer.Screen name="Perfil" component={ProfileScreen} />
+      <Drawer.Screen name="Ranking" component={RankingScreen} />
+      <Drawer.Screen name="Amigos" component={FriendsScreen} />
+      <Drawer.Screen name="Clubes" component={ClubsScreen} />
+    </Drawer.Navigator>
+  );
+}
 
 export default function App() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    if (!USE_AUTH) return; // se login desativado, não faz nada
+    if (!USE_AUTH) return;
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
     });
     return unsubscribe;
   }, []);
 
-  const renderScreen = () => {
-    if (!USE_AUTH) {
-      // modo dev: ignora login e abre direto
-      return <Stack.Screen name="Home" component={HomeScreen} />;
-    }
-
-    // modo normal: exige login
-    return user ? (
-      <Stack.Screen name="Home" component={HomeScreen} />
-    ) : (
-      <Stack.Screen name="Login" component={LoginScreen} />
-    );
-  };
-
   return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {renderScreen()}
+      <Stack.Navigator
+        screenOptions={{ headerShown: false }}
+        initialRouteName={!USE_AUTH ? "Main" : user ? "Main" : "Login"} // 🔹 Define rota inicial
+      >
+        {!USE_AUTH ? (
+          <Stack.Screen name="Main" component={DrawerRoutes} />
+        ) : user ? (
+          <Stack.Screen name="Main" component={DrawerRoutes} />
+        ) : (
+          <Stack.Screen name="Login" component={LoginScreen} />
+        )}
       </Stack.Navigator>
     </NavigationContainer>
   );
