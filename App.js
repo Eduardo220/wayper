@@ -1,3 +1,4 @@
+import "react-native-reanimated";
 import React, { useEffect, useState } from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
@@ -12,6 +13,7 @@ import RankingScreen from "./src/screens/RankingScreen";
 import FriendsScreen from "./src/screens/FriendsScreen";
 import ClubsScreen from "./src/screens/ClubScreen"; // Corrigido para bater com o import
 import CustomDrawer from "./src/components/CustomDrawer";
+
 
 const Stack = createNativeStackNavigator();
 const Drawer = createDrawerNavigator();
