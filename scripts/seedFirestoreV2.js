@@ -29,6 +29,9 @@ const users = [
     totalArea: 4.3,
     totalZones: 12,
     badges: ["explorer", "first-run"],
+    username: "eduardow",
+    friends: ["uid_amigo1", "uid_amigo2"], 
+    friendRequests: ["uid_pendente"],
   },
   {
     id: "user_ana",
@@ -89,8 +92,8 @@ const partners = [
 const stops = [
   {
     name: "Padaria do Zé",
-    latitude: -29.68,
-    longitude: -53.80,
+    latitude: --29.687852,
+    longitude: -53.814271,
     bonusXP: 50,
     partnerId: "padaria-ze",
     qrCodeValue: "stop_padaria_ze",
