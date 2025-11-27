@@ -1,0 +1,67 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===================================================
+    // 👤 USERS
+    // ===================================================
+    match /users/{userId} {
+      // Usuário pode ler e atualizar apenas o próprio perfil
+      allow read, update, delete: if request.auth != null && request.auth.uid == userId;
+      // Pode criar seu documento (no primeiro login)
+      allow create: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ===================================================
+    // 🗺️ ZONES (áreas conquistadas)
+    // ===================================================
+    match /zones/{zoneId} {
+      allow read: if true; // zonas podem ser públicas para exibição de mapa
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // ===================================================
+    // 🏪 PARTNERS (comércios)
+    // ===================================================
+    match /partners/{partnerId} {
+      // Leitura pública (para exibir quem é o parceiro)
+      allow read: if true;
+      
+      // Criação restrita a usuários autenticados (ou administradores)
+      allow create: if request.auth != null;
+      
+      // Edição apenas pelo dono do parceiro (validação via email)
+      allow update, delete: if request.auth != null
+        && request.resource.data.ownerEmail == request.auth.token.email;
+    }
+
+    // ===================================================
+    // 📍 STOPS (pontos de parada parceiros)
+    // ===================================================
+    match /stops/{stopId} {
+      allow read: if true; // todos podem ver os pontos
+      
+      // Criação/edição só pelo dono do parceiro
+      allow create, update, delete: if request.auth != null
+        && get(/databases/$(database)/documents/partners/$(request.resource.data.partnerId)).data.ownerEmail == request.auth.token.email;
+    }
+
+    // ===================================================
+    // 🏃 ACTIVITIES (corridas, visitas e bônus)
+    // ===================================================
+    match /activities/{activityId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow delete, update: if false; // não pode alterar histórico
+    }
+
+    // ===================================================
+    // 🛠️ ADMIN (opcional futuro)
+    // ===================================================
+    match /admin/{docId} {
+      allow read, write: if request.auth.token.admin == true;
+    }
+  }
+}
