@@ -92,7 +92,7 @@ const partners = [
 const stops = [
   {
     name: "Padaria do Zé",
-    latitude: --29.687852,
+    latitude: -29.687852,
     longitude: -53.814271,
     bonusXP: 50,
     partnerId: "padaria-ze",

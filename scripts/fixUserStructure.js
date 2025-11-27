@@ -10,12 +10,12 @@ import {
 
 // 🔥 Configuração do Firebase (copie igual do firebaseConfig.js)
 const firebaseConfig = {
-  apiKey: "SUA_API_KEY",
-  authDomain: "SEU_AUTH_DOMAIN",
-  projectId: "SEU_PROJECT_ID",
-  storageBucket: "SEU_STORAGE_BUCKET",
-  messagingSenderId: "SEU_MESSAGING_SENDER_ID",
-  appId: "SEU_APP_ID",
+  apiKey: "IzaSyDMEuHH1fq9qlGL6cfIK6jA9UvqD4YFS6Y",
+  authDomain: "wayper-3ee61.firebaseapp.com",
+  projectId: "wayper-3ee61",
+  storageBucket: "wayper-3ee61.appspot.com",
+  messagingSenderId: "284903184569",
+  appId: "1:284903184569:web:956fb1d235443d002f2368",
 };
 
 // Inicializa o Firebase e Firestore

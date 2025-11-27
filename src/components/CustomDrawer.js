@@ -15,100 +15,95 @@ import { Ionicons } from "@expo/vector-icons";
 import { MotiView, MotiText } from "moti";
 import { colors } from "../theme/colors";
 
-export default function CustomDrawer(props) {
-  const user = {
-    name: "Eduardo Weissheimer",
-    level: 7,
-    xp: 3450,
-    nextLevelXP: 5000,
-    area: 4.3, // km² conquistados
-    avatar: "https://i.pravatar.cc/150?img=12",
-  };
 
-  const progress = (user.xp / user.nextLevelXP) * 100;
+export default function CustomDrawer(props) {
+  const user = props.user || {};
+
+  const name = user.name ?? user.displayName ?? "Usuário";
+  const avatar = user.photoURL ?? user.avatar ?? "https://i.pravatar.cc/150?img=1";
+  const level = user.level ?? 1;
+  const xp = user.xp ?? 0;
+  const nextXP = user.nextLevelXP ?? 1000;
+  const area = user.area ?? 0;
+
+  const progress = Math.min((xp / nextXP) * 100, 100);
 
   return (
-    <View style={{ flex: 1 }}>
-      {/* Cabeçalho com gradiente e animação */}
+    <View style={{ flex: 1, backgroundColor: "#0b0d10" }}>
+      {/* HEADER PREMIUM */}
       <LinearGradient
-        colors={[colors.primary, colors.secondary]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+        colors={["#13161a", "#0d0f12"]}
         style={styles.header}
       >
         <MotiView
-          from={{ scale: 0, opacity: 0 }}
+          from={{ scale: 0.7, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", duration: 600 }}
+          transition={{ type: "spring", duration: 500 }}
         >
-          <Image source={{ uri: user.avatar }} style={styles.avatar} />
+          <Image source={{ uri: avatar }} style={styles.avatar} />
         </MotiView>
 
         <MotiText
-          from={{ opacity: 0, translateY: -10 }}
+          from={{ opacity: 0, translateY: -5 }}
           animate={{ opacity: 1, translateY: 0 }}
-          transition={{ delay: 300 }}
+          transition={{ delay: 200 }}
           style={styles.name}
         >
-          {user.name}
+          {name}
         </MotiText>
 
         <MotiText
-          from={{ opacity: 0, translateY: -10 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={{ delay: 400 }}
+          from={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 300 }}
           style={styles.level}
         >
-          Nível {user.level}
+          Nível {level}
         </MotiText>
 
-        {/* Barra de XP */}
+        {/* XP BAR */}
         <View style={styles.progressContainer}>
           <View style={styles.progressBar}>
             <MotiView
               from={{ width: "0%" }}
               animate={{ width: `${progress}%` }}
-              transition={{ type: "timing", duration: 800 }}
+              transition={{ type: "timing", duration: 700 }}
               style={styles.progressFill}
             />
           </View>
-          <MotiText
-            from={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 700 }}
-            style={styles.xpText}
-          >
-            {user.xp} / {user.nextLevelXP} XP
-          </MotiText>
+
+          <Text style={styles.xpText}>
+            {xp} / {nextXP} XP
+          </Text>
         </View>
 
-        {/* Área conquistada */}
+        {/* ÁREA CONQUISTADA */}
         <MotiView
-          from={{ opacity: 0, translateY: 10 }}
+          from={{ opacity: 0, translateY: 8 }}
           animate={{ opacity: 1, translateY: 0 }}
-          transition={{ delay: 800 }}
-          style={styles.statsRow}
+          transition={{ delay: 400 }}
+          style={styles.areaRow}
         >
-          <Ionicons name="earth-outline" size={16} color={colors.white} />
-          <Text style={styles.areaText}>{user.area} km² conquistados</Text>
+          <Ionicons name="map-outline" size={16} color="#ffffff" />
+          <Text style={styles.areaText}>{area} km² conquistados</Text>
         </MotiView>
       </LinearGradient>
 
-      {/* Itens do Drawer */}
+      {/* MENU */}
       <DrawerContentScrollView
         {...props}
-        contentContainerStyle={styles.drawerContainer}
+        contentContainerStyle={styles.scrollBody}
       >
         <DrawerItemList {...props} />
       </DrawerContentScrollView>
 
-      {/* Rodapé */}
+      {/* FOOTER */}
       <View style={styles.footer}>
         <TouchableOpacity
           style={styles.logoutButton}
-          onPress={() => console.log("Logout")}
+          onPress={props.onSignOut}
         >
-          <Ionicons name="exit-outline" size={18} color={colors.white} />
+          <Ionicons name="exit-outline" size={20} color="#fff" />
           <Text style={styles.logoutText}>Sair</Text>
         </TouchableOpacity>
       </View>
@@ -118,85 +113,98 @@ export default function CustomDrawer(props) {
 
 const styles = StyleSheet.create({
   header: {
-    paddingVertical: 40,
+    paddingTop: 45,
+    paddingBottom: 30,
     alignItems: "center",
     borderBottomRightRadius: 25,
     borderBottomLeftRadius: 25,
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 6,
-    elevation: 6,
   },
+
   avatar: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    borderWidth: 3,
-    borderColor: colors.white,
-    marginBottom: 10,
+    width: 95,
+    height: 95,
+    borderRadius: 47,
+    borderWidth: 2,
+    borderColor: "#ffffff",
+    marginBottom: 12,
   },
+
   name: {
-    color: colors.white,
-    fontSize: 18,
-    fontWeight: "bold",
+    color: "#ffffff",
+    fontSize: 20,
+    fontWeight: "700",
   },
+
   level: {
-    color: "#e0ffff",
+    color: "#c7d0d8",
     fontSize: 14,
-    marginBottom: 10,
+    marginTop: 2,
+    marginBottom: 12,
   },
+
   progressContainer: {
     width: "80%",
     alignItems: "center",
   },
+
   progressBar: {
-    height: 8,
     width: "100%",
-    backgroundColor: "rgba(255,255,255,0.3)",
-    borderRadius: 5,
-    marginBottom: 4,
+    height: 8,
+    backgroundColor: "#25282d",
+    borderRadius: 6,
+    overflow: "hidden",
+    marginBottom: 5,
   },
+
   progressFill: {
     height: "100%",
-    backgroundColor: colors.white,
-    borderRadius: 5,
+    backgroundColor: "#ff6b00",
+    borderRadius: 6,
   },
+
   xpText: {
-    color: colors.white,
-    fontSize: 12,
+    color: "#ffffff",
+    fontSize: 11,
   },
-  statsRow: {
+
+  areaRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 8,
+    marginTop: 14,
     gap: 6,
   },
+
   areaText: {
-    color: colors.white,
+    color: "#ffffff",
+    fontSize: 13,
     fontWeight: "600",
   },
-  drawerContainer: {
-    backgroundColor: colors.background,
+
+  scrollBody: {
     paddingTop: 10,
+    backgroundColor: "#0b0d10",
   },
+
   footer: {
-    padding: 15,
-    backgroundColor: colors.primary,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    padding: 16,
+    backgroundColor: "#0d0f12",
+    borderTopColor: "#1a1d21",
+    borderTopWidth: 1,
   },
+
   logoutButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    backgroundColor: colors.secondary,
-    paddingVertical: 10,
+    gap: 8,
+    paddingVertical: 12,
+    backgroundColor: "#00e676",
     borderRadius: 12,
   },
+
   logoutText: {
-    color: colors.white,
-    fontWeight: "600",
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: 15,
   },
 });
