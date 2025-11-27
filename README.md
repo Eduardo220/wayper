@@ -70,6 +70,20 @@ Novas funcionalidades, melhorias de experiência e expansão do sistema de zonas
 
 ---
 
+## 📸 Galeria do App
+
+<p align="center">
+   <img src="./assets/screens/login.png" width="200"/>
+   <img src="./assets/screens/corrida.png" width="200"/>
+   <img src="./assets/screens/menu.png" width="200"/>
+   <img src="./assets/screens/perfil.png" width="200"/>
+   <img src="./assets/screens/ranking.png" width="200"/>
+   <img src="./assets/screens/amigos.png" width="200"/>
+   <img src="./assets/screens/clan.png" width="200"/>
+</p>
+
+---
+
 ## 🧪 Instalação e Execução (dev)
 ```bash
 # Clone o repositório
@@ -83,5 +97,3 @@ npm install
 
 # Inicie o app
 npm start
-
-
