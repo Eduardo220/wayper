@@ -4,8 +4,11 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  ActivityIndicator,
   Alert,
+  StyleSheet,
 } from "react-native";
+
 import { signUpEmail } from "../../services/auth/authService";
 
 export default function RegisterScreen({ navigation }) {
@@ -13,44 +16,51 @@ export default function RegisterScreen({ navigation }) {
   const [senha, setSenha] = useState("");
   const [confirmSenha, setConfirmSenha] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleRegister = async () => {
-    if (!email || !senha) {
-      Alert.alert("Erro", "Preenche essa porcaria direito.");
+  /* ============================================================
+     REGISTRO
+     ============================================================ */
+  async function handleRegister() {
+    if (!email.trim() || !senha.trim()) {
+      Alert.alert("Erro", "Preenche isso aí direito, criatura.");
       return;
     }
 
-    if (senha !== confirmSenha) {
+    if (senha.trim() !== confirmSenha.trim()) {
       Alert.alert("Erro", "As senhas não batem, gênio.");
       return;
     }
 
     try {
-      await signUpEmail(email, senha);
-      Alert.alert("Sucesso", "Conta criada. Vai logar logo.");
+      setLoading(true);
+
+      await signUpEmail(email.trim(), senha.trim());
+
+      Alert.alert("Sucesso", "Conta criada. Agora entra no app, caramba.");
       navigation.replace("Login");
 
     } catch (err) {
       console.log("ERRO NO REGISTRO:", err);
-
-      let msg = "Algo deu errado.";
+      let msg = "Algo deu errado, obviamente.";
 
       if (err.code === "auth/email-already-in-use")
         msg = "Esse email já tem dono, tenta outro.";
-      if (err.code === "auth/invalid-email")
-        msg = "Esse email parece um lixo, digita direito.";
-      if (err.code === "auth/weak-password")
-        msg = "Senha fraca, coloca uma decente.";
+      else if (err.code === "auth/invalid-email")
+        msg = "Esse email mal feito não existe nem no inferno.";
+      else if (err.code === "auth/weak-password")
+        msg = "Senha fraca demais, faz uma decente.";
 
       Alert.alert("Erro", msg);
+
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
   return (
-    <View style={{ flex: 1, padding: 20, justifyContent: "center" }}>
-      <Text style={{ fontSize: 24, fontWeight: "bold", marginBottom: 20 }}>
-        Criar Conta
-      </Text>
+    <View style={styles.container}>
+      <Text style={styles.title}>Criar Conta</Text>
 
       <TextInput
         placeholder="Email"
@@ -58,13 +68,7 @@ export default function RegisterScreen({ navigation }) {
         onChangeText={setEmail}
         autoCapitalize="none"
         keyboardType="email-address"
-        style={{
-          borderWidth: 1,
-          borderColor: "#ccc",
-          marginBottom: 15,
-          padding: 12,
-          borderRadius: 6,
-        }}
+        style={styles.input}
       />
 
       <View>
@@ -73,17 +77,11 @@ export default function RegisterScreen({ navigation }) {
           secureTextEntry={!showPassword}
           value={senha}
           onChangeText={setSenha}
-          style={{
-            borderWidth: 1,
-            borderColor: "#ccc",
-            padding: 12,
-            borderRadius: 6,
-            marginBottom: 10,
-          }}
+          style={styles.input}
         />
 
         <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-          <Text style={{ fontSize: 13, color: "#555", marginBottom: 15 }}>
+          <Text style={styles.showPasswordText}>
             {showPassword ? "Ocultar senha" : "Mostrar senha"}
           </Text>
         </TouchableOpacity>
@@ -94,33 +92,68 @@ export default function RegisterScreen({ navigation }) {
         secureTextEntry={!showPassword}
         value={confirmSenha}
         onChangeText={setConfirmSenha}
-        style={{
-          borderWidth: 1,
-          borderColor: "#ccc",
-          padding: 12,
-          borderRadius: 6,
-          marginBottom: 20,
-        }}
+        style={styles.input}
       />
 
       <TouchableOpacity
         onPress={handleRegister}
-        style={{
-          backgroundColor: "black",
-          padding: 15,
-          alignItems: "center",
-          borderRadius: 6,
-          marginBottom: 20,
-        }}
+        style={styles.button}
+        disabled={loading}
       >
-        <Text style={{ color: "white", fontSize: 16 }}>Criar Conta</Text>
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Criar Conta</Text>
+        )}
       </TouchableOpacity>
 
       <TouchableOpacity onPress={() => navigation.goBack()}>
-        <Text style={{ color: "black", textAlign: "center" }}>
-          Já tem conta? Fazer login
-        </Text>
+        <Text style={styles.backLogin}>Já tem conta? Fazer login</Text>
       </TouchableOpacity>
     </View>
   );
 }
+
+/* ============================================================
+   ESTILOS
+   ============================================================ */
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 25,
+    justifyContent: "center",
+    backgroundColor: "#fff",
+  },
+  title: {
+    fontSize: 26,
+    fontWeight: "bold",
+    marginBottom: 20,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    padding: 12,
+    borderRadius: 6,
+    marginBottom: 15,
+  },
+  showPasswordText: {
+    fontSize: 13,
+    color: "#555",
+    marginBottom: 10,
+  },
+  button: {
+    backgroundColor: "#000",
+    padding: 15,
+    alignItems: "center",
+    borderRadius: 6,
+    marginBottom: 20,
+  },
+  buttonText: {
+    color: "#fff",
+    fontSize: 16,
+  },
+  backLogin: {
+    color: "#000",
+    textAlign: "center",
+  },
+});

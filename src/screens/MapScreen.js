@@ -1,5 +1,6 @@
 // src/screens/MapScreen.js
-// MAP SCREEN - WAYPER (raw GPS mode, no smoothing)
+// MAP SCREEN - WAYPER (re-escrito, com logs de saída ao final de cada função)
+// Assumptions: expo-managed or bare with expo-location + react-native-maps available.
 
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -12,12 +13,20 @@ import {
   Modal,
   Alert,
   AppState,
+  Platform,
 } from "react-native";
 import MapView, { Marker, Polyline, Polygon, AnimatedRegion } from "react-native-maps";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
 
+/* ---------------------- Helpers ---------------------- */
+
+const debug = (...args) => {
+  try {
+    console.log("[MAPDEBUG]", ...args);
+  } catch (e) {}
+};
 
 /* Haversine distance (meters) */
 function haversineDistance(lat1, lon1, lat2, lon2) {
@@ -28,11 +37,27 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const res = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  debug("haversineDistance exit", { lat1, lon1, lat2, lon2, res });
+  return res;
 }
 
+/* formatTime (seconds) -> mm:ss or hh:mm:ss */
+function formatTime(sec) {
+  const s = Math.floor(sec % 60);
+  const m = Math.floor((sec % 3600) / 60);
+  const h = Math.floor(sec / 3600);
+  const out = h > 0
+    ? `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  debug("formatTime exit", { sec, out });
+  return out;
+}
+
+/* ---------------------- Component ---------------------- */
+
 export default function MapScreen() {
-  // UI + flow
+  /* UI + flow */
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState(null);
   const [running, setRunning] = useState(false);
@@ -43,8 +68,7 @@ export default function MapScreen() {
   const [counting, setCounting] = useState(false);
   const [countdown, setCountdown] = useState(0);
 
-  // metrics & states
-  const [route, setRoute] = useState([]);
+  /* metrics & states */
   const [routeState, setRouteState] = useState([]); // rendered trail
   const [replayPathState, setReplayPathState] = useState([]);
   const [distanceState, setDistanceState] = useState(0);
@@ -53,367 +77,679 @@ export default function MapScreen() {
   const [polygons, setPolygons] = useState([]);
   const [mode, setMode] = useState(null); // 'free' | 'zones'
 
-  // refs (performance)
+  /* refs (performance) */
   const mapRef = useRef(null);
   const coordinate = useRef(new AnimatedRegion({ latitude: 0, longitude: 0, latitudeDelta: 0.001, longitudeDelta: 0.001 })).current;
   const watcherRef = useRef(null);
-  const flushIntervalRef = useRef(null);
   const timerRef = useRef(null);
   const replayIntervalRef = useRef(null);
   const appStateRef = useRef(AppState.currentState);
 
-  // buffer + last point + distance
+  /* buffer + last point + distance */
   const lastPointRef = useRef(null);
-  const routeBufferRef = useRef([]);
+  const routeBufferRef = useRef([]); // will flush to routeState periodically
   const distanceRef = useRef(0);
+  const runningRef = useRef(false);
 
-  /* TUNABLES - raw GPS mode (no smoothing) */
-  const MIN_ACCURACY = 100; // accept up to 100m accuracy; still allows very noisy devices to be used
-  const FLUSH_INTERVAL_MS = 200; // flush buffer to state every 200ms (keeps UI responsive)
-  // NOTE: MIN_POINT_DISTANCE removed — we accept raw points
+  /* TUNABLES */
+  const MIN_ACCURACY = 75; // meters tolerated
+  const FLUSH_INTERVAL_MS = 300; // flush buffer to state
 
-  /* =============== init =============== */
+  /* ---------------------- INIT & CLEANUP ---------------------- */
   useEffect(() => {
-    let cleanup = false;
+    let mounted = true;
+    let appStateSub = null;
+    let flushTimer = null;
+
     (async () => {
       try {
+        // request permissions
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== "granted") {
-          Alert.alert("Permissão", "Permita o GPS para usar o app.");
-          setLoading(false);
+          Alert.alert("Permissão negada", "Ative o GPS e permita localização em primeiro plano.");
+          if (mounted) setLoading(false);
+          debug("init exit (permission denied)");
           return;
         }
 
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-        const coords = pos.coords || { latitude: 0, longitude: 0 };
-        const initial = { latitude: coords.latitude, longitude: coords.longitude };
-        setLocation(initial);
-        try { coordinate.setValue(initial); } catch {}
+        // initial position
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest }).catch(e => {
+          debug("getCurrentPositionAsync failed (init)", e);
+          return null;
+        });
 
-        // start route buffer flush interval
-        if (!flushIntervalRef.current) {
-          flushIntervalRef.current = setInterval(() => flushRouteBufferToState(), FLUSH_INTERVAL_MS);
+        const initial = pos?.coords ? { latitude: pos.coords.latitude, longitude: pos.coords.longitude } : { latitude: 0, longitude: 0 };
+        if (mounted) {
+          setLocation(initial);
+          try { coordinate.setValue(initial); } catch {}
         }
 
-        // optional: listen app state for backgrounding
-        const sub = AppState.addEventListener("change", (next) => {
+        // app state listener
+        appStateSub = AppState.addEventListener("change", (next) => {
           appStateRef.current = next;
+          debug("appState change", next);
         });
-      } catch (e) {
-        console.warn("init error", e);
+
+        // start periodic flush to UI
+        flushTimer = setInterval(() => {
+          flushRouteBufferToState();
+        }, FLUSH_INTERVAL_MS);
+        debug("init finished priming");
+      } catch (err) {
+        console.warn("INIT ERROR", err);
+        debug("init catch exit", err);
       } finally {
-        if (!cleanup) setLoading(false);
+        if (mounted) setLoading(false);
+        debug("useEffect(init) exit");
       }
     })();
 
     return () => {
-      cleanup = true;
-      if (flushIntervalRef.current) { clearInterval(flushIntervalRef.current); flushIntervalRef.current = null; }
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-      if (replayIntervalRef.current) { clearInterval(replayIntervalRef.current); replayIntervalRef.current = null; }
-      if (watcherRef.current && typeof watcherRef.current.remove === "function") {
-        try { watcherRef.current.remove(); } catch {}
+      mounted = false;
+
+      // cleanup timer
+      if (flushTimer) {
+        clearInterval(flushTimer);
+        flushTimer = null;
+      }
+
+      // stop watcher
+      stopWatcherAndPolling();
+
+      // stop running timer
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+
+      // remove app state listener
+      if (appStateSub?.remove) appStateSub.remove();
+
+      // make sure runningRef cleared
+      runningRef.current = false;
+
+      debug("useEffect cleanup exit");
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  debug("component render", { loading, location, running });
+
+  /* ---------------------- UTIL: watcher cleanup ---------------------- */
+
+  function stopWatcherAndPolling() {
+    try {
+      if (watcherRef.current) {
+        if (typeof watcherRef.current.remove === "function") {
+          try { watcherRef.current.remove(); } catch (e) { debug("watcher remove error", e); }
+        } else if (watcherRef.current.pollingInterval) {
+          try { clearInterval(watcherRef.current.pollingInterval); } catch (e) { debug("clear polling error", e); }
+        }
         watcherRef.current = null;
       }
-    };
-  }, []);
-
-  /* =============== buffer flush =============== */
-  function flushRouteBufferToState() {
-    if (routeBufferRef.current.length === 0) return;
-    setRouteState((prev) => {
-      const next = prev.concat(routeBufferRef.current);
-      routeBufferRef.current = [];
-      return next;
-    });
-    setDistanceState(distanceRef.current);
+    } catch (e) {
+      debug("stopWatcherAndPolling caught", e);
+    }
+    debug("stopWatcherAndPolling exit");
   }
 
-  /* =============== location processing (RAW) =============== */
-  function handleLocationUpdate(raw) {
-    if (!raw || typeof raw.latitude !== "number" || typeof raw.longitude !== "number") return;
+  /* ---------------------- BUFFER FLUSH ---------------------- */
 
-    // raw point (no filter)
-    const now = Date.now();
-    const point = {
-      latitude: raw.latitude,
-      longitude: raw.longitude,
-      timestamp: now,
-    };
-
-    // move the DOT smoothly (still just visual)
+  function flushRouteBufferToState() {
     try {
-      coordinate.timing({
-        latitude: point.latitude,
-        longitude: point.longitude,
-        duration: 120,
-        useNativeDriver: false
-      }).start();
-    } catch {
-      try { coordinate.setValue({ latitude: point.latitude, longitude: point.longitude }); } catch {}
+      const buf = routeBufferRef.current;
+      if (!buf || buf.length === 0) {
+        debug("flushRouteBufferToState no-op");
+        return;
+      }
+      // keep only lat/lon for UI
+      const mapped = buf.map(p => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) })).filter(p => isFinite(p.latitude) && isFinite(p.longitude));
+      if (mapped.length === 0) {
+        routeBufferRef.current = [];
+        debug("flushRouteBufferToState nothing valid");
+        return;
+      }
+      setRouteState(prev => {
+        const next = prev.concat(mapped);
+        return next;
+      });
+      routeBufferRef.current = [];
+      setDistanceState(distanceRef.current);
+      debug("flushRouteBufferToState exit", { added: mapped.length, distanceRef: distanceRef.current });
+    } catch (e) {
+      debug("flushRouteBufferToState catch", e);
     }
+  }
 
-    // always keep location state so MapView initial/region can use it
-    setLocation({ latitude: point.latitude, longitude: point.longitude });
+  /* ---------------------- LOCATION HANDLER ---------------------- */
 
-    // if not running, we don't record trail
-    if (!running) return;
+  function handleLocationUpdate(locObj = {}) {
+    debug("HLU STEP0: begin", locObj);
 
-    // if first point, accept it
-    if (!lastPointRef.current) {
+    try {
+      // ----------------------------------
+      // 1) VALIDAR COORDENADAS
+      // ----------------------------------
+      const lat = Number(locObj.latitude);
+      const lon = Number(locObj.longitude);
+      const accuracy = locObj.accuracy != null ? Number(locObj.accuracy) : 9999;
+
+      if (!isFinite(lat) || !isFinite(lon)) {
+        debug("HLU ERROR: invalid coords", locObj);
+        return;
+      }
+
+      // ----------------------------------
+      // 2) ATUALIZAR VISUAL DO DOT SEMPRE
+      // ----------------------------------
+      setLocation({ latitude: lat, longitude: lon });
+
+      try {
+        coordinate.timing({
+          latitude: lat,
+          longitude: lon,
+          duration: 280,
+          useNativeDriver: false,
+        }).start();
+      } catch {
+        try {
+          coordinate.setValue({ latitude: lat, longitude: lon });
+        } catch {}
+      }
+
+      // ----------------------------------
+      // 3) SE NÃO TÁ CORRENDO -> SAI
+      // ----------------------------------
+      if (!runningRef.current) {
+        debug("HLU EXIT (NOT RUNNING REF)", { lat, lon, accuracy });
+        return;
+      }
+
+      // ----------------------------------
+      // 4) FILTRO DE ACURÁCIA
+      // ----------------------------------
+      if (!isFinite(accuracy) || accuracy > MIN_ACCURACY) {
+        debug("HLU EXIT (ACCURACY DROP)", { lat, lon, accuracy });
+        return;
+      }
+
+      // ----------------------------------
+      // 5) CRIAR PONTO PADRÃO
+      // ----------------------------------
+      const point = {
+        latitude: lat,
+        longitude: lon,
+        accuracy,
+        timestamp: Date.now(),
+      };
+
+      // ----------------------------------
+      // 6) PRIMEIRO PONTO
+      // ----------------------------------
+      if (!lastPointRef.current) {
+        lastPointRef.current = point;
+        routeBufferRef.current.push(point);
+        debug("HLU EXIT (FIRST POINT)", point);
+        return;
+      }
+
+      // ----------------------------------
+      // 7) DISTÂNCIA ENTRE ÚLTIMO E ATUAL
+      // ----------------------------------
+      const last = lastPointRef.current;
+      const d = haversineDistance(last.latitude, last.longitude, point.latitude, point.longitude);
+
+      // ----------------------------------
+      // 8) FILTRO DE SPIKE
+      // ----------------------------------
+      if (!isFinite(d) || d <= 0 || d > 1000) {
+        debug("HLU EXIT (SPIKE IGNORED)", { last, point, d });
+        return;
+      }
+
+      // ----------------------------------
+      // 9) SALVAR DISTÂNCIA E PONTO
+      // ----------------------------------
+      distanceRef.current += d;
       lastPointRef.current = point;
       routeBufferRef.current.push(point);
+      setDistanceState(distanceRef.current);
+
+      debug("HLU EXIT (OK)", {
+        added: d,
+        total: distanceRef.current,
+        point,
+      });
+
+    } catch (e) {
+      debug("HLU CATCH", e);
+    }
+  }
+
+  /* ---------------------- START / STOP RUN ---------------------- */
+  function startWithCountdown(selectedMode = "free") {
+    try {
+      if (counting || running) {
+        debug("startWithCountdown early-return", { counting, running });
+        return;
+      }
+      setMode(selectedMode);
+      setCounting(true);
+      setCountdown(3);
+
+      const interval = setInterval(() => {
+        setCountdown(c => {
+          if (c <= 1) {
+            clearInterval(interval);
+            setCounting(false);
+            startRun();
+            return 0;
+          }
+          return c - 1;
+        });
+      }, 1000);
+      debug("startWithCountdown exit (started countdown)", { selectedMode });
+    } catch (e) {
+      debug("startWithCountdown catch", e);
+    }
+  }
+
+ /* ---------------------- START RUN ---------------------- */
+  async function startRun() {
+  debug("startRun STEP0: begin");
+
+  try {
+    if (running) {
+      debug("startRun EARLY_EXIT: already running");
       return;
     }
 
-    // calculate distance from last raw point (no smoothing)
-    const last = lastPointRef.current;
-    const dist = haversineDistance(last.latitude, last.longitude, point.latitude, point.longitude);
+    debug("startRun STEP1: resetting states");
 
-    // accept the raw point always (no minimum). Still guard gross jumps: if dist is absurd, ignore.
-    if (isFinite(dist) && dist < 1000) {
-      routeBufferRef.current.push(point);
-      distanceRef.current += dist;
-      lastPointRef.current = point;
-    } else {
-      // ignore absurd jump but keep lastPointRef the same
-      // do nothing
-    }
-  }
-
-  /* =============== start / stop core (raw mode) =============== */
-  async function startRunCore(selectedMode = "free") {
-    setMode(selectedMode);
-
-    // prepare state BEFORE starting watcher
+    // reset everything
     setRunning(true);
+    // ****** FIX: marca a ref como true para o handler aceitar pontos ******
+    runningRef.current = true;
+
     setReplaying(false);
-
-    routeBufferRef.current = [];
-    lastPointRef.current = null;
-
     setRouteState([]);
+    routeBufferRef.current = [];
     distanceRef.current = 0;
     setDistanceState(0);
+    lastPointRef.current = null;
     setTimeSec(0);
 
-    // start timer
+    // timer reset
     if (timerRef.current) {
       clearInterval(timerRef.current);
-      timerRef.current = null;
+      debug("startRun STEP1.1: cleared previous timer");
     }
+
     timerRef.current = setInterval(() => {
-      setTimeSec((t) => t + 1);
+      setTimeSec(t => t + 1);
     }, 1000);
 
-    // initial position
+    debug("startRun STEP2: requesting initial position");
+
+    // GET CURRENT POSITION (FIRST CRITICAL POINT)
+    let pos = null;
     try {
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High
+      pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Highest,
       });
-      if (pos?.coords) {
-        const { latitude, longitude } = pos.coords;
-        try { coordinate.setValue({ latitude, longitude }); } catch {}
-        lastPointRef.current = { latitude, longitude, timestamp: Date.now() };
-        routeBufferRef.current.push(lastPointRef.current);
-        mapRef.current?.animateCamera({ center: { latitude, longitude }, zoom: 17 });
-        setLocation({ latitude, longitude });
-      }
-    } catch (err) {
-      // ignore
+      debug("startRun STEP2.1: got initial position", pos?.coords);
+    } catch (e) {
+      debug("startRun ERROR: getCurrentPositionAsync failed", e);
     }
 
-    // start watcher — RAW mode: distanceInterval 0 => get updates by timeInterval
+    // avoid exploding AnimatedRegion
+    debug("startRun STEP3: syncing coordinate safely");
+
+    if (pos?.coords) {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+
+      try {
+        coordinate.stopAnimation();
+      } catch (e) {
+        debug("startRun coord.stopAnimation error", e);
+      }
+
+      try {
+        coordinate.setValue({ latitude: lat, longitude: lon });
+        debug("startRun STEP3.1: coordinate.setValue OK");
+      } catch (e) {
+        debug("startRun STEP3.1 ERROR: coordinate.setValue failed", e);
+      }
+
+      try {
+        mapRef.current?.animateCamera({
+          center: { latitude: lat, longitude: lon },
+          zoom: 17,
+        });
+        debug("startRun STEP3.2: animateCamera OK");
+      } catch (e) {
+        debug("startRun STEP3.2 ERROR: animateCamera failed", e);
+      }
+
+      // call handler manually for first point
+      try {
+        handleLocationUpdate({
+          latitude: lat,
+          longitude: lon,
+          accuracy: pos.coords.accuracy,
+        });
+        debug("startRun STEP3.3: handleLocationUpdate OK");
+      } catch (e) {
+        debug("startRun STEP3.3 ERROR: handleLocationUpdate failed", e);
+      }
+    } else {
+      debug("startRun STEP3 SKIPPED: no pos.coords");
+    }
+
+    // START WATCHER (SECOND CRITICAL POINT)
+    debug("startRun STEP4: starting watcher");
+
     try {
       const sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: 200,
+          timeInterval: 1000,
           distanceInterval: 0,
           mayShowUserSettingsDialog: true,
         },
         (loc) => {
-          if (!loc?.coords) return;
-          const { latitude, longitude, accuracy } = loc.coords;
-          // accept even noisy points, but allow a very high-accuracy block (optional)
-          if (typeof accuracy === "number" && accuracy > MIN_ACCURACY) {
-            // still accept points, but user can change MIN_ACCURACY if desired
+          debug("watch CB fired", loc?.coords);
+          if (!loc?.coords) {
+            debug("watch CB EMPTY", loc);
+            return;
           }
-          handleLocationUpdate({ latitude, longitude });
+
+          handleLocationUpdate({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+            accuracy: loc.coords.accuracy,
+          });
         }
       );
+
       watcherRef.current = sub;
+      debug("startRun STEP4.1: watcher started", {
+        hasRemove: typeof sub.remove === "function",
+      });
+
     } catch (e) {
-      console.warn("watchPositionAsync failed, fallback to polling", e);
-      const pollId = setInterval(async () => {
+      // WATCHER FAILED → FALLBACK
+      debug("startRun STEP4 ERROR: watchPositionAsync failed", e);
+
+      const poll = setInterval(async () => {
         try {
-          const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-          if (!p?.coords) return;
-          const { latitude, longitude } = p.coords;
-          handleLocationUpdate({ latitude, longitude });
-        } catch (err) { /* ignore */ }
+          const p = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.High,
+          });
+
+          debug("polling LOCATION", p?.coords);
+
+          if (p?.coords) {
+            handleLocationUpdate({
+              latitude: p.coords.latitude,
+              longitude: p.coords.longitude,
+              accuracy: p.coords.accuracy,
+            });
+          }
+        } catch (err) {
+          debug("startRun POLLING_ERROR", err);
+        }
       }, 1000);
-      watcherRef.current = { pollingInterval: pollId };
-    }
-  }
 
-  function stopRunCore() {
-    setRunning(false);
-
-    // stop watcher
-    if (watcherRef.current) {
-      if (typeof watcherRef.current.remove === "function") {
-        try { watcherRef.current.remove(); } catch (e) {}
-      } else if (watcherRef.current.pollingInterval) {
-        clearInterval(watcherRef.current.pollingInterval);
-      }
-      watcherRef.current = null;
+      watcherRef.current = { pollingInterval: poll };
+      debug("startRun STEP4.2: fallback polling started");
     }
 
-    // stop timer
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    debug("startRun STEP5: exit normally");
 
-    // final flush: take buffer snapshot, don't rely on state update timing
-    const finalBuffer = [...routeBufferRef.current];
-    routeBufferRef.current = [];
-
-    const finalRoute = [...routeState, ...finalBuffer];
-
-    if (finalRoute.length > 1) {
-      const entry = {
-        id: String(Date.now()),
-        date: Date.now(),
-        mode,
-        distance: distanceRef.current,
-        time: timeSec,
-        path: finalRoute,
-      };
-      setRuns((r) => [...r, entry]);
-      // you may want to persist to AsyncStorage here
-    }
-
-    // cleanup
-    distanceRef.current = 0;
-    lastPointRef.current = null;
-    setRouteState([]);
-    setReplayPathState([]);
-    setDistanceState(0);
-    setTimeSec(0);
-    setMode(null);
+  } catch (e) {
+    debug("startRun FINAL_CATCH", e);
   }
+}
 
-  /* =============== countdown wrapper =============== */
-  function startWithCountdown(selectedMode = "free") {
-    if (counting) return;
-    setCounting(true);
-    setCountdown(3);
-    let n = 3;
-    const tick = setInterval(() => {
-      n -= 1;
-      setCountdown(n);
-      if (n <= 0) clearInterval(tick);
-    }, 1000);
-    setTimeout(() => {
-      setCounting(false);
-      setCountdown(0);
-      startRunCore(selectedMode);
-    }, 3000);
-  }
-
+ /* ---------------------- STOP RUN ---------------------- */
   function stopRun() {
-    stopRunCore();
-  }
-
-  /* =============== replay =============== */
-  function startReplay(runEntry) {
-    if (!runEntry || !Array.isArray(runEntry.path) || runEntry.path.length === 0) return;
-    // stop watcher if any
-    if (watcherRef.current && typeof watcherRef.current.remove === "function") {
-      try { watcherRef.current.remove(); } catch {}
-      watcherRef.current = null;
-    }
-    if (watcherRef.current && watcherRef.current.pollingInterval) {
-      clearInterval(watcherRef.current.pollingInterval);
-      watcherRef.current = null;
-    }
-
-    setReplaying(true);
-    setRunning(false);
-    setRouteState([]);
-    setReplayPathState([]);
-    setMode(null);
-
-    let idx = 0;
-    if (replayIntervalRef.current) { clearInterval(replayIntervalRef.current); replayIntervalRef.current = null; }
-    replayIntervalRef.current = setInterval(() => {
-      if (!runEntry || idx >= runEntry.path.length) {
-        clearInterval(replayIntervalRef.current);
-        replayIntervalRef.current = null;
-        setReplaying(false);
+    try {
+      if (!running) {
+        debug("stopRun early exit not running");
         return;
       }
-      const p = runEntry.path[idx++];
-      setReplayPathState((prev) => [...prev, p]);
-      try {
-        coordinate.timing({ latitude: p.latitude, longitude: p.longitude, duration: 200, useNativeDriver: false }).start();
-      } catch {
-        try { coordinate.setValue({ latitude: p.latitude, longitude: p.longitude }); } catch {}
+
+      // ****** FIX: marca a ref como false pra handler não aceitar pontos ******
+      runningRef.current = false;
+      setRunning(false);
+
+      stopWatcherAndPolling();
+
+      // stop timer
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
       }
-    }, 250);
+
+      // save run if sensible
+      const routeCopy = routeState || [];
+      if (routeCopy.length > 1 && distanceRef.current > 1) {
+        const entry = {
+          id: String(Date.now()),
+          date: Date.now(),
+          distance: distanceRef.current,
+          time: timeSec,
+          path: routeCopy,
+        };
+        setRuns(r => [entry, ...r]);
+        debug("stopRun saved run", { id: entry.id, distance: entry.distance, time: entry.time });
+      }
+
+      // reset visual
+      distanceRef.current = 0;
+      setDistanceState(0);
+      lastPointRef.current = null;
+      setRouteState([]);
+      setTimeSec(0);
+
+      debug("stopRun exit");
+    } catch (e) {
+      debug("stopRun catch", e);
+    }
   }
+
+  /* ============================================================
+   REPLAY DA CORRIDA — VERSÃO AJUSTADA E SEM FRESCURA
+   ============================================================ */
+
+  function startReplay(runEntry) {
+    try {
+      // validação decente
+      if (
+        !runEntry ||
+        !Array.isArray(runEntry.path) ||
+        runEntry.path.length === 0
+      ) {
+        debug("startReplay invalid input", { valid: !!runEntry });
+        return;
+      }
+
+      // desliga qualquer tracking ativo
+      stopWatcherAndPolling();
+
+      // garante modo replay
+      setReplaying(true);
+      runningRef.current = false;
+      setRunning(false);
+
+      // limpa o estado do mapa ANTES do replay
+      setRouteState([]);
+      setReplayPathState([]);
+      setDrawnPath && setDrawnPath([]);
+      setMode(null);
+
+      // limpa interval anterior, se existir
+      if (replayIntervalRef.current) {
+        clearInterval(replayIntervalRef.current);
+        replayIntervalRef.current = null;
+      }
+
+      let idx = 0;
+
+      replayIntervalRef.current = setInterval(() => {
+        // fim do replay
+        if (!runEntry || idx >= runEntry.path.length) {
+          clearInterval(replayIntervalRef.current);
+          replayIntervalRef.current = null;
+
+          // garante o fim do replay
+          setReplaying(false);
+
+          // LIMPA TUDO ao finalizar
+          setReplayPathState([]);
+          setRouteState([]);
+          setDrawnPath && setDrawnPath([]);
+
+          debug("startReplay finished");
+          return;
+        }
+
+        const p = runEntry.path[idx++];
+        setReplayPathState(prev => [...prev, p]);
+
+        // animação do ponto
+        try {
+          coordinate
+            .timing({
+              latitude: p.latitude,
+              longitude: p.longitude,
+              duration: 200,
+              useNativeDriver: false,
+            })
+            .start();
+        } catch {
+          try {
+            coordinate.setValue({
+              latitude: p.latitude,
+              longitude: p.longitude,
+            });
+          } catch {}
+        }
+      }, 250);
+
+      debug("startReplay exit started", { total: runEntry.path.length });
+
+    } catch (e) {
+      debug("startReplay catch", e);
+    }
+  }
+
+  /* ============================================================
+    FINALIZAR REPLAY — VERSÃO AJUSTADA
+    ============================================================ */
 
   function stopReplay() {
-    if (replayIntervalRef.current) { clearInterval(replayIntervalRef.current); replayIntervalRef.current = null; }
-    setReplaying(false);
-    setReplayPathState([]);
+    try {
+      if (replayIntervalRef.current) {
+        clearInterval(replayIntervalRef.current);
+        replayIntervalRef.current = null;
+      }
+
+      setReplaying(false);
+
+      // limpa qualquer lixo do mapa
+      setReplayPathState([]);
+      setRouteState([]);
+      setDrawnPath && setDrawnPath([]);
+
+      debug("stopReplay exit");
+    } catch (e) {
+      debug("stopReplay catch", e);
+    }
   }
 
-  /* =============== GPX/JSON helpers =============== */
-  function pointsToGPX(coords, meta = {}) {
-    const header = `<?xml version="1.0" encoding="UTF-8"?>
+
+  /* ---------------------- GPX / JSON helpers ---------------------- */
+
+  function pointsToGPX(coords = [], meta = {}) {
+    try {
+      const header = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Wayper" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata><name>${meta.name || "Wayper Run"}</name><time>${meta.time || new Date().toISOString()}</time></metadata>
   <trk><name>${meta.name || "Wayper Run"}</name><trkseg>`;
-    const pts = coords.map((p) => `<trkpt lat="${p.latitude}" lon="${p.longitude}"><time>${p.timestamp || ""}</time></trkpt>`).join("\n");
-    const footer = `</trkseg></trk></gpx>`;
-    return `${header}\n${pts}\n${footer}`;
+      const pts = coords.map((p) => `<trkpt lat="${p.latitude}" lon="${p.longitude}"><time>${p.timestamp || ""}</time></trkpt>`).join("\n");
+      const footer = `</trkseg></trk></gpx>`;
+      const out = `${header}\n${pts}\n${footer}`;
+      debug("pointsToGPX exit", { count: coords.length });
+      return out;
+    } catch (e) {
+      debug("pointsToGPX catch", e);
+      return "";
+    }
   }
 
-  async function shareRunAsGPX(run) {
-    if (!run || !Array.isArray(run.path)) return;
-    const gpx = pointsToGPX(run.path, { name: `Wayper Run ${run.date}`, time: new Date(run.date).toISOString() });
-    const path = FileSystem.cacheDirectory + `wayper_run_${run.id || Date.now()}.gpx`;
+    async function shareRunAsGPX(run) {
     try {
-      await FileSystem.writeAsStringAsync(path, gpx, { encoding: FileSystem.EncodingType.UTF8 });
+      if (!run || !Array.isArray(run.path)) {
+        debug("shareRunAsGPX invalid run");
+        return;
+      }
+
+      const gpx = pointsToGPX(run.path, { name: `Wayper Run ${run.date}`, time: new Date(run.date).toISOString() });
+      const path = FileSystem.cacheDirectory + `wayper_run_${run.id || Date.now()}.gpx`;
+
+      await FileSystem.writeAsStringAsync(path, gpx, {
+        encoding: FileSystem.Encoding.UTF8
+      });
+
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path);
+        debug("shareRunAsGPX exit shared", { path });
       } else {
         Alert.alert("Compartilhar", "Compartilhamento não disponível neste dispositivo.");
+        debug("shareRunAsGPX exit sharing not available");
       }
     } catch (e) {
       console.warn("share GPX error", e);
+      debug("shareRunAsGPX catch", e);
       Alert.alert("Erro", "Falha ao gerar/compartilhar GPX.");
     }
   }
 
-  async function shareRunAsJSON(run) {
-    if (!run) return;
-    const path = FileSystem.cacheDirectory + `wayper_run_${run.id || Date.now()}.json`;
+
+    async function shareRunAsJSON(run) {
     try {
-      await FileSystem.writeAsStringAsync(path, JSON.stringify(run), { encoding: FileSystem.EncodingType.UTF8 });
+      if (!run) {
+        debug("shareRunAsJSON invalid run");
+        return;
+      }
+
+      const path = FileSystem.cacheDirectory + `wayper_run_${run.id || Date.now()}.json`;
+
+      await FileSystem.writeAsStringAsync(path, JSON.stringify(run), {
+        encoding: FileSystem.Encoding.UTF8
+      });
+
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path);
+        debug("shareRunAsJSON exit shared", { path });
       } else {
         Alert.alert("Compartilhar", "Compartilhamento não disponível neste dispositivo.");
+        debug("shareRunAsJSON exit sharing not available");
       }
     } catch (e) {
       console.warn("share JSON error", e);
+      debug("shareRunAsJSON catch", e);
       Alert.alert("Erro", "Falha ao gerar/compartilhar JSON.");
     }
   }
 
-  /* =============== UI =============== */
+
+  /* ---------------------- RENDER ---------------------- */
+
   if (loading || !location) {
+    debug("render early loading");
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color="#0984e3" />
@@ -437,7 +773,6 @@ export default function MapScreen() {
           <Polygon key={i} coordinates={z.coords} strokeColor="#00b894" fillColor="rgba(0,184,148,0.25)" strokeWidth={8} />
         ))}
 
-        {/* trail: routeState (flushed) */}
         {routeState.length > 0 && <Polyline coordinates={routeState} strokeWidth={8} strokeColor="#0984e3" lineJoin="round" lineCap="round" /> }
         {replayPathState.length > 0 && <Polyline coordinates={replayPathState} strokeWidth={8} strokeColor="#fdcb6e" lineJoin="round" lineCap="round" /> }
 
@@ -446,7 +781,6 @@ export default function MapScreen() {
         </Marker.Animated>
       </MapView>
 
-      {/* run panel */}
       {(running || replaying) && (
         <View style={styles.runPanel}>
           <Text style={styles.runTitle}>
@@ -463,7 +797,6 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* main menu (centered start) */}
       {!running && !replaying && (
         <View style={styles.menuPanel}>
           <TouchableOpacity style={styles.startMainBtn} onPress={() => setSelectModeVisible(true)}>
@@ -486,7 +819,6 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* bottom finalize button */}
       {running && (
         <View style={styles.bottomButtons}>
           <TouchableOpacity style={[styles.mainButton, { backgroundColor: "#d63031" }]} onPress={stopRun}>
@@ -503,7 +835,6 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* replay modal */}
       <Modal visible={showReplayList} animationType="slide">
         <View style={styles.modal}>
           <Text style={styles.title}>Corridas Salvas</Text>
@@ -533,7 +864,6 @@ export default function MapScreen() {
         </View>
       </Modal>
 
-      {/* select mode modal */}
       <Modal visible={selectModeVisible} transparent animationType="fade">
         <View style={styles.modeOverlay}>
           <View style={styles.modeBox}>
@@ -551,7 +881,6 @@ export default function MapScreen() {
         </View>
       </Modal>
 
-      {/* countdown overlay */}
       {counting && (
         <View style={styles.countdownOverlay}>
           <View style={styles.countdownBox}>
@@ -563,7 +892,8 @@ export default function MapScreen() {
   );
 }
 
-/* =============== styles (WAYPER ULTRA UI) =============== */
+/* =============== styles (kept same visuals) =============== */
+/* You can reuse your original styles — keeping here for completeness */
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -580,7 +910,6 @@ const styles = StyleSheet.create({
     alignItems: "center"
   },
 
-  /* Pontinho da localização */
   myLocationDot: {
     width: 18,
     height: 18,
@@ -594,7 +923,6 @@ const styles = StyleSheet.create({
     shadowRadius: 8
   },
 
-  /* Painel flutuante com blur e neon */
   runPanel: {
     position: "absolute",
     top: 22,
@@ -632,7 +960,6 @@ const styles = StyleSheet.create({
     fontWeight: "800"
   },
 
-  /* Painel inferior principal */
   menuPanel: {
     position: "absolute",
     bottom: 26,
@@ -702,7 +1029,6 @@ const styles = StyleSheet.create({
     opacity: 0.8
   },
 
-  /* Botão inferior */
   bottomButtons: {
     position: "absolute",
     bottom: 22,
@@ -728,7 +1054,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6
   },
 
-  /* Modal */
   modal: {
     flex: 1,
     padding: 20,
@@ -761,7 +1086,6 @@ const styles = StyleSheet.create({
     alignItems: "center"
   },
 
-  /* countdown */
   countdownOverlay: {
     position: "absolute",
     left: 0, right: 0, top: 0, bottom: 0,
@@ -787,7 +1111,6 @@ const styles = StyleSheet.create({
     color: "#00ffe1"
   },
 
-  /* selecionar modo */
   modeOverlay: {
     position: "absolute",
     left: 0, right: 0, top: 0, bottom: 0,

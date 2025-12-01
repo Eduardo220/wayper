@@ -1,5 +1,5 @@
 // src/screens/ProfileScreen.js
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -19,7 +19,6 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { MotiView, MotiText } from "moti";
 
-// novo componente bonito pra medalhas
 import MedalsWidget from "../components/MedalsWidget";
 
 export default function ProfileScreen() {
@@ -29,61 +28,88 @@ export default function ProfileScreen() {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
-  const [avatar, setAvatar] = useState(null);
+  const [avatar, setAvatar] = useState("");
 
-  useEffect(() => {
-    loadUser();
-  }, []);
-
-  async function loadUser() {
+  /* -------------------------------------------
+     LOAD USER
+  ------------------------------------------- */
+  const loadUser = useCallback(async () => {
     try {
       const auth = getAuth();
-      const uid = auth.currentUser.uid;
+      const current = auth.currentUser;
 
-      const snap = await getDoc(doc(db, "users", uid));
+      if (!current) {
+        console.log("Nenhum usuário logado.");
+        setLoading(false);
+        return;
+      }
+
+      const snap = await getDoc(doc(db, "users", current.uid));
 
       if (snap.exists()) {
         const data = snap.data();
+
         setUser(data);
         setName(data.name || "");
         setBio(data.bio || "");
-        setAvatar(data.avatar || null);
+        setAvatar(data.avatar || "");
       }
     } catch (err) {
       console.log("Erro buscando usuário:", err);
     }
 
     setLoading(false);
-  }
+  }, []);
 
+  useEffect(() => {
+    loadUser();
+  }, [loadUser]);
+
+  /* -------------------------------------------
+     PICK IMAGE
+  ------------------------------------------- */
   async function pickImage() {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 1,
-    });
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 1,
+      });
 
-    if (!result.canceled) {
-      setAvatar(result.assets[0].uri);
+      if (!result.canceled) {
+        setAvatar(result.assets[0].uri);
+      }
+    } catch (e) {
+      console.log("Erro selecionando imagem:", e);
     }
   }
 
+  /* -------------------------------------------
+     SAVE EDITS
+  ------------------------------------------- */
   async function saveChanges() {
     try {
+      if (!name.trim()) {
+        console.log("Nome inválido.");
+        return;
+      }
+
       const auth = getAuth();
-      const uid = auth.currentUser.uid;
+      const uid = auth.currentUser?.uid;
+
+      if (!uid) return;
 
       await updateDoc(doc(db, "users", uid), {
-        name,
-        bio,
+        name: name.trim(),
+        bio: bio.trim(),
         avatar,
       });
 
       setUser({
         ...user,
-        name,
-        bio,
+        name: name.trim(),
+        bio: bio.trim(),
         avatar,
       });
 
@@ -93,20 +119,21 @@ export default function ProfileScreen() {
     }
   }
 
-  function formatDate(timestamp) {
-    if (!timestamp) return "—";
+  /* -------------------------------------------
+     FORMAT DATE
+  ------------------------------------------- */
+  function formatDate(ts) {
     try {
-      const date = timestamp.toDate();
-      return date.toLocaleDateString("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-      });
+      if (!ts || !ts.toDate) return "—";
+      return ts.toDate().toLocaleDateString("pt-BR");
     } catch {
       return "—";
     }
   }
 
+  /* -------------------------------------------
+     LOADING
+  ------------------------------------------- */
   if (loading || !user) {
     return (
       <View style={styles.loadingContainer}>
@@ -116,8 +143,16 @@ export default function ProfileScreen() {
     );
   }
 
+  const displayAvatar =
+    avatar ||
+    user.avatar ||
+    "https://i.pravatar.cc/300?u=wayper_default_profile";
+
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.container}
+      showsVerticalScrollIndicator={false}
+    >
       {/* HEADER */}
       <LinearGradient colors={["#13161a", "#0d0f12"]} style={styles.header}>
         <TouchableOpacity
@@ -129,10 +164,11 @@ export default function ProfileScreen() {
             animate={{ scale: 1, opacity: 1 }}
             transition={{ type: "spring", duration: 600 }}
           >
-            <Image source={{ uri: avatar }} style={styles.photo} />
+            <Image source={{ uri: displayAvatar }} style={styles.photo} />
           </MotiView>
         </TouchableOpacity>
 
+        {/* EDIT MODE */}
         {editing ? (
           <>
             <TextInput
@@ -142,6 +178,7 @@ export default function ProfileScreen() {
               placeholder="Seu nome"
               placeholderTextColor="#666"
             />
+
             <Text style={styles.username}>@{user.username}</Text>
 
             <TextInput
@@ -166,7 +203,9 @@ export default function ProfileScreen() {
 
             <Text style={styles.username}>@{user.username}</Text>
 
-            {user.bio ? <Text style={styles.bio}>{user.bio}</Text> : null}
+            {user.bio ? (
+              <Text style={styles.bio}>{user.bio}</Text>
+            ) : null}
           </>
         )}
       </LinearGradient>
@@ -205,19 +244,22 @@ export default function ProfileScreen() {
 
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Criado em:</Text>
-          <Text style={styles.infoValue}>{formatDate(user.createdAt)}</Text>
+          <Text style={styles.infoValue}>
+            {formatDate(user.createdAt)}
+          </Text>
         </View>
 
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Último acesso:</Text>
-          <Text style={styles.infoValue}>{formatDate(user.lastActive)}</Text>
+          <Text style={styles.infoValue}>
+            {formatDate(user.lastActive)}
+          </Text>
         </View>
       </View>
 
-      {/* MEDALHAS (REFEITO) */}
+      {/* MEDALHAS */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Medalhas</Text>
-
         <MedalsWidget user={user} compact={false} />
       </View>
 
@@ -355,7 +397,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: "center",
-    flexDirection: "row", 
+    flexDirection: "row",
     justifyContent: "center",
     gap: 6,
   },
