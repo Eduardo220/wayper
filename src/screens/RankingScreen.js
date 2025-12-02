@@ -1,5 +1,6 @@
 // src/screens/RankingScreen.js
-import React, { useEffect, useMemo, useRef, useState } from "react";
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -12,41 +13,21 @@ import {
   Platform,
   Animated,
   Easing,
+  RefreshControl,
+  Alert,
 } from "react-native";
-
 import { Ionicons } from "@expo/vector-icons";
-
-// THEME PADRÃO DO APP
-const colors = {
-  primary: "#FF5A5F",
-  accent: "#00b894",
-  bg: "#07111a",
-  bgCard: "#0b151d",
-  muted: "#9aa0a6",
-  textMain: "#e6eef6",
-  textMuted: "#9aa0a6",
-  gold: "#FFD700",
-  silver: "#C0C0C0",
-  bronze: "#CD7F32",
-};
-
-// —————————————————————————————————————————————
-// MOCK (SE FIREBASE FALHAR)
-const makeMockRanking = (city = "Santa Maria", count = 100) =>
+import { getFirestore, collection, getDocs, query, where, orderBy, limit } from "firebase/firestore";
+import { auth } from "../firebaseConfig"; // apenas se precisa checar auth
+// fallback mock generator (mantive a lógica original)
+const makeMockRanking = (city = "Santa Maria", count = 60) =>
   Array.from({ length: count }, (_, i) => {
     const zones = Math.floor(Math.random() * 120);
     const area = +(Math.random() * 50).toFixed(2);
     const xp = Math.floor(Math.random() * 25000);
     const level = Math.floor(xp / 2000) + 1;
     const eloScore = Math.floor(Math.random() * 3000);
-
-    const elo =
-      eloScore > 2400 ? "Global" :
-      eloScore > 1800 ? "Diamante" :
-      eloScore > 1200 ? "Ouro" :
-      eloScore > 700 ? "Prata" :
-      "Bronze";
-
+    const elo = eloScore > 2400 ? "Global" : eloScore > 1800 ? "Diamante" : eloScore > 1200 ? "Ouro" : eloScore > 700 ? "Prata" : "Bronze";
     return {
       id: (i + 1).toString(),
       name: `Usuário ${i + 1}`,
@@ -62,8 +43,23 @@ const makeMockRanking = (city = "Santa Maria", count = 100) =>
     };
   });
 
-// —————————————————————————————————————————————
-// SORT
+// theme (mantive esquema)
+const colors = {
+  primary: "#FF5A5F",
+  accent: "#00b894",
+  bg: "#07111a",
+  bgCard: "#0b151d",
+  muted: "#9aa0a6",
+  textMain: "#e6eef6",
+  textMuted: "#9aa0a6",
+  gold: "#FFD700",
+  silver: "#C0C0C0",
+  bronze: "#CD7F32",
+};
+
+/* -----------------------
+   util: sort
+------------------------*/
 const sortBy = (list, criterion) => {
   const copy = [...list];
   if (criterion === "zones") return copy.sort((a, b) => b.zones - a.zones);
@@ -79,8 +75,9 @@ const topBadge = (pos) => {
   return null;
 };
 
-// —————————————————————————————————————————————
-// RankItem
+/* -----------------------
+   RankItem (memo)
+------------------------*/
 function RankItem({ item, index }) {
   const badge = topBadge(index);
 
@@ -100,7 +97,9 @@ function RankItem({ item, index }) {
 
       <View style={{ flex: 1, marginLeft: 12 }}>
         <View style={styles.rowBetween}>
-          <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
+          <Text style={styles.name} numberOfLines={1}>
+            {item.name}
+          </Text>
           <View style={styles.eloBox}>
             <Text style={styles.eloText}>{item.elo}</Text>
           </View>
@@ -112,18 +111,15 @@ function RankItem({ item, index }) {
           </Text>
 
           <View style={styles.xpBox}>
-            <Text style={styles.xpText}>{item.level} • {item.xp} XP</Text>
+            <Text style={styles.xpText}>
+              {item.level} • {item.xp} XP
+            </Text>
           </View>
         </View>
 
         <View style={styles.progressRow}>
           <View style={styles.progressBarBg}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${Math.min(100, (item.xp % 2000) / 20)}%` },
-              ]}
-            />
+            <View style={[styles.progressBarFill, { width: `${Math.min(100, (item.xp % 2000) / 20)}%` }]} />
           </View>
           <Text style={styles.dailyPoints}>+{item.dailyPoints}/dia</Text>
         </View>
@@ -132,110 +128,244 @@ function RankItem({ item, index }) {
   );
 }
 
-// —————————————————————————————————————————————
-// TELA PRINCIPAL DO RANKING
+/* -----------------------
+   RankingScreen
+------------------------*/
 export default function RankingScreen({ route }) {
-  const routeCity = route?.params?.city || "Santa Maria";
+  const injectedCity = (route && route.params && route.params.city) || "Santa Maria";
+  const injectedData = (route && route.params && route.params.rankingData) || null;
 
-  const [city, setCity] = useState(routeCity);
-  const [scope, setScope] = useState("global");
-  const [criterion, setCriterion] = useState("zones");
+  const [city, setCity] = useState(injectedCity);
+  const [scope, setScope] = useState("global"); // global || regional
+  const [criterion, setCriterion] = useState("zones"); // zones | area | xp | elo
   const [query, setQuery] = useState("");
-
   const [loading, setLoading] = useState(false);
-  const [data, setData] = useState(() => makeMockRanking(city));
+  const [data, setData] = useState(() => (Array.isArray(injectedData) ? injectedData : makeMockRanking(injectedCity)));
+  const [refreshing, setRefreshing] = useState(false);
 
-  const animScale = useRef(new Animated.Value(0.95)).current;
+  // in-memory cache to avoid re-fetching while screen mounted
+  const cacheRef = useRef({ city: injectedCity, data: Array.isArray(injectedData) ? injectedData : null });
+
+  // animated value for top cards
+  const animScale = useRef(new Animated.Value(1)).current;
+
+  // debounce for search input
+  const searchTimeout = useRef(null);
+
+  const db = getFirestore();
+
+  const log = useRef((...args) => console.debug("[RANK]", ...args)).current;
 
   useEffect(() => {
+    // safe looped animation (gentle pulse)
     Animated.loop(
       Animated.sequence([
-        Animated.timing(animScale, { toValue: 1.02, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(animScale, { toValue: 0.96, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(animScale, { toValue: 1.03, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(animScale, { toValue: 0.98, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       ]),
       { iterations: -1 }
     ).start();
-  }, []);
 
+    return () => {
+      // stop animation on unmount (Animated.loop is cleaned by RN but keep explicit)
+      animScale.stopAnimation?.();
+    };
+  }, [animScale]);
+
+  const fetchRemoteRanking = useCallback(
+    async (c = city) => {
+      setLoading(true);
+      log("fetchRemoteRanking start", c);
+      try {
+        // guard: if we already have cached data for this city, reuse it
+        if (cacheRef.current && cacheRef.current.city === c && Array.isArray(cacheRef.current.data)) {
+          log("fetchRemoteRanking using cache");
+          setData(cacheRef.current.data);
+          return cacheRef.current.data;
+        }
+
+        // If user not authenticated, fall back to mock (but still try to read public 'ranking' collection)
+        try {
+          const q = query(collection(db, "ranking"), orderBy("eloScore", "desc"), limit(300));
+          const snap = await getDocs(q);
+          const out = [];
+          snap.forEach((d) => {
+            const obj = { id: d.id, ...d.data() };
+            // sanitize fields we use
+            out.push({
+              id: String(obj.id || Math.random()),
+              name: String(obj.name || "Usuário"),
+              avatar: String(obj.avatar || `https://i.pravatar.cc/150?img=${Math.floor(Math.random() * 70) + 1}`),
+              city: String(obj.city || c),
+              zones: Number(obj.zones || 0),
+              area: Number(obj.area || 0),
+              xp: Number(obj.xp || 0),
+              level: Number(obj.level || 1),
+              elo: String(obj.elo || "Bronze"),
+              eloScore: Number(obj.eloScore || 0),
+              dailyPoints: Number(obj.dailyPoints || 0),
+            });
+          });
+
+          if (out.length === 0) {
+            log("fetchRemoteRanking: empty result → using mock");
+            cacheRef.current = { city: c, data: makeMockRanking(c, 60) };
+            setData(cacheRef.current.data);
+            return cacheRef.current.data;
+          }
+
+          cacheRef.current = { city: c, data: out };
+          setData(out);
+          log("fetchRemoteRanking success", out.length);
+          return out;
+        } catch (e) {
+          // firestore read error → fallback to mock
+          console.warn("fetchRemoteRanking firestore error:", e);
+          cacheRef.current = { city: c, data: makeMockRanking(c, 60) };
+          setData(cacheRef.current.data);
+          return cacheRef.current.data;
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [db, log, city]
+  );
+
+  // initial load and when injectedData changes
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      try {
+        if (Array.isArray(injectedData) && injectedData.length) {
+          cacheRef.current = { city, data: injectedData };
+          setData(injectedData);
+          log("using injectedData from route");
+        } else {
+          await fetchRemoteRanking(city);
+        }
+      } catch (e) {
+        console.warn("Ranking initial load error:", e);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [injectedData, city, fetchRemoteRanking, log]);
+
+  // refresh handler
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      cacheRef.current = { city: city, data: null }; // clear cache for this city
+      await fetchRemoteRanking(city);
+    } catch (e) {
+      console.warn("refresh error:", e);
+      Alert.alert("Erro", "Falha ao atualizar ranking.");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [city, fetchRemoteRanking]);
+
+  // debounce search input (keeps the UI snappy)
+  useEffect(() => {
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    searchTimeout.current = setTimeout(() => {
+      // nothing else: filtering happens in memo below
+      log("search debounce fired", query);
+    }, 350);
+    return () => {
+      if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    };
+  }, [query, log]);
+
+  // filtered + sorted list (memoized)
   const filtered = useMemo(() => {
-    let list = [...data];
-
-    if (scope === "regional") list = list.filter((u) => u.city.toLowerCase() === city.toLowerCase());
-    if (query.trim()) list = list.filter((u) => u.name.toLowerCase().includes(query.trim().toLowerCase()));
-
-    return sortBy(list, criterion);
+    let list = Array.isArray(data) ? data : [];
+    if (scope === "regional") {
+      list = list.filter((u) => (u.city || "").toLowerCase() === (city || "").toLowerCase());
+    }
+    const q = (query || "").trim().toLowerCase();
+    if (q) list = list.filter((u) => (u.name || "").toLowerCase().includes(q));
+    const out = sortBy(list, criterion);
+    return out;
   }, [data, scope, city, criterion, query]);
 
-  const top3 = filtered.slice(0, 3);
+  const top3 = useMemo(() => filtered.slice(0, 3), [filtered]);
 
-  // HEADER COMPONENT
-  const Header = () => (
-    <View style={styles.headerContainer}>
-      <View style={styles.headerRow}>
-        <View style={styles.headerLeft}>
-          <Ionicons name="trophy-outline" size={28} color={colors.primary} />
-          <View style={{ marginLeft: 10 }}>
-            <Text style={styles.title}>Ranking</Text>
-            <Text style={styles.subtitle}>Global • Regional</Text>
+  // header component extracted (keeps FlatList stable)
+  const Header = useCallback(() => {
+    return (
+      <View style={styles.headerContainer}>
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
+            <Ionicons name="trophy-outline" size={28} color={colors.primary} />
+            <View style={{ marginLeft: 10 }}>
+              <Text style={styles.title}>Ranking</Text>
+              <Text style={styles.subtitle}>Global • Regional</Text>
+            </View>
+          </View>
+
+          <View style={styles.headerRight}>
+            <TextInput
+              value={city}
+              onChangeText={setCity}
+              placeholder="Cidade"
+              placeholderTextColor="#888"
+              style={styles.cityInput}
+            />
           </View>
         </View>
 
-        <View style={styles.headerRight}>
-          <TextInput
-            value={city}
-            onChangeText={setCity}
-            placeholder="Cidade"
-            placeholderTextColor="#888"
-            style={styles.cityInput}
-          />
+        <View style={styles.controlsRow}>
+          <View style={styles.segment}>
+            <TouchableOpacity onPress={() => setScope("global")} style={[styles.segmentBtn, scope === "global" && styles.segmentActive]}>
+              <Text style={[styles.segmentText, scope === "global" && styles.segmentTextActive]}>Global</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setScope("regional")} style={[styles.segmentBtn, scope === "regional" && styles.segmentActive]}>
+              <Text style={[styles.segmentText, scope === "regional" && styles.segmentTextActive]}>Regional</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.filterGroup}>
+            <TouchableOpacity onPress={() => setCriterion("zones")} style={[styles.filterBtn, criterion === "zones" && styles.filterActive]}>
+              <Text style={[styles.filterText, criterion === "zones" && styles.filterTextActive]}>Zonas</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setCriterion("area")} style={[styles.filterBtn, criterion === "area" && styles.filterActive]}>
+              <Text style={[styles.filterText, criterion === "area" && styles.filterTextActive]}>Área</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setCriterion("xp")} style={[styles.filterBtn, criterion === "xp" && styles.filterActive]}>
+              <Text style={[styles.filterText, criterion === "xp" && styles.filterTextActive]}>XP</Text>
+            </TouchableOpacity>
+          </View>
         </View>
+
+        <View style={styles.heroRow}>
+          <View style={styles.heroLeft}>
+            <Text style={styles.heroTitle}>Top 3</Text>
+            <Text style={styles.heroSub}>Líderes do momento</Text>
+          </View>
+
+          <Animated.View style={[styles.heroRight, { transform: [{ scale: animScale }] }]}>
+            {top3.map((u) => (
+              <View key={u.id} style={styles.topCard}>
+                <Image source={{ uri: u.avatar }} style={styles.topAvatar} />
+                <Text style={styles.topName}>{u.name}</Text>
+                <Text style={styles.topSmall}>
+                  {u.zones} zonas • {u.area} km²
+                </Text>
+              </View>
+            ))}
+          </Animated.View>
+        </View>
+
+        <View style={styles.separator} />
       </View>
-
-      <View style={styles.controlsRow}>
-        <View style={styles.segment}>
-          <TouchableOpacity onPress={() => setScope("global")} style={[styles.segmentBtn, scope === "global" && styles.segmentActive]}>
-            <Text style={[styles.segmentText, scope === "global" && styles.segmentTextActive]}>Global</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setScope("regional")} style={[styles.segmentBtn, scope === "regional" && styles.segmentActive]}>
-            <Text style={[styles.segmentText, scope === "regional" && styles.segmentTextActive]}>Regional</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.filterGroup}>
-          <TouchableOpacity onPress={() => setCriterion("zones")} style={[styles.filterBtn, criterion === "zones" && styles.filterActive]}>
-            <Text style={[styles.filterText, criterion === "zones" && styles.filterTextActive]}>Zonas</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => setCriterion("area")} style={[styles.filterBtn, criterion === "area" && styles.filterActive]}>
-            <Text style={[styles.filterText, criterion === "area" && styles.filterTextActive]}>Área</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => setCriterion("xp")} style={[styles.filterBtn, criterion === "xp" && styles.filterActive]}>
-            <Text style={[styles.filterText, criterion === "xp" && styles.filterTextActive]}>XP</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <View style={styles.heroRow}>
-        <View style={styles.heroLeft}>
-          <Text style={styles.heroTitle}>Top 3</Text>
-          <Text style={styles.heroSub}>Líderes do momento</Text>
-        </View>
-
-        <Animated.View style={[styles.heroRight, { transform: [{ scale: animScale }] }]}>
-          {top3.map((u) => (
-            <View key={u.id} style={styles.topCard}>
-              <Image source={{ uri: u.avatar }} style={styles.topAvatar} />
-              <Text style={styles.topName}>{u.name}</Text>
-              <Text style={styles.topSmall}>{u.zones} zonas • {u.area} km²</Text>
-            </View>
-          ))}
-        </Animated.View>
-      </View>
-
-      <View style={styles.separator} />
-    </View>
-  );
+    );
+  }, [animScale, city, criterion, scope, top3]);
 
   return (
     <View style={styles.container}>
@@ -252,14 +382,16 @@ export default function RankingScreen({ route }) {
           ListHeaderComponent={<Header />}
           stickyHeaderIndices={[0]}
           ListEmptyComponent={<Text style={{ textAlign: "center", marginTop: 20, color: colors.textMuted }}>Sem resultados</Text>}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />}
         />
       )}
     </View>
   );
 }
 
-// —————————————————————————————————————————————
-// STYLES FINAL (REFORMULADO)
+/* -----------------------
+   Styles (mantive visual)
+------------------------*/
 const styles = StyleSheet.create({
   container: {
     flex: 1,

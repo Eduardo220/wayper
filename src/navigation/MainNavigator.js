@@ -25,12 +25,22 @@ import ClanChatScreen from "../screens/Clan/ClanChatScreen";
 
 import CustomDrawer from "../components/CustomDrawer";
 
+// NEW: Runs / Corridas / Dashboard
+import CorridasScreen from "../screens/Runs/CorridasScreen";
+import RunDetailScreen from "../screens/Runs/RunDetailScreen";
+import ZoneDetailScreen from "../screens/Runs/ZoneDetailScreen";
+import DashboardScreen from "../screens/Runs/DashboardScreen";
+
+// Sync utils (auto-sync starter)
+import * as sync from "../utils/sync";
+
 const Drawer = createDrawerNavigator();
 const Stack = createStackNavigator();
 
 /* ============================================================
    STACK: AMIGOS
-============================================================ */
+   (kept as-is, small reformat)
+   ============================================================ */
 function FriendsStack() {
   return (
     <Stack.Navigator
@@ -62,7 +72,7 @@ function FriendsStack() {
 
 /* ============================================================
    STACK: CLÃS
-============================================================ */
+   ============================================================ */
 function ClanStack() {
   return (
     <Stack.Navigator
@@ -92,8 +102,44 @@ function ClanStack() {
 }
 
 /* ============================================================
-   MAIN NAVIGATOR
-============================================================ */
+   STACK: RUNS (Corridas)
+   - Single entry point "Corridas" that contains the list and details
+   - CorridasScreen is initial screen, RunDetail / ZoneDetail reachable via navigation.navigate
+   ============================================================ */
+function RunsStack() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: "#0d0f12" },
+        headerTintColor: "#fff",
+        headerTitleStyle: { fontWeight: "900", fontSize: 20 },
+        cardStyle: { backgroundColor: "#0b0d10" },
+      }}
+    >
+      <Stack.Screen
+        name="CorridasHome"
+        component={CorridasScreen}
+        options={{ title: "Corridas" }}
+      />
+      <Stack.Screen
+        name="RunDetail"
+        component={RunDetailScreen}
+        options={{ title: "Detalhes da Corrida" }}
+      />
+      <Stack.Screen
+        name="ZoneDetail"
+        component={ZoneDetailScreen}
+        options={{ title: "Detalhes da Zona" }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+/* ============================================================
+   MAIN NAVIGATOR (Drawer)
+   - Enhanced: includes Corridas (RunsStack) and Dashboard
+   - Starts auto-sync in background once user loaded
+   ============================================================ */
 export default function MainNavigator() {
   const navigation = useNavigation();
   const [userData, setUserData] = useState(null);
@@ -127,6 +173,21 @@ export default function MainNavigator() {
     loadUser();
   }, []);
 
+  // start background auto-sync when navigator mounts and userData resolved
+  useEffect(() => {
+    if (!userData) return;
+    try {
+      // startAutoSync is optional in sync module; guard it
+      if (typeof sync.startAutoSync === "function") {
+        sync.startAutoSync(); // default interval inside util (e.g. 5 minutes)
+      }
+    } catch (e) {
+      console.warn("startAutoSync failed", e);
+    }
+    // don't stop on unmount automatically here — sync util exposes stopAutoSync()
+    // if you want to stop when leaving, call sync.stopAutoSync()
+  }, [userData]);
+
   if (!userData) {
     return (
       <View
@@ -150,7 +211,7 @@ export default function MainNavigator() {
         headerStyle: { backgroundColor: "#0d0f12" },
         headerTintColor: "#fff",
         headerTitleStyle: { fontWeight: "900", fontSize: 22 },
-        drawerStyle: { backgroundColor: "#0d0f12", width: 280 },
+        drawerStyle: { backgroundColor: "#0d0f12", width: 300 },
         drawerInactiveTintColor: "#9aa0a6",
         drawerActiveTintColor: "#00e676",
         drawerLabelStyle: { fontSize: 16, fontWeight: "700" },
@@ -159,12 +220,28 @@ export default function MainNavigator() {
         <CustomDrawer {...props} user={userData} onSignOut={handleLogout} />
       )}
     >
+      {/* Map */}
       <Drawer.Screen
         name="Mapa"
         component={MapScreen}
         options={{ title: "Mapa" }}
       />
 
+      {/* Corridas stack (single drawer entry that contains list + details) */}
+      <Drawer.Screen
+        name="Corridas"
+        component={RunsStack}
+        options={{ title: "Corridas" }}
+      />
+
+      {/* Dashboard (global stats) */}
+      <Drawer.Screen
+        name="Dashboard"
+        component={DashboardScreen}
+        options={{ title: "Dashboard" }}
+      />
+
+      {/* Profile & Ranking remain */}
       <Drawer.Screen
         name="Perfil"
         component={ProfileScreen}
@@ -177,6 +254,7 @@ export default function MainNavigator() {
         options={{ title: "Ranking" }}
       />
 
+      {/* Friends & Clans as nested stacks */}
       <Drawer.Screen
         name="Amigos"
         component={FriendsStack}
