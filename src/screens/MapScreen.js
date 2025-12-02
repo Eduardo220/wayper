@@ -37,6 +37,10 @@ import { getDistance } from "../utils/geo";
 import zones from "../utils/zones";
 import sync from "../utils/sync";
 import RunSummaryModal from "../components/Runs/RunSummaryModal";
+import { updateProfileStats } from "../services/profile/profileService";
+import { subscribeProfileUpdates, loadProfile } from "../services/profile/profileService";
+import xpService from "../services/xp/xpService";
+
 
 
 /* ---------------------- Constants / Tunables ---------------------- */
@@ -854,7 +858,7 @@ const stopRun = useCallback(
             />
           )}
 
-          <Marker.Animated coordinate={coordinate}>
+          <Marker.Animated coordinate={coordinate} anchor={{ x: 0.8, y: 0.3 }} tracksViewChanges={true}>
             <View style={styles.myLocationDot} />
           </Marker.Animated>
         </MapView>
@@ -1005,33 +1009,59 @@ const stopRun = useCallback(
         onClose={() => setShowRunModal(false)}
         onSave={async (payload) => {
           try {
-            // ensure payload has path property (compat)
             payload.path = payload.path || payload.coords || currentRunData?.path || [];
-            // save via sync (ultra-optimized)
+
+            // SALVAR corrida local (seu sync)
             const saved = await sync.saveLocalRun(payload);
-            // schedule background sync if available
-            try {
-              sync.scheduleRunsSync?.();
-            } catch {}
+            sync.scheduleRunsSync?.();
 
-            // update UI lists (newest first)
             setRunsList((prev) => [saved, ...(Array.isArray(prev) ? prev : [])]);
-
-            // keep lastSavedRun reference and show confirmation modal
             setLastSavedRun(saved);
             setShowSavedModal(true);
 
-            // auto capture preview (non-blocking)
+            // AUTO CAPTURE (não bloquear)
             setTimeout(() => {
-              try {
-                autoCapture(saved);
-              } catch (e) {
-                debug("autoCapture failed", e);
-              }
+              try { autoCapture(saved); } catch (e) {}
             }, 400);
+
+            // --- CHAMADA PRINCIPAL: XP engine ---
+            // xpService.awardRunXP aplica localmente e persiste no Firestore (profile + ranking)
+            try {
+              const distanceMeters = Number(payload.distance) || 0;
+              const durationSec = Number(payload.duration) || 0;
+              const areaM2 = Number(payload.area) || 0;
+
+              // awardRunXP retorna breakdown e profile atualizado
+              const result = await xpService.awardRunXP({
+                distance: distanceMeters,
+                duration: durationSec,
+                area: areaM2,
+              });
+
+              // opcional: legacy updateProfileStats (se você ainda usa em outros pontos)
+              // await updateProfileStats({ distance: distanceMeters, duration: durationSec, area: areaM2, isZone: false, meta: { runId: saved.id } });
+
+              // debug visual (remova em produção)
+              console.debug("XP applied for run:", result?.applied, result?.xpBreakdown);
+            } catch (err) {
+              console.warn("Erro ao aplicar XP via xpService:", err);
+              // fallback: tenta profileService caso xpService falhe
+              try {
+                await updateProfileStats({
+                  distance: payload.distance,
+                  duration: payload.duration,
+                  area: payload.area,
+                  isZone: false,
+                  meta: { runId: saved.id },
+                });
+              } catch (e) {
+                console.warn("Fallback updateProfileStats também falhou:", e);
+              }
+            }
+
           } catch (e) {
             debug("RunSummaryModal onSave failed", e);
-            Alert.alert("Erro", "Não foi possível salvar a corrida localmente.");
+            Alert.alert("Erro", "Não foi possível salvar a corrida.");
           } finally {
             setShowRunModal(false);
           }

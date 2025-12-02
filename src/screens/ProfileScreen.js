@@ -35,6 +35,7 @@ import {
   updateDoc,
   serverTimestamp,
 } from "firebase/firestore";
+import { onSnapshot } from "firebase/firestore";
 
 // Storage
 import {
@@ -52,7 +53,6 @@ import {
   updateProfileStats,
   DEFAULT_PROFILE,
 } from "../services/profile/profileService";
-
 
 /* ---------------------- Config / Constants ---------------------- */
 const LOG = (...args) => console.debug("[PROFILE]", ...args);
@@ -134,16 +134,55 @@ export default function ProfileScreen() {
   const [syncing, setSyncing] = useState(false);
 
   const mountedRef = useRef(true);
+  const firestoreListenerRef = useRef(null);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    (async () => {
-      await loadAll();
-    })();
+
+ useEffect(() => {
+  mountedRef.current = true;
+
+  const uid = auth.currentUser?.uid;
+  if (!uid) {
+    loadAll();
     return () => {
       mountedRef.current = false;
+      firestoreListenerRef.current?.();
     };
-  }, []);
+  }
+
+  // 🔥 LISTENER FIRESTORE EM TEMPO REAL
+  const userRef = doc(db, "users", uid);
+
+  firestoreListenerRef.current = onSnapshot(userRef, async (snap) => {
+    if (!snap.exists()) return;
+    console.log("🔥 FIRESTORE MUDOU!");
+
+    const data = snap.data();
+    if (!mountedRef.current) return;
+
+    // Atualiza Firestore doc no estado
+    setUserDoc(data);
+    setName(data.name || "");
+    setBio(data.bio || "");
+    setAvatarUri(data.avatar || null);
+
+    // 🔥 Recalcula perfil completo do profileService
+    const p = await loadProfile();
+    if (mountedRef.current) {
+      setProfile(p);
+    }
+  });
+
+  // 🔄 também carregamos uma vez ao abrir
+  (async () => {
+    await loadAll();
+  })();
+
+  return () => {
+    mountedRef.current = false;
+    firestoreListenerRef.current?.(); // remove o listener
+  };
+}, []);
+
 
   /* ---------------------- Load local profile + user doc  ---------------------- */
   const loadAll = useCallback(async () => {
