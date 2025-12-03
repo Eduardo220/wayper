@@ -38,6 +38,7 @@ import RunSummaryModal from "../components/Runs/RunSummaryModal";
 import { updateProfileStats } from "../services/profile/profileService";
 import xpService from "../services/xp/xpService";
 import myLocationIcon from "../../assets/icons/my_location_android.png";
+import KalmanFilter2D from "../utils/kalman";
 
 /* ==================== CONSTANTES ==================== */
 /* Valores tunáveis centralizados para facilitar manutenção */
@@ -53,7 +54,6 @@ const WAYPER_GREEN = "#00e676";
 const ROUTE_CAP = 5000; // limite de pontos mantidos no estado da rota
 const ANIMATE_THROTTLE_MS = 100; // throttle de animação do marker
 const ANTI_JITTER_M = 0.4; // filtro anti-jitter (m)
-
 /* ==================== UTILITÁRIOS ==================== */
 /**
  * debug - wrapper de logs para facilitar desligar em produção
@@ -121,6 +121,9 @@ const MapScreen = () => {
   const [lastSavedRun, setLastSavedRun] = useState(null);
 
   /* ---------- Refs (estáveis) ---------- */
+  const kalman2dRef = useRef(new KalmanFilter2D()).current; // filtro Kalman 2D (lat/lon + velocidade)
+
+
   const mapRef = useRef(null);
   const mapCaptureRef = useRef(null);
   const markerRef = useRef(null);
@@ -284,6 +287,28 @@ const MapScreen = () => {
         const accuracy = locObj.accuracy != null ? Number(locObj.accuracy) : Number.POSITIVE_INFINITY;
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
+        // ========================
+        // Aplicar Kalman 2D (suavização)
+        // ========================
+        try {
+          const now = Date.now();
+          const smooth = kalman2dRef.filter(lat, lon, Number.isFinite(accuracy) ? Number(accuracy) : 999, now);
+          // usar valores suavizados a partir daqui
+          const sLat = Number(smooth.latitude);
+          const sLon = Number(smooth.longitude);
+          if (Number.isFinite(sLat) && Number.isFinite(sLon)) {
+            // sobrescreve lat/lon para uso nas animações e buffer
+            // mantendo as variáveis originais para debug se necessário
+            // (variáveis 'lat' e 'lon' não são re-declaradas; we'll use sLat/sLon below)
+          } else {
+            // fallback para valores brutos caso Kalman falhe
+            sLat = lat; sLon = lon;
+          }
+        } catch (kalErr) {
+          debug('kalman filter error', kalErr);
+        }
+
+
         // evitar rerender desnecessário se a localização não mudou
         setLocation((prev) => {
           if (prev && prev.latitude === lat && prev.longitude === lon) return prev;
@@ -291,7 +316,7 @@ const MapScreen = () => {
         });
 
         // ponto usado para animação e para buffer
-        const newPoint = { latitude: lat, longitude: lon };
+        const newPoint = { latitude: (typeof sLat !== 'undefined' ? sLat : lat), longitude: (typeof sLon !== 'undefined' ? sLon : lon) };
         const now = Date.now();
 
         // throttle simples para animações (aumenta performance)
@@ -318,7 +343,7 @@ const MapScreen = () => {
         // filtro por precisão
         if (!Number.isFinite(accuracy) || accuracy > MIN_ACCURACY) return;
 
-        const point = { latitude: lat, longitude: lon, accuracy, timestamp: now };
+        const point = { latitude: (typeof sLat !== 'undefined' ? sLat : lat), longitude: (typeof sLon !== 'undefined' ? sLon : lon), accuracy, timestamp: now };
 
         // primeiro ponto
         if (!lastPointRef.current) {
@@ -392,6 +417,8 @@ const MapScreen = () => {
 
         // marca estado de execução
         setRunning(true);
+        // reset do Kalman ao iniciar uma corrida
+        try { kalman2dRef.reset ? kalman2dRef.reset() : (kalman2dRef.initialized = false); } catch(e){ debug('kalman reset failed', e); }
         runningRef.current = true;
         setReplaying(false);
         setRouteState([]);
