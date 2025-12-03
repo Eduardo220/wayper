@@ -1,10 +1,10 @@
-// src/utils/sync.js
+// src/utils/sync.ultimate.js
 /**
- * Ultimate sync.js
- * - Runs, Zones (existing): batching, backoff, debounce
- * - NEW: Medals local persistence + Firestore sync pipeline
- *
- * Preserves external API, improves reliability, adds medals pipeline.
+ * sync.ultimate.js - Ultimate Power version
+ * - Robust sanitization, safe pagination, retries, backoff
+ * - Background task properly defined (TaskManager.defineTask after handler)
+ * - No duplicate imports, clear defensive checks
+ * - Idempotent schedulers, safe guards, and well-structured exports
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -20,7 +20,11 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db, auth } from "../firebaseConfig";
-import zones from "./zones"; // CORRECT relative import
+import zones from "./zones";
+
+import * as TaskManager from "expo-task-manager";
+import * as BackgroundFetch from "expo-background-fetch";
+import { Platform } from "react-native";
 
 // ----------------- Keys / Constants -----------------
 const RUNS_KEY = "runs";
@@ -33,7 +37,10 @@ const MIN_ZONE_AREA_M2 = 5;
 const REMOTE_PAGE_SIZE = 400;
 const MAX_RETRY_ATTEMPTS = 6;
 const MAX_BACKOFF_MS = 1000 * 60 * 15;
+const ROUTE_CAP = 5000;
+const BG_TASK_NAME = "WAYPER_BACKGROUND_SYNC_TASK";
 
+// runtime guards
 let isSyncingRuns = false;
 let isSyncingZones = false;
 let isSyncingMedals = false;
@@ -87,15 +94,28 @@ function sanitizeCoordsArray(coords = []) {
   return coords
     .map((p) => {
       if (!p) return null;
-      const latitude = Number(
-        p.latitude ?? p.lat ?? (Array.isArray(p) ? p[1] : NaN)
-      );
-      const longitude = Number(
-        p.longitude ?? p.lon ?? p.lng ?? (Array.isArray(p) ? p[0] : NaN)
-      );
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude))
-        return null;
-      return { latitude, longitude, timestamp: p.timestamp ?? p.time ?? null };
+      // accept objects with latitude/longitude or arrays [lat, lon] or [lon, lat]
+      let latitude = NaN;
+      let longitude = NaN;
+      if (Array.isArray(p)) {
+        const a = Number(p[0]);
+        const b = Number(p[1]);
+        // prefer [lat, lon] but tolerate swapped by checking range
+        if (Number.isFinite(a) && Math.abs(a) <= 90 && Number.isFinite(b) && Math.abs(b) <= 180) {
+          latitude = a;
+          longitude = b;
+        } else if (Number.isFinite(b) && Math.abs(b) <= 90 && Number.isFinite(a) && Math.abs(a) <= 180) {
+          latitude = b;
+          longitude = a;
+        }
+      } else {
+        latitude = Number(p.latitude ?? p.lat ?? NaN);
+        longitude = Number(p.longitude ?? p.lon ?? p.lng ?? NaN);
+      }
+
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+      const timestamp = p.timestamp ?? p.time ?? p.t ?? null;
+      return { latitude, longitude, timestamp: timestamp == null ? null : timestamp };
     })
     .filter(Boolean);
 }
@@ -137,7 +157,6 @@ export async function saveLocalRun(run = {}) {
       avgSpeed: Number(run.avgSpeed ?? 0),
       date: run.date || now,
       synced: !!run.synced || false,
-      // personalization fields
       name: run.name || `Corrida ${new Date(now).toLocaleString()}`,
       effort: Number(run.effort ?? 5),
       mood: run.mood || "🙂",
@@ -148,6 +167,7 @@ export async function saveLocalRun(run = {}) {
     };
     existing.unshift(normalized);
     const deduped = uniqueById(existing);
+    deduped.sort((a, b) => (a.date < b.date ? 1 : -1));
     await AsyncStorage.setItem(RUNS_KEY, safeStringify(deduped));
     return normalized;
   } catch (err) {
@@ -189,6 +209,7 @@ export async function saveLocalZone(zone = {}) {
     };
     existing.unshift(normalized);
     const deduped = uniqueById(existing);
+    deduped.sort((a, b) => (a.date < b.date ? 1 : -1));
     await AsyncStorage.setItem(ZONES_KEY, safeStringify(deduped));
     return normalized;
   } catch (err) {
@@ -244,13 +265,16 @@ export async function createAndSaveZoneFromPath(path = [], options = {}) {
   }
 }
 
-// ----------------- Remote IDs fetch (paginated) -----------------
+// ----------------- Remote IDs fetch (paginated, safe) -----------------
 async function fetchRemoteIds(collectionName) {
   try {
     const remoteIds = new Set();
     const colRef = collection(db, collectionName);
     let lastSnap = null;
+    let pages = 0;
     while (true) {
+      pages++;
+      if (pages > 100) break; // safety
       let q;
       if (lastSnap) {
         q = query(
@@ -531,8 +555,6 @@ export async function loadLocalMedals() {
 
 /**
  * saveLocalMedal(medal = { id, userId, date, meta })
- * - appends / updates local medal storage (object keyed by medalId)
- * - returns the normalized medal object
  */
 export async function saveLocalMedal(medal = {}) {
   try {
@@ -551,7 +573,6 @@ export async function saveLocalMedal(medal = {}) {
     };
     existing[normalized.id] = normalized;
     await AsyncStorage.setItem(MEDALS_KEY, JSON.stringify(existing));
-    // schedule sync non-blocking
     scheduleMedalsSync();
     return normalized;
   } catch (err) {
@@ -642,7 +663,6 @@ export async function syncMedalsToFirestore() {
       }
     }
 
-    // write back local store with updated synced flags
     await AsyncStorage.setItem(MEDALS_KEY, JSON.stringify(localObj));
     await _setRetryMeta(RETRY_META_MEDALS, { attempts: 0, nextAt: 0 });
   } catch (err) {
@@ -677,7 +697,6 @@ export function scheduleMedalsSync(delay = SYNC_DEBOUNCE_MS) {
 export async function getAllMedals() {
   try {
     const local = await loadLocalMedals();
-    // return as array [{id, userId, date, meta, synced}]
     if (!local || typeof local !== "object") return [];
     return Object.keys(local).map((k) => local[k]);
   } catch (err) {
@@ -688,11 +707,107 @@ export async function getAllMedals() {
 
 // ----------------- Sync All convenience -----------------
 export async function syncAll() {
+  // guard to avoid parallel runs
+  if (isSyncingRuns || isSyncingZones || isSyncingMedals) return;
   await Promise.all([
     syncRunsToFirestore(),
     syncZonesToFirestore(),
     syncMedalsToFirestore(),
   ]);
+}
+
+// ----------------- Background sync task handler -----------------
+async function _bgSyncHandler() {
+  try {
+    await syncAll();
+    return BackgroundFetch.BackgroundFetchResult.NewData;
+  } catch (err) {
+    logError(err, { fn: "_bgSyncHandler" });
+    return BackgroundFetch.BackgroundFetchResult.Failed;
+  }
+}
+
+// Define the TaskManager task at module load (must be defined before register)
+try {
+  if (TaskManager && typeof TaskManager.defineTask === "function") {
+    // if already defined, defineTask will throw; wrap to be safe
+    try {
+      TaskManager.defineTask(BG_TASK_NAME, async () => {
+        return await _bgSyncHandler();
+      });
+    } catch (e) {
+      // ignore if task already defined in the environment
+      console.debug("[sync] Task defineTask skipped or already defined.", e?.message || e);
+    }
+  } else {
+    console.warn("[sync] TaskManager.defineTask not available in this environment.");
+  }
+} catch (e) {
+  console.warn("[sync] error while attempting to define task:", e);
+}
+
+/**
+ * Register a background sync task using expo-background-fetch.
+ * - idempotent
+ * - returns boolean success
+ */
+export async function registerBackgroundSyncTask(options = { minimumInterval: 15 * 60 }) {
+  try {
+    if (!TaskManager || !BackgroundFetch) {
+      console.warn("[sync] Background fetch not available in this environment.");
+      return false;
+    }
+
+    // Ensure task was defined above (best-effort)
+    if (!TaskManager || typeof TaskManager.defineTask !== "function") {
+      console.warn("[sync] TaskManager.defineTask not available; cannot register.");
+      return false;
+    }
+
+    const opts = {
+      minimumInterval: options.minimumInterval || 15 * 60, // seconds
+      stopOnTerminate: false,
+      startOnBoot: true,
+    };
+
+    try {
+      await BackgroundFetch.registerTaskAsync(BG_TASK_NAME, opts);
+    } catch (err) {
+      // ignore "already registered" style errors
+      const msg = String(err || "");
+      if (msg.toLowerCase().includes("already registered")) {
+        return true;
+      }
+      logError(err, { fn: "registerBackgroundSyncTask" });
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    logError(err, { fn: "registerBackgroundSyncTask" });
+    return false;
+  }
+}
+
+export async function unregisterBackgroundSyncTask() {
+  try {
+    if (!TaskManager || !BackgroundFetch) return false;
+    if (typeof TaskManager.isTaskRegisteredAsync === "function") {
+      const registered = await TaskManager.isTaskRegisteredAsync(BG_TASK_NAME);
+      if (registered) {
+        await BackgroundFetch.unregisterTaskAsync(BG_TASK_NAME);
+      }
+    } else {
+      // best-effort unregister
+      try {
+        await BackgroundFetch.unregisterTaskAsync(BG_TASK_NAME);
+      } catch {}
+    }
+    return true;
+  } catch (err) {
+    logError(err, { fn: "unregisterBackgroundSyncTask" });
+    return false;
+  }
 }
 
 // ----------------- Exports -----------------
@@ -713,5 +828,7 @@ export default {
   syncMedalsToFirestore,
   scheduleMedalsSync,
   getAllMedals,
+  // background
+  registerBackgroundSyncTask,
+  unregisterBackgroundSyncTask,
 };
-

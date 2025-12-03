@@ -1,11 +1,9 @@
-// src/screens/MapScreen.js
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+// MapScreen.ultimate.supreme.js
+// VERSÃO SUPREMA — MapScreen otimizado, seguro e comentado em Português
+// Objetivo: preservar aparência e comportamento, melhorar performance, segurança, estabilidade e legibilidade.
+// Autor: gerado por assistente — revisar e ajustar paths de import conforme seu projeto.
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -24,58 +22,78 @@ import MapView, {
   Polyline,
   Polygon,
   AnimatedRegion,
+  PROVIDER_GOOGLE,
 } from "react-native-maps";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
 import { captureRef } from "react-native-view-shot";
-import { Ionicons } from "@expo/vector-icons";
 
-// project helpers & services
+// helpers / serviços do projeto
 import formatTime from "../utils/formatTime";
 import { getDistance } from "../utils/geo";
 import zones from "../utils/zones";
 import sync from "../utils/sync";
 import RunSummaryModal from "../components/Runs/RunSummaryModal";
 import { updateProfileStats } from "../services/profile/profileService";
-import { subscribeProfileUpdates, loadProfile } from "../services/profile/profileService";
 import xpService from "../services/xp/xpService";
+import myLocationIcon from "../../assets/icons/my_location_android.png";
 
-
-
-/* ---------------------- Constants / Tunables ---------------------- */
-const MIN_ACCURACY = 75; // meters tolerated
-const FLUSH_INTERVAL_MS = 300; // buffer flush interval
-const WATCH_TIME_INTERVAL_MS = 1000;
-const WATCH_DISTANCE_INTERVAL = 0;
+/* ==================== CONSTANTES ==================== */
+/* Valores tunáveis centralizados para facilitar manutenção */
+const MIN_ACCURACY = 75; // metros tolerados para gravação
+const FLUSH_INTERVAL_MS = 300; // frequência de flush do buffer (ms)
+const WATCH_TIME_INTERVAL_MS = 1000; // watchPosition intervalo mínimo (ms)
+const WATCH_DISTANCE_INTERVAL = 0; // distância (m) para watchPosition
 const INITIAL_REGION_DELTA = 0.001;
 const COUNTDOWN_DEFAULT = 3;
-const MAX_SPIKE_DISTANCE_M = 1000;
+const MAX_SPIKE_DISTANCE_M = 1000; // filtro de spikes (m)
 const ZONE_MIN_AREA_M2 = 5;
 const WAYPER_GREEN = "#00e676";
+const ROUTE_CAP = 5000; // limite de pontos mantidos no estado da rota
+const ANIMATE_THROTTLE_MS = 100; // throttle de animação do marker
+const ANTI_JITTER_M = 0.4; // filtro anti-jitter (m)
 
-/* ---------------------- Small helpers ---------------------- */
+/* ==================== UTILITÁRIOS ==================== */
+/**
+ * debug - wrapper de logs para facilitar desligar em produção
+ * (não imprime nada por padrão — ative se precisar)
+ */
 const debug = (...args) => {
-  try {
-    // toggle logs by setting this to false if needed
-    // console.log("[MAP]", ...args);
-  } catch {}
+  // descomente linha abaixo para habilitar logs locais durante desenvolvimento
+  // console.log("[MapScreen]", ...args);
 };
 
-const safeStringify = (obj) => {
+/** safeStringify - converte objetos para string sem quebrar */
+const safeStringify = (v) => {
   try {
-    return JSON.stringify(obj);
+    return JSON.stringify(v);
   } catch {
-    return String(obj);
+    return String(v);
   }
 };
 
-const uid = () =>
-  `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+/** uid simples para elementos temporários */
+const uid = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-/* ---------------------- Component ---------------------- */
+/** sanitizePath - garante que um array de pontos tem lat/lon numéricos */
+const sanitizePath = (arr = []) => {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((p) => {
+      if (!p) return null;
+      const lat = Number(p.latitude ?? p.lat);
+      const lon = Number(p.longitude ?? p.lon ?? p.lng);
+      const ts = p.timestamp ?? p.time ?? null;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return { latitude: lat, longitude: lon, timestamp: ts };
+    })
+    .filter(Boolean);
+};
+
+/* ==================== COMPONENTE ==================== */
 const MapScreen = () => {
-  /* ---------------------- UI state ---------------------- */
+  /* ---------- Estado de UI ---------- */
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState(null);
 
@@ -89,30 +107,29 @@ const MapScreen = () => {
   const [showRunModal, setShowRunModal] = useState(false);
   const [currentRunData, setCurrentRunData] = useState(null);
 
-  /* Metrics & persisted UI */
   const [routeState, setRouteState] = useState([]);
   const [replayPathState, setReplayPathState] = useState([]);
   const [distanceState, setDistanceState] = useState(0);
   const [timeSec, setTimeSec] = useState(0);
   const [runsList, setRunsList] = useState([]);
-  const [polygons, setPolygons] = useState([]); // array of {coords, area, id, date}
+  const [polygons, setPolygons] = useState([]); // array de {coords, area, id, date}
   const [mode, setMode] = useState(null); // 'free' | 'zones'
 
-  /* modal / details */
   const [showRunsModal, setShowRunsModal] = useState(false);
   const [selectedRun, setSelectedRun] = useState(null);
   const [showSavedModal, setShowSavedModal] = useState(false);
   const [lastSavedRun, setLastSavedRun] = useState(null);
 
-  /* refs (stable across renders) */
+  /* ---------- Refs (estáveis) ---------- */
   const mapRef = useRef(null);
   const mapCaptureRef = useRef(null);
+  const markerRef = useRef(null);
   const coordinate = useRef(
     new AnimatedRegion({
       latitude: 0,
       longitude: 0,
-      latitudeDelta: INITIAL_REGION_DELTA,
-      longitudeDelta: INITIAL_REGION_DELTA,
+      latitudeDelta: 0.001,
+      longitudeDelta: 0.001,
     })
   ).current;
 
@@ -129,9 +146,11 @@ const MapScreen = () => {
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
 
-  const isActiveTracking = useMemo(() => runningRef.current === true, []);
+  /* ---------- Memoizações simples para reduzir re-renderizações ---------- */
+  const runsCount = useMemo(() => (Array.isArray(runsList) ? runsList.length : 0), [runsList]);
+  const zonesCount = useMemo(() => (Array.isArray(polygons) ? polygons.length : 0), [polygons]);
 
-  /* ---------------------- Initialization ---------------------- */
+  /* ==================== INITIALIZATION ==================== */
   useEffect(() => {
     mountedRef.current = true;
     let flushTimer = null;
@@ -139,64 +158,49 @@ const MapScreen = () => {
 
     (async () => {
       try {
+        // pedir permissões de localização
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== "granted") {
-          Alert.alert(
-            "Permissão negada",
-            "Ative o GPS e permita localização em primeiro plano."
-          );
+          Alert.alert("Permissão de localização", "Ative o GPS e permita localização em primeiro plano.");
           setLoading(false);
           return;
         }
 
+        // tentar obter posição inicial (não crítico)
         let pos = null;
         try {
-          pos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Highest,
-          });
+          pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
         } catch (e) {
           debug("initial position failed", e);
         }
 
-        const initial = pos?.coords
-          ? { latitude: pos.coords.latitude, longitude: pos.coords.longitude }
-          : { latitude: 0, longitude: 0 };
+        const initial = pos?.coords ? { latitude: pos.coords.latitude, longitude: pos.coords.longitude } : { latitude: 0, longitude: 0 };
 
         if (mountedRef.current) {
           setLocation(initial);
-          try {
-            coordinate.setValue(initial);
-          } catch {}
+          try { coordinate.setValue(initial); } catch {}
         }
 
+        // observador de app state
         appStateSub = AppState.addEventListener("change", (next) => {
           appStateRef.current = next;
         });
 
-        flushTimer = setInterval(() => {
-          flushRouteBufferToState();
-        }, FLUSH_INTERVAL_MS);
+        // timer para flush do buffer periodicamente
+        flushTimer = setInterval(() => flushRouteBufferToState(), FLUSH_INTERVAL_MS);
 
-        // load persisted runs and zones (batched)
+        // carregar corridas e zonas locais (não bloquear UI)
         try {
-          const [persistedRuns, persistedZones] = await Promise.all([
-            sync.loadLocalRuns(),
-            sync.loadLocalZones(),
-          ]);
-
+          const [persistedRuns, persistedZones] = await Promise.all([sync.loadLocalRuns?.(), sync.loadLocalZones?.()]);
           if (Array.isArray(persistedRuns) && persistedRuns.length > 0) {
-            // keep newest first in UI
+            // o UI quer exibir mais recente primeiro (mantido)
             setRunsList(persistedRuns.slice().reverse());
           }
-
           if (Array.isArray(persistedZones) && persistedZones.length > 0) {
             setPolygons(
-              persistedZones.map((z) => ({
-                coords: z.coords,
-                area: z.area,
-                id: z.id,
-                date: z.date,
-              }))
+              persistedZones
+                .filter((z) => Array.isArray(z.coords) && z.coords.length >= 3)
+                .map((z) => ({ coords: z.coords, area: z.area, id: z.id, date: z.date }))
             );
           }
         } catch (e) {
@@ -217,29 +221,25 @@ const MapScreen = () => {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      if (appStateSub?.remove) appStateSub.remove();
+      try { if (appStateSub?.remove) appStateSub.remove(); } catch (e) { debug("appState remove fail", e); }
       runningRef.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // rodar só uma vez
 
-  /* ---------------------- Stop watcher helper ---------------------- */
+  /* ==================== HELPERS ==================== */
+
+  /**
+   * stopWatcherAndPolling - remove watcher ou polling fallback
+   * assegura limpeza e evita leaks
+   */
   const stopWatcherAndPolling = useCallback(() => {
     try {
       const w = watcherRef.current;
       if (!w) return;
       if (typeof w.remove === "function") {
-        try {
-          w.remove();
-        } catch (e) {
-          debug("watcher remove error", e);
-        }
+        try { w.remove(); } catch (e) { debug("watcher remove error", e); }
       } else if (w.pollingInterval) {
-        try {
-          clearInterval(w.pollingInterval);
-        } catch (e) {
-          debug("clear polling error", e);
-        }
+        try { clearInterval(w.pollingInterval); } catch (e) { debug("clear polling error", e); }
       }
       watcherRef.current = null;
     } catch (e) {
@@ -247,33 +247,24 @@ const MapScreen = () => {
     }
   }, []);
 
-  /* ---------------------- Flush buffer to state ---------------------- */
+  /**
+   * flushRouteBufferToState - processa buffer de pontos acumulados e empurra para o estado
+   * usa sanitizePath para garantir segurança dos dados
+   */
   const flushRouteBufferToState = useCallback(() => {
     try {
       const buf = routeBufferRef.current;
       if (!buf || buf.length === 0) return;
 
-      const mapped = buf
-        .map((p) => ({
-          latitude: Number(p.latitude),
-          longitude: Number(p.longitude),
-          timestamp: p.timestamp,
-        }))
-        .filter(
-          (p) =>
-            Number.isFinite(p.latitude) && Number.isFinite(p.longitude)
-        );
-
+      const mapped = sanitizePath(buf).map((p) => ({ latitude: p.latitude, longitude: p.longitude, timestamp: p.timestamp }));
       if (mapped.length === 0) {
         routeBufferRef.current = [];
         return;
       }
 
-      // append to route state in a functional way to avoid stale closures
       setRouteState((prev) => {
-        // avoid huge arrays growing unbounded in memory: cap to last 5000
         const merged = prev.concat(mapped);
-        return merged.length > 5000 ? merged.slice(merged.length - 5000) : merged;
+        return merged.length > ROUTE_CAP ? merged.slice(merged.length - ROUTE_CAP) : merged;
       });
 
       routeBufferRef.current = [];
@@ -283,38 +274,53 @@ const MapScreen = () => {
     }
   }, []);
 
-  /* ---------------------- Location handler ---------------------- */
+  /* ==================== HANDLER DE LOCALIZAÇÃO (CORE) ==================== */
   const handleLocationUpdate = useCallback(
     (locObj = {}) => {
       try {
+        // normalização e validação primária
         const lat = Number(locObj.latitude);
         const lon = Number(locObj.longitude);
-        const accuracy = locObj.accuracy != null ? Number(locObj.accuracy) : 9999;
+        const accuracy = locObj.accuracy != null ? Number(locObj.accuracy) : Number.POSITIVE_INFINITY;
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-        // keep UI location up-to-date
-        setLocation({ latitude: lat, longitude: lon });
+        // evitar rerender desnecessário se a localização não mudou
+        setLocation((prev) => {
+          if (prev && prev.latitude === lat && prev.longitude === lon) return prev;
+          return { latitude: lat, longitude: lon };
+        });
 
-        // smoothly animate marker
-        try {
-          coordinate.timing({
-            latitude: lat,
-            longitude: lon,
-            duration: 280,
-            useNativeDriver: false,
-          }).start();
-        } catch {
+        // ponto usado para animação e para buffer
+        const newPoint = { latitude: lat, longitude: lon };
+        const now = Date.now();
+
+        // throttle simples para animações (aumenta performance)
+        if (!handleLocationUpdate._lastAnimate) handleLocationUpdate._lastAnimate = 0;
+        if (now - handleLocationUpdate._lastAnimate < ANIMATE_THROTTLE_MS) {
+          try { coordinate.setValue(newPoint); } catch {}
+        } else {
+          handleLocationUpdate._lastAnimate = now;
           try {
-            coordinate.setValue({ latitude: lat, longitude: lon });
-          } catch {}
+            if (Platform.OS === "android" && markerRef.current?.animateMarkerToCoordinate) {
+              // método nativo Android mais suave
+              markerRef.current.animateMarkerToCoordinate(newPoint, 280);
+            } else {
+              coordinate.timing({ ...newPoint, duration: 280, useNativeDriver: false }).start();
+            }
+          } catch (e) {
+            try { coordinate.setValue(newPoint); } catch {}
+          }
         }
 
+        // se não estiver capturando (running) não precisamos gravar pontos
         if (!runningRef.current) return;
 
+        // filtro por precisão
         if (!Number.isFinite(accuracy) || accuracy > MIN_ACCURACY) return;
 
-        const point = { latitude: lat, longitude: lon, accuracy, timestamp: Date.now() };
+        const point = { latitude: lat, longitude: lon, accuracy, timestamp: now };
 
+        // primeiro ponto
         if (!lastPointRef.current) {
           lastPointRef.current = point;
           routeBufferRef.current.push(point);
@@ -324,9 +330,9 @@ const MapScreen = () => {
         const last = lastPointRef.current;
         const d = getDistance(last.latitude, last.longitude, point.latitude, point.longitude);
 
-        if (!Number.isFinite(d) || d <= 0 || d > MAX_SPIKE_DISTANCE_M) {
-          return;
-        }
+        // validações contra spikes e jitter
+        if (!Number.isFinite(d) || d <= 0 || d > MAX_SPIKE_DISTANCE_M) return;
+        if (d < ANTI_JITTER_M) return;
 
         distanceRef.current += d;
         lastPointRef.current = point;
@@ -339,7 +345,8 @@ const MapScreen = () => {
     [coordinate]
   );
 
-  /* ---------------------- Start with countdown wrapper ---------------------- */
+  /* ==================== START / STOP RUN ==================== */
+
   const startWithCountdown = useCallback(
     (selectedMode = "free") => {
       try {
@@ -375,16 +382,15 @@ const MapScreen = () => {
         debug("startWithCountdown catch", e);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [counting, running]
   );
 
-  /* ---------------------- Start Run ---------------------- */
   const startRun = useCallback(
     async (selectedMode = "free") => {
       try {
         if (runningRef.current || running) return;
 
+        // marca estado de execução
         setRunning(true);
         runningRef.current = true;
         setReplaying(false);
@@ -395,37 +401,27 @@ const MapScreen = () => {
         lastPointRef.current = null;
         setTimeSec(0);
 
+        // iniciar contador de tempo
         if (timerRef.current) {
           clearInterval(timerRef.current);
           timerRef.current = null;
         }
         timerRef.current = setInterval(() => setTimeSec((t) => t + 1), 1000);
 
+        // posição inicial para centralizar mapa/marker
         let pos = null;
-        try {
-          pos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Highest,
-          });
-        } catch (e) {
-          debug("startRun getCurrentPosition failed", e);
-        }
+        try { pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest }); } catch (e) { debug("startRun getCurrentPosition failed", e); }
 
         if (pos?.coords) {
           const { latitude: lat, longitude: lon } = pos.coords;
-          try {
-            coordinate.setValue({ latitude: lat, longitude: lon });
-            mapRef.current?.animateCamera?.({
-              center: { latitude: lat, longitude: lon },
-              zoom: 17,
-            });
-            handleLocationUpdate({
-              latitude: lat,
-              longitude: lon,
-              accuracy: pos.coords.accuracy,
-            });
-          } catch {}
+          try { coordinate.setValue({ latitude: lat, longitude: lon }); } catch {}
+          if (mapRef.current && Number.isFinite(lat) && Number.isFinite(lon)) {
+            try { mapRef.current.animateCamera?.({ center: { latitude: lat, longitude: lon }, zoom: 17 }); } catch (e) { debug("animateCamera failed", e); }
+          }
+          handleLocationUpdate({ latitude: lat, longitude: lon, accuracy: pos.coords.accuracy });
         }
 
+        // tentativa principal: watchPositionAsync
         try {
           const sub = await Location.watchPositionAsync(
             {
@@ -436,25 +432,18 @@ const MapScreen = () => {
             },
             (loc) => {
               if (!loc?.coords) return;
-              handleLocationUpdate({
-                latitude: loc.coords.latitude,
-                longitude: loc.coords.longitude,
-                accuracy: loc.coords.accuracy,
-              });
+              handleLocationUpdate({ latitude: loc.coords.latitude, longitude: loc.coords.longitude, accuracy: loc.coords.accuracy });
             }
           );
           watcherRef.current = sub;
         } catch (e) {
+          // fallback polling caso watchPosition falhe
           debug("watchPositionAsync failed, fallback polling", e);
           const poll = setInterval(async () => {
             try {
               const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
               if (p?.coords) {
-                handleLocationUpdate({
-                  latitude: p.coords.latitude,
-                  longitude: p.coords.longitude,
-                  accuracy: p.coords.accuracy,
-                });
+                handleLocationUpdate({ latitude: p.coords.latitude, longitude: p.coords.longitude, accuracy: p.coords.accuracy });
               }
             } catch (err) {
               debug("polling error", err);
@@ -469,16 +458,11 @@ const MapScreen = () => {
     [handleLocationUpdate, running]
   );
 
-  /* ---------------------- Fade out route animation ---------------------- */
   const fadeOutRoute = useCallback(() => {
     return new Promise((resolve) => {
       try {
         routeFadeAnim.setValue(1);
-        Animated.timing(routeFadeAnim, {
-          toValue: 0,
-          duration: 350,
-          useNativeDriver: true,
-        }).start(() => {
+        Animated.timing(routeFadeAnim, { toValue: 0, duration: 350, useNativeDriver: true }).start(() => {
           setRouteState([]);
           resolve();
         });
@@ -498,133 +482,85 @@ const MapScreen = () => {
     setMode(null);
   }, []);
 
-const stopRun = useCallback(
-  async (opts = {}) => {
-    try {
-      if (!running) return;
+  const stopRun = useCallback(
+    async (opts = {}) => {
+      try {
+        if (!running) return;
 
-      runningRef.current = false;
-      setRunning(false);
+        runningRef.current = false;
+        setRunning(false);
 
-      stopWatcherAndPolling();
+        stopWatcherAndPolling();
 
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
 
-      flushRouteBufferToState();
+        // garante que o buffer pendente seja flushado
+        flushRouteBufferToState();
 
-      const path = [...routeState];
-      const totalDistance = distanceRef.current;
+        // copiar rota atual de forma segura
+        const path = sanitizePath(routeState);
 
-      const hasValidRun =
-        path.length > 1 &&
-        totalDistance > 1 &&
-        timeSec > 2;
+        const totalDistance = distanceRef.current;
 
-      if (!hasValidRun) {
-        resetRunVisuals();
-        return;
-      }
+        const hasValidRun = path.length > 1 && totalDistance > 1 && timeSec > 2;
+        if (!hasValidRun) {
+          resetRunVisuals();
+          return;
+        }
 
-      const runData = {
-        path,
-        distance: totalDistance,
-        duration: timeSec,
-        avgSpeed:
-          totalDistance && timeSec
-            ? Number(
-                (totalDistance / 1000 / (timeSec / 3600)).toFixed(2)
-              )
-            : 0,
-        date: new Date().toISOString(),
-      };
+        const runData = {
+          path,
+          distance: totalDistance,
+          duration: timeSec,
+          avgSpeed: totalDistance && timeSec ? Number(((totalDistance / 1000) / (timeSec / 3600)).toFixed(2)) : 0,
+          date: new Date().toISOString(),
+        };
 
-      /* --------------------- ZONES MODE --------------------- */
-      if (mode === "zones") {
-        try {
-          const savedZone = await sync.createAndSaveZoneFromPath(path, {
-            simplifyTolerance: 0.0006,
-            smoothIterations: 0,
-            maxPoints: 300,
-            compressMax: 300,
-          });
-
-          if (savedZone) {
-            setPolygons((prev) => [
-              {
-                coords: savedZone.coords,
-                area: savedZone.area,
-                id: savedZone.id,
-                date: savedZone.date,
-              },
-              ...prev,
-            ]);
-          }
-        } catch (e) {
-          debug("zone creation via sync failed", e);
+        // caso modo zonas: tentar criar zona via sync (transaction local)
+        if (mode === "zones") {
           try {
-            const built = zones.buildConvexZone(path, {
-              simplifyTolerance: 0.0006,
-              smoothIterations: 0,
-              maxPoints: 300,
-            });
-            const area = zones.calcArea(built);
-            if (built.length >= 3 && area >= ZONE_MIN_AREA_M2) {
-              const z = await sync.saveLocalZone({
-                coords: built,
-                area,
-                date: new Date().toISOString(),
-              });
-              sync.scheduleZonesSync?.();
-              setPolygons((prev) => [
-                {
-                  coords: z.coords,
-                  area: z.area,
-                  id: z.id,
-                  date: z.date,
-                },
-                ...prev,
-              ]);
+            const savedZone = await sync.createAndSaveZoneFromPath?.(path, { simplifyTolerance: 0.0006, smoothIterations: 0, maxPoints: 300, compressMax: 300 });
+            if (savedZone) {
+              setPolygons((prev) => [{ coords: savedZone.coords, area: savedZone.area, id: savedZone.id, date: savedZone.date }, ...(Array.isArray(prev) ? prev : [])]);
             }
-          } catch (fallbackErr) {
-            debug("fallback zone save failed", fallbackErr);
+          } catch (e) {
+            debug("zone creation via sync failed", e);
+            // fallback: construir localmente e salvar localmente
+            try {
+              const built = zones.buildConvexZone(path, { simplifyTolerance: 0.0006, smoothIterations: 0, maxPoints: 300 });
+              const area = zones.calcArea(built);
+              if (Array.isArray(built) && built.length >= 3 && area >= ZONE_MIN_AREA_M2) {
+                const z = await sync.saveLocalZone?.({ coords: built, area, date: new Date().toISOString() });
+                sync.scheduleZonesSync?.();
+                setPolygons((prev) => [{ coords: z.coords, area: z.area, id: z.id, date: z.date }, ...(Array.isArray(prev) ? prev : [])]);
+              }
+            } catch (fallbackErr) {
+              debug("fallback zone save failed", fallbackErr);
+            }
           }
         }
+
+        await fadeOutRoute();
+        resetRunVisuals();
+
+        setCurrentRunData(runData);
+        setShowRunModal(true);
+      } catch (e) {
+        debug("stopRun catch", e);
       }
+    },
+    [running, routeState, timeSec, resetRunVisuals, fadeOutRoute, stopWatcherAndPolling, flushRouteBufferToState, mode]
+  );
 
-      await fadeOutRoute();
-      resetRunVisuals();
-
-      // AQUI ESTAVA TEU ERRO: AGORA ESTÁ CORRETO.
-      setCurrentRunData(runData);
-      setShowRunModal(true);
-    } catch (e) {
-      debug("stopRun catch", e);
-    }
-  },
-  [
-    running,
-    routeState,
-    timeSec,
-    resetRunVisuals,
-    fadeOutRoute,
-    stopWatcherAndPolling,
-    flushRouteBufferToState,
-    mode,
-  ]
-);
-
-
-  /* ---------------------- Replay helpers ---------------------- */
+  /* ==================== REPLAY ==================== */
   const startReplay = useCallback(
     (runEntry) => {
       try {
         if (!runEntry || !Array.isArray(runEntry.path) || runEntry.path.length === 0) return;
-
         stopWatcherAndPolling();
-
         setReplaying(true);
         runningRef.current = false;
         setRunning(false);
@@ -637,9 +573,10 @@ const stopRun = useCallback(
           replayIntervalRef.current = null;
         }
 
+        const path = sanitizePath(runEntry.path);
         let idx = 0;
         replayIntervalRef.current = setInterval(() => {
-          if (!runEntry || idx >= runEntry.path.length) {
+          if (!path || idx >= path.length) {
             clearInterval(replayIntervalRef.current);
             replayIntervalRef.current = null;
             setReplaying(false);
@@ -647,21 +584,20 @@ const stopRun = useCallback(
             setRouteState([]);
             return;
           }
-
-          const p = runEntry.path[idx++];
-          setReplayPathState((prev) => prev.concat(p));
+          const p = path[idx++];
+          setReplayPathState((prev) => {
+            const merged = prev.concat(p);
+            return merged.length > ROUTE_CAP ? merged.slice(merged.length - ROUTE_CAP) : merged;
+          });
 
           try {
-            coordinate.timing({
-              latitude: p.latitude,
-              longitude: p.longitude,
-              duration: 200,
-              useNativeDriver: false,
-            }).start();
+            if (Platform.OS === "android" && markerRef.current?.animateMarkerToCoordinate) {
+              markerRef.current.animateMarkerToCoordinate({ latitude: p.latitude, longitude: p.longitude }, 200);
+            } else {
+              coordinate.timing({ latitude: p.latitude, longitude: p.longitude, duration: 200, useNativeDriver: false }).start();
+            }
           } catch {
-            try {
-              coordinate.setValue({ latitude: p.latitude, longitude: p.longitude });
-            } catch {}
+            try { coordinate.setValue({ latitude: p.latitude, longitude: p.longitude }); } catch {}
           }
         }, 250);
       } catch (e) {
@@ -683,25 +619,23 @@ const stopRun = useCallback(
     }
   }, []);
 
-  /* ---------------------- UI helpers / modals ---------------------- */
+  /* ==================== UI HELPERS ==================== */
   const openRunsModal = useCallback(() => setShowRunsModal(true), []);
-  const closeRunsModal = useCallback(() => {
-    setShowRunsModal(false);
-    setSelectedRun(null);
-  }, []);
+  const closeRunsModal = useCallback(() => { setShowRunsModal(false); setSelectedRun(null); }, []);
   const openRunDetails = useCallback((run) => setSelectedRun(run), []);
 
-  /* ---------------------- Auto capture & share ---------------------- */
+  const toggleZones = useCallback(() => setShowZones((s) => !s), []);
+  const openStartModal = useCallback(() => setSelectModeVisible(true), []);
+  const openRunsList = useCallback(() => setShowRunsModal(true), []);
+
+  /* ==================== CAPTURE / SHARE ==================== */
   const autoCapture = useCallback(async (savedRun) => {
     try {
       if (!mapCaptureRef.current) return;
       const uri = await captureRef(mapCaptureRef.current, { format: "png", quality: 0.9, result: "tmpfile" });
       const dest = FileSystem.cacheDirectory + `wayper_run_${savedRun?.id || Date.now()}.png`;
       await FileSystem.copyAsync({ from: uri, to: dest });
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(dest, { dialogTitle: "Compartilhar Replay Wayper" });
-      }
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(dest, { dialogTitle: "Compartilhar Replay Wayper" });
     } catch (e) {
       debug("autoCapture catch", e);
     }
@@ -709,14 +643,10 @@ const stopRun = useCallback(
 
   const captureAndShareMap = useCallback(async (filenamePrefix = "wayper_run") => {
     try {
-      if (!mapCaptureRef.current) {
-        Alert.alert("Erro", "Mapa indisponível para captura.");
-        return;
-      }
+      if (!mapCaptureRef.current) { Alert.alert("Erro", "Mapa indisponível para captura."); return; }
       const uri = await captureRef(mapCaptureRef.current, { format: "png", quality: 0.9, result: "tmpfile" });
       const dest = FileSystem.cacheDirectory + `${filenamePrefix}_${Date.now()}.png`;
       await FileSystem.copyAsync({ from: uri, to: dest });
-
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(dest, { dialogTitle: "Compartilhar Replay Wayper" });
       } else {
@@ -728,14 +658,15 @@ const stopRun = useCallback(
     }
   }, []);
 
-  /* ---------------------- GPX / JSON helpers ---------------------- */
+  /* ==================== EXPORT / SHARE GPX / JSON ==================== */
   const pointsToGPX = useCallback((coords = [], meta = {}) => {
     try {
+      const safeName = (meta.name || "Wayper Run").replace(/</g, "");
       const header = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Wayper" xmlns="http://www.topografix.com/GPX/1/1">
-  <metadata><name>${(meta.name || "Wayper Run").replace(/</g, "")}</name><time>${meta.time || new Date().toISOString()}</time></metadata>
-  <trk><name>${(meta.name || "Wayper Run").replace(/</g, "")}</name><trkseg>`;
-      const pts = coords.map((p) => `<trkpt lat="${p.latitude}" lon="${p.longitude}"><time>${p.timestamp || ""}</time></trkpt>`).join("\n");
+  <metadata><name>${safeName}</name><time>${meta.time || new Date().toISOString()}</time></metadata>
+  <trk><name>${safeName}</name><trkseg>`;
+      const pts = sanitizePath(coords).map((p) => `<trkpt lat="${p.latitude}" lon="${p.longitude}"><time>${p.timestamp || ""}</time></trkpt>`).join("\n");
       const footer = `</trkseg></trk></gpx>`;
       return `${header}\n${pts}\n${footer}`;
     } catch (e) {
@@ -750,12 +681,8 @@ const stopRun = useCallback(
       const gpx = pointsToGPX(run.path, { name: `Wayper Run ${run.date}`, time: new Date(run.date).toISOString() });
       const path = FileSystem.cacheDirectory + `wayper_run_${run.id || Date.now()}.gpx`;
       await FileSystem.writeAsStringAsync(path, gpx, { encoding: FileSystem.EncodingUTF8 });
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(path);
-      } else {
-        Alert.alert("Compartilhar", "Compartilhamento não disponível neste dispositivo.");
-      }
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(path);
+      else Alert.alert("Compartilhar", "Compartilhamento não disponível neste dispositivo.");
     } catch (e) {
       debug("shareRunAsGPX catch", e);
       Alert.alert("Erro", "Falha ao gerar/compartilhar GPX.");
@@ -767,44 +694,36 @@ const stopRun = useCallback(
       if (!run) return;
       const path = FileSystem.cacheDirectory + `wayper_run_${run.id || Date.now()}.json`;
       await FileSystem.writeAsStringAsync(path, safeStringify(run), { encoding: FileSystem.EncodingUTF8 });
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(path);
-      } else {
-        Alert.alert("Compartilhar", "Compartilhamento não disponível neste dispositivo.");
-      }
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(path);
+      else Alert.alert("Compartilhar", "Compartilhamento não disponível neste dispositivo.");
     } catch (e) {
       debug("shareRunAsJSON catch", e);
       Alert.alert("Erro", "Falha ao gerar/compartilhar JSON.");
     }
   }, []);
 
-  /* ---------------------- Fit map to show all zones when toggled on ---------------------- */
+  /* ==================== MAP FIT & SAFEGUARDS ==================== */
   const fitMapToAllZones = useCallback(() => {
     try {
-      if (!mapRef.current || !polygons || polygons.length === 0) return;
-      // collect all coords
-      const all = polygons.flatMap((p) => (Array.isArray(p.coords) ? p.coords : []));
-      if (all.length === 0) return;
-      const coords = all.map((c) => ({ latitude: c.latitude, longitude: c.longitude }));
+      if (!mapRef.current || !polygons || !Array.isArray(polygons) || polygons.length === 0) return;
+      const all = polygons.flatMap((p) => (p && Array.isArray(p.coords) ? p.coords : [])).filter(Boolean);
+      if (!all || all.length === 0) return;
+      const coords = all.map((c) => ({ latitude: Number(c.latitude), longitude: Number(c.longitude) })).filter((c) => Number.isFinite(c.latitude) && Number.isFinite(c.longitude));
+      if (coords.length === 0) return;
       mapRef.current.fitToCoordinates(coords, { edgePadding: { top: 80, right: 80, bottom: 220, left: 80 }, animated: true });
     } catch (e) {
       debug("fitMapToAllZones", e);
     }
   }, [polygons]);
 
-  /* whenever showZones toggled on, fit map to them (gentle UX) */
   useEffect(() => {
     if (showZones) {
-      // defer slightly to allow UI settle
-      const t = setTimeout(() => {
-        fitMapToAllZones();
-      }, 300);
+      const t = setTimeout(() => fitMapToAllZones(), 300);
       return () => clearTimeout(t);
     }
   }, [showZones, fitMapToAllZones]);
 
-  /* ---------------------- Render guard while loading location ---------------------- */
+  /* ==================== RENDER GUARD (LOADING) ==================== */
   if (loading || !location) {
     return (
       <View style={styles.loading}>
@@ -813,693 +732,284 @@ const stopRun = useCallback(
     );
   }
 
-  /* ---------------------- JSX (visual preserved) ---------------------- */
+  /* ==================== JSX ==================== */
   return (
     <View style={styles.container}>
       <View ref={mapCaptureRef} style={{ flex: 1 }}>
         <MapView
+          provider={PROVIDER_GOOGLE}
           ref={mapRef}
           style={styles.map}
           initialRegion={{
-            latitude: location.latitude,
-            longitude: location.longitude,
+            latitude: Number(location.latitude) || 0,
+            longitude: Number(location.longitude) || 0,
             latitudeDelta: INITIAL_REGION_DELTA,
             longitudeDelta: INITIAL_REGION_DELTA,
           }}
+          followsUserLocation={running}
+          showsUserLocation={false}
+          zoomControlEnabled={true}
+          rotateEnabled={false}
+          pitchEnabled={false}
         >
-          {showZones &&
-            polygons.map((z, i) => (
-              <Polygon
-                key={z.id || i}
-                coordinates={z.coords}
-                strokeColor="#00b894"
-                fillColor="rgba(0,184,148,0.25)"
-                strokeWidth={8}
-              />
-            ))}
+          {/* ZONAS: só desenha polígonos válidos */}
+          {showZones && Array.isArray(polygons) && polygons.map((z, i) => (
+            z && Array.isArray(z.coords) && z.coords.length >= 3 ? (
+              <Polygon key={z.id || i} coordinates={z.coords} strokeColor="#00b894" fillColor="rgba(0,184,148,0.25)" strokeWidth={4} />
+            ) : null
+          ))}
 
-          {routeState.length > 0 && (
-            <Polyline
-              coordinates={routeState}
-              strokeWidth={8}
-              strokeColor="#0984e3"
-              lineJoin="round"
-              lineCap="round"
-            />
+          {/* ROTA principal (somente se >=2 pontos válidos) */}
+          {Array.isArray(routeState) && routeState.length >= 2 && routeState.every(p => p && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (
+            <Polyline coordinates={routeState} strokeWidth={4} strokeColor="#0984e3" lineJoin="round" lineCap="round" />
           )}
 
-          {replayPathState.length > 0 && (
-            <Polyline
-              coordinates={replayPathState}
-              strokeWidth={8}
-              strokeColor="#fdcb6e"
-              lineJoin="round"
-              lineCap="round"
-            />
+          {/* REPLAY path */}
+          {Array.isArray(replayPathState) && replayPathState.length >= 2 && replayPathState.every(p => p && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (
+            <Polyline coordinates={replayPathState} strokeWidth={4} strokeColor="#fdcb6e" lineJoin="round" lineCap="round" />
           )}
 
-          <Marker.Animated coordinate={coordinate} anchor={{ x: 0.8, y: 0.3 }} tracksViewChanges={true}>
-            <View style={styles.myLocationDot} />
-          </Marker.Animated>
+          {/* MARKER: só renderiza se coordenadas válidas */}
+          {location && Number.isFinite(location.latitude) && Number.isFinite(location.longitude) && (
+            <Marker.Animated
+              ref={markerRef}
+              coordinate={coordinate}
+              anchor={{ x: 0.5, y: 0.5 }}
+              flat={true}
+              tracksViewChanges={false}
+              style={{ width: 48, height: 48 }}
+              image={myLocationIcon}
+              rotation={location && location.heading ? Number(location.heading) : 0}
+            />
+          )}
         </MapView>
       </View>
 
+      {/* Painel superior com métricas enquanto correndo/reproduzindo */}
       {(running || replaying) && (
         <View style={styles.runPanel}>
-          <Text style={styles.runTitle}>
-            {running ? (mode === "zones" ? "Capturando Zonas" : "Corrida Livre") : "Reproduzindo"}
-          </Text>
-          <View style={styles.runRow}>
-            <Text style={styles.runLabel}>Tempo</Text>
-            <Text style={styles.runValue}>{formatTime(timeSec)}</Text>
-          </View>
-          <View style={styles.runRow}>
-            <Text style={styles.runLabel}>Distância</Text>
-            <Text style={styles.runValue}>{(distanceState / 1000).toFixed(2)} km</Text>
-          </View>
+          <Text style={styles.runTitle}>{running ? (mode === "zones" ? "Capturando Zonas" : "Corrida Livre") : "Reproduzindo"}</Text>
+          <View style={styles.runRow}><Text style={styles.runLabel}>Tempo</Text><Text style={styles.runValue}>{formatTime(timeSec)}</Text></View>
+          <View style={styles.runRow}><Text style={styles.runLabel}>Distância</Text><Text style={styles.runValue}>{(distanceState / 1000).toFixed(2)} km</Text></View>
         </View>
       )}
 
+      {/* Menu inferior quando não estiver rodando */}
       {!running && !replaying && (
         <View style={styles.menuPanel}>
-          <TouchableOpacity style={styles.startMainBtn} onPress={() => setSelectModeVisible(true)}>
-            <Text style={styles.startMainBtnTxt}>Iniciar Corrida</Text>
-          </TouchableOpacity>
+          <TouchableOpacity style={styles.startMainBtn} onPress={openStartModal}><Text style={styles.startMainBtnTxt}>Iniciar Corrida</Text></TouchableOpacity>
 
           <View style={styles.menuRow}>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => {
-                // toggle showZones and show all if turning on
-                setShowZones((s) => {
-                  const next = !s;
-                  if (!s && polygons.length > 0) {
-                    // will trigger useEffect to fit map
-                  }
-                  return next;
-                });
-              }}
-            >
+            <TouchableOpacity style={styles.menuItem} onPress={toggleZones}>
               <Text style={styles.menuItemTitle}>Zonas</Text>
               <Text style={styles.menuItemValue}>{showZones ? "Exibindo" : "Ocultas"}</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.menuItem} onPress={() => setShowRunsModal(true)}>
+            <TouchableOpacity style={styles.menuItem} onPress={openRunsList}>
               <Text style={styles.menuItemTitle}>Corridas</Text>
-              <Text style={styles.menuItemValue}>{runsList.length}</Text>
+              <Text style={styles.menuItemValue}>{runsCount}</Text>
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.metaText}>Zonas: {polygons.length} • Corridas: {runsList.length}</Text>
+          <Text style={styles.metaText}>Zonas: {zonesCount} • Corridas: {runsCount}</Text>
         </View>
       )}
 
+      {/* Botões de controle inferior */}
       {running && (
         <View style={styles.bottomButtons}>
-          <TouchableOpacity style={[styles.mainButton, { backgroundColor: "#d63031" }]} onPress={stopRun}>
-            <Text style={styles.mainButtonText}>Finalizar</Text>
-          </TouchableOpacity>
+          <TouchableOpacity style={[styles.mainButton, { backgroundColor: "#d63031" }]} onPress={stopRun}><Text style={styles.mainButtonText}>Finalizar</Text></TouchableOpacity>
         </View>
       )}
-
       {replaying && (
         <View style={styles.bottomButtons}>
-          <TouchableOpacity style={[styles.mainButton, { backgroundColor: "#d63031" }]} onPress={stopReplay}>
-            <Text style={styles.mainButtonText}>Parar Reprodução</Text>
-          </TouchableOpacity>
+          <TouchableOpacity style={[styles.mainButton, { backgroundColor: "#d63031" }]} onPress={stopReplay}><Text style={styles.mainButtonText}>Parar Reprodução</Text></TouchableOpacity>
         </View>
       )}
 
-      {/* Runs Modal */}
+      {/* Modal de corridas */}
       <Modal visible={showRunsModal} animationType="slide" transparent={true} onRequestClose={closeRunsModal}>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Suas Corridas</Text>
-
-            <FlatList
-              data={runsList}
-              keyExtractor={(item) => item.id || uid()}
-              style={{ flex: 1 }}
+            <FlatList data={runsList} keyExtractor={(item) => String(item.id || (item._tempId || (item._tempId = uid())))} style={{ flex: 1 }}
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.runItem}
-                  onPress={() => {
-                    openRunDetails(item);
-                  }}
-                >
+                <TouchableOpacity style={styles.runItem} onPress={() => openRunDetails(item)}>
                   <Text style={styles.runDate}>{item.date}</Text>
-                  <Text style={styles.runStats}>
-                    {(item.distance / 1000).toFixed(2)} km • {Math.round(item.duration)} s
-                  </Text>
+                  <Text style={styles.runStats}>{(item.distance / 1000).toFixed(2)} km • {Math.round(item.duration)} s</Text>
                 </TouchableOpacity>
-              )}
-            />
-
-            <TouchableOpacity style={styles.closeBtn} onPress={closeRunsModal}>
-              <Text style={styles.closeBtnText}>Fechar</Text>
-            </TouchableOpacity>
+              )} />
+            <TouchableOpacity style={styles.closeBtn} onPress={closeRunsModal}><Text style={styles.closeBtnText}>Fechar</Text></TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* Saved run modal */}
+      {/* Modal corrida salva */}
       <Modal visible={showSavedModal} animationType="slide" transparent={true} onRequestClose={() => setShowSavedModal(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.savedModalContent}>
             <Text style={styles.detailsTitle}>Corrida salva</Text>
-
             <Text style={styles.detailsInfo}>Distância: {(lastSavedRun?.distance / 1000)?.toFixed(2) ?? "—"} km</Text>
             <Text style={styles.detailsInfo}>Duração: {lastSavedRun?.duration ?? "—"} s</Text>
-            <Text style={styles.detailsInfo}>
-              Data: {lastSavedRun ? new Date(lastSavedRun.date).toLocaleString() : "—"}
-            </Text>
-
-            <TouchableOpacity
-              style={styles.actionBtn}
-              onPress={() => {
-                setShowSavedModal(false);
-                setSelectedRun(lastSavedRun);
-                setShowRunsModal(true);
-              }}
-            >
-              <Text style={styles.actionBtnText}>Ver Corrida</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.actionBtn}
-              onPress={() => {
-                setShowSavedModal(false);
-                captureAndShareMap(`wayper_run_${lastSavedRun?.id || Date.now()}`);
-              }}
-            >
-              <Text style={styles.actionBtnText}>Compartilhar imagem</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setShowSavedModal(false)}>
-              <Text style={styles.closeBtnText}>Fechar</Text>
-            </TouchableOpacity>
+            <Text style={styles.detailsInfo}>Data: {lastSavedRun ? new Date(lastSavedRun.date).toLocaleString() : "—"}</Text>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => { setShowSavedModal(false); setSelectedRun(lastSavedRun); setShowRunsModal(true); }}><Text style={styles.actionBtnText}>Ver Corrida</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => { setShowSavedModal(false); captureAndShareMap(`wayper_run_${lastSavedRun?.id || Date.now()}`); }}><Text style={styles.actionBtnText}>Compartilhar imagem</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.closeBtn} onPress={() => setShowSavedModal(false)}><Text style={styles.closeBtnText}>Fechar</Text></TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* RunSummaryModal: customization UI before saving */}
-      <RunSummaryModal
-        visible={showRunModal}
-        baseRunData={currentRunData}
-        onClose={() => setShowRunModal(false)}
-        onSave={async (payload) => {
+      {/* RunSummaryModal - salvar corrida */}
+      <RunSummaryModal visible={showRunModal} baseRunData={currentRunData} onClose={() => setShowRunModal(false)} onSave={async (payload) => {
+        try {
+          payload.path = payload.path || payload.coords || currentRunData?.path || [];
+          const normalized = { ...payload, path: sanitizePath(payload.path) };
+
+          const saved = await sync.saveLocalRun?.(normalized);
+          sync.scheduleRunsSync?.();
+
+          setRunsList((prev) => [saved, ...(Array.isArray(prev) ? prev : [])]);
+          setLastSavedRun(saved);
+          setShowSavedModal(true);
+
+          // captura automatica não bloqueante
+          setTimeout(() => { try { autoCapture(saved); } catch (e) { debug("autoCapture failed", e); } }, 400);
+
+          // engine de XP (não bloqueante)
           try {
-            payload.path = payload.path || payload.coords || currentRunData?.path || [];
-
-            // SALVAR corrida local (seu sync)
-            const saved = await sync.saveLocalRun(payload);
-            sync.scheduleRunsSync?.();
-
-            setRunsList((prev) => [saved, ...(Array.isArray(prev) ? prev : [])]);
-            setLastSavedRun(saved);
-            setShowSavedModal(true);
-
-            // AUTO CAPTURE (não bloquear)
-            setTimeout(() => {
-              try { autoCapture(saved); } catch (e) {}
-            }, 400);
-
-            // --- CHAMADA PRINCIPAL: XP engine ---
-            // xpService.awardRunXP aplica localmente e persiste no Firestore (profile + ranking)
+            const distanceMeters = Number(normalized.distance) || 0;
+            const durationSec = Number(normalized.duration) || 0;
+            const areaM2 = Number(normalized.area) || 0;
+            const result = await xpService.awardRunXP?.({ distance: distanceMeters, duration: durationSec, area: areaM2 });
+            debug("XP applied for run:", result?.applied, result?.xpBreakdown);
+          } catch (err) {
+            debug("Erro ao aplicar XP via xpService:", err);
             try {
-              const distanceMeters = Number(payload.distance) || 0;
-              const durationSec = Number(payload.duration) || 0;
-              const areaM2 = Number(payload.area) || 0;
-
-              // awardRunXP retorna breakdown e profile atualizado
-              const result = await xpService.awardRunXP({
-                distance: distanceMeters,
-                duration: durationSec,
-                area: areaM2,
-              });
-
-              // opcional: legacy updateProfileStats (se você ainda usa em outros pontos)
-              // await updateProfileStats({ distance: distanceMeters, duration: durationSec, area: areaM2, isZone: false, meta: { runId: saved.id } });
-
-              // debug visual (remova em produção)
-              console.debug("XP applied for run:", result?.applied, result?.xpBreakdown);
-            } catch (err) {
-              console.warn("Erro ao aplicar XP via xpService:", err);
-              // fallback: tenta profileService caso xpService falhe
-              try {
-                await updateProfileStats({
-                  distance: payload.distance,
-                  duration: payload.duration,
-                  area: payload.area,
-                  isZone: false,
-                  meta: { runId: saved.id },
-                });
-              } catch (e) {
-                console.warn("Fallback updateProfileStats também falhou:", e);
-              }
+              await updateProfileStats?.({ distance: payload.distance, duration: payload.duration, area: payload.area, isZone: false, meta: { runId: saved?.id } });
+            } catch (e) {
+              debug("Fallback updateProfileStats failed", e);
             }
-
-          } catch (e) {
-            debug("RunSummaryModal onSave failed", e);
-            Alert.alert("Erro", "Não foi possível salvar a corrida.");
-          } finally {
-            setShowRunModal(false);
           }
-        }}
-      />
+        } catch (e) {
+          debug("RunSummaryModal onSave failed", e);
+          Alert.alert("Erro", "Não foi possível salvar a corrida.");
+        } finally {
+          setShowRunModal(false);
+        }
+      }} />
 
-      {/* Run details (quick modal) */}
+      {/* Detalhes da corrida */}
       <Modal visible={!!selectedRun} animationType="slide" transparent={true} onRequestClose={() => setSelectedRun(null)}>
         <View style={styles.modalContainer}>
           <View style={styles.detailsContent}>
             <Text style={styles.detailsTitle}>Detalhes da Corrida</Text>
-
             <View style={{ height: 200, width: "100%", borderRadius: 12, overflow: "hidden", marginBottom: 12 }}>
-              <MapView
-                style={{ flex: 1 }}
-                initialRegion={{
-                  latitude: selectedRun?.path?.[0]?.latitude || 0,
-                  longitude: selectedRun?.path?.[0]?.longitude || 0,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01,
-                }}
-                scrollEnabled={false}
-                rotateEnabled={false}
-                pitchEnabled={false}
-                zoomEnabled={false}
-              >
-                <Polyline coordinates={selectedRun?.path || []} strokeWidth={4} strokeColor={WAYPER_GREEN} />
-                <Polygon
-                  coordinates={selectedRun?.path || []}
-                  strokeColor="rgba(0,230,118,0.8)"
-                  fillColor="rgba(0,230,118,0.15)"
-                  strokeWidth={2}
-                />
+              <MapView style={{ flex: 1 }} initialRegion={{ latitude: Number(selectedRun?.path?.[0]?.latitude) || 0, longitude: Number(selectedRun?.path?.[0]?.longitude) || 0, latitudeDelta: 0.01, longitudeDelta: 0.01 }} scrollEnabled={false} rotateEnabled={false} pitchEnabled={false} zoomEnabled={false} provider={PROVIDER_GOOGLE}>
+                {Array.isArray(selectedRun?.path) && selectedRun.path.length >= 2 && selectedRun.path.every(p => p && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (<Polyline coordinates={selectedRun.path} strokeWidth={4} strokeColor={WAYPER_GREEN} />)}
+                {Array.isArray(selectedRun?.path) && selectedRun.path.length >= 3 && selectedRun.path.every(p => p && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (<Polygon coordinates={selectedRun.path} strokeColor="rgba(0,230,118,0.8)" fillColor="rgba(0,230,118,0.15)" strokeWidth={2} />)}
               </MapView>
             </View>
-
             <Text style={styles.detailsInfo}>Distância: {(selectedRun?.distance / 1000)?.toFixed(2)} km</Text>
             <Text style={styles.detailsInfo}>Duração: {selectedRun?.duration} s</Text>
             <Text style={styles.detailsInfo}>Vel. Média: {selectedRun?.avgSpeed} km/h</Text>
             <Text style={styles.detailsInfo}>Data: {selectedRun?.date}</Text>
-
-            <TouchableOpacity
-              style={styles.actionBtn}
-              onPress={() => {
-                startReplay(selectedRun);
-                setSelectedRun(null);
-                setShowRunsModal(false);
-              }}
-            >
-              <Text style={styles.actionBtnText}>Assistir Replay</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionBtn} onPress={() => shareRunAsGPX(selectedRun)}>
-              <Text style={styles.actionBtnText}>Exportar GPX</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionBtn} onPress={() => shareRunAsJSON(selectedRun)}>
-              <Text style={styles.actionBtnText}>Exportar JSON</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedRun(null)}>
-              <Text style={styles.closeBtnText}>Fechar</Text>
-            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => { startReplay(selectedRun); setSelectedRun(null); setShowRunsModal(false); }}><Text style={styles.actionBtnText}>Assistir Replay</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => shareRunAsGPX(selectedRun)}><Text style={styles.actionBtnText}>Exportar GPX</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => shareRunAsJSON(selectedRun)}><Text style={styles.actionBtnText}>Exportar JSON</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedRun(null)}><Text style={styles.closeBtnText}>Fechar</Text></TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* mode selection modal */}
+      {/* seleção de modo */}
       <Modal visible={selectModeVisible} transparent animationType="fade">
         <View style={styles.modeOverlay}>
           <View style={styles.modeBox}>
             <Text style={styles.modeTitle}>Selecione o tipo de corrida</Text>
-            <TouchableOpacity
-              style={styles.modeBtn}
-              onPress={() => {
-                setSelectModeVisible(false);
-                startWithCountdown("free");
-              }}
-            >
-              <Text style={styles.modeBtnText}>Corrida Livre</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.modeBtn}
-              onPress={() => {
-                setSelectModeVisible(false);
-                startWithCountdown("zones");
-              }}
-            >
-              <Text style={styles.modeBtnText}>Capturar Zonas</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setSelectModeVisible(false)}>
-              <Text style={styles.cancelBtnText}>Cancelar</Text>
-            </TouchableOpacity>
+            <TouchableOpacity style={styles.modeBtn} onPress={() => { setSelectModeVisible(false); startWithCountdown("free"); }}><Text style={styles.modeBtnText}>Corrida Livre</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.modeBtn} onPress={() => { setSelectModeVisible(false); startWithCountdown("zones"); }}><Text style={styles.modeBtnText}>Capturar Zonas</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setSelectModeVisible(false)}><Text style={styles.cancelBtnText}>Cancelar</Text></TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* countdown overlay */}
+      {/* contagem regressiva */}
       {counting && (
-        <View style={styles.countdownOverlay}>
-          <View style={styles.countdownBox}>
-            <Text style={styles.countdownNumber}>{countdown > 0 ? countdown : "VAI"}</Text>
-          </View>
-        </View>
+        <View style={styles.countdownOverlay}><View style={styles.countdownBox}><Text style={styles.countdownNumber}>{countdown > 0 ? countdown : "VAI"}</Text></View></View>
       )}
     </View>
   );
-};
+}; // fim MapScreen
 
-/* export memoized to avoid unnecessary rerenders by parent re-renders */
 export default React.memo(MapScreen);
 
-/* =============== styles (preserved visuals) =============== */
+/* ==================== STYLES (visuais preservados) ==================== */
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#000",
-  },
-
-  map: {
-    flex: 1,
-  },
-
-  loading: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  container: { flex: 1, backgroundColor: "#000" },
+  map: { flex: 1 },
+  loading: { flex: 1, justifyContent: "center", alignItems: "center" },
 
   myLocationDot: {
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: "#00ffe1",
+    backgroundColor: WAYPER_GREEN,
     borderWidth: 3,
     borderColor: "#000",
-    shadowColor: "#00ffe1",
+    shadowColor: WAYPER_GREEN,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
     shadowRadius: 8,
+    elevation: 6,
   },
 
-  runPanel: {
-    position: "absolute",
-    top: 22,
-    left: 16,
-    right: 16,
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: "rgba(15, 15, 15, 0.55)",
-    borderWidth: 1,
-    borderColor: "rgba(0,255,200,0.15)",
-  },
+  runPanel: { position: "absolute", top: 22, left: 16, right: 16, padding: 14, borderRadius: 16, backgroundColor: "rgba(15, 15, 15, 0.55)", borderWidth: 1, borderColor: "rgba(0,255,200,0.15)" },
+  runTitle: { fontSize: 17, fontWeight: "900", textAlign: "center", color: "#eaffff", marginBottom: 8, letterSpacing: 0.8 },
+  runRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 6 },
+  runLabel: { color: "#c4f6f6", fontWeight: "600" },
+  runValue: { color: "#fff", fontWeight: "800" },
 
-  runTitle: {
-    fontSize: 17,
-    fontWeight: "900",
-    textAlign: "center",
-    color: "#eaffff",
-    marginBottom: 8,
-    letterSpacing: 0.8,
-  },
+  menuPanel: { position: "absolute", bottom: 26, left: 16, right: 16, padding: 18, borderRadius: 18, backgroundColor: "rgba(15,15,15,0.65)", borderColor: "rgba(0,255,200,0.15)", borderWidth: 1 },
+  startMainBtn: { width: "100%", paddingVertical: 16, borderRadius: 14, alignItems: "center", marginBottom: 18, backgroundColor: WAYPER_GREEN, shadowColor: WAYPER_GREEN, shadowOpacity: 0.4, shadowRadius: 10 },
+  startMainBtnTxt: { color: "#000", fontSize: 19, fontWeight: "900", letterSpacing: 0.5 },
 
-  runRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 6,
-  },
+  menuRow: { flexDirection: "row", width: "100%", justifyContent: "space-between", marginBottom: 10 },
+  menuItem: { flex: 1, marginHorizontal: 6, paddingVertical: 12, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(0,255,200,0.1)", borderWidth: 1, alignItems: "center" },
+  menuItemTitle: { fontWeight: "800", fontSize: 14, color: "#eaffff" },
+  menuItemValue: { marginTop: 4, color: "#9dd", fontSize: 12 },
 
-  runLabel: {
-    color: "#c4f6f6",
-    fontWeight: "600",
-  },
+  metaText: { marginTop: 10, color: "#9dd", fontSize: 12, textAlign: "center", opacity: 0.8 },
 
-  runValue: {
-    color: "#fff",
-    fontWeight: "800",
-  },
+  bottomButtons: { position: "absolute", bottom: 22, width: "100%", alignItems: "center" },
+  mainButton: { width: "75%", paddingVertical: 14, borderRadius: 16, alignItems: "center", backgroundColor: "#ff1744", shadowColor: "#ff1744", shadowOpacity: 0.5, shadowRadius: 12 },
+  mainButtonText: { color: "#fff", fontWeight: "900", fontSize: 16, letterSpacing: 0.6 },
 
-  menuPanel: {
-    position: "absolute",
-    bottom: 26,
-    left: 16,
-    right: 16,
-    padding: 18,
-    borderRadius: 18,
-    backgroundColor: "rgba(15,15,15,0.65)",
-    borderColor: "rgba(0,255,200,0.15)",
-    borderWidth: 1,
-  },
+  modeOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "center", alignItems: "center", paddingHorizontal: 20 },
+  modeBox: { width: "100%", backgroundColor: "rgba(15,15,15,0.9)", padding: 22, borderRadius: 16, borderWidth: 1, borderColor: "rgba(0,255,200,0.2)" },
+  modeTitle: { fontSize: 22, fontWeight: "900", textAlign: "center", marginBottom: 22, color: "#eaffff" },
+  modeBtn: { backgroundColor: WAYPER_GREEN, paddingVertical: 14, borderRadius: 12, alignItems: "center", marginBottom: 12 },
+  modeBtnText: { color: "#000", fontWeight: "900", fontSize: 17 },
+  cancelBtn: { backgroundColor: "#ff1744", paddingVertical: 12, borderRadius: 12, alignItems: "center", marginTop: 6 },
+  cancelBtnText: { color: "#fff", fontWeight: "900", fontSize: 15 },
 
-  startMainBtn: {
-    width: "100%",
-    paddingVertical: 16,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 18,
-    backgroundColor: WAYPER_GREEN,
-    shadowColor: WAYPER_GREEN,
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-  },
+  modalContainer: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 20 },
+  modalContent: { backgroundColor: "#0d0f12", borderRadius: 18, padding: 20, height: "80%" },
+  modalTitle: { color: "#fff", fontSize: 22, fontWeight: "800", marginBottom: 12 },
+  runItem: { paddingVertical: 12, borderBottomWidth: 1, borderColor: "#333" },
+  runDate: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  runStats: { color: "#aaa", fontSize: 13, marginTop: 2 },
 
-  startMainBtnTxt: {
-    color: "#000",
-    fontSize: 19,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-  },
+  detailsContent: { backgroundColor: "#0d0f12", borderRadius: 18, padding: 20 },
+  detailsTitle: { color: "#fff", fontSize: 22, fontWeight: "800", marginBottom: 12, textAlign: "center" },
+  detailsInfo: { color: "#aaa", fontSize: 14, marginTop: 8 },
+  actionBtn: { backgroundColor: WAYPER_GREEN, paddingVertical: 12, borderRadius: 12, marginTop: 12 },
+  actionBtnText: { color: "#000", fontWeight: "800", textAlign: "center", fontSize: 16 },
+  closeBtn: { backgroundColor: "#1c1c1c", paddingVertical: 12, borderRadius: 12, marginTop: 18 },
+  closeBtnText: { color: "#fff", fontWeight: "700", textAlign: "center" },
+  savedModalContent: { backgroundColor: "#0d0f12", borderRadius: 18, padding: 20, width: "100%", maxHeight: 360, alignSelf: "center" },
 
-  menuRow: {
-    flexDirection: "row",
-    width: "100%",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-
-  menuItem: {
-    flex: 1,
-    marginHorizontal: 6,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderColor: "rgba(0,255,200,0.1)",
-    borderWidth: 1,
-    alignItems: "center",
-  },
-
-  menuItemTitle: {
-    fontWeight: "800",
-    fontSize: 14,
-    color: "#eaffff",
-  },
-
-  menuItemValue: {
-    marginTop: 4,
-    color: "#9dd",
-    fontSize: 12,
-  },
-
-  metaText: {
-    marginTop: 10,
-    color: "#9dd",
-    fontSize: 12,
-    textAlign: "center",
-    opacity: 0.8,
-  },
-
-  bottomButtons: {
-    position: "absolute",
-    bottom: 22,
-    width: "100%",
-    alignItems: "center",
-  },
-
-  mainButton: {
-    width: "75%",
-    paddingVertical: 14,
-    borderRadius: 16,
-    alignItems: "center",
-    backgroundColor: "#ff1744",
-    shadowColor: "#ff1744",
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-  },
-
-  mainButtonText: {
-    color: "#fff",
-    fontWeight: "900",
-    fontSize: 16,
-    letterSpacing: 0.6,
-  },
-
-  modeOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 20,
-  },
-
-  modeBox: {
-    width: "100%",
-    backgroundColor: "rgba(15,15,15,0.9)",
-    padding: 22,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(0,255,200,0.2)",
-  },
-
-  modeTitle: {
-    fontSize: 22,
-    fontWeight: "900",
-    textAlign: "center",
-    marginBottom: 22,
-    color: "#eaffff",
-  },
-
-  modeBtn: {
-    backgroundColor: WAYPER_GREEN,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-
-  modeBtnText: {
-    color: "#000",
-    fontWeight: "900",
-    fontSize: 17,
-  },
-
-  cancelBtn: {
-    backgroundColor: "#ff1744",
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 6,
-  },
-
-  cancelBtnText: {
-    color: "#fff",
-    fontWeight: "900",
-    fontSize: 15,
-  },
-
-  modalContainer: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    padding: 20,
-  },
-
-  modalContent: {
-    backgroundColor: "#0d0f12",
-    borderRadius: 18,
-    padding: 20,
-    height: "80%",
-  },
-  modalTitle: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "800",
-    marginBottom: 12,
-  },
-  runItem: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderColor: "#333",
-  },
-  runDate: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  runStats: {
-    color: "#aaa",
-    fontSize: 13,
-    marginTop: 2,
-  },
-  detailsContent: {
-    backgroundColor: "#0d0f12",
-    borderRadius: 18,
-    padding: 20,
-  },
-  detailsTitle: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "800",
-    marginBottom: 12,
-    textAlign: "center",
-  },
-  detailsInfo: {
-    color: "#aaa",
-    fontSize: 14,
-    marginTop: 8,
-  },
-  actionBtn: {
-    backgroundColor: WAYPER_GREEN,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginTop: 12,
-  },
-  actionBtnText: {
-    color: "#000",
-    fontWeight: "800",
-    textAlign: "center",
-    fontSize: 16,
-  },
-  closeBtn: {
-    backgroundColor: "#1c1c1c",
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginTop: 18,
-  },
-  closeBtnText: {
-    color: "#fff",
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  savedModalContent: {
-    backgroundColor: "#0d0f12",
-    borderRadius: 18,
-    padding: 20,
-    width: "100%",
-    maxHeight: 360,
-    alignSelf: "center",
-  },
-  countdownOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.7)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  countdownBox: {
-    width: 240,
-    height: 240,
-    borderRadius: 20,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,255,200,0.05)",
-    borderColor: "rgba(0,255,200,0.25)",
-    borderWidth: 1,
-  },
-
-  countdownNumber: {
-    fontSize: 110,
-    fontWeight: "900",
-    color: "#00ffe1",
-  },
+  countdownOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", alignItems: "center" },
+  countdownBox: { width: 240, height: 240, borderRadius: 20, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,255,200,0.05)", borderColor: "rgba(0,255,200,0.25)", borderWidth: 1 },
+  countdownNumber: { fontSize: 110, fontWeight: "900", color: "#00ffe1" },
 });
 

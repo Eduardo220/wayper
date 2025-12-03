@@ -24,6 +24,7 @@
     "expo": "~54.0.25",
     "expo-auth-session": "~7.0.9",
     "expo-background-fetch": "~14.0.8",
+    "expo-background-task": "~1.0.9",
     "expo-barcode-scanner": "^13.0.1",
     "expo-constants": "~18.0.10",
     "expo-crypto": "~15.0.7",

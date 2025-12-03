@@ -8,13 +8,11 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.wayper.app",
@@ -28,8 +26,12 @@
         ]
       }
     },
-
     "android": {
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDMEuHH1fq9qlGL6cfIK6jA9UvqD4YFS6Y"
+        }
+      },
       "package": "com.wayper.app",
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
@@ -53,7 +55,6 @@
       },
       "edgeToEdgeEnabled": true
     },
-
     "plugins": [
       "expo-web-browser",
       "expo-barcode-scanner",
@@ -62,13 +63,12 @@
         {
           "locationAlwaysAndWhenInUsePermission": "O Wayper precisa da sua localização mesmo em segundo plano para registrar corridas corretamente."
         }
-      ]
+      ],
+      "expo-background-task"
     ],
-
     "web": {
       "favicon": "./assets/favicon.png"
     },
-
     "extra": {
       "eas": {
         "projectId": "9fcacdf5-6972-47d9-81b9-19810cb93c3f"
