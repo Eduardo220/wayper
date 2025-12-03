@@ -154,7 +154,6 @@ export default function ProfileScreen() {
 
   firestoreListenerRef.current = onSnapshot(userRef, async (snap) => {
     if (!snap.exists()) return;
-    console.log("🔥 FIRESTORE MUDOU!");
 
     const data = snap.data();
     if (!mountedRef.current) return;

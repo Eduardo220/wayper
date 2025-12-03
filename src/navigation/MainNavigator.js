@@ -31,6 +31,7 @@ import RunDetailScreen from "../screens/Runs/RunDetailScreen";
 import ZoneDetailScreen from "../screens/Runs/ZoneDetailScreen";
 import DashboardScreen from "../screens/Runs/DashboardScreen";
 
+
 // Sync utils (auto-sync starter)
 import * as sync from "../utils/sync";
 
@@ -147,15 +148,13 @@ export default function MainNavigator() {
   async function handleLogout() {
     try {
       await signOut(auth);
-
-      navigation.reset({
-        index: 0,
-        routes: [{ name: "Login" }],
-      });
+      // ❌ NÃO navega manualmente
+      // O App.js já navega automático pro Login
     } catch (e) {
       console.log("Erro ao deslogar:", e);
     }
   }
+
 
   useEffect(() => {
     const loadUser = async () => {

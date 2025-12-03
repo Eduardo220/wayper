@@ -1,58 +1,119 @@
-import React, { useState } from "react";
+// LoginScreen.updated.js
+// Versão melhorada do LoginScreen
+// - Validações, mensagens amigáveis, proteção contra double-submit
+// - Suporte a login por email/senha e Google (expo-auth-session hook exposto pelo authService)
+// - Comentários em português e boas práticas de performance
+
+import React, { useCallback, useState, useEffect } from "react";
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  ActivityIndicator
+  ActivityIndicator,
+  Keyboard,
+  Alert,
+  Platform,
 } from "react-native";
-
-import { signInEmail, resetPassword } from "../../services/auth/authService";
 import Icon from "react-native-vector-icons/Feather";
+
+import {
+  signInEmail,
+  resetPassword,
+  useGoogleAuth,
+  signInWithGoogleAsync,
+} from "../../services/auth/authService";
+
+// regex simples para validar email (suficiente para UX)
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// mensagens padrão para mapeamento de erros firebase (pode ser estendido)
+const ERROR_MAP = {
+  "auth/invalid-email": "Formato de email inválido.",
+  "auth/user-not-found": "Usuário não encontrado. Verifique o email.",
+  "auth/wrong-password": "Senha incorreta.",
+  "auth/too-many-requests": "Muitas tentativas. Tente novamente mais tarde.",
+};
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  /* ============================================================
-     LOGIN
-     ============================================================ */
-  async function handleLogin() {
-    if (!email.trim() || !password.trim()) {
-      setError("Preenche esse troço direito, criatura.");
+  // Hook para Google (expo-auth-session) — vindo do authService
+  const [request, response, promptAsync] = useGoogleAuth();
+
+  useEffect(() => {
+    // quando o response do Google chegar, pegar o id_token e efetuar login
+    let mounted = true;
+    (async () => {
+      try {
+        if (response?.type === "success" && response.authentication?.idToken) {
+          setLoading(true);
+          setError("");
+          const idToken = response.authentication.idToken;
+          await signInWithGoogleAsync(idToken);
+          if (mounted) navigation.replace("Main");
+        } else if (response?.type === "error") {
+          setError("Falha no login com Google.");
+        }
+      } catch (e) {
+        setError("Erro ao logar com Google.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [response, navigation]);
+
+  const handleLogin = useCallback(async () => {
+    // protege contra múltiplos submits
+    if (loading) return;
+
+    // limpeza e validação básica
+    const mail = (email || "").trim().toLowerCase();
+    const pass = (password || "").trim();
+
+    if (!mail || !pass) {
+      setError("Preencha email e senha.");
+      return;
+    }
+    if (!EMAIL_REGEX.test(mail)) {
+      setError("Digite um e‑mail válido.");
       return;
     }
 
     try {
       setLoading(true);
       setError("");
+      Keyboard.dismiss();
 
-      await signInEmail(email.trim(), password);
+      await signInEmail(mail, pass);
 
+      // navega para tela principal substituindo a stack (não permite voltar ao login)
       navigation.replace("Main");
     } catch (err) {
-      let msg = "Email ou senha errado, animal.";
-
-      if (err.code === "auth/invalid-email") msg = "Esse email tá errado.";
-      if (err.code === "auth/user-not-found") msg = "Esse usuário nem existe.";
-      if (err.code === "auth/wrong-password") msg = "Senha errada, esperto.";
-
+      // tenta mapear erro conhecido
+      const msg = (err && (err.code && ERROR_MAP[err.code])) ? ERROR_MAP[err.code] : "Falha ao autenticar. Verifique suas credenciais.";
       setError(msg);
     } finally {
       setLoading(false);
     }
-  }
+  }, [email, password, loading, navigation]);
 
-  /* ============================================================
-     RESETAR SENHA
-     ============================================================ */
-  async function handleForgotPassword() {
-    if (!email.trim()) {
-      setError("Coloca o email, jumento.");
+  const handleForgotPassword = useCallback(async () => {
+    if (loading) return;
+
+    const mail = (email || "").trim().toLowerCase();
+    if (!mail) {
+      setError("Coloque seu email para receber o link.");
+      return;
+    }
+    if (!EMAIL_REGEX.test(mail)) {
+      setError("Digite um e‑mail válido.");
       return;
     }
 
@@ -60,27 +121,23 @@ export default function LoginScreen({ navigation }) {
       setLoading(true);
       setError("");
 
-      await resetPassword(email.trim());
-      setError("Pronto. Te mandei um email. Vai lá ler.");
+      await resetPassword(mail);
+
+      // feedback amigável
+      Alert.alert("Enviado", "Enviamos um email com instruções para resetar sua senha.");
     } catch (err) {
-      let msg = "Não consegui enviar essa merda.";
-
-      if (err.code === "auth/invalid-email")
-        msg = "Esse email tá errado, tenta digitar certo.";
-      if (err.code === "auth/user-not-found")
-        msg = "Esse email nem cadastro tem.";
-
+      const msg = (err && err.code === "auth/user-not-found") ? "Email não encontrado." : "Não conseguimos enviar o email. Tente novamente.";
       setError(msg);
     } finally {
       setLoading(false);
     }
-  }
+  }, [email, loading]);
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} accessible accessibilityLabel="Tela de login">
       <Text style={styles.title}>Entrar</Text>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {!!error && <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>}
 
       <TextInput
         placeholder="Email"
@@ -88,81 +145,86 @@ export default function LoginScreen({ navigation }) {
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
+        keyboardType="email-address"
+        textContentType="emailAddress"
+        returnKeyType="next"
+        onSubmitEditing={() => { /* foco no próximo campo */ }}
       />
 
-      <View style={styles.passwordContainer}>
+      <View style={styles.passwordContainer} accessible accessibilityLabel="campo senha">
         <TextInput
           placeholder="Senha"
           style={styles.passwordInput}
           value={password}
           onChangeText={setPassword}
           secureTextEntry={!showPassword}
+          textContentType="password"
+          returnKeyType="done"
+          onSubmitEditing={handleLogin}
         />
 
-        <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-          <Icon name={showPassword ? "eye-off" : "eye"} size={22} />
+        <TouchableOpacity
+          onPress={() => setShowPassword((v) => !v)}
+          accessibilityLabel={showPassword ? "Ocultar senha" : "Mostrar senha"}
+          accessibilityRole="button"
+          style={styles.iconButton}
+        >
+          <Icon name={showPassword ? "eye-off" : "eye"} size={20} />
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Login</Text>
-        )}
+      <TouchableOpacity
+        style={[styles.button, loading ? styles.buttonDisabled : null]}
+        onPress={handleLogin}
+        disabled={loading}
+        accessibilityRole="button"
+        accessibilityLabel="Entrar"
+      >
+        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Entrar</Text>}
       </TouchableOpacity>
 
-      <TouchableOpacity onPress={() => navigation.navigate("Register")}>
-        <Text style={styles.link}>Criar conta</Text>
-      </TouchableOpacity>
+      <View style={styles.row}>
+        <TouchableOpacity onPress={() => navigation.navigate("Register")} disabled={loading}>
+          <Text style={styles.link}>Criar conta</Text>
+        </TouchableOpacity>
 
-      <TouchableOpacity onPress={handleForgotPassword}>
-        <Text style={styles.forgot}>Esqueci minha senha</Text>
-      </TouchableOpacity>
+        <TouchableOpacity onPress={handleForgotPassword} disabled={loading}>
+          <Text style={styles.forgot}>Esqueci minha senha</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* botão de login com Google (se configurado) */}
+      <View style={{ marginTop: 20, alignItems: "center" }}>
+        <TouchableOpacity
+          onPress={() => {
+            // caso o request esteja presente, abre o fluxo do Google
+            if (request) promptAsync();
+            else Alert.alert("Google Auth", "Autenticação Google não configurada.");
+          }}
+          style={styles.googleBtn}
+          disabled={loading}
+        >
+          <Text style={styles.googleTxt}>Entrar com Google</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 25,
-    justifyContent: "center",
-    backgroundColor: "#fff",
-  },
-  title: { fontSize: 28, fontWeight: "bold", marginBottom: 20 },
-  input: {
-    backgroundColor: "#eee",
-    padding: 12,
-    marginBottom: 10,
-    borderRadius: 8,
-  },
-  passwordContainer: {
-    backgroundColor: "#eee",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    marginBottom: 10,
-  },
-  passwordInput: {
-    flex: 1,
-    paddingVertical: 12,
-  },
-  button: {
-    backgroundColor: "#00b894",
-    padding: 15,
-    borderRadius: 8,
-    marginTop: 10,
-    alignItems: "center",
-  },
-  buttonText: { color: "#fff", textAlign: "center", fontWeight: "bold" },
-  link: {
-    textAlign: "center",
-    marginTop: 15,
-    color: "#00b894",
-    fontWeight: "600",
-  },
-  forgot: { textAlign: "center", marginTop: 10, color: "#555" },
-  error: { color: "red", marginBottom: 10 },
+  container: { flex: 1, padding: 20, justifyContent: "center", backgroundColor: "#fff" },
+  title: { fontSize: 28, fontWeight: "700", marginBottom: 20 },
+  input: { backgroundColor: "#f5f6fb", padding: 12, marginBottom: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e6e9f0" },
+  passwordContainer: { backgroundColor: "#f5f6fb", flexDirection: "row", alignItems: "center", paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e6e9f0", marginBottom: 12 },
+  passwordInput: { flex: 1, paddingVertical: 12 },
+  iconButton: { padding: 8 },
+  button: { backgroundColor: "#00b894", padding: 14, borderRadius: 10, alignItems: "center" },
+  buttonDisabled: { opacity: 0.7 },
+  buttonText: { color: "#fff", fontWeight: "700" },
+  link: { color: "#00b894", fontWeight: "600" },
+  forgot: { color: "#777" },
+  row: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
+  error: { color: "#c62828", marginBottom: 10 },
+  googleBtn: { backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: "#ddd" },
+  googleTxt: { color: "#444" },
 });
