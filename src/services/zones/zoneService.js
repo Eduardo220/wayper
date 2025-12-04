@@ -34,10 +34,13 @@ export async function syncZonesToFirestore(zones = []) {
         date: zone.date,
       });
     }
-    // marca como synced localmente (não salva automaticamente aqui)
-    return zones.map((z) => ({ ...z, synced: true }));
+
+    const updated = zones.map((z) => ({ ...z, synced: true }));
+    await saveLocalZones(updated);
+    return updated;
   } catch (err) {
     console.error("syncZonesToFirestore:", err);
     return zones;
   }
 }
+

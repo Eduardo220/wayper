@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import {
   View,
   Text,
@@ -6,56 +6,70 @@ import {
   StyleSheet,
   TouchableOpacity,
 } from "react-native";
+
 import {
   DrawerContentScrollView,
   DrawerItemList,
 } from "@react-navigation/drawer";
+
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { MotiView, MotiText } from "moti";
-import { colors } from "../theme/colors";
 
-
-export default function CustomDrawer(props) {
+export default memo(function CustomDrawer(props) {
   const user = props.user || {};
 
-  const name = user.name ?? user.displayName ?? "Usuário";
-  const avatar = user.photoURL ?? user.avatar ?? "https://i.pravatar.cc/150?img=1";
-  const level = user.level ?? 1;
-  const xp = user.xp ?? 0;
-  const nextXP = user.nextLevelXP ?? 1000;
-  const area = user.area ?? 0;
+  const name =
+    user.name ||
+    user.displayName ||
+    user.username ||
+    user.email?.split("@")[0] ||
+    "Usuário";
 
-  const progress = Math.min((xp / nextXP) * 100, 100);
+  const avatar =
+    user.photoURL ||
+    user.avatar ||
+    "https://i.pravatar.cc/150?u=wayper_default";
+
+  const level = Number(user.level) || 1;
+  const xp = Number(user.xp) || 0;
+  const nextXP = Number(user.nextLevelXP) || 1000;
+  const area = Number(user.area) || 0;
+
+  const progress = Math.max(
+    0,
+    Math.min((xp / nextXP) * 100 || 0, 100)
+  );
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#0b0d10" }}>
-      {/* HEADER PREMIUM */}
-      <LinearGradient
-        colors={["#13161a", "#0d0f12"]}
-        style={styles.header}
-      >
+    <View style={styles.container}>
+      {/* HEADER */}
+      <LinearGradient colors={["#13161a", "#0d0f12"]} style={styles.header}>
+        
+        {/* AVATAR */}
         <MotiView
-          from={{ scale: 0.7, opacity: 0 }}
+          from={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", duration: 500 }}
+          transition={{ type: "spring", duration: 450 }}
         >
           <Image source={{ uri: avatar }} style={styles.avatar} />
         </MotiView>
 
+        {/* NOME */}
         <MotiText
-          from={{ opacity: 0, translateY: -5 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={{ delay: 200 }}
+          from={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 120 }}
           style={styles.name}
         >
           {name}
         </MotiText>
 
+        {/* LEVEL */}
         <MotiText
           from={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 300 }}
+          transition={{ delay: 200 }}
           style={styles.level}
         >
           Nível {level}
@@ -71,21 +85,22 @@ export default function CustomDrawer(props) {
               style={styles.progressFill}
             />
           </View>
-
           <Text style={styles.xpText}>
             {xp} / {nextXP} XP
           </Text>
         </View>
 
-        {/* ÁREA CONQUISTADA */}
+        {/* AREA */}
         <MotiView
-          from={{ opacity: 0, translateY: 8 }}
+          from={{ opacity: 0, translateY: 6 }}
           animate={{ opacity: 1, translateY: 0 }}
-          transition={{ delay: 400 }}
+          transition={{ delay: 280 }}
           style={styles.areaRow}
         >
           <Ionicons name="map-outline" size={16} color="#ffffff" />
-          <Text style={styles.areaText}>{area} km² conquistados</Text>
+          <Text style={styles.areaText}>
+            {area} km² conquistados
+          </Text>
         </MotiView>
       </LinearGradient>
 
@@ -109,21 +124,27 @@ export default function CustomDrawer(props) {
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#0b0d10",
+  },
+
   header: {
     paddingTop: 45,
     paddingBottom: 30,
     alignItems: "center",
     borderBottomRightRadius: 25,
     borderBottomLeftRadius: 25,
+    overflow: "hidden",
   },
 
   avatar: {
     width: 95,
     height: 95,
-    borderRadius: 47,
+    borderRadius: 50,
     borderWidth: 2,
     borderColor: "#ffffff",
     marginBottom: 12,
@@ -158,7 +179,7 @@ const styles = StyleSheet.create({
 
   progressFill: {
     height: "100%",
-    backgroundColor: "#ff6b00",
+    backgroundColor: "#00e676",
     borderRadius: 6,
   },
 

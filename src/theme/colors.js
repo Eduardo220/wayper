@@ -33,4 +33,7 @@ export const colors = {
   gold: "#ffd700",
   silver: "#c0c0c0",
   bronze: "#cd7f32",
+
+  wayperGreen: "#00e676",
+
 };

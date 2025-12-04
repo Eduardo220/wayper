@@ -14,24 +14,61 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.wayper.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "O Wayper utiliza sua localização para registrar corridas e áreas conquistadas.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Sua localização em tempo real é essencial para registrar seu trajeto.",
+        "NSLocationAlwaysUsageDescription": "O Wayper precisa da sua localização para registrar seu percurso durante as corridas.",
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ]
+      }
     },
     "android": {
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDMEuHH1fq9qlGL6cfIK6jA9UvqD4YFS6Y"
+        }
+      },
       "package": "com.wayper.app",
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "VIBRATE",
+        "WAKE_LOCK",
+        "INTERNET"
+      ],
+      "foregroundService": {
+        "notificationTitle": "Wayper ativo",
+        "notificationBody": "Registrando sua rota.",
+        "notificationColor": "#00e676"
+      },
       "edgeToEdgeEnabled": true
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-web-browser",
-      "expo-barcode-scanner"
+      "expo-barcode-scanner",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "O Wayper precisa da sua localização mesmo em segundo plano para registrar corridas corretamente."
+        }
+      ],
+      "expo-background-task"
     ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
     "extra": {
       "eas": {
         "projectId": "9fcacdf5-6972-47d9-81b9-19810cb93c3f"

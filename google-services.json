@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "284903184569",
+    "project_id": "wayper-3ee61",
+    "storage_bucket": "wayper-3ee61.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:284903184569:android:65742bff032cd15a2f2368",
+        "android_client_info": {
+          "package_name": "com.wayper.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "284903184569-q3r2va555c2gt042guvuv1c1ikk89ebl.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOrJEpQuRem8YGPApmo80JXEs9THbTrzE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "284903184569-q3r2va555c2gt042guvuv1c1ikk89ebl.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
