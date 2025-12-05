@@ -1,148 +1,177 @@
-// APP.JS — WAYPER ULTIMATE PRO VERSION
+// APP.JS — WAYPER PRO EDITION (Optimized, Clean, Stable)
 import "react-native-reanimated";
-import React, { useEffect, useState } from "react";
-import { LogBox } from "react-native";
+
+import React, { useEffect, useState, useRef } from "react";
+import { LogBox, AppState } from "react-native";
 import * as FileSystem from "expo-file-system";
 
+// ===============================
+// NAVIGATION
+// ===============================
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
+// ===============================
+// FIREBASE AUTH
+// ===============================
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "./src/firebaseConfig";
 
+// Screens
 import LoginScreen from "./src/screens/Auth/LoginScreen";
 import RegisterScreen from "./src/screens/Auth/RegisterScreen";
 import MainNavigator from "./src/navigation/MainNavigator";
 
-// === Sync (Ultimate Pro Sync) === //
+// Utilities
 import * as Sync from "./src/utils/sync";
 
-// ===========================================
-//  OPTIONAL SENTRY INIT (auto-detect)
-// ===========================================
+// ===============================
+//  SENTRY WRAPPED + SAFE INIT
+// ===============================
 let Sentry = null;
 try {
-  // eslint-disable-next-line global-require
   Sentry = require("@sentry/react-native");
-  if (Sentry && Sentry.init) {
-    Sentry.init({
-      dsn: "YOUR_DSN_HERE", // Troque para seu DSN real
-      tracesSampleRate: 1.0,
-      environment: "production",
-    });
-  }
-} catch (e) {
+  Sentry?.init?.({
+    dsn: "YOUR_DSN_HERE",
+    tracesSampleRate: 1.0,
+    environment: "production",
+  });
+} catch {
   Sentry = null;
 }
 
-// ===========================================
-//  CONFIG
-// ===========================================
-LogBox.ignoreAllLogs(); // ignora warns irrelevantes
+// ===============================
+//  REACT-QUERY + ASYNC STORAGE PERSIST
+// ===============================
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { persistQueryClient } from "@tanstack/react-query-persist-client";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
+
+// Presence Hook
+import usePresence from "./src/hooks/usePresence";
+
+// Ignore all warnings for production smoothness
+LogBox.ignoreAllLogs();
+
 const Stack = createNativeStackNavigator();
 const USE_AUTH = true;
-const logFile = FileSystem.documentDirectory + "wayper_errors.txt";
+const LOG_FILE = FileSystem.documentDirectory + "wayper_errors.txt";
 
-// ===========================================
-//  APP COMPONENT
-// ===========================================
+// ===============================
+// QUERY CLIENT (Optimized)
+// ===============================
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnReconnect: "always",
+      refetchOnWindowFocus: false,
+      staleTime: 10_000,
+    },
+  },
+});
+
+// Persist React Query cache
+const persister = createAsyncStoragePersister({ storage: AsyncStorage });
+
+persistQueryClient({
+  queryClient,
+  persister,
+});
+
+// ===============================
+// APP (PRO VERSION)
+// ===============================
 export default function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
 
-  /* ----------------------------------
-     Init Background Sync (ONE TIME)
-  ----------------------------------- */
-  useEffect(() => {
-    let mounted = true;
+  const appState = useRef(AppState.currentState);
 
-    async function initBackground() {
+  // Presence system – reacts to user ID
+  usePresence(user);
+
+  // ============================
+  // BACKGROUND SYNC
+  // ============================
+  useEffect(() => {
+    async function init() {
       try {
-        await Sync.registerBackgroundSyncTask(15 * 60); // 15min
-        if (Sentry) {
-          Sentry.addBreadcrumb({
-            message: "Background Sync Registered",
-            level: "info",
-          });
-        } else {
-          console.log("Background Sync Registered.");
-        }
+        await Sync.registerBackgroundSyncTask(15 * 60);
+        Sentry?.addBreadcrumb?.({
+          message: "Background Sync Registered",
+          level: "info",
+        });
       } catch (e) {
-        console.error("registerBackgroundSyncTask failed:", e);
+        console.error("Background sync failed:", e);
       }
     }
 
-    initBackground();
-
-    return () => {
-      mounted = false;
-    };
+    init();
   }, []);
 
-
-  /* ----------------------------------
-     LISTEN AUTH
-  ----------------------------------- */
+  // ============================
+  // AUTH STATE LISTENER
+  // ============================
   useEffect(() => {
     if (!USE_AUTH) {
       setAuthChecked(true);
       return;
     }
 
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser || null);
       setAuthChecked(true);
     });
 
     return unsub;
   }, []);
 
-  /* ----------------------------------
-     AVOID WHITE FLASH BEFORE AUTH READY
-  ----------------------------------- */
+  // ============================
+  // Avoid white flash — wait until auth is checked
+  // ============================
   if (!authChecked) return null;
 
-  /* ----------------------------------
-     UI
-  ----------------------------------- */
+  // ============================
+  // UI
+  // ============================
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {/* sem login obrigatório */}
-        {!USE_AUTH && (
-          <Stack.Screen name="Main" component={MainNavigator} />
-        )}
+    <QueryClientProvider client={queryClient}>
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {!USE_AUTH && <Stack.Screen name="Main" component={MainNavigator} />}
 
-        {/* logado */}
-        {USE_AUTH && user && (
-          <Stack.Screen name="Main" component={MainNavigator} />
-        )}
+          {USE_AUTH && user && (
+            <Stack.Screen name="Main" component={MainNavigator} />
+          )}
 
-        {/* deslogado */}
-        {USE_AUTH && !user && (
-          <>
-            <Stack.Screen name="Login" component={LoginScreen} />
-            <Stack.Screen name="Register" component={RegisterScreen} />
-          </>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+          {USE_AUTH && !user && (
+            <>
+              <Stack.Screen name="Login" component={LoginScreen} />
+              <Stack.Screen name="Register" component={RegisterScreen} />
+            </>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+    </QueryClientProvider>
   );
 }
 
-/* ============================================================
-   LOG DE ERROS EM ARQUIVO (EVOLUÍDO)
-   ============================================================ */
+// =======================================================================
+// ADVANCED ERROR LOGGING SYSTEM
+// =======================================================================
 async function saveErrorToFile(prefix, err, info) {
   try {
     const timestamp = new Date().toISOString();
+
     const msg =
       `\n\n[${timestamp}] ${prefix}\n` +
       `ERROR: ${err?.toString?.()}\n` +
       `STACK: ${err?.stack || "no stack"}\n` +
       (info ? `INFO: ${JSON.stringify(info)}\n` : "");
 
-    await FileSystem.writeAsStringAsync(logFile, msg, {
+    await FileSystem.writeAsStringAsync(LOG_FILE, msg, {
       encoding: FileSystem.Encoding.UTF8,
       append: true,
     });
@@ -152,30 +181,26 @@ async function saveErrorToFile(prefix, err, info) {
 }
 
 export async function getErrorLogFile() {
-  return logFile;
+  return LOG_FILE;
 }
 
-/* ============================================================
-   GLOBAL ERROR HANDLERS (JS + PROMISES)
-   ============================================================ */
+// =======================================================================
+// GLOBAL JS ERROR HANDLERS (SAFE + SENTRY)
+// =======================================================================
 const originalHandler = ErrorUtils.getGlobalHandler();
 
 ErrorUtils.setGlobalHandler((err, isFatal) => {
   saveErrorToFile("GLOBAL_ERROR", err, { isFatal });
 
-  if (originalHandler) originalHandler(err, isFatal);
+  originalHandler?.(err, isFatal);
 
-  if (Sentry && Sentry.captureException) {
-    Sentry.captureException(err, { extra: { isFatal } });
-  }
+  Sentry?.captureException?.(err, { extra: { isFatal } });
 });
 
 globalThis.onunhandledrejection = (event) => {
   saveErrorToFile("UNHANDLED_PROMISE", event.reason);
 
-  if (Sentry && Sentry.captureException) {
-    Sentry.captureException(event.reason, {
-      extra: { type: "UNHANDLED_PROMISE" },
-    });
-  }
+  Sentry?.captureException?.(event.reason, {
+    extra: { type: "UNHANDLED_PROMISE" },
+  });
 };
