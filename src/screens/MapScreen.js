@@ -774,25 +774,33 @@ const MapScreen = () => {
 
   // Se chegou aqui, garantimos que o app não ficará preso. Use location fallback se necessário.
   const safeLocation = location || DEFAULT_COORD;
+  if (!location) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color="#00e676" />
+        <Text style={{ color: "#fff", marginTop: 10 }}>Obtendo localização inicial…</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <View ref={mapCaptureRef} style={{ flex: 1 }}>
         <MapView
-          provider={PROVIDER_GOOGLE}
           ref={mapRef}
+          provider={PROVIDER_GOOGLE}
           style={styles.map}
           initialRegion={{
-            latitude: Number(safeLocation.latitude) || DEFAULT_COORD.latitude,
-            longitude: Number(safeLocation.longitude) || DEFAULT_COORD.longitude,
-            latitudeDelta: INITIAL_REGION_DELTA,
-            longitudeDelta: INITIAL_REGION_DELTA,
+            latitude: safeLocation.latitude,
+            longitude: safeLocation.longitude,
+            latitudeDelta: 0.001,
+            longitudeDelta: 0.001,
           }}
-          followsUserLocation={running}
           showsUserLocation={false}
-          zoomControlEnabled={true}
-          rotateEnabled={false}
-          pitchEnabled={false}
+          toolbarEnabled={false}
+          loadingEnabled={true}
+          loadingIndicatorColor="#00e676"
+          moveOnMarkerPress={false}
         >
           {showZones &&
             Array.isArray(polygons) &&

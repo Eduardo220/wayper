@@ -56,7 +56,6 @@
 
     "plugins": [
       "expo-web-browser",
-      "expo-barcode-scanner",
       [
         "expo-location",
         {

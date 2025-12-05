@@ -2,13 +2,14 @@ import React, { useEffect, useState } from "react";
 import { View, ActivityIndicator } from "react-native";
 
 import { createDrawerNavigator } from "@react-navigation/drawer";
-import { createStackNavigator } from "@react-navigation/stack";
+import { createNativeStackNavigator } from "@react-navigation/native-stack"; // ✅ CORRETO
 import { useNavigation } from "@react-navigation/native";
 
 import { auth, db } from "../firebaseConfig";
 import { doc, getDoc } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 
+// Screens
 import MapScreen from "../screens/MapScreen";
 import RankingScreen from "../screens/RankingScreen";
 import ProfileScreen from "../screens/ProfileScreen";
@@ -25,22 +26,20 @@ import ClanChatScreen from "../screens/Clan/ClanChatScreen";
 
 import CustomDrawer from "../components/CustomDrawer";
 
-// NEW: Runs / Corridas / Dashboard
+// RUNS
 import CorridasScreen from "../screens/Runs/CorridasScreen";
 import RunDetailScreen from "../screens/Runs/RunDetailScreen";
 import ZoneDetailScreen from "../screens/Runs/ZoneDetailScreen";
 import DashboardScreen from "../screens/Runs/DashboardScreen";
 
-
-// Sync utils (auto-sync starter)
+// Sync background
 import * as sync from "../utils/sync";
 
 const Drawer = createDrawerNavigator();
-const Stack = createStackNavigator();
+const Stack = createNativeStackNavigator(); // ✅ AQUI
 
 /* ============================================================
    STACK: AMIGOS
-   (kept as-is, small reformat)
    ============================================================ */
 function FriendsStack() {
   return (
@@ -49,24 +48,11 @@ function FriendsStack() {
         headerStyle: { backgroundColor: "#0d0f12" },
         headerTintColor: "#fff",
         headerTitleStyle: { fontWeight: "900", fontSize: 20 },
-        cardStyle: { backgroundColor: "#0b0d10" },
       }}
     >
-      <Stack.Screen
-        name="FriendsHome"
-        component={FriendsScreen}
-        options={{ title: "Amigos" }}
-      />
-      <Stack.Screen
-        name="FriendProfile"
-        component={FriendProfileScreen}
-        options={{ title: "Perfil" }}
-      />
-      <Stack.Screen
-        name="FriendRuns"
-        component={FriendRunsScreen}
-        options={{ title: "Atividades" }}
-      />
+      <Stack.Screen name="FriendsHome" component={FriendsScreen} options={{ title: "Amigos" }} />
+      <Stack.Screen name="FriendProfile" component={FriendProfileScreen} options={{ title: "Perfil" }} />
+      <Stack.Screen name="FriendRuns" component={FriendRunsScreen} options={{ title: "Atividades" }} />
     </Stack.Navigator>
   );
 }
@@ -83,29 +69,15 @@ function ClanStack() {
         headerTitleStyle: { fontWeight: "900", fontSize: 20 },
       }}
     >
-      <Stack.Screen
-        name="ClansHome"
-        component={ClansScreen}
-        options={{ title: "Clãs" }}
-      />
-      <Stack.Screen
-        name="ClanDetail"
-        component={ClanDetailScreen}
-        options={{ title: "Detalhes do Clã" }}
-      />
-      <Stack.Screen
-        name="ClanChat"
-        component={ClanChatScreen}
-        options={{ title: "Chat do Clã" }}
-      />
+      <Stack.Screen name="ClansHome" component={ClansScreen} options={{ title: "Clãs" }} />
+      <Stack.Screen name="ClanDetail" component={ClanDetailScreen} options={{ title: "Detalhes do Clã" }} />
+      <Stack.Screen name="ClanChat" component={ClanChatScreen} options={{ title: "Chat do Clã" }} />
     </Stack.Navigator>
   );
 }
 
 /* ============================================================
-   STACK: RUNS (Corridas)
-   - Single entry point "Corridas" that contains the list and details
-   - CorridasScreen is initial screen, RunDetail / ZoneDetail reachable via navigation.navigate
+   STACK: CORRIDAS
    ============================================================ */
 function RunsStack() {
   return (
@@ -114,32 +86,17 @@ function RunsStack() {
         headerStyle: { backgroundColor: "#0d0f12" },
         headerTintColor: "#fff",
         headerTitleStyle: { fontWeight: "900", fontSize: 20 },
-        cardStyle: { backgroundColor: "#0b0d10" },
       }}
     >
-      <Stack.Screen
-        name="CorridasHome"
-        component={CorridasScreen}
-        options={{ title: "Corridas" }}
-      />
-      <Stack.Screen
-        name="RunDetail"
-        component={RunDetailScreen}
-        options={{ title: "Detalhes da Corrida" }}
-      />
-      <Stack.Screen
-        name="ZoneDetail"
-        component={ZoneDetailScreen}
-        options={{ title: "Detalhes da Zona" }}
-      />
+      <Stack.Screen name="CorridasHome" component={CorridasScreen} options={{ title: "Corridas" }} />
+      <Stack.Screen name="RunDetail" component={RunDetailScreen} options={{ title: "Detalhes da Corrida" }} />
+      <Stack.Screen name="ZoneDetail" component={ZoneDetailScreen} options={{ title: "Detalhes da Zona" }} />
     </Stack.Navigator>
   );
 }
 
 /* ============================================================
-   MAIN NAVIGATOR (Drawer)
-   - Enhanced: includes Corridas (RunsStack) and Dashboard
-   - Starts auto-sync in background once user loaded
+   MAIN DRAWER NAVIGATOR
    ============================================================ */
 export default function MainNavigator() {
   const navigation = useNavigation();
@@ -148,13 +105,11 @@ export default function MainNavigator() {
   async function handleLogout() {
     try {
       await signOut(auth);
-      // ❌ NÃO navega manualmente
-      // O App.js já navega automático pro Login
+      // Navegação automática já é tratada no App.js
     } catch (e) {
       console.log("Erro ao deslogar:", e);
     }
   }
-
 
   useEffect(() => {
     const loadUser = async () => {
@@ -172,19 +127,15 @@ export default function MainNavigator() {
     loadUser();
   }, []);
 
-  // start background auto-sync when navigator mounts and userData resolved
   useEffect(() => {
     if (!userData) return;
     try {
-      // startAutoSync is optional in sync module; guard it
       if (typeof sync.startAutoSync === "function") {
-        sync.startAutoSync(); // default interval inside util (e.g. 5 minutes)
+        sync.startAutoSync();
       }
     } catch (e) {
       console.warn("startAutoSync failed", e);
     }
-    // don't stop on unmount automatically here — sync util exposes stopAutoSync()
-    // if you want to stop when leaving, call sync.stopAutoSync()
   }, [userData]);
 
   if (!userData) {
@@ -219,52 +170,13 @@ export default function MainNavigator() {
         <CustomDrawer {...props} user={userData} onSignOut={handleLogout} />
       )}
     >
-      {/* Map */}
-      <Drawer.Screen
-        name="Mapa"
-        component={MapScreen}
-        options={{ title: "Mapa" }}
-      />
-
-      {/* Corridas stack (single drawer entry that contains list + details) */}
-      <Drawer.Screen
-        name="Corridas"
-        component={RunsStack}
-        options={{ title: "Corridas" }}
-      />
-
-      {/* Dashboard (global stats) */}
-      <Drawer.Screen
-        name="Dashboard"
-        component={DashboardScreen}
-        options={{ title: "Dashboard" }}
-      />
-
-      {/* Profile & Ranking remain */}
-      <Drawer.Screen
-        name="Perfil"
-        component={ProfileScreen}
-        options={{ title: "Meu Perfil" }}
-      />
-
-      <Drawer.Screen
-        name="Ranking"
-        component={RankingScreen}
-        options={{ title: "Ranking" }}
-      />
-
-      {/* Friends & Clans as nested stacks */}
-      <Drawer.Screen
-        name="Amigos"
-        component={FriendsStack}
-        options={{ title: "Amigos" }}
-      />
-
-      <Drawer.Screen
-        name="Clans"
-        component={ClanStack}
-        options={{ title: "Clãs" }}
-      />
+      <Drawer.Screen name="Mapa" component={MapScreen} options={{ title: "Mapa" }} />
+      <Drawer.Screen name="Corridas" component={RunsStack} options={{ title: "Corridas" }} />
+      <Drawer.Screen name="Dashboard" component={DashboardScreen} options={{ title: "Dashboard" }} />
+      <Drawer.Screen name="Perfil" component={ProfileScreen} options={{ title: "Meu Perfil" }} />
+      <Drawer.Screen name="Ranking" component={RankingScreen} options={{ title: "Ranking" }} />
+      <Drawer.Screen name="Amigos" component={FriendsStack} options={{ title: "Amigos" }} />
+      <Drawer.Screen name="Clans" component={ClanStack} options={{ title: "Clãs" }} />
     </Drawer.Navigator>
   );
 }
