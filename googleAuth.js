@@ -1,9 +1,9 @@
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import { useEffect } from 'react';
-import { auth } from '../firebaseConfig';
+import { auth } from './src/firebaseConfig';
 import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
-import { createUserIfNotExists } from '../services/firestore/userService';
+import { createUserIfNotExists } from './src/services/userService';
 
 WebBrowser.maybeCompleteAuthSession();
 

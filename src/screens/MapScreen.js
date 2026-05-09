@@ -24,6 +24,7 @@ import { getDistance } from "../utils/geo";
 import zones from "../utils/zones";
 import sync from "../utils/sync";
 import xpService from "../services/xp/xpService";
+import { updateProfileStats } from "../services/profile/profileService";
 import myLocationIcon from "../../assets/icons/my_location_android.png";
 import KalmanFilter2D from "../utils/kalman";
 
@@ -495,9 +496,10 @@ const MapScreen = () => {
           timerRef.current = null;
         }
 
+        const bufferedPath = routeState.concat(routeBufferRef.current || []);
         flushRouteBufferToState();
 
-        const path = sanitizePath(routeState);
+        const path = sanitizePath(bufferedPath.length ? bufferedPath : routeState);
         const totalDistance = distanceRef.current;
 
         const hasValidRun = path.length > 1 && totalDistance > 1 && timeSec > 2;
@@ -512,12 +514,17 @@ const MapScreen = () => {
           duration: timeSec,
           avgSpeed: totalDistance && timeSec ? Number(((totalDistance / 1000) / (timeSec / 3600)).toFixed(2)) : 0,
           date: new Date().toISOString(),
+          mode: mode || "free",
+          area: 0,
+          zoneId: null,
         };
 
         if (mode === "zones") {
           try {
             const savedZone = await sync.createAndSaveZoneFromPath?.(path, { simplifyTolerance: 0.0006, smoothIterations: 0, maxPoints: 300, compressMax: 300 });
             if (savedZone) {
+              runData.area = Number(savedZone.area || 0);
+              runData.zoneId = savedZone.id || null;
               setPolygons((prev) => [{ coords: savedZone.coords, area: savedZone.area, id: savedZone.id, date: savedZone.date }, ...(Array.isArray(prev) ? prev : [])]);
             }
           } catch (e) {
@@ -528,6 +535,8 @@ const MapScreen = () => {
               if (Array.isArray(built) && built.length >= 3 && area >= ZONE_MIN_AREA_M2) {
                 const z = await sync.saveLocalZone?.({ coords: built, area, date: new Date().toISOString() });
                 sync.scheduleZonesSync?.();
+                runData.area = Number(z?.area || area || 0);
+                runData.zoneId = z?.id || null;
                 setPolygons((prev) => [{ coords: z.coords, area: z.area, id: z.id, date: z.date }, ...(Array.isArray(prev) ? prev : [])]);
               }
             } catch (fallbackErr) {
@@ -957,12 +966,39 @@ const MapScreen = () => {
               const distanceMeters = Number(normalized.distance) || 0;
               const durationSec = Number(normalized.duration) || 0;
               const areaM2 = Number(normalized.area) || 0;
-              const result = await xpService.awardRunXP?.({ distance: distanceMeters, duration: durationSec, area: areaM2 });
-              debug("XP applied for run:", result?.applied, result?.xpBreakdown);
+              const durationMs = durationSec * 1000;
+              const result = await xpService.awardRunXP?.({
+                path: normalized.path,
+                distanceMeters,
+                durationMs,
+                area: 0,
+              });
+
+              if (areaM2 > 0) {
+                await xpService.awardZoneXP?.({
+                  id: normalized.zoneId || saved?.zoneId || saved?.id,
+                  area: areaM2,
+                });
+              }
+
+              debug("XP applied for run:", result?.xp || result?.applied, result?.computed);
             } catch (err) {
               debug("Erro ao aplicar XP via xpService:", err);
               try {
-                await updateProfileStats?.({ distance: payload.distance, duration: payload.duration, area: payload.area, isZone: false, meta: { runId: saved?.id } });
+                await updateProfileStats?.({
+                  distance: payload.distance,
+                  duration: payload.duration,
+                  area: 0,
+                  isZone: false,
+                });
+                if (Number(payload.area || 0) > 0) {
+                  await updateProfileStats?.({
+                    distance: 0,
+                    duration: 0,
+                    area: payload.area,
+                    isZone: true,
+                  });
+                }
               } catch (e) {
                 debug("Fallback updateProfileStats failed", e);
               }

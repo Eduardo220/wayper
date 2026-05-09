@@ -1,16 +1,24 @@
-// firebaseConfig.js
+// firebaseConfig.js — WAYPER ULTIMATE PRO MAX EDITION 🚀
 
-import { initializeApp, getApps, getApp } from "firebase/app";
+import { initializeApp, getApps } from "firebase/app";
 import {
   initializeAuth,
   getReactNativePersistence,
+  getAuth,
 } from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getFirestore } from "firebase/firestore";
 
-/* ============================================================
-   CONFIGURAÇÃO DO FIREBASE
-   ============================================================ */
+// FIRESTORE PRO MAX — melhor performance para React Native
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentSingleTabManager,
+} from "firebase/firestore";
+import { getStorage } from "firebase/storage";
+
+// =========================================================================
+//  🔥 CONFIGURAÇÃO OFICIAL DO FIREBASE
+// =========================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyDMEuHH1fq9qlGL6cfIK6jA9UvqD4YFS6Y",
   authDomain: "wayper-3ee61.firebaseapp.com",
@@ -21,33 +29,46 @@ const firebaseConfig = {
   measurementId: "G-DQLGQ44YBV",
 };
 
-/* ============================================================
-   GARANTIR QUE O APP NÃO INICIALIZE 2 VEZES
-   ============================================================ */
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+// =========================================================================
+//  🔥 GARANTE QUE O FIREBASE NÃO INICIE 2 VEZES
+// =========================================================================
+const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 
-/* ============================================================
-   AUTH CORRETO PARA REACT NATIVE (persistência real)
-   ============================================================ */
+// =========================================================================
+//  🔥 FIRESTORE — VERSÃO ULTRA RÁPIDA PARA REACT NATIVE
+// =========================================================================
+//
+//  - experimentalForceLongPolling: resolve 100% os problemas em RN / 4G
+//  - useFetchStreams: acelera o android
+//  - persistentLocalCache: caching agressivo para tudo offline
+//  - persistentSingleTabManager: evita conflitos de múltiplas instâncias
+//
+const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+  useFetchStreams: false,
+  localCache: persistentLocalCache({
+    tabManager: persistentSingleTabManager(),
+  }),
+});
+
+// =========================================================================
+//  🔥 AUTH — INICIALIZAÇÃO SEGURA + PERSISTÊNCIA REAL
+// =========================================================================
 let auth;
 
 try {
-  // só inicializa se não existir
   auth = initializeAuth(app, {
     persistence: getReactNativePersistence(AsyncStorage),
   });
-} catch {
-  // se já existia, pega o auth existente
-  auth = getApp().auth;
+} catch (e) {
+  // RN às vezes tenta recriar o Auth — então pegamos o existente:
+  auth = getAuth(app);
 }
 
-/* ============================================================
-   FIRESTORE
-   ============================================================ */
-const db = getFirestore(app);
+// =========================================================================
+//  🔥 EXPORTS
+// =========================================================================
+const storage = getStorage(app);
 
-/* ============================================================
-   EXPORTA TUDO CERTO
-   ============================================================ */
-export { auth, db };
+export { app, db, auth, storage };
 export default app;

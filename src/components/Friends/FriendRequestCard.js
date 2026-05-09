@@ -1,7 +1,7 @@
 // src/components/FriendRequestCard.js
 import React, { memo } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { colors } from "../theme";
+import { colors } from "../../theme";
 
 function FriendRequestCard({ request, onAccept, onReject, isOutgoing }) {
   const who = isOutgoing ? request.to : request.from;

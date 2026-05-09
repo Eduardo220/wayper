@@ -33,8 +33,8 @@ export default memo(function CustomDrawer(props) {
 
   const level = Number(user.level) || 1;
   const xp = Number(user.xp) || 0;
-  const nextXP = Number(user.nextLevelXP) || 1000;
-  const area = Number(user.area) || 0;
+  const nextXP = Number(user.nextLevelXp || user.nextLevelXP) || 1000;
+  const area = Number(user.totalArea ?? user.area) || 0;
 
   const progress = Math.max(
     0,
@@ -99,7 +99,7 @@ export default memo(function CustomDrawer(props) {
         >
           <Ionicons name="map-outline" size={16} color="#ffffff" />
           <Text style={styles.areaText}>
-            {area} km² conquistados
+            {area >= 1e6 ? `${(area / 1e6).toFixed(2)} km²` : `${Math.round(area)} m²`} conquistados
           </Text>
         </MotiView>
       </LinearGradient>

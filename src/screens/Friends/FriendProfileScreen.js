@@ -15,6 +15,12 @@ import { db } from "../../firebaseConfig";
 import MedalsWidget from "../../components/MedalsWidget";
 import { colors } from "../../theme/colors";
 
+const formatArea = (m2 = 0) => {
+  const safe = Number(m2 || 0);
+  if (safe >= 1e6) return `${(safe / 1e6).toFixed(2)} km²`;
+  return `${Math.round(safe)} m²`;
+};
+
 export default function FriendProfileScreen({ route, navigation }) {
   const friendId = route?.params?.friendId;
   const [friend, setFriend] = useState(null);
@@ -80,6 +86,21 @@ export default function FriendProfileScreen({ route, navigation }) {
     );
   }
 
+  if (friend.isPrivate || friend.profileVisibility === "private") {
+    return (
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <Image source={{ uri: friend.avatar || friend.photoURL || "https://i.pravatar.cc/150" }} style={styles.avatar} />
+          <View style={{ flex: 1, marginLeft: 14 }}>
+            <Text style={styles.name}>{friend.name || friend.username}</Text>
+            <Text style={styles.username}>@{friend.username}</Text>
+            <Text style={styles.small}>Perfil privado</Text>
+          </View>
+        </View>
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
 
@@ -87,7 +108,7 @@ export default function FriendProfileScreen({ route, navigation }) {
       <View style={styles.header}>
         <Image
           source={{
-            uri: friend.avatar || "https://i.pravatar.cc/150",
+            uri: friend.avatar || friend.photoURL || "https://i.pravatar.cc/150",
           }}
           style={styles.avatar}
         />
@@ -125,7 +146,7 @@ export default function FriendProfileScreen({ route, navigation }) {
         <View style={styles.rowBetween}>
           <Text style={styles.small}>Área total</Text>
           <Text style={styles.smallBold}>
-            {(topStats.totalArea || 0).toFixed(2)} km²
+            {formatArea(topStats.totalArea || 0)}
           </Text>
         </View>
       </View>
@@ -170,7 +191,7 @@ function FriendRunsPreview({ friendId, openFull }) {
 
         const arr = [];
         snaps.forEach((d) => arr.push({ id: d.id, ...d.data() }));
-        arr.sort((a, b) => b.date - a.date);
+        arr.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
         if (mounted) setRuns(arr.slice(0, 3));
       } catch {
@@ -193,7 +214,7 @@ function FriendRunsPreview({ friendId, openFull }) {
           </Text>
 
           <Text style={styles.small}>
-            {(r.distance / 1000)?.toFixed(2)} km • {formatTime(r.time)}
+            {(r.distance / 1000)?.toFixed(2)} km • {formatTime(r.duration)}
           </Text>
         </View>
       ))}

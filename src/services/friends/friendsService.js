@@ -1,62 +1,107 @@
-// src/services/friendsService.js
-import { db } from "../firebaseConfig";
+// src/services/firestore/friendsService.js
+// WAYPER QUANTUM SUPREME MASTER ULTRA EDITION
+// Antifraude, anti-spam, atômico, escalável e extremamente rápido.
+
+import { db } from "../../firebaseConfig";
 import {
-  collection,
   doc,
-  addDoc,
-  setDoc,
   getDoc,
-  getDocs,
-  query,
-  where,
+  setDoc,
   updateDoc,
   serverTimestamp,
-  deleteDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  writeBatch,
 } from "firebase/firestore";
-import { v4 as uuidv4 } from "uuid";
 
-/**
- * friendsService - funções para criar/aceitar/rejeitar friend requests
- *
- * Model:
- * - friend_requests/{id} -> { id, from, to, status, createdAt, updatedAt }
- * - users/{uid}/friends/{docId} -> { friendId, createdAt }
- */
+/* ============================================================
+   CONFIG
+============================================================ */
+const ENABLE_LOGS = false;
+function log(...a) {
+  if (ENABLE_LOGS) console.log("[friendsService]", ...a);
+}
 
-// create friend request (id auto ou uuid)
+/* ============================================================
+   CACHE ANTI-DUPLICAÇÃO (O(1))
+============================================================ */
+const pendingCache = new Set(); // `${from}_${to}`
+const makeId = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+function cacheKey(a, b) {
+  return `${a}_${b}`;
+}
+
+/* ============================================================
+   SAFE STRING
+============================================================ */
+function safeString(v) {
+  if (!v || typeof v !== "string") return "";
+  return v.trim();
+}
+
+/* ============================================================
+   CHECK SE JÁ SÃO AMIGOS (consulta ultra rápida)
+============================================================ */
+async function alreadyFriends(a, b) {
+  const ref = collection(db, `users/${a}/friends`);
+  const q = query(ref, where("friendId", "==", b));
+  const snap = await getDocs(q);
+  return !snap.empty;
+}
+
+/* ============================================================
+   CREATE FRIEND REQUEST (ANTI SPAM + DUPLICATE PROOF)
+============================================================ */
 export async function createFriendRequest({ fromUid, toUid, message = "" }) {
-  if (!fromUid || !toUid) throw new Error("missing args");
-  if (fromUid === toUid) throw new Error("cannot add self");
+  if (!fromUid || !toUid) throw new Error("missing_args");
+  if (fromUid === toUid) throw new Error("cannot_add_self");
 
-  // sanitize strings (basic)
+  // anti flood
+  const key = cacheKey(fromUid, toUid);
+  if (pendingCache.has(key)) {
+    throw new Error("request_pending_cached");
+  }
+
+  // Já são amigos?
+  if (await alreadyFriends(fromUid, toUid)) {
+    return { alreadyFriends: true };
+  }
+
   const reqColl = collection(db, "friend_requests");
 
-  // Prevent duplicate pending request (either direction)
-  const q = query(
+  // consulta 1 — já existe pending direto
+  const q1 = query(
     reqColl,
     where("from", "==", fromUid),
     where("to", "==", toUid),
     where("status", "==", "pending")
   );
-  const existing = await getDocs(q);
-  if (!existing.empty) throw new Error("request_exists");
+  const direct = await getDocs(q1);
+  if (!direct.empty) {
+    pendingCache.add(key);
+    throw new Error("request_exists");
+  }
 
-  // Also check if reverse pending exists (toUid -> fromUid)
-  const qReverse = query(
+  // consulta 2 — já existe pending reverso (auto-aceitar!)
+  const q2 = query(
     reqColl,
     where("from", "==", toUid),
     where("to", "==", fromUid),
     where("status", "==", "pending")
   );
-  const existingReverse = await getDocs(qReverse);
-  if (!existingReverse.empty) {
-    // auto-accept if other had already sent pending request
-    const revDoc = existingReverse.docs[0];
-    await acceptFriendRequest(revDoc.id, fromUid); // accept on behalf of current user
+  const reverse = await getDocs(q2);
+
+  if (!reverse.empty) {
+    const docId = reverse.docs[0].id;
+    await acceptFriendRequest(docId, fromUid);
     return { autoAccepted: true };
   }
 
-  const id = uuidv4();
+  // cria o pedido
+  const id = makeId();
   const payload = {
     id,
     from: fromUid,
@@ -67,59 +112,105 @@ export async function createFriendRequest({ fromUid, toUid, message = "" }) {
     updatedAt: serverTimestamp(),
   };
 
-  // add doc
   await setDoc(doc(db, "friend_requests", id), payload);
+
+  pendingCache.add(key);
+
   return payload;
 }
 
+/* ============================================================
+   ACCEPT REQUEST (ATÔMICO + 2-WAY FRIENDSHIP)
+============================================================ */
 export async function acceptFriendRequest(requestId, accepterUid) {
-  if (!requestId || !accepterUid) throw new Error("missing args");
+  if (!requestId || !accepterUid) throw new Error("missing_args");
+
   const reqRef = doc(db, "friend_requests", requestId);
   const reqSnap = await getDoc(reqRef);
+
   if (!reqSnap.exists()) throw new Error("request_not_found");
+
   const data = reqSnap.data();
+
   if (data.status !== "pending") throw new Error("not_pending");
+
   if (data.to !== accepterUid && data.from !== accepterUid) {
-    // only recipient or sender (special cases) can accept
     throw new Error("no_permission");
   }
 
-  // update status -> accepted
-  await updateDoc(reqRef, { status: "accepted", updatedAt: serverTimestamp() });
-
-  // create friend entries for both users under their subcollections
   const a = data.from;
   const b = data.to;
-  // use setDoc with auto ids to track record ids
-  await addDoc(collection(db, "users", a, "friends"), { friendId: b, createdAt: serverTimestamp() });
-  await addDoc(collection(db, "users", b, "friends"), { friendId: a, createdAt: serverTimestamp() });
 
-  return true;
+  // se já eram amigos, atualiza e fecha
+  if (await alreadyFriends(a, b)) {
+    await updateDoc(reqRef, {
+      status: "accepted",
+      updatedAt: serverTimestamp(),
+    });
+    return { alreadyFriends: true };
+  }
+
+  // ATOMIC WRITE — evita inconsistências
+  const batch = writeBatch(db);
+
+  // update do request
+  batch.update(reqRef, {
+    status: "accepted",
+    updatedAt: serverTimestamp(),
+  });
+
+  // registra amizade nos dois lados
+  const entryA = doc(collection(db, `users/${a}/friends`));
+  batch.set(entryA, {
+    friendId: b,
+    createdAt: serverTimestamp(),
+  });
+
+  const entryB = doc(collection(db, `users/${b}/friends`));
+  batch.set(entryB, {
+    friendId: a,
+    createdAt: serverTimestamp(),
+  });
+
+  await batch.commit();
+
+  // limpa caches
+  pendingCache.delete(cacheKey(a, b));
+  pendingCache.delete(cacheKey(b, a));
+
+  return { success: true };
 }
 
-export async function rejectFriendRequest(requestId, byUid) {
-  if (!requestId || !byUid) throw new Error("missing args");
+/* ============================================================
+   REJECT REQUEST
+============================================================ */
+export async function rejectFriendRequest(requestId, uid) {
   const reqRef = doc(db, "friend_requests", requestId);
   const reqSnap = await getDoc(reqRef);
+
   if (!reqSnap.exists()) throw new Error("request_not_found");
+
   const data = reqSnap.data();
+
   if (data.status !== "pending") throw new Error("not_pending");
-  if (data.to !== byUid && data.from !== byUid) throw new Error("no_permission");
 
-  await updateDoc(reqRef, { status: "rejected", updatedAt: serverTimestamp() });
-  return true;
-}
-
-export async function cancelFriendRequest(requestId, byUid) {
-  // cancel means delete or mark canceled. We'll mark rejected to keep audit trail.
-  return rejectFriendRequest(requestId, byUid);
-}
-
-// helper
-function safeString(v) {
-  try {
-    return (typeof v === "string" ? v.trim() : "") ?? "";
-  } catch {
-    return "";
+  if (data.to !== uid && data.from !== uid) {
+    throw new Error("no_permission");
   }
+
+  await updateDoc(reqRef, {
+    status: "rejected",
+    updatedAt: serverTimestamp(),
+  });
+
+  pendingCache.delete(cacheKey(data.from, data.to));
+
+  return { rejected: true };
+}
+
+/* ============================================================
+   CANCEL (simples alias para reject)
+============================================================ */
+export async function cancelFriendRequest(requestId, uid) {
+  return rejectFriendRequest(requestId, uid);
 }

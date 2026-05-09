@@ -18,6 +18,12 @@ import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { colors } from "../../theme/colors";
 
+const formatArea = (m2 = 0) => {
+  const safe = Number(m2 || 0);
+  if (safe >= 1e6) return `${(safe / 1e6).toFixed(2)} km²`;
+  return `${Math.round(safe)} m²`;
+};
+
 export default function FriendRunsScreen({ route }) {
   const friendId = route?.params?.friendId;
   const PAGE_SIZE = 12;
@@ -133,11 +139,11 @@ ${body}
         <Text style={styles.date}>{new Date(item.date).toLocaleString()}</Text>
 
         <Text style={styles.small}>
-          {(item.distance / 1000).toFixed(2)} km • {formatTime(item.time)}
+          {(item.distance / 1000).toFixed(2)} km • {formatTime(item.duration)}
         </Text>
 
         <Text style={styles.small}>
-          Área: {(item.area || 0).toFixed(2)} km²
+          Área: {formatArea(item.area)}
         </Text>
       </View>
 

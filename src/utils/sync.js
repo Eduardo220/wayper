@@ -39,6 +39,7 @@ const MAX_RETRY_ATTEMPTS = 6;
 const MAX_BACKOFF_MS = 1000 * 60 * 15;
 const ROUTE_CAP = 5000;
 const BG_TASK_NAME = "WAYPER_BACKGROUND_SYNC_TASK";
+const AUTO_SYNC_INTERVAL_MS = 60 * 1000;
 
 // runtime guards
 let isSyncingRuns = false;
@@ -48,6 +49,7 @@ let isSyncingMedals = false;
 let debounceRunsTimer = null;
 let debounceZonesTimer = null;
 let debounceMedalsTimer = null;
+let autoSyncTimer = null;
 
 const RETRY_META_RUNS = "wayper:retry:runs";
 const RETRY_META_ZONES = "wayper:retry:zones";
@@ -164,6 +166,10 @@ export async function saveLocalRun(run = {}) {
       notes: run.notes || "",
       tags: Array.isArray(run.tags) ? run.tags : [],
       photoUri: run.photoUri || null,
+      mode: run.mode || run.type || "free",
+      zoneId: run.zoneId || null,
+      area: Number(run.area ?? 0),
+      visibility: run.visibility || "followers",
     };
     existing.unshift(normalized);
     const deduped = uniqueById(existing);
@@ -206,6 +212,7 @@ export async function saveLocalZone(zone = {}) {
       area: Number(zone.area ?? 0),
       date: zone.date || now,
       synced: !!zone.synced || false,
+      userId: zone.userId || auth?.currentUser?.uid || "offline",
     };
     existing.unshift(normalized);
     const deduped = uniqueById(existing);
@@ -354,22 +361,42 @@ export async function syncZonesToFirestore() {
         }))
         .slice(0, 5000);
 
+      const uid = auth?.currentUser?.uid || "offline";
       const payload = {
         id: zone.id,
-        userId: auth?.currentUser?.uid || "offline",
+        userId: uid,
         coords,
         area: Number(zone.area || 0),
         date: zone.date || new Date().toISOString(),
         createdAt: Timestamp.now(),
       };
 
-      const ref = doc(collection(db, "zones"));
-      batch.set(ref, payload);
+      batch.set(doc(db, "zones", zone.id), payload, { merge: true });
       opsInBatch++;
+
+      if (uid !== "offline") {
+        batch.set(doc(db, "users", uid, "zones", zone.id), payload, { merge: true });
+        batch.set(
+          doc(db, "activities", `zone_${uid}_${zone.id}`),
+          {
+            id: `zone_${uid}_${zone.id}`,
+            type: "zone",
+            userId: uid,
+            zoneId: zone.id,
+            area: Number(zone.area || 0),
+            description: `capturou ${Number(zone.area || 0).toFixed(0)} m²`,
+            visibility: "followers",
+            createdAt: Timestamp.now(),
+            timestamp: Timestamp.now(),
+          },
+          { merge: true }
+        );
+        opsInBatch += 2;
+      }
 
       zone.synced = true;
 
-      if (opsInBatch >= MAX_BATCH_WRITE) {
+      if (opsInBatch >= MAX_BATCH_WRITE - 4) {
         batches.push(batch);
         batch = writeBatch(db);
         opsInBatch = 0;
@@ -466,24 +493,62 @@ export async function syncRunsToFirestore() {
         }))
         .slice(0, 5000);
 
+      const uid = auth?.currentUser?.uid || "offline";
       const payload = {
         id: run.id,
-        userId: auth?.currentUser?.uid || "offline",
+        userId: uid,
         path,
         distance: Number(run.distance || 0),
         duration: Number(run.duration || 0),
         avgSpeed: Number(run.avgSpeed || 0),
+        area: Number(run.area || 0),
+        mode: run.mode || "free",
+        zoneId: run.zoneId || null,
+        name: run.name || "Corrida",
+        effort: Number(run.effort || 0),
+        mood: run.mood || "",
+        weather: run.weather || "",
+        notes: run.notes || "",
+        tags: Array.isArray(run.tags) ? run.tags : [],
+        photoUri: run.photoUri || null,
+        visibility: run.visibility || "followers",
         date: run.date || new Date().toISOString(),
         createdAt: Timestamp.now(),
       };
 
-      const ref = doc(collection(db, "runs"));
-      batch.set(ref, payload);
+      batch.set(doc(db, "runs", run.id), payload, { merge: true });
       opsInBatch++;
+
+      if (uid !== "offline") {
+        batch.set(doc(db, "users", uid, "runs", run.id), payload, { merge: true });
+        batch.set(
+          doc(db, "activities", `run_${uid}_${run.id}`),
+          {
+            id: `run_${uid}_${run.id}`,
+            type: "run",
+            userId: uid,
+            runId: run.id,
+            distance: Number(run.distance || 0),
+            duration: Number(run.duration || 0),
+            area: Number(run.area || 0),
+            mode: run.mode || "free",
+            name: run.name || "Corrida",
+            description:
+              run.mode === "zones" && Number(run.area || 0) > 0
+                ? `capturou uma area e correu ${(Number(run.distance || 0) / 1000).toFixed(2)} km`
+                : `correu ${(Number(run.distance || 0) / 1000).toFixed(2)} km`,
+            visibility: run.visibility || "followers",
+            createdAt: Timestamp.now(),
+            timestamp: Timestamp.now(),
+          },
+          { merge: true }
+        );
+        opsInBatch += 2;
+      }
 
       run.synced = true;
 
-      if (opsInBatch >= MAX_BATCH_WRITE) {
+      if (opsInBatch >= MAX_BATCH_WRITE - 4) {
         batches.push(batch);
         batch = writeBatch(db);
         opsInBatch = 0;
@@ -716,6 +781,24 @@ export async function syncAll() {
   ]);
 }
 
+export async function syncNow() {
+  return syncAll();
+}
+
+export function startAutoSync(intervalMs = AUTO_SYNC_INTERVAL_MS) {
+  if (autoSyncTimer) return;
+  syncAll().catch((e) => logError(e, { fn: "startAutoSync.initial" }));
+  autoSyncTimer = setInterval(() => {
+    syncAll().catch((e) => logError(e, { fn: "startAutoSync.tick" }));
+  }, intervalMs);
+}
+
+export function stopAutoSync() {
+  if (!autoSyncTimer) return;
+  clearInterval(autoSyncTimer);
+  autoSyncTimer = null;
+}
+
 // ----------------- Background sync task handler -----------------
 async function _bgSyncHandler() {
   try {
@@ -822,13 +905,16 @@ export default {
   scheduleRunsSync,
   scheduleZonesSync,
   syncAll,
+  syncNow,
+  startAutoSync,
+  stopAutoSync,
   // medals
   loadLocalMedals,
   saveLocalMedal,
   syncMedalsToFirestore,
   scheduleMedalsSync,
   getAllMedals,
-  // background
+  // background]
   registerBackgroundSyncTask,
   unregisterBackgroundSyncTask,
 };

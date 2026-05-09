@@ -1,7 +1,7 @@
 // src/hooks/useFriendsAdvanced.js
 import { useCallback } from "react";
 import { auth, db } from "../firebaseConfig";
-import { createFriendRequest, acceptFriendRequest, rejectFriendRequest } from "../services/friendsService";
+import { createFriendRequest, acceptFriendRequest, rejectFriendRequest } from "../services/friends/friendsService";
 
 import {
   collection,
@@ -64,35 +64,44 @@ export default function useFriendsAdvanced() {
   const uid = currentUid();
 
   // friends query (initial fetch)
-  const friendsQuery = useQuery(FRIENDS_QUERY_KEY(uid), () => fetchFriends(uid), {
+  const friendsQuery = useQuery({
+    queryKey: FRIENDS_QUERY_KEY(uid),
+    queryFn: () => fetchFriends(uid),
     enabled: !!uid,
     staleTime: 1000 * 60, // 1m
-    cacheTime: 1000 * 60 * 60, // 1h
+    gcTime: 1000 * 60 * 60, // 1h
   });
 
   // friend requests received
-  const reqReceivedQuery = useQuery(REQ_RECEIVED_KEY(uid), async () => {
-    if (!uid) return [];
-    const q = query(collection(db, "friend_requests"), where("to", "==", uid), where("status", "==", "pending"), orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  }, { enabled: !!uid });
+  const reqReceivedQuery = useQuery({
+    queryKey: REQ_RECEIVED_KEY(uid),
+    queryFn: async () => {
+      if (!uid) return [];
+      const q = query(collection(db, "friend_requests"), where("to", "==", uid), where("status", "==", "pending"), orderBy("createdAt", "desc"));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    },
+    enabled: !!uid,
+  });
 
   // friend requests sent
-  const reqSentQuery = useQuery(REQ_SENT_KEY(uid), async () => {
-    if (!uid) return [];
-    const q = query(collection(db, "friend_requests"), where("from", "==", uid), where("status", "==", "pending"), orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  }, { enabled: !!uid });
+  const reqSentQuery = useQuery({
+    queryKey: REQ_SENT_KEY(uid),
+    queryFn: async () => {
+      if (!uid) return [];
+      const q = query(collection(db, "friend_requests"), where("from", "==", uid), where("status", "==", "pending"), orderBy("createdAt", "desc"));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    },
+    enabled: !!uid,
+  });
 
   // MUTATIONS (optimistic) ------------------------------------------------
-  const sendMutation = useMutation(
-    ({ toUid, message }) => createFriendRequest({ fromUid: uid, toUid, message }),
-    {
+  const sendMutation = useMutation({
+    mutationFn: ({ toUid, message }) => createFriendRequest({ fromUid: uid, toUid, message }),
       onMutate: async (variables) => {
         // optimistic: add to reqSent cache
-        await qc.cancelQueries(REQ_SENT_KEY(uid));
+        await qc.cancelQueries({ queryKey: REQ_SENT_KEY(uid) });
         const previous = qc.getQueryData(REQ_SENT_KEY(uid)) || [];
         const fake = { id: "tmp-" + Date.now(), from: uid, to: variables.toUid, status: "pending", message: variables.message, createdAt: Date.now() };
         qc.setQueryData(REQ_SENT_KEY(uid), [fake, ...previous]);
@@ -102,18 +111,16 @@ export default function useFriendsAdvanced() {
         qc.setQueryData(REQ_SENT_KEY(uid), context.previous || []);
       },
       onSettled: () => {
-        qc.invalidateQueries(REQ_SENT_KEY(uid));
+        qc.invalidateQueries({ queryKey: REQ_SENT_KEY(uid) });
       },
-    }
-  );
+  });
 
-  const acceptMutation = useMutation(
-    ({ requestId }) => acceptFriendRequest(requestId, uid),
-    {
+  const acceptMutation = useMutation({
+    mutationFn: ({ requestId }) => acceptFriendRequest(requestId, uid),
       onMutate: async ({ requestId }) => {
         // optimistic: remove from received, add to friends
-        await qc.cancelQueries(REQ_RECEIVED_KEY(uid));
-        await qc.cancelQueries(FRIENDS_QUERY_KEY(uid));
+        await qc.cancelQueries({ queryKey: REQ_RECEIVED_KEY(uid) });
+        await qc.cancelQueries({ queryKey: FRIENDS_QUERY_KEY(uid) });
         const prevReceived = qc.getQueryData(REQ_RECEIVED_KEY(uid)) || [];
         const prevFriends = qc.getQueryData(FRIENDS_QUERY_KEY(uid)) || [];
 
@@ -132,17 +139,15 @@ export default function useFriendsAdvanced() {
         qc.setQueryData(FRIENDS_QUERY_KEY(uid), context.prevFriends || []);
       },
       onSettled: () => {
-        qc.invalidateQueries(REQ_RECEIVED_KEY(uid));
-        qc.invalidateQueries(FRIENDS_QUERY_KEY(uid));
+        qc.invalidateQueries({ queryKey: REQ_RECEIVED_KEY(uid) });
+        qc.invalidateQueries({ queryKey: FRIENDS_QUERY_KEY(uid) });
       },
-    }
-  );
+  });
 
-  const rejectMutation = useMutation(
-    ({ requestId }) => rejectFriendRequest(requestId, uid),
-    {
+  const rejectMutation = useMutation({
+    mutationFn: ({ requestId }) => rejectFriendRequest(requestId, uid),
       onMutate: async ({ requestId }) => {
-        await qc.cancelQueries(REQ_RECEIVED_KEY(uid));
+        await qc.cancelQueries({ queryKey: REQ_RECEIVED_KEY(uid) });
         const prev = qc.getQueryData(REQ_RECEIVED_KEY(uid)) || [];
         qc.setQueryData(REQ_RECEIVED_KEY(uid), prev.filter((r) => r.id !== requestId));
         return { prev };
@@ -150,9 +155,8 @@ export default function useFriendsAdvanced() {
       onError: (err, vars, context) => {
         qc.setQueryData(REQ_RECEIVED_KEY(uid), context.prev || []);
       },
-      onSettled: () => qc.invalidateQueries(REQ_RECEIVED_KEY(uid)),
-    }
-  );
+      onSettled: () => qc.invalidateQueries({ queryKey: REQ_RECEIVED_KEY(uid) }),
+  });
 
   // public API
   return {
@@ -165,6 +169,6 @@ export default function useFriendsAdvanced() {
     acceptRequest: acceptMutation.mutateAsync,
     rejectRequest: rejectMutation.mutateAsync,
     // raw queries for advanced usage
-    refetchFriends: () => qc.invalidateQueries(FRIENDS_QUERY_KEY(uid)),
+    refetchFriends: () => qc.invalidateQueries({ queryKey: FRIENDS_QUERY_KEY(uid) }),
   };
 }

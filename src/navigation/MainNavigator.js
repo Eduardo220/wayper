@@ -1,15 +1,17 @@
+// MAIN NAVIGATOR — WAYPER (STABLE, OFFLINE-SAFE)
+
 import React, { useEffect, useState } from "react";
 import { View, ActivityIndicator } from "react-native";
 
 import { createDrawerNavigator } from "@react-navigation/drawer";
-import { createNativeStackNavigator } from "@react-navigation/native-stack"; // ✅ CORRETO
-import { useNavigation } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
+// FIREBASE
 import { auth, db } from "../firebaseConfig";
 import { doc, getDoc } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 
-// Screens
+// SCREENS
 import MapScreen from "../screens/MapScreen";
 import RankingScreen from "../screens/RankingScreen";
 import ProfileScreen from "../screens/ProfileScreen";
@@ -24,23 +26,24 @@ import ClansScreen from "../screens/Clan/ClansScreen";
 import ClanDetailScreen from "../screens/Clan/ClanDetailScreen";
 import ClanChatScreen from "../screens/Clan/ClanChatScreen";
 
-import CustomDrawer from "../components/CustomDrawer";
-
 // RUNS
 import CorridasScreen from "../screens/Runs/CorridasScreen";
 import RunDetailScreen from "../screens/Runs/RunDetailScreen";
 import ZoneDetailScreen from "../screens/Runs/ZoneDetailScreen";
 import DashboardScreen from "../screens/Runs/DashboardScreen";
 
-// Sync background
+// UI
+import CustomDrawer from "../components/CustomDrawer";
+
+// SYNC
 import * as sync from "../utils/sync";
 
 const Drawer = createDrawerNavigator();
-const Stack = createNativeStackNavigator(); // ✅ AQUI
+const Stack = createNativeStackNavigator();
 
-/* ============================================================
-   STACK: AMIGOS
-   ============================================================ */
+/* ===========================
+   FRIENDS STACK
+   =========================== */
 function FriendsStack() {
   return (
     <Stack.Navigator
@@ -57,9 +60,9 @@ function FriendsStack() {
   );
 }
 
-/* ============================================================
-   STACK: CLÃS
-   ============================================================ */
+/* ===========================
+   CLAN STACK
+   =========================== */
 function ClanStack() {
   return (
     <Stack.Navigator
@@ -76,9 +79,9 @@ function ClanStack() {
   );
 }
 
-/* ============================================================
-   STACK: CORRIDAS
-   ============================================================ */
+/* ===========================
+   RUNS STACK
+   =========================== */
 function RunsStack() {
   return (
     <Stack.Navigator
@@ -95,50 +98,68 @@ function RunsStack() {
   );
 }
 
-/* ============================================================
-   MAIN DRAWER NAVIGATOR
-   ============================================================ */
+/* ===========================
+   MAIN NAVIGATOR
+   =========================== */
 export default function MainNavigator() {
-  const navigation = useNavigation();
   const [userData, setUserData] = useState(null);
+  const [loadingUser, setLoadingUser] = useState(true);
 
-  async function handleLogout() {
-    try {
-      await signOut(auth);
-      // Navegação automática já é tratada no App.js
-    } catch (e) {
-      console.log("Erro ao deslogar:", e);
-    }
-  }
-
+  // ===========================
+  // LOAD USER DATA (SAFE)
+  // ===========================
   useEffect(() => {
     const loadUser = async () => {
       const uid = auth.currentUser?.uid;
-      if (!uid) return;
+      if (!uid) {
+        setLoadingUser(false);
+        return;
+      }
 
       try {
         const snap = await getDoc(doc(db, "users", uid));
-        if (snap.exists()) setUserData(snap.data());
+        setUserData(snap.exists() ? snap.data() : null);
       } catch (err) {
         console.log("Erro ao carregar usuário:", err);
+        setUserData(null);
+      } finally {
+        setLoadingUser(false);
       }
     };
 
     loadUser();
   }, []);
 
+  // ===========================
+  // START BACKGROUND SYNC
+  // ===========================
   useEffect(() => {
     if (!userData) return;
+
     try {
       if (typeof sync.startAutoSync === "function") {
         sync.startAutoSync();
       }
     } catch (e) {
-      console.warn("startAutoSync failed", e);
+      console.warn("startAutoSync failed:", e);
     }
   }, [userData]);
 
-  if (!userData) {
+  // ===========================
+  // LOGOUT
+  // ===========================
+  async function handleLogout() {
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.log("Erro ao deslogar:", e);
+    }
+  }
+
+  // ===========================
+  // LOADING
+  // ===========================
+  if (loadingUser) {
     return (
       <View
         style={{
@@ -153,6 +174,9 @@ export default function MainNavigator() {
     );
   }
 
+  // ===========================
+  // UI
+  // ===========================
   return (
     <Drawer.Navigator
       initialRouteName="Mapa"
@@ -176,7 +200,7 @@ export default function MainNavigator() {
       <Drawer.Screen name="Perfil" component={ProfileScreen} options={{ title: "Meu Perfil" }} />
       <Drawer.Screen name="Ranking" component={RankingScreen} options={{ title: "Ranking" }} />
       <Drawer.Screen name="Amigos" component={FriendsStack} options={{ title: "Amigos" }} />
-      <Drawer.Screen name="Clans" component={ClanStack} options={{ title: "Clãs" }} />
+      <Drawer.Screen name="Clãs" component={ClanStack} options={{ title: "Clãs" }} />
     </Drawer.Navigator>
   );
 }

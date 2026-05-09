@@ -34,12 +34,7 @@ export default function ClansScreen({ navigation }) {
   const filtered = clans.filter(c => !search.trim() || c.name.toLowerCase().includes(search.toLowerCase()) || (c.tag||"").toLowerCase().includes(search.toLowerCase()));
 
   const renderItem = ({ item }) => (
-    <TouchableOpacity style={styles.card} onPress={() =>
-  navigation.navigate("Clans", {
-    screen: "ClanDetail",
-    params: { clanId: item.id }
-  })
-}>
+    <TouchableOpacity style={styles.card} onPress={() => navigation.navigate("ClanDetail", { clanId: item.id })}>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
         <View style={styles.avatarPlaceholder}><Text style={{color: colors.white}}>{(item.tag||"").slice(0,2).toUpperCase()}</Text></View>
         <View style={{ marginLeft: 12 }}>
@@ -57,7 +52,7 @@ export default function ClansScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
-        <Text style={styles.title}>Clans</Text>
+        <Text style={styles.title}>Grupos</Text>
         <TouchableOpacity onPress={() => setShowCreate(true)} style={styles.createBtn}>
           <Ionicons name="add" size={18} color={colors.white} />
           <Text style={{color:colors.white, marginLeft:8}}>Criar</Text>
@@ -66,7 +61,7 @@ export default function ClansScreen({ navigation }) {
 
       <View style={styles.searchRow}>
         <Ionicons name="search" size={18} color={colors.textMuted} />
-        <TextInput value={search} onChangeText={setSearch} placeholder="Procurar clan ou tag" placeholderTextColor={colors.textMuted} style={styles.searchInput} />
+        <TextInput value={search} onChangeText={setSearch} placeholder="Procurar grupo ou tag" placeholderTextColor={colors.textMuted} style={styles.searchInput} />
       </View>
 
       {loading ? <ActivityIndicator style={{marginTop:20}}/> :

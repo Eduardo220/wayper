@@ -61,6 +61,11 @@ const TEXTS = {
 // ----------------- Helper utils -----------------
 const safeString = (v) => (typeof v === "string" ? v.trim() : "");
 const safeNumber = (v, fallback = 0) => (typeof v === "number" && !Number.isNaN(v) ? v : fallback);
+const formatArea = (m2 = 0) => {
+  const safe = Number(m2 || 0);
+  if (safe >= 1e6) return `${(safe / 1e6).toFixed(2)} km²`;
+  return `${Math.round(safe)} m²`;
+};
 
 const sortFriends = (a, b) => {
   const la = safeNumber(a.level, 0);
@@ -73,12 +78,12 @@ const sortFriends = (a, b) => {
 
 // ----------------- FriendCard (memoized) -----------------
 const FriendCard = React.memo(function FriendCard({ friend, onPress, onRemove }) {
-  const avatar = friend?.avatar || DEFAULT_AVATAR;
+  const avatar = friend?.avatar || friend?.photoURL || DEFAULT_AVATAR;
   const name = friend?.name || friend?.username || "—";
   const username = friend?.username || "";
   const level = safeNumber(friend?.level, 1);
   const totalArea = Number(friend?.totalArea ?? 0);
-  const zones = Number(friend?.zones ?? 0);
+  const zones = Number(friend?.totalZones ?? friend?.zones ?? 0);
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.8}>
@@ -97,7 +102,7 @@ const FriendCard = React.memo(function FriendCard({ friend, onPress, onRemove })
           </View>
 
           <View style={styles.statPill}>
-            <Text style={styles.statText}>{totalArea} km²</Text>
+            <Text style={styles.statText}>{formatArea(totalArea)}</Text>
           </View>
 
           <View style={styles.statPill}>
@@ -255,6 +260,7 @@ export default function FriendsScreen({ navigation }) {
       await addDoc(myFriendsRef, {
         friendId,
         addedAt: new Date(),
+        type: "following",
       });
 
       // success

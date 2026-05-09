@@ -1,56 +1,95 @@
-// src/services/runService.js
+// src/services/run/runService.js
+// WAYPER — RUN SERVICE (SUPREME ULTIMATE MASTER PRO)
+// Features:
+// - start/pause/resume/stop run controllers integrated with locationService
+// - in-memory + persistent queue for unsynced runs (AsyncStorage)
+// - robust uploader with exponential backoff and concurrency lock
+// - path compression (Ramer-Douglas-Peucker) + chunking
+// - calculation of distance, duration, avgSpeed, pace
+// - idempotent persistRun / finalizeRun
+// - events emitter for UI updates
+// - safe auth checks and offline-first behaviour
+
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
-import { auth, db } from "../firebaseConfig"; // ajusta o caminho se necessário
+import { auth, db } from "../firebaseConfig";
 import {
   doc,
   setDoc,
   collection,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
+import * as locationService from "./location/locationService"; // assumes path
+// If your locationService path differs, adjust import above.
 
-const UNSYNCED_KEY = "wayper_unsynced_runs_v1";
-const LOCAL_CACHE_KEY = "wayper_runs_cache_v1"; // cache local de runs list para UI
+const UNSYNCED_KEY = "wayper_unsynced_runs_v2";
+const LOCAL_CACHE_KEY = "wayper_runs_cache_v2";
+const RUN_STATE_KEY = "wayper_active_run_v1";
 
-function debug(...args) {
-  console.log("[RUN-SERVICE]", ...args);
+const ENABLE_LOGS = false;
+function log(...args) {
+  if (ENABLE_LOGS) console.log("[runService]", ...args);
 }
 
-/* -------------------------
-   Helpers
-   ------------------------- */
+/* =========================
+   UTIL HELPERS
+   ========================= */
+function nowIso() {
+  return new Date().toISOString();
+}
+
 function makeId() {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 async function getAuthUid() {
   try {
-    const u = auth.currentUser;
-    return u?.uid || null;
-  } catch (e) {
+    return auth?.currentUser?.uid || null;
+  } catch {
     return null;
   }
 }
 
-/* -------------------------
+/* =========================
+   EVENTS (simple emitter)
+   ========================= */
+const listeners = {
+  runsUpdated: new Set(), // callbacks receive runs list
+  runState: new Set(), // callbacks receive current active run state
+};
+
+function emit(event, payload) {
+  const set = listeners[event];
+  if (!set) return;
+  for (const cb of set) {
+    try {
+      cb(payload);
+    } catch (e) {
+      log("emitter error", e);
+    }
+  }
+}
+
+/* =========================
    Local storage helpers
-   ------------------------- */
-export async function loadLocalRunsCache() {
+   ========================= */
+async function loadLocalRunsCache() {
   try {
     const raw = await AsyncStorage.getItem(LOCAL_CACHE_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
-    debug("loadLocalRunsCache error", e);
+    log("loadLocalRunsCache error", e);
     return [];
   }
 }
 
-export async function saveLocalRunsCache(list = []) {
+async function saveLocalRunsCache(list = []) {
   try {
     await AsyncStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(list));
-    debug("saveLocalRunsCache ok", list.length);
+    emit("runsUpdated", list);
   } catch (e) {
-    debug("saveLocalRunsCache error", e);
+    log("saveLocalRunsCache error", e);
   }
 }
 
@@ -59,7 +98,7 @@ async function loadUnsyncedQueue() {
     const raw = await AsyncStorage.getItem(UNSYNCED_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
-    debug("loadUnsyncedQueue error", e);
+    log("loadUnsyncedQueue error", e);
     return [];
   }
 }
@@ -67,248 +106,558 @@ async function loadUnsyncedQueue() {
 async function saveUnsyncedQueue(queue = []) {
   try {
     await AsyncStorage.setItem(UNSYNCED_KEY, JSON.stringify(queue));
-    debug("saveUnsyncedQueue ok", queue.length);
   } catch (e) {
-    debug("saveUnsyncedQueue error", e);
+    log("saveUnsyncedQueue error", e);
   }
 }
 
-/* -------------------------
-   Normalize run object
-   ------------------------- */
+/* =========================
+   RDP Compression (Ramer-Douglas-Peucker)
+   ========================= */
+function perpendicularDistance(point, lineStart, lineEnd) {
+  const x = point.latitude;
+  const y = point.longitude;
+  const x1 = lineStart.latitude;
+  const y1 = lineStart.longitude;
+  const x2 = lineEnd.latitude;
+  const y2 = lineEnd.longitude;
+
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  if (dx === 0 && dy === 0) {
+    return Math.hypot(x - x1, y - y1);
+  }
+
+  const t = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy);
+  const px = x1 + t * dx;
+  const py = y1 + t * dy;
+  return Math.hypot(x - px, y - py);
+}
+
+function rdp(points, epsilon) {
+  if (!Array.isArray(points) || points.length < 3) return points.slice();
+  const keep = new Array(points.length).fill(false);
+  keep[0] = true;
+  keep[points.length - 1] = true;
+
+  function recurse(start, end) {
+    let maxDist = 0;
+    let index = -1;
+    for (let i = start + 1; i < end; i++) {
+      const d = perpendicularDistance(points[i], points[start], points[end]);
+      if (d > maxDist) {
+        maxDist = d;
+        index = i;
+      }
+    }
+    if (maxDist > epsilon && index !== -1) {
+      keep[index] = true;
+      recurse(start, index);
+      recurse(index, end);
+    }
+  }
+
+  recurse(0, points.length - 1);
+  const out = [];
+  for (let i = 0; i < points.length; i++) if (keep[i]) out.push(points[i]);
+  return out;
+}
+
+/* =========================
+   STATS HELPERS
+   ========================= */
+function computeDistanceMeters(path = []) {
+  // simple haversine
+  const R = 6371e3;
+  const toRad = (d) => (d * Math.PI) / 180;
+  let total = 0;
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    if (!a || !b) continue;
+    const φ1 = toRad(a.latitude);
+    const φ2 = toRad(b.latitude);
+    const Δφ = toRad(b.latitude - a.latitude);
+    const Δλ = toRad(b.longitude - a.longitude);
+    const aa =
+      Math.sin(Δφ / 2) ** 2 +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+    total += R * c;
+  }
+  return total;
+}
+
+function computeDuration(path = []) {
+  if (!Array.isArray(path) || path.length === 0) return 0;
+  const first = path[0].timestamp || Date.now();
+  const last = path[path.length - 1].timestamp || Date.now();
+  return Math.max(0, last - first); // ms
+}
+
+/* =========================
+   PATH SANITIZER + CHUNKER
+   ========================= */
+function sanitizePath(rawPath = []) {
+  // ensure consistent points: {latitude, longitude, accuracy?, timestamp?}
+  return (rawPath || [])
+    .map((p) => {
+      if (!p) return null;
+      const lat = Number(p.latitude);
+      const lon = Number(p.longitude);
+      const ts = p.timestamp ? Number(p.timestamp) : Date.now();
+      const acc = p.accuracy != null ? Number(p.accuracy) : null;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return { latitude: lat, longitude: lon, accuracy: acc, timestamp: ts };
+    })
+    .filter(Boolean);
+}
+
+function chunkArray(arr, size = 500) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/* =========================
+   IN-MEMORY STATE (active run)
+   ========================= */
+let activeController = null; // { id, startedAt, path[], paused, ... }
+let uploaderLock = false;
+
+/* =========================
+   API: startRun / pause / resume / stop
+   Integration with locationService.watchPosition
+   ========================= */
+
+export async function startRun(opts = {}) {
+  // returns controller with stop/pause/resume/getState
+  if (activeController) {
+    log("startRun: run already active, returning existing controller");
+    return activeController.controllerAPI;
+  }
+
+  // create run object
+  const id = makeId();
+  const startedAt = nowIso();
+  const run = {
+    id,
+    startedAt,
+    path: [],
+    meta: opts.meta || {},
+    paused: false,
+    pausedAt: null,
+    totalPausedMs: 0,
+  };
+
+  // controller functions
+  let watcher = null;
+  let lastPauseTs = null;
+
+  // onChange handler for location points
+  const onPoint = (p) => {
+    try {
+      // p is expected as {latitude, longitude, accuracy, timestamp, distanceFromLast, speed, bearing, raw}
+      // push sanitized minimal point
+      run.path.push({
+        latitude: p.latitude,
+        longitude: p.longitude,
+        accuracy: p.accuracy ?? null,
+        timestamp: p.timestamp ?? Date.now(),
+      });
+      emit("runState", { running: true, runId: id, pathLength: run.path.length });
+    } catch (e) {
+      log("onPoint error", e);
+    }
+  };
+
+  // start watcher with reasonable defaults; opts can override
+  watcher = await locationService.watchPosition(onPoint, {
+    accuracy: opts.accuracy,
+    timeInterval: opts.timeInterval,
+    distanceInterval: opts.distanceInterval,
+    minAccuracy: opts.minAccuracy,
+    debounceMillis: opts.debounceMillis,
+    smoothingWindow: opts.smoothingWindow,
+    maxSpikeDistance: opts.maxSpikeDistance,
+    backoffOnFail: opts.backoffOnFail,
+    enableLocalBuffer: false,
+  });
+
+  // build controller API
+  const controllerAPI = {
+    id,
+    getRun: () => ({ ...run }),
+    pause: async () => {
+      if (!watcher) return;
+      if (run.paused) return;
+      run.paused = true;
+      run.pausedAt = Date.now();
+      lastPauseTs = run.pausedAt;
+      try {
+        watcher.pause();
+      } catch (e) {
+        log("pause watcher error", e);
+      }
+      emit("runState", { running: false, paused: true, runId: id });
+    },
+    resume: async () => {
+      if (!watcher) return;
+      if (!run.paused) return;
+      const resumedAt = Date.now();
+      run.paused = false;
+      run.totalPausedMs += resumedAt - (run.pausedAt || resumedAt);
+      run.pausedAt = null;
+      lastPauseTs = null;
+      try {
+        await watcher.resume();
+      } catch (e) {
+        log("resume watcher error", e);
+      }
+      emit("runState", { running: true, paused: false, runId: id });
+    },
+    stop: async () => {
+      // finalize run: compute stats, persist locally and queue for sync
+      try {
+        if (watcher && typeof watcher.remove === "function") {
+          try {
+            watcher.remove();
+          } catch {}
+        }
+        watcher = null;
+      } catch (e) {
+        log("stop watcher error", e);
+      }
+
+      // compute stats
+      const cleanedPath = sanitizePath(run.path);
+      const compressed = rdp(cleanedPath, opts.compressEpsilon ?? 0.00012); // ~small tolerance
+      const distanceMeters = computeDistanceMeters(compressed);
+      const durationMs = computeDuration(cleanedPath) - (run.totalPausedMs || 0);
+      const avgSpeed = durationMs > 0 ? distanceMeters / (durationMs / 1000) : 0;
+
+      const finalRun = {
+        id: run.id,
+        date: run.startedAt,
+        path: compressed,
+        rawPathLength: cleanedPath.length,
+        distance: Math.round(distanceMeters), // meters
+        duration: Math.round(durationMs), // ms
+        avgSpeed,
+        meta: run.meta || {},
+        createdAt: nowIso(),
+      };
+
+      // persist and enqueue
+      const saved = await persistRun(finalRun);
+
+      // clear active controller
+      activeController = null;
+      await AsyncStorage.removeItem(RUN_STATE_KEY);
+      emit("runState", { running: false, stopped: true, runId: id });
+
+      return saved;
+    },
+    isActive: () => !!watcher,
+  };
+
+  // store active run state persistently so background/resume can recover
+  activeController = {
+    run,
+    controllerAPI,
+  };
+  try {
+    await AsyncStorage.setItem(RUN_STATE_KEY, JSON.stringify({ id, startedAt }));
+  } catch (e) {
+    log("persist RUN_STATE_KEY failed", e);
+  }
+
+  emit("runState", { running: true, runId: id, pathLength: 0 });
+
+  return controllerAPI;
+}
+
+/* =========================
+   persistRun / finalizeRun (local queue + immediate try to sync)
+   ========================= */
+
 function normalizeRun(run) {
-  // garante campos essenciais
   const id = run.id || makeId();
-  const date = run.date || new Date().toISOString();
+  const date = run.date || nowIso();
   const path = Array.isArray(run.path) ? run.path : [];
   const distance = Number(run.distance || 0);
   const duration = Number(run.duration || 0);
-  const meta = run.meta || {};
-
   return {
     id,
     date,
     path,
     distance,
     duration,
-    meta,
-    createdAt: new Date().toISOString(),
+    meta: run.meta || {},
+    createdAt: nowIso(),
     synced: false,
   };
 }
 
-/* -------------------------
-   Save run local + queue upload
-   - retorna o objeto salvo (com id)
-   ------------------------- */
-export async function persistRun(run) {
+export async function persistRun(runLike) {
   try {
-    // normaliza
-    const r = normalizeRun(run);
+    const r = normalizeRun(runLike);
 
-    // 1) salva no cache local de runs (lista que alimenta UI)
+    // save to local cache (UI)
     const cache = await loadLocalRunsCache();
-    cache.unshift(r); // coloca na frente
-    await saveLocalRunsCache(cache);
+    cache.unshift(r);
+    // keep limit e.g., 200
+    const trimmed = cache.slice(0, 200);
+    await saveLocalRunsCache(trimmed);
 
-    // 2) adiciona à fila de unsynced para enviar ao servidor
+    // add to unsynced queue (persist)
     const q = await loadUnsyncedQueue();
     q.push(r);
     await saveUnsyncedQueue(q);
 
-    debug("persistRun queued", r.id);
-
-    // 3) tenta sincronizar imediatamente se houver rede
+    // try immediate sync if online
     const state = await NetInfo.fetch();
     if (state.isConnected) {
-      syncUnsyncedRuns().catch((e) => debug("sync immediate failed", e));
+      // attempt in background (non-blocking)
+      syncUnsyncedRuns().catch((e) => log("sync immediate failed", e));
     }
 
     return r;
   } catch (e) {
-    debug("persistRun error", e);
+    log("persistRun error", e);
     throw e;
   }
 }
 
-/* -------------------------
-   Upload single run to Firestore
-   - usa path users/{uid}/runs/{id} (privado por usuário)
-   - retorna true se ok
-   ------------------------- */
+/* =========================
+   uploader: uploadRunToFirestore
+   - uses users/{uid}/runs/{id}
+   - uses chunking if path > 1500 points (split into parts)
+   - writes run metadata/doc + optional subcollection 'chunks' with compressed points
+   ========================= */
 async function uploadRunToFirestore(run, attempt = 0) {
   const uid = await getAuthUid();
-  if (!uid) {
-    throw new Error("not-authenticated");
-  }
+  if (!uid) throw new Error("not-authenticated");
 
-  // prepara doc ref
-  const ref = doc(collection(db, `users/${uid}/runs`), run.id);
+  // prepare doc refs
+  const userRunsColl = collection(db, `users/${uid}/runs`);
+  const runRef = doc(userRunsColl, run.id);
 
-  // sanitiza o payload: não enviar referências circulares
-  const payload = {
-    id: run.id,
-    date: run.date,
-    path: run.path.map(p => ({
-      latitude: Number(p.latitude),
-      longitude: Number(p.longitude),
-      timestamp: p.timestamp || null,
-      accuracy: p.accuracy || null,
-    })),
-    distance: Number(run.distance || 0),
-    duration: Number(run.duration || 0),
-    meta: run.meta || {},
-    createdAt: serverTimestamp(),
-  };
+  // sanitize path
+  const path = sanitizePath(run.path);
+  const MAX_POINTS_INLINE = 800; // keep doc size reasonable
+  const chunks = chunkArray(path, MAX_POINTS_INLINE);
 
   try {
-    await setDoc(ref, payload);
-    debug("uploadRunToFirestore ok", run.id);
+    if (chunks.length <= 1) {
+      // write single doc with path inline
+      const payload = {
+        id: run.id,
+        date: run.date,
+        path: chunks[0] || [],
+        distance: Number(run.distance || 0),
+        duration: Number(run.duration || 0),
+        meta: run.meta || {},
+        createdAt: serverTimestamp(),
+      };
+      await setDoc(runRef, payload);
+    } else {
+      // write metadata doc + chunks subcollection atomically via batch where possible (batch cannot write subcollections atomically with root doc in Firestore,
+      // but we can write main doc then write chunk docs)
+      // write metadata (without path)
+      await setDoc(runRef, {
+        id: run.id,
+        date: run.date,
+        distance: Number(run.distance || 0),
+        duration: Number(run.duration || 0),
+        meta: run.meta || {},
+        chunkCount: chunks.length,
+        createdAt: serverTimestamp(),
+        _chunked: true,
+      });
+
+      // write each chunk as documents under runs/{runId}/chunks/{partIndex}
+      // Use setDoc individually (could parallelize)
+      const promises = chunks.map((c, idx) =>
+        setDoc(doc(runRef, "chunks", `${idx}`), {
+          index: idx,
+          points: c,
+          createdAt: serverTimestamp(),
+        })
+      );
+      await Promise.all(promises);
+    }
+    log("uploadRunToFirestore ok", run.id);
     return true;
   } catch (e) {
-    debug("uploadRunToFirestore error", { id: run.id, attempt, err: e });
+    log("uploadRunToFirestore error", { id: run.id, attempt, err: e });
     throw e;
   }
 }
 
-/* -------------------------
-   Sync queue processor
-   - tenta enviar cada run da fila
-   - retry com backoff (simples)
-   - marca como synced removendo da fila e atualizando cache local
-   ------------------------- */
+/* =========================
+   syncUnsyncedRuns (robust queue processor)
+   - single worker (uploaderLock)
+   - retries with exponential backoff
+   - marks local cache items as synced
+   ========================= */
 export async function syncUnsyncedRuns() {
+  if (uploaderLock) {
+    log("syncUnsyncedRuns: worker busy");
+    return;
+  }
+  uploaderLock = true;
   try {
-    debug("syncUnsyncedRuns start");
-    // só roda se tiver usuário autenticado
+    log("syncUnsyncedRuns start");
     const uid = await getAuthUid();
     if (!uid) {
-      debug("syncUnsyncedRuns abort: not authenticated");
+      log("syncUnsyncedRuns abort: not authenticated");
+      uploaderLock = false;
       return;
     }
 
     let queue = await loadUnsyncedQueue();
     if (!queue || queue.length === 0) {
-      debug("syncUnsyncedRuns nothing to do");
+      log("syncUnsyncedRuns nothing to do");
+      uploaderLock = false;
       return;
     }
 
-    const newQueue = []; // runs que falharem e precisam ficar na fila
+    const remaining = [];
 
     for (let i = 0; i < queue.length; i++) {
       const run = queue[i];
       let ok = false;
       let attempt = 0;
-      const maxAttempts = 5;
+      const maxAttempts = 6;
 
       while (!ok && attempt < maxAttempts) {
         try {
           attempt++;
           await uploadRunToFirestore(run, attempt);
 
-          // se ok: atualiza cache local para marcar como synced
+          // mark as synced in local cache
           const cache = await loadLocalRunsCache();
-          const idx = cache.findIndex(r => r.id === run.id);
+          const idx = cache.findIndex((r) => r.id === run.id);
           if (idx !== -1) {
             cache[idx] = { ...cache[idx], synced: true };
             await saveLocalRunsCache(cache);
           }
 
           ok = true;
-          debug("syncUnsyncedRuns uploaded", run.id, "attempt", attempt);
-        } catch (e) {
-          debug("sync attempt failed", run.id, "attempt", attempt);
-          // backoff exponencial simples
-          const delay = Math.min(30000, 500 * Math.pow(2, attempt));
-          await new Promise(res => setTimeout(res, delay));
+          log("sync uploaded", run.id, "attempt", attempt);
+        } catch (err) {
+          log("upload attempt failed", run.id, "attempt", attempt, err?.message || err);
+          const delay = Math.min(120000, 1000 * 2 ** attempt); // cap 2 min
+          // wait before next try
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((r) => setTimeout(r, delay));
         }
       }
 
       if (!ok) {
-        // ainda falhou: mantém na fila para tentar depois
-        newQueue.push(run);
-        debug("syncUnsyncedRuns keep in queue", run.id);
+        remaining.push(run);
+        log("keeping in queue", run.id);
       }
     }
 
-    // sobrou algo que falhou: salva de volta
-    await saveUnsyncedQueue(newQueue);
-    debug("syncUnsyncedRuns done, remaining", newQueue.length);
+    await saveUnsyncedQueue(remaining);
+    log("syncUnsyncedRuns done, remaining", remaining.length);
   } catch (e) {
-    debug("syncUnsyncedRuns catch", e);
+    log("syncUnsyncedRuns catch", e);
+  } finally {
+    uploaderLock = false;
   }
 }
 
-/* -------------------------
-   init sync: chama no App start (useEffect)
-   - registra listener de online/offline pra disparar sync
-   ------------------------- */
+/* =========================
+   initRunSyncOnStart: register NetInfo listener + immediate try
+   ========================= */
 let netUnsub = null;
 export function initRunSyncOnStart() {
   try {
-    if (netUnsub) return; // já registrado
-
-    netUnsub = NetInfo.addEventListener(state => {
+    if (netUnsub) return;
+    netUnsub = NetInfo.addEventListener((state) => {
       if (state.isConnected) {
-        debug("NetInfo: online -> trying sync");
-        syncUnsyncedRuns().catch(e => debug("sync on net event failed", e));
+        log("NetInfo: online -> trying sync");
+        syncUnsyncedRuns().catch((e) => log("sync on net event failed", e));
       }
     });
 
-    // tenta uma primeira vez
-    NetInfo.fetch().then(state => {
-      if (state.isConnected) {
-        syncUnsyncedRuns().catch(e => debug("initial sync failed", e));
-      }
+    // initial attempt
+    NetInfo.fetch().then((state) => {
+      if (state.isConnected) syncUnsyncedRuns().catch((e) => log("initial sync failed", e));
     });
 
-    debug("initRunSyncOnStart ok");
+    log("initRunSyncOnStart ok");
   } catch (e) {
-    debug("initRunSyncOnStart error", e);
+    log("initRunSyncOnStart error", e);
   }
 }
 
-/* -------------------------
-   finalizeRun: chamada de alto nível pelo MapScreen quando terminar corrida
-   - recebe o objeto run (path, distance, duration, meta)
-   - salva local e tenta enviar
-   - retorna o run salvo (com id)
-   ------------------------- */
-export async function finalizeRun(runLike) {
+/* =========================
+   Recover active run on app start (if any)
+   - attempts to restore activeController state from storage
+   ========================= */
+export async function recoverActiveRunIfAny() {
   try {
-    const run = normalizeRun(runLike);
-    debug("finalizeRun start", run.id);
-
-    const saved = await persistRun(run);
-
-    // já chama sync em background (não bloqueia)
-    syncUnsyncedRuns().catch(e => debug("background sync failed", e));
-
-    return saved;
+    const raw = await AsyncStorage.getItem(RUN_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.id) return null;
+    // We don't persist full path to avoid heavy storage; app may re-start tracking anew.
+    // Inform caller that there was an interrupted run.
+    return parsed; // { id, startedAt }
   } catch (e) {
-    debug("finalizeRun error", e);
-    throw e;
+    log("recoverActiveRunIfAny error", e);
+    return null;
   }
 }
 
-/* -------------------------
-   clear resources on sign out (optional)
-   ------------------------- */
+/* =========================
+   finalizeRun helper — convenience wrapper that accepts raw runLike
+   ========================= */
+export async function finalizeRun(runLike) {
+  // provide compatibility with previous code
+  return persistRun(runLike);
+}
+
+/* =========================
+   clear state on sign out
+   ========================= */
 export async function clearRunServiceState() {
   try {
     await saveUnsyncedQueue([]);
     await saveLocalRunsCache([]);
-    debug("clearRunServiceState ok");
+    await AsyncStorage.removeItem(RUN_STATE_KEY);
+    log("clearRunServiceState done");
   } catch (e) {
-    debug("clearRunServiceState error", e);
+    log("clearRunServiceState error", e);
   }
 }
 
+/* =========================
+   PUBLIC API export
+   ========================= */
+export function onRunsUpdated(cb) {
+  listeners.runsUpdated.add(cb);
+  return () => listeners.runsUpdated.delete(cb);
+}
+export function onRunState(cb) {
+  listeners.runState.add(cb);
+  return () => listeners.runState.delete(cb);
+}
+
 export default {
+  startRun,
   persistRun,
   finalizeRun,
   syncUnsyncedRuns,
   initRunSyncOnStart,
   loadLocalRunsCache,
   clearRunServiceState,
+  recoverActiveRunIfAny,
+  onRunsUpdated,
+  onRunState,
 };

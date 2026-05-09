@@ -1,7 +1,7 @@
 // src/components/ClanMembersList.js
 import React, { useEffect, useState } from "react";
 import { View, Text, FlatList, TouchableOpacity, Image, StyleSheet, ActivityIndicator, Alert } from "react-native";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, doc, getDoc } from "firebase/firestore";
 import { db, auth } from "../../firebaseConfig";
 import { colors } from "../../theme/colors";
 import { Platform } from "react-native";
@@ -20,7 +20,7 @@ export default function ClanMembersList({ clanId }) {
         for (const docSnap of snap.docs) {
           const data = docSnap.data();
           // try get public info
-          const userDoc = await (await fetchUser(data.uid));
+          const userDoc = await fetchUser(data.uid);
           arr.push({ id: docSnap.id, uid: data.uid, role: data.role, joinedAt: data.joinedAt, nickname: data.nickname, user: userDoc });
         }
         if (mounted) setMembers(arr);
@@ -34,8 +34,8 @@ export default function ClanMembersList({ clanId }) {
 
   async function fetchUser(uid) {
     try {
-      const d = await getDocs(collection(db, "users")); // fallback naive; replace with getDoc(doc(...)) in production
-      return null;
+      const d = await getDoc(doc(db, "users", uid));
+      return d.exists() ? d.data() : null;
     } catch { return null }
   }
 

@@ -18,6 +18,7 @@ import {
   Alert,
   Platform,
   Share,
+  Switch,
 } from "react-native";
 
 import * as ImagePicker from "expo-image-picker";
@@ -75,7 +76,6 @@ async function uploadImageToFirebase(uri, storagePath) {
     if (!uri) throw new Error("No uri");
     const resp = await fetch(uri);
     const blob = await resp.blob();
-    const storage = getStorage();
     const ref = storageRef(storage, storagePath);
     const snap = await uploadBytes(ref, blob, { contentType: blob.type });
     const url = await getDownloadURL(snap.ref);
@@ -129,6 +129,7 @@ export default function ProfileScreen() {
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
   const [avatarUri, setAvatarUri] = useState(null);
+  const [isPrivate, setIsPrivate] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -163,6 +164,7 @@ export default function ProfileScreen() {
     setName(data.name || "");
     setBio(data.bio || "");
     setAvatarUri(data.avatar || null);
+    setIsPrivate(!!data.isPrivate || data.profileVisibility === "private");
 
     // 🔥 Recalcula perfil completo do profileService
     const p = await loadProfile();
@@ -201,6 +203,7 @@ export default function ProfileScreen() {
             setName(data.name || "");
             setBio(data.bio || "");
             setAvatarUri(data.avatar || null);
+            setIsPrivate(!!data.isPrivate || data.profileVisibility === "private");
           }
         } else {
           // if no user doc, still keep profile values
@@ -257,7 +260,14 @@ export default function ProfileScreen() {
       setSaving(true);
 
       // optimistic update in UI
-      const optimisticUserDoc = { ...(userDoc || {}), name: name.trim(), bio: bio.trim(), avatar: avatarUri || userDoc?.avatar || DEFAULT_AVATAR };
+      const optimisticUserDoc = {
+        ...(userDoc || {}),
+        name: name.trim(),
+        bio: bio.trim(),
+        avatar: avatarUri || userDoc?.avatar || DEFAULT_AVATAR,
+        isPrivate,
+        profileVisibility: isPrivate ? "private" : "public",
+      };
       setUserDoc(optimisticUserDoc);
       setEditing(false);
 
@@ -278,6 +288,8 @@ export default function ProfileScreen() {
         name: name.trim(),
         bio: bio.trim(),
         avatar: remoteAvatarUrl,
+        isPrivate,
+        profileVisibility: isPrivate ? "private" : "public",
         updatedAt: serverTimestamp(),
       });
 
@@ -295,7 +307,7 @@ export default function ProfileScreen() {
       setSaving(false);
       setEditing(true);
     }
-  }, [name, bio, avatarUri, userDoc]);
+  }, [name, bio, avatarUri, userDoc, isPrivate]);
 
   /* ---------------------- Sync profile remote ---------------------- */
   const handleSyncProfile = useCallback(async () => {
@@ -497,6 +509,34 @@ export default function ProfileScreen() {
         <Text style={styles.cardTitle}>Informações</Text>
 
         <View style={styles.infoRow}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={styles.infoLabel}>Perfil privado</Text>
+            <Text style={styles.privacyHint}>
+              {isPrivate ? "Apenas seguidores veem detalhes e atividades." : "Perfil visivel no ranking e feed."}
+            </Text>
+          </View>
+          <Switch
+            value={isPrivate}
+            onValueChange={async (value) => {
+              setIsPrivate(value);
+              const uid = auth.currentUser?.uid;
+              if (!uid) return;
+              try {
+                await updateDoc(doc(db, "users", uid), {
+                  isPrivate: value,
+                  profileVisibility: value ? "private" : "public",
+                  updatedAt: serverTimestamp(),
+                });
+              } catch (e) {
+                console.warn("privacy update failed", e);
+              }
+            }}
+            trackColor={{ false: "#263238", true: WAYPER_GREEN }}
+            thumbColor="#ffffff"
+          />
+        </View>
+
+        <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Email:</Text>
           <Text style={styles.infoValue}>{auth.currentUser?.email || "—"}</Text>
         </View>
@@ -673,6 +713,12 @@ const styles = StyleSheet.create({
   infoLabel: { color: "#bbb", fontSize: 14 },
 
   infoValue: { color: "#fff", fontSize: 14 },
+
+  privacyHint: {
+    color: "#8f9aa3",
+    fontSize: 12,
+    marginTop: 4,
+  },
 
   editButton: {
     marginTop: 30,

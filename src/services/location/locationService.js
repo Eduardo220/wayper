@@ -1,35 +1,61 @@
 // src/services/location/locationService.js
+// WAYPER — LOCATION SERVICE (SUPREME ULTIMATE MASTER PRO)
+// - expo-location based
+// - robust permissions handling
+// - getCurrentPosition with retries + timeout
+// - watchPosition with debounce, smoothing, spike filtering, polling fallback
+// - event emitter (subscribe/unsubscribe)
+// - pause/resume/remove controls
+// - optional local buffer (in-memory) for sync (opt-in)
+// - does NOT persist sensitive data by default
+//
+// Usage examples:
+// const controller = await watchPosition(point => {...}, opts)
+// controller.pause(); controller.resume(); controller.remove();
+// const now = await getCurrentPosition({...})
+// subscribe/unsubscribe for global events: on('position', cb), off('position', cb)
 
 import * as Location from "expo-location";
+import AsyncStorage from "@react-native-async-storage/async-storage"; // optional use
+// no other side effects
 
+/* ===========================
+   DEFAULT CONFIG
+   =========================== */
 const DEFAULTS = {
   timeInterval: 1000, // ms
   distanceInterval: 1, // meters
   accuracy: Location.Accuracy.BestForNavigation,
-  minAccuracy: 100, // meters - ignore readings worse than this by default
-  debounceMillis: 500, // minimal time between emitted points to reduce floods
+  minAccuracy: 120, // meters — ignore readings worse than this by default
+  debounceMillis: 500, // minimal time between emitted points
+  smoothingWindow: 3, // number of points to smooth (simple moving average)
   maxSpikeDistance: 1000, // meters - ignore absurd jumps
-  maxRetryAttempts: 3, // for optional read retry/backoff
-  retryBackoffBaseMs: 300, // base ms for exponential backoff
-  requestPermissionRationale: {
+  maxRetryAttempts: 3,
+  retryBackoffBaseMs: 300,
+  pollingFallback: true,
+  pollingMultiplier: 1, // polling interval = timeInterval * pollingMultiplier
+  permissionRationale: {
     title: "Permissão de localização",
-    message: "O app precisa acessar sua localização para registrar corridas e zonas.",
+    message: "Precisamos da sua localização para registrar corridas e zonas.",
     buttonPositive: "OK",
   },
+  enableLocalBuffer: false, // set true to enable in-memory buffer (not persisted)
+  localBufferMax: 1000,
 };
 
-let _cachedPermission = null; // 'granted' | 'denied' | null
 let _debug = false;
+let _cachedPermission = null; // 'granted' | 'denied' | 'undetermined' | null
 
-/* --------------------- debug util --------------------- */
+/* ===========================
+   DEBUG
+   =========================== */
 function debug(...args) {
-  if (_debug) {
-    // eslint-disable-next-line no-console
-    console.log("[locationService]", ...args);
-  }
+  if (_debug) console.log("[locationService]", ...args);
 }
 
-/* --------------------- small helpers --------------------- */
+/* ===========================
+   UTIL HELPERS
+   =========================== */
 const safeNum = (v, fallback = 0) =>
   Number.isFinite(Number(v)) ? Number(v) : fallback;
 
@@ -37,7 +63,7 @@ function nowTs() {
   return Date.now();
 }
 
-function sanitizeCoordsFromLocationObj(loc) {
+function sanitizeLocationObj(loc) {
   if (!loc || !loc.coords) return null;
   const { latitude, longitude, accuracy } = loc.coords;
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
@@ -46,40 +72,127 @@ function sanitizeCoordsFromLocationObj(loc) {
     longitude: Number(longitude),
     accuracy: Number.isFinite(Number(accuracy)) ? Number(accuracy) : null,
     timestamp: loc.timestamp || nowTs(),
+    raw: loc,
   };
 }
 
-/* --------------------- Permission helpers --------------------- */
-/**
- * requestLocationPermission(opts)
- * - opts: { force?: boolean } -> if force true, will request even if already cached
- * - returns: { granted: boolean, status: string }
- */
-export async function requestLocationPermission(opts = {}) {
+// haversine distance in meters
+function haversineDistance(a, b) {
   try {
-    const force = !!opts.force;
+    if (!a || !b) return Infinity;
+    const R = 6371e3;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const φ1 = toRad(safeNum(a.latitude));
+    const φ2 = toRad(safeNum(b.latitude));
+    const Δφ = toRad(safeNum(b.latitude) - safeNum(a.latitude));
+    const Δλ = toRad(safeNum(b.longitude) - safeNum(a.longitude));
+    const aa =
+      Math.sin(Δφ / 2) ** 2 +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+    return R * c;
+  } catch {
+    return Infinity;
+  }
+}
+
+function calcBearing(a, b) {
+  try {
+    if (!a || !b) return null;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const toDeg = (r) => (r * 180) / Math.PI;
+    const lat1 = toRad(a.latitude);
+    const lat2 = toRad(b.latitude);
+    const dLon = toRad(b.longitude - a.longitude);
+    const y = Math.sin(dLon) * Math.cos(lat2);
+    const x =
+      Math.cos(lat1) * Math.sin(lat2) -
+      Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    let brng = toDeg(Math.atan2(y, x));
+    brng = (brng + 360) % 360;
+    return brng;
+  } catch {
+    return null;
+  }
+}
+
+function smoothPoints(points = [], window = 3) {
+  if (!Array.isArray(points) || points.length === 0) return points;
+  const w = Math.max(1, Math.min(points.length, window));
+  const out = [];
+  for (let i = 0; i < points.length; i++) {
+    const start = Math.max(0, i - w + 1);
+    const slice = points.slice(start, i + 1);
+    const lat = slice.reduce((s, p) => s + p.latitude, 0) / slice.length;
+    const lon = slice.reduce((s, p) => s + p.longitude, 0) / slice.length;
+    const acc = slice.reduce((s, p) => s + (p.accuracy || 0), 0) / slice.length;
+    const ts = slice[slice.length - 1].timestamp || nowTs();
+    out.push({ latitude: lat, longitude: lon, accuracy: acc, timestamp: ts });
+  }
+  return out;
+}
+
+/* ===========================
+   EVENT EMITTER (simple)
+   =========================== */
+const listeners = {
+  position: new Set(), // callbacks receive point object
+  permission: new Set(), // callbacks receive { granted, status }
+};
+
+function emitPosition(point) {
+  listeners.position.forEach((cb) => {
+    try {
+      cb(point);
+    } catch (e) {
+      debug("listener position error", e);
+    }
+  });
+}
+function emitPermission(info) {
+  listeners.permission.forEach((cb) => {
+    try {
+      cb(info);
+    } catch (e) {
+      debug("listener permission error", e);
+    }
+  });
+}
+
+/* ===========================
+   PERMISSION HELPERS
+   =========================== */
+export async function requestLocationPermission({ force = false } = {}) {
+  try {
     if (!force && _cachedPermission === "granted") {
       return { granted: true, status: "granted" };
     }
 
     const { status } = await Location.requestForegroundPermissionsAsync();
     _cachedPermission = status;
-    return { granted: status === "granted", status };
-  } catch (e) {
-    debug("requestLocationPermission error", e);
-    return { granted: false, status: "unknown", error: e };
+    const granted = status === "granted";
+    emitPermission({ granted, status });
+    return { granted, status };
+  } catch (err) {
+    debug("requestLocationPermission error", err);
+    return { granted: false, status: "unknown", error: err };
   }
 }
 
-/* --------------------- getCurrentPosition --------------------- */
-/**
- * getCurrentPosition(opts)
- * opts: {
- *   accuracy, timeoutMs, maxRetryAttempts, retryBackoffBaseMs
- * }
- *
- * returns: { coords: {latitude,longitude,accuracy,timestamp}, raw, error }
- */
+export async function getPermissionStatus() {
+  if (_cachedPermission) return _cachedPermission;
+  try {
+    const { status } = await Location.getForegroundPermissionsAsync();
+    _cachedPermission = status;
+    return status;
+  } catch {
+    return "unknown";
+  }
+}
+
+/* ===========================
+   getCurrentPosition with retries + timeout
+   =========================== */
 export async function getCurrentPosition(opts = {}) {
   const {
     accuracy = DEFAULTS.accuracy,
@@ -88,89 +201,56 @@ export async function getCurrentPosition(opts = {}) {
     retryBackoffBaseMs = DEFAULTS.retryBackoffBaseMs,
   } = opts;
 
-  try {
-    // ensure permission first
-    const perm = await requestLocationPermission({ force: false });
-    if (!perm.granted) {
-      return { coords: null, raw: null, error: new Error("permission_denied") };
-    }
-
-    let attempts = 0;
-    let lastErr = null;
-    while (attempts <= maxRetryAttempts) {
-      attempts += 1;
-      try {
-        const p = await Promise.race([
-          Location.getCurrentPositionAsync({ accuracy }),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), timeoutMs)),
-        ]);
-        const sanitized = sanitizeCoordsFromLocationObj(p);
-        if (!sanitized) {
-          lastErr = new Error("invalid_location");
-          throw lastErr;
-        }
-        return { coords: sanitized, raw: p, error: null };
-      } catch (e) {
-        lastErr = e;
-        debug("getCurrentPosition attempt failed", attempts, e);
-        if (attempts > maxRetryAttempts) break;
-        // exponential backoff
-        const wait = retryBackoffBaseMs * 2 ** (attempts - 1);
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((res) => setTimeout(res, wait));
-      }
-    }
-    return { coords: null, raw: null, error: lastErr || new Error("unknown") };
-  } catch (err) {
-    debug("getCurrentPosition catch", err);
-    return { coords: null, raw: null, error: err };
-  }
-}
-
-/* --------------------- watchPosition (advanced) --------------------- */
-/**
- * watchPosition(onChange, opts)
- *
- * onChange receives sanitized coords: { latitude, longitude, accuracy, timestamp }
- *
- * opts:
- *  - accuracy (expo Location accuracy)
- *  - timeInterval (ms)
- *  - distanceInterval (meters)
- *  - minAccuracy (meters) -> ignore readings with worse accuracy
- *  - debounceMillis (ms) -> minimum interval between emitted points
- *  - minDistance (meters) -> minimal distance moved to emit
- *  - maxSpikeDistance (meters) -> ignore jumps > this
- *  - backoffOnFail: { enabled: boolean, maxAttempts }
- *
- * Returns watcher control:
- *  {
- *    remove: () => void,
- *    pause: () => void,
- *    resume: () => Promise<void>,
- *    isWatching: () => boolean
- *  }
- */
-export async function watchPosition(onChange, opts = {}) {
-  const config = {
-    accuracy: opts.accuracy ?? DEFAULTS.accuracy,
-    timeInterval: opts.timeInterval ?? DEFAULTS.timeInterval,
-    distanceInterval: opts.distanceInterval ?? DEFAULTS.distanceInterval,
-    minAccuracy: opts.minAccuracy ?? DEFAULTS.minAccuracy,
-    debounceMillis: opts.debounceMillis ?? DEFAULTS.debounceMillis,
-    minDistance: opts.minDistance ?? 0,
-    maxSpikeDistance: opts.maxSpikeDistance ?? DEFAULTS.maxSpikeDistance,
-    backoffOnFail: opts.backoffOnFail ?? { enabled: false, maxAttempts: DEFAULTS.maxRetryAttempts },
-  };
-
-  if (typeof onChange !== "function") {
-    throw new Error("watchPosition: onChange must be a function");
-  }
-
   // ensure permission
   const perm = await requestLocationPermission({ force: false });
   if (!perm.granted) {
-    // return a dummy controller that does nothing but allows the caller to call remove()
+    return { coords: null, raw: null, error: new Error("permission_denied") };
+  }
+
+  let attempts = 0;
+  let lastErr = null;
+  while (attempts < maxRetryAttempts) {
+    attempts += 1;
+    try {
+      const p = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy }),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("timeout")), timeoutMs)
+        ),
+      ]);
+      const s = sanitizeLocationObj(p);
+      if (!s) throw new Error("invalid_location");
+      // enrich: optionally compute accuracy/heading later
+      return { coords: s, raw: p, error: null };
+    } catch (err) {
+      lastErr = err;
+      debug("getCurrentPosition attempt failed", attempts, err);
+      if (attempts >= maxRetryAttempts) break;
+      const wait = retryBackoffBaseMs * 2 ** (attempts - 1);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  return { coords: null, raw: null, error: lastErr || new Error("unknown") };
+}
+
+/* ===========================
+   watchPosition core factory
+   =========================== */
+export async function watchPosition(onChange, userOpts = {}) {
+  if (typeof onChange !== "function")
+    throw new Error("watchPosition: onChange must be a function");
+
+  const opts = {
+    ...DEFAULTS,
+    ...userOpts,
+  };
+
+  // permission guard
+  const perm = await requestLocationPermission({ force: false });
+  if (!perm.granted) {
+    debug("watchPosition: permission denied");
+    // return a no-op controller
     return {
       remove: () => {},
       pause: () => {},
@@ -179,169 +259,172 @@ export async function watchPosition(onChange, opts = {}) {
     };
   }
 
-  let sub = null;
-  let isPaused = false;
-  let isRemoved = false;
+  // internal state
+  let subscription = null;
+  let pollingStopper = null;
+  let removed = false;
+  let paused = false;
   let lastEmitTs = 0;
-  let lastEmitPoint = null;
-  let failAttempts = 0;
+  let lastPoint = null;
+  let buffer = []; // in-memory buffer of emitted points (if enableLocalBuffer)
+  const smoothingWindow = Math.max(1, opts.smoothingWindow || 1);
 
-  // internal emitter guard: apply filters and call onChange only when sane
-  const tryEmit = (raw) => {
+  // small emitter that applies filters then calls onChange and global listeners
+  const emitIfValid = (raw) => {
     try {
-      const p = sanitizeCoordsFromLocationObj(raw);
+      const p = sanitizeLocationObj(raw);
       if (!p) return;
 
       const now = nowTs();
 
       // accuracy filter
-      if (p.accuracy != null && config.minAccuracy != null && p.accuracy > config.minAccuracy) {
-        debug("skip: accuracy too low", p.accuracy);
+      if (
+        p.accuracy != null &&
+        opts.minAccuracy != null &&
+        p.accuracy > opts.minAccuracy
+      ) {
+        debug("skip: bad accuracy", p.accuracy);
         return;
       }
 
-      // spike filter
-      if (lastEmitPoint) {
-        const d = haversineDistance(lastEmitPoint, p);
-        if (d > config.maxSpikeDistance) {
-          debug("skip: spike detected", d);
+      // spike detection
+      if (lastPoint) {
+        const d = haversineDistance(lastPoint, p);
+        if (d > (opts.maxSpikeDistance || DEFAULTS.maxSpikeDistance)) {
+          debug("skip: spike", d);
           return;
         }
-        if (d < (config.minDistance || 0)) {
-          debug("skip: not moved enough", d);
-          // but allow if enough time passed since last emit
-          if (now - lastEmitTs < (config.debounceMillis || 0)) {
-            return;
-          }
+        // if movement is very small and debounce not passed, skip
+        if (d < (opts.minDistance || 0) && now - lastEmitTs < opts.debounceMillis) {
+          debug("skip: too small movement", d);
+          return;
         }
       }
 
-      // debounce/time filter
-      if (now - lastEmitTs < (config.debounceMillis || 0)) {
-        debug("skip: debounce", now - lastEmitTs);
+      // debounce time
+      if (now - lastEmitTs < (opts.debounceMillis || 0)) {
+        debug("skip: debounce time");
         return;
       }
 
-      // ok -> emit
+      // smoothing: we keep last N raw points, smooth and emit last smoothed
+      buffer.push(p);
+      if (buffer.length > smoothingWindow) buffer.shift();
+      const smoothed = smoothPoints(buffer, smoothingWindow).slice(-1)[0] || p;
+
+      // compute derived metrics if possible: distance, speed, bearing
+      let distanceFromLast = null;
+      let speed = null;
+      let bearing = null;
+      if (lastPoint) {
+        distanceFromLast = haversineDistance(lastPoint, smoothed); // meters
+        const dt = Math.max(1, (smoothed.timestamp || now) - (lastPoint.timestamp || now));
+        speed = distanceFromLast / (dt / 1000); // m/s
+        bearing = calcBearing(lastPoint, smoothed);
+      }
+
+      const pointOut = {
+        latitude: smoothed.latitude,
+        longitude: smoothed.longitude,
+        accuracy: smoothed.accuracy,
+        timestamp: smoothed.timestamp,
+        distanceFromLast,
+        speed,
+        bearing,
+        raw: smoothed.raw || null,
+      };
+
+      // emit to caller
+      try {
+        onChange(pointOut);
+      } catch (e) {
+        debug("watch onChange handler threw", e);
+      }
+      // emit global listeners
+      emitPosition(pointOut);
+
       lastEmitTs = now;
-      lastEmitPoint = p;
-      failAttempts = 0;
-      try {
-        onChange(p);
-      } catch (e) {
-        debug("onChange handler threw", e);
+      lastPoint = smoothed;
+
+      // keep buffer trimmed for local storage
+      if (opts.enableLocalBuffer) {
+        // push to tail; keep bounded
+        _localBufferPush(pointOut, opts.localBufferMax || DEFAULTS.localBufferMax);
       }
     } catch (e) {
-      debug("tryEmit error", e);
+      debug("emitIfValid error", e);
     }
   };
 
-  // small haversine helper (local here for perf)
-  function haversineDistance(a, b) {
+  // start native watcher
+  const startNativeWatcher = async () => {
     try {
-      if (!a || !b) return Infinity;
-      const R = 6371e3;
-      const toRad = (d) => (d * Math.PI) / 180;
-      const φ1 = toRad(safeNum(a.latitude));
-      const φ2 = toRad(safeNum(b.latitude));
-      const Δφ = toRad(safeNum(b.latitude) - safeNum(a.latitude));
-      const Δλ = toRad(safeNum(b.longitude) - safeNum(a.longitude));
-      const aa =
-        Math.sin(Δφ / 2) ** 2 +
-        Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
-      const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
-      return R * c;
-    } catch {
-      return Infinity;
-    }
-  }
-
-  // start the actual location watcher
-  const startWatcher = async () => {
-    try {
-      if (isRemoved) return;
-      if (sub) {
-        // already started
-        return;
-      }
-      debug("startWatcher", config);
-      try {
-        const subscription = await Location.watchPositionAsync(
-          {
-            accuracy: config.accuracy,
-            timeInterval: config.timeInterval,
-            distanceInterval: config.distanceInterval,
-            mayShowUserSettingsDialog: true,
-          },
-          (loc) => {
-            tryEmit(loc);
-          }
-        );
-        sub = subscription;
-      } catch (e) {
-        debug("watchPositionAsync failed", e);
-        // optional backoff retry
-        if (config.backoffOnFail?.enabled && failAttempts < (config.backoffOnFail.maxAttempts || 3)) {
-          failAttempts += 1;
-          const wait = DEFAULTS.retryBackoffBaseMs * 2 ** (failAttempts - 1);
-          debug("retrying watcher after", wait);
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise((res) => setTimeout(res, wait));
-          if (!isRemoved) await startWatcher();
-        }
-      }
-    } catch (e) {
-      debug("startWatcher outer catch", e);
+      if (subscription) return;
+      debug("startNativeWatcher", opts);
+      subscription = await Location.watchPositionAsync(
+        {
+          accuracy: opts.accuracy,
+          timeInterval: opts.timeInterval,
+          distanceInterval: opts.distanceInterval,
+          mayShowUserSettingsDialog: true,
+        },
+        (loc) => emitIfValid(loc)
+      );
+      debug("native watcher started");
+    } catch (err) {
+      debug("startNativeWatcher failed", err);
+      subscription = null;
+      // allow fallback to polling
     }
   };
 
-  // fallback: polling if watchPositionAsync not available/failed
+  // polling fallback (lower fidelity)
   const startPolling = async () => {
-    let pollId = null;
+    debug("startPolling fallback");
+    let timer = null;
     try {
-      debug("startPolling");
-      pollId = setInterval(async () => {
+      timer = setInterval(async () => {
         try {
-          const p = await Location.getCurrentPositionAsync({ accuracy: config.accuracy });
-          tryEmit(p);
+          const p = await Location.getCurrentPositionAsync({ accuracy: opts.accuracy });
+          emitIfValid(p);
         } catch (e) {
-          debug("poll getCurrentPositionAsync failed", e);
+          debug("poll failure", e);
         }
-      }, config.timeInterval || 1000);
-      return () => clearInterval(pollId);
+      }, Math.max(500, opts.timeInterval * (opts.pollingMultiplier || 1)));
+      return () => clearInterval(timer);
     } catch (e) {
       debug("startPolling catch", e);
-      if (pollId) clearInterval(pollId);
+      if (timer) clearInterval(timer);
       return () => {};
     }
   };
 
-  // start immediately
-  await startWatcher();
-  // if no sub after attempt, fallback to polling
-  let pollingStopper = null;
-  if (!sub) {
+  // start
+  await startNativeWatcher();
+  if (!subscription && opts.pollingFallback) {
     pollingStopper = await startPolling();
   }
 
+  // controller API
   const controller = {
     remove: () => {
       try {
-        isRemoved = true;
-        if (sub && typeof sub.remove === "function") {
+        removed = true;
+        if (subscription && typeof subscription.remove === "function") {
           try {
-            sub.remove();
+            subscription.remove();
           } catch (e) {
-            debug("sub.remove error", e);
+            debug("subscription.remove error", e);
           }
         }
         if (pollingStopper) {
           try {
             pollingStopper();
-          } catch {}
+          } catch (_) {}
         }
-        sub = null;
+        subscription = null;
         pollingStopper = null;
+        buffer = [];
         debug("watcher removed");
       } catch (e) {
         debug("controller.remove catch", e);
@@ -349,45 +432,103 @@ export async function watchPosition(onChange, opts = {}) {
     },
     pause: () => {
       try {
-        if (isRemoved) return;
-        isPaused = true;
-        if (sub && typeof sub.remove === "function") {
+        if (removed) return;
+        paused = true;
+        if (subscription && typeof subscription.remove === "function") {
           try {
-            sub.remove();
+            subscription.remove();
           } catch (e) {
-            debug("pause: sub.remove error", e);
+            debug("pause subscription.remove error", e);
           }
         }
         if (pollingStopper) {
           try {
             pollingStopper();
-          } catch {}
+          } catch (_) {}
         }
-        sub = null;
+        subscription = null;
+        pollingStopper = null;
+        debug("watcher paused");
       } catch (e) {
         debug("controller.pause catch", e);
       }
     },
     resume: async () => {
       try {
-        if (isRemoved) return;
-        if (!isPaused) return;
-        isPaused = false;
-        await startWatcher();
-        if (!sub) {
+        if (removed) return;
+        if (!paused) return;
+        paused = false;
+        await startNativeWatcher();
+        if (!subscription && opts.pollingFallback) {
           pollingStopper = await startPolling();
         }
+        debug("watcher resumed");
       } catch (e) {
         debug("controller.resume catch", e);
       }
     },
-    isWatching: () => !!sub,
+    isWatching: () => !!subscription,
   };
 
   return controller;
 }
 
-/* --------------------- debug toggle (helper for dev) --------------------- */
+/* ===========================
+   LOCAL BUFFER (optional in-memory)
+   - used only if enableLocalBuffer = true
+   - not persisted, bounded length
+   =========================== */
+const _localBuffer = []; // global in-memory buffer (not persisted)
+function _localBufferPush(point, max = DEFAULTS.localBufferMax) {
+  try {
+    _localBuffer.push(point);
+    if (_localBuffer.length > max) _localBuffer.shift();
+  } catch (e) {
+    debug("localBufferPush err", e);
+  }
+}
+export function getLocalBufferSnapshot() {
+  return _localBuffer.slice();
+}
+export function clearLocalBuffer() {
+  _localBuffer.length = 0;
+}
+
+/* ===========================
+   GLOBAL SUBSCRIBE/UNSUBSCRIBE HELPERS
+   =========================== */
+export function on(eventName = "position", cb) {
+  if (!listeners[eventName]) throw new Error("unknown_event");
+  listeners[eventName].add(cb);
+  return () => off(eventName, cb);
+}
+export function off(eventName = "position", cb) {
+  if (!listeners[eventName]) return;
+  listeners[eventName].delete(cb);
+}
+
+/* ===========================
+   Debug toggle
+   =========================== */
 export function enableDebugging(enable = true) {
   _debug = !!enable;
 }
+
+/* ===========================
+   Export other helpers
+   =========================== */
+export { haversineDistance as distanceBetween };
+export { calcBearing as bearingBetween };
+
+/* ===========================
+   NOTES / INTEGRATION
+   ===========================
+ - This module does NOT persist location data by default. If you need to buffer
+   to disk for later sync, implement explicit save/flush using getLocalBufferSnapshot()
+   and your secure persistence layer (prefer encrypted storage).
+ - For background tracking you may integrate with expo-task-manager and
+   BackgroundFetch/Location.startLocationUpdatesAsync — those require extra
+   permissions and manifest changes (Android foreground service). I can add a
+   safe background module once you confirm target behaviour.
+ - Keeps sensitive data in-memory only; optional persistence is opt-in.
+=========================== */

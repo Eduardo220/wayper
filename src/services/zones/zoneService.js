@@ -27,7 +27,7 @@ export async function syncZonesToFirestore(zones = []) {
   try {
     const unsynced = zones.filter((z) => !z.synced);
     for (const zone of unsynced) {
-      await addDoc(collection(db, "zonas"), {
+      await addDoc(collection(db, "zones"), {
         userId: auth?.currentUser?.uid || "offline",
         coords: zone.coords,
         area: zone.area,

@@ -1,5 +1,5 @@
-// services/auth/authService.js — VERSÃO ULTIMATE PRO MAX SUPREMA
-// Ultra otimizado, seguro e estável
+// services/auth/authService.js — WAYPER ULTRA™ EDITION
+// O serviço de autenticação mais sólido, rápido e seguro possível no Expo + Firebase
 
 import {
   signInWithEmailAndPassword,
@@ -10,95 +10,130 @@ import {
   signInWithCredential,
   updateProfile,
   onAuthStateChanged,
+  getAuth,
 } from "firebase/auth";
 
 import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
 import { auth } from "../../firebaseConfig";
-import { createUserIfNotExists } from "../firestone/userService";
+import { createUserIfNotExists } from "../userService";
 
-// Necessário para Google OAuth no Expo
+/* ============================================================
+   FIX GOOGLE AUTH SESSIONS (OBRIGATÓRIO NO EXPO)
+============================================================ */
 WebBrowser.maybeCompleteAuthSession();
 
-/* ------------------------------------------------------------
-   CONFIG GLOBAL
-------------------------------------------------------------- */
+/* ============================================================
+   CONFIGURAÇÕES
+============================================================ */
 const ENABLE_LOGS = false;
+const REQUEST_TIMEOUT = 8000;
 
-/// Log seguro
+const ERRORS_MAP = {
+  "auth/invalid-email": "Email inválido.",
+  "auth/user-not-found": "Usuário não encontrado.",
+  "auth/wrong-password": "Senha incorreta.",
+  "auth/email-already-in-use": "Email já está em uso.",
+  "auth/weak-password": "Senha muito fraca.",
+  "auth/too-many-requests": "Muitas tentativas. Tente mais tarde.",
+  "auth/network-request-failed": "Erro de rede. Verifique sua conexão.",
+};
+
+/* ============================================================
+   HELPERS PRO EDITION
+============================================================ */
+
 function log(...args) {
   if (ENABLE_LOGS) console.log("[authService]", ...args);
 }
 
-/// Sanitiza strings
 function clean(str) {
   if (!str || typeof str !== "string") return "";
   return str.trim().replace(/\s+/g, " ");
 }
 
-/// Timeout para evitar travas do Firebase (caso raro)
-async function withTimeout(promise, ms = 8000) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Tempo limite na operação Firebase.")), ms)
-    ),
-  ]);
+function formatError(err) {
+  const code = err?.code || "";
+  return ERRORS_MAP[code] || err.message || "Erro inesperado.";
+}
+
+async function withTimeout(promise, ms = REQUEST_TIMEOUT) {
+  let timeout;
+  const timer = new Promise((_, reject) => {
+    timeout = setTimeout(() => reject(new Error("timeout")), ms);
+  });
+
+  try {
+    return await Promise.race([promise, timer]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeUser(user) {
+  if (!user) return null;
+
+  return {
+    uid: user.uid,
+    email: user.email || null,
+    displayName: user.displayName || null,
+    photoURL: user.photoURL || null,
+    emailVerified: user.emailVerified || false,
+    providerId: user.providerId || null,
+  };
 }
 
 /* ============================================================
-   LOGIN COM EMAIL E SENHA
+   LOGIN EMAIL / SENHA
 ============================================================ */
 export async function signInEmail(email, password) {
   email = clean(email).toLowerCase();
   password = clean(password);
 
-  if (!email || !password) throw new Error("Faltou email ou senha.");
+  if (!email || !password) throw new Error("Digite email e senha.");
 
   try {
-    const result = await withTimeout(
+    const res = await withTimeout(
       signInWithEmailAndPassword(auth, email, password)
     );
 
-    await createUserIfNotExists(result.user);
-    return result.user;
+    await createUserIfNotExists(res.user);
+
+    return normalizeUser(res.user);
   } catch (err) {
-    log("Erro signInEmail:", err);
-    throw err;
+    log("signInEmail error:", err);
+    throw new Error(formatError(err));
   }
 }
 
 /* ============================================================
-   REGISTRO COM EMAIL / SENHA
+   REGISTRO EMAIL / SENHA
 ============================================================ */
 export async function signUpEmail(email, password, username) {
   email = clean(email).toLowerCase();
   password = clean(password);
   username = clean(username);
 
-  if (!email || !password) throw new Error("Faltou email ou senha.");
-
   try {
-    const result = await withTimeout(
+    const res = await withTimeout(
       createUserWithEmailAndPassword(auth, email, password)
     );
 
-    // Atualiza displayName se tiver username
     if (username) {
-      await updateProfile(result.user, { displayName: username });
+      await updateProfile(res.user, { displayName: username });
     }
 
-    await createUserIfNotExists(result.user, username);
+    await createUserIfNotExists(res.user, username);
 
-    return result.user;
+    return normalizeUser(res.user);
   } catch (err) {
-    log("Erro signUpEmail:", err);
-    throw err;
+    log("signUpEmail error:", err);
+    throw new Error(formatError(err));
   }
 }
 
 /* ============================================================
-   GOOGLE AUTH — HOOK ULTRA ESTÁVEL
+   GOOGLE AUTH — ULTRA VERSÃO
 ============================================================ */
 export function useGoogleAuth() {
   return Google.useAuthRequest({
@@ -111,37 +146,35 @@ export function useGoogleAuth() {
 }
 
 export async function signInWithGoogleAsync(idToken) {
-  if (!idToken) throw new Error("Faltou idToken do Google.");
+  if (!idToken) throw new Error("Erro ao autenticar com Google.");
 
   try {
     const credential = GoogleAuthProvider.credential(idToken);
 
-    const result = await withTimeout(
-      signInWithCredential(auth, credential)
-    );
+    const res = await withTimeout(signInWithCredential(auth, credential));
 
-    await createUserIfNotExists(result.user);
+    await createUserIfNotExists(res.user);
 
-    return result.user;
+    return normalizeUser(res.user);
   } catch (err) {
-    log("Erro signInWithGoogle:", err);
-    throw err;
+    log("signInWithGoogle error:", err);
+    throw new Error(formatError(err));
   }
 }
 
 /* ============================================================
-   RESETAR SENHA
+   RESET PASSWORD
 ============================================================ */
 export async function resetPassword(email) {
   email = clean(email).toLowerCase();
-  if (!email) throw new Error("Digite um email válido.");
+
+  if (!email) throw new Error("Informe o email.");
 
   try {
     await withTimeout(sendPasswordResetEmail(auth, email));
     return true;
   } catch (err) {
-    log("Erro resetPassword:", err);
-    throw err;
+    throw new Error(formatError(err));
   }
 }
 
@@ -150,39 +183,25 @@ export async function resetPassword(email) {
 ============================================================ */
 export async function logout() {
   try {
-    return await withTimeout(signOut(auth));
+    await withTimeout(signOut(auth));
+    return true;
   } catch (err) {
-    log("Erro logout:", err);
-    throw err;
+    throw new Error(formatError(err));
   }
 }
 
 /* ============================================================
-   LISTENER UNIVERSAL DE LOGIN
-   - Pode ser usado no app inteiro
-   - Retorna usuário formatado
+   LISTENER UNIVERSAL
 ============================================================ */
 export function listenAuthChanges(callback) {
   return onAuthStateChanged(auth, (user) => {
-    if (!user) {
-      callback(null);
-      return;
-    }
-
-    // formato seguro
-    callback({
-      uid: user.uid,
-      email: user.email,
-      displayName: user.displayName || null,
-      photoURL: user.photoURL || null,
-      emailVerified: user.emailVerified,
-    });
+    callback(normalizeUser(user));
   });
 }
 
 /* ============================================================
-   GET USER ATUAL (SINCRONO)
+   GET USER ATUAL
 ============================================================ */
 export function getCurrentUser() {
-  return auth.currentUser || null;
+  return normalizeUser(getAuth().currentUser);
 }

@@ -1,6 +1,4 @@
-// src/screens/RankingScreen.js
-
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -11,314 +9,245 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
-  Animated,
-  Easing,
   RefreshControl,
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { getFirestore, collection, getDocs, query, where, orderBy, limit } from "firebase/firestore";
-import { auth } from "../firebaseConfig"; // apenas se precisa checar auth
-// fallback mock generator (mantive a lógica original)
-const makeMockRanking = (city = "Santa Maria", count = 60) =>
-  Array.from({ length: count }, (_, i) => {
-    const zones = Math.floor(Math.random() * 120);
-    const area = +(Math.random() * 50).toFixed(2);
-    const xp = Math.floor(Math.random() * 25000);
-    const level = Math.floor(xp / 2000) + 1;
-    const eloScore = Math.floor(Math.random() * 3000);
-    const elo = eloScore > 2400 ? "Global" : eloScore > 1800 ? "Diamante" : eloScore > 1200 ? "Ouro" : eloScore > 700 ? "Prata" : "Bronze";
-    return {
-      id: (i + 1).toString(),
-      name: `Usuário ${i + 1}`,
-      avatar: `https://i.pravatar.cc/150?img=${(i % 70) + 1}`,
-      city,
-      zones,
-      area,
-      xp,
-      level,
-      elo,
-      eloScore,
-      dailyPoints: Math.floor(Math.random() * 300),
-    };
-  });
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { auth, db } from "../firebaseConfig";
+import { fetchAllRanking, fetchMonthlyRanking } from "../services/ranking";
+import { getMonthlyMedalForRank, getRankingMonthKey } from "../services/ranking/constants";
 
-// theme (mantive esquema)
 const colors = {
-  primary: "#FF5A5F",
-  accent: "#00b894",
+  primary: "#00b894",
+  accent: "#26c6da",
   bg: "#07111a",
   bgCard: "#0b151d",
   muted: "#9aa0a6",
   textMain: "#e6eef6",
   textMuted: "#9aa0a6",
-  gold: "#FFD700",
-  silver: "#C0C0C0",
-  bronze: "#CD7F32",
+  border: "#12333f",
 };
 
-/* -----------------------
-   util: sort
-------------------------*/
-const sortBy = (list, criterion) => {
-  const copy = [...list];
-  if (criterion === "zones") return copy.sort((a, b) => b.zones - a.zones);
-  if (criterion === "area") return copy.sort((a, b) => b.area - a.area);
-  if (criterion === "xp") return copy.sort((a, b) => b.xp - a.xp);
-  return copy.sort((a, b) => b.eloScore - a.eloScore);
+const DEFAULT_AVATAR = "https://i.pravatar.cc/150?u=wayper";
+
+const makeMockRanking = (city = "Santa Maria", count = 40) =>
+  Array.from({ length: count }, (_, i) => {
+    const distance = Math.round((Math.random() * 220 + 5) * 1000);
+    const area = Math.round((Math.random() * 2_500_000) + 20_000);
+    return {
+      id: `mock-${i + 1}`,
+      name: `Usuario ${i + 1}`,
+      avatar: `https://i.pravatar.cc/150?img=${(i % 70) + 1}`,
+      city,
+      area,
+      distance,
+      monthlyArea: area * 0.35,
+      monthlyDistance: distance * 0.35,
+      totalRuns: Math.floor(Math.random() * 70),
+      level: Math.floor(Math.random() * 40) + 1,
+      xp: Math.floor(Math.random() * 25000),
+    };
+  });
+
+const formatKm = (meters = 0) => `${(Number(meters || 0) / 1000).toFixed(2)} km`;
+const formatArea = (m2 = 0) => {
+  const safe = Number(m2 || 0);
+  if (safe >= 1e6) return `${(safe / 1e6).toFixed(2)} km²`;
+  return `${Math.round(safe)} m²`;
 };
 
-const topBadge = (pos) => {
-  if (pos === 0) return { label: "1", color: colors.gold };
-  if (pos === 1) return { label: "2", color: colors.silver };
-  if (pos === 2) return { label: "3", color: colors.bronze };
-  return null;
+const getMetricValue = (item, mode, period) => {
+  if (mode === "distance") {
+    return Number(period === "monthly" ? item.monthlyDistance ?? item.distance : item.distance) || 0;
+  }
+  return Number(period === "monthly" ? item.monthlyArea ?? item.area : item.area) || 0;
 };
 
-/* -----------------------
-   RankItem (memo)
-------------------------*/
-function RankItem({ item, index }) {
-  const badge = topBadge(index);
+const getMetricLabel = (item, mode, period) => {
+  const value = getMetricValue(item, mode, period);
+  return mode === "distance" ? formatKm(value) : formatArea(value);
+};
+
+const normalizeRanking = (list, mode, period) =>
+  (Array.isArray(list) ? list : [])
+    .map((item) => ({
+      ...item,
+      avatar: item.avatar || item.photoURL || DEFAULT_AVATAR,
+      name: item.name || item.displayName || item.username || "Jogador",
+    }))
+    .sort((a, b) => getMetricValue(b, mode, period) - getMetricValue(a, mode, period))
+    .map((item, index) => ({ ...item, rank: index + 1 }));
+
+function RankItem({ item, mode, period }) {
+  const medal = period === "monthly" ? getMonthlyMedalForRank(item.rank) : null;
 
   return (
     <View style={styles.item}>
       <View style={styles.positionCol}>
-        {badge ? (
-          <View style={[styles.medal, { backgroundColor: badge.color }]}>
-            <Text style={styles.medalText}>{badge.label}</Text>
-          </View>
-        ) : (
-          <Text style={styles.position}>{index + 1}</Text>
-        )}
+        <View style={[styles.rankBadge, medal && { backgroundColor: medal.color }]}>
+          <Text style={[styles.rankText, medal && { color: "#07111a" }]}>{item.rank}</Text>
+        </View>
       </View>
 
       <Image source={{ uri: item.avatar }} style={styles.avatar} />
 
-      <View style={{ flex: 1, marginLeft: 12 }}>
+      <View style={styles.itemBody}>
         <View style={styles.rowBetween}>
           <Text style={styles.name} numberOfLines={1}>
             {item.name}
           </Text>
-          <View style={styles.eloBox}>
-            <Text style={styles.eloText}>{item.elo}</Text>
-          </View>
+          {medal ? (
+            <View style={styles.medalPill}>
+              <Text style={styles.medalText}>{medal.label}</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.rowBetween}>
           <Text style={styles.info}>
-            {item.zones} zonas • {item.area} km²
+            {mode === "distance" ? "Km percorrido" : "Area capturada"}
           </Text>
-
-          <View style={styles.xpBox}>
-            <Text style={styles.xpText}>
-              {item.level} • {item.xp} XP
-            </Text>
-          </View>
+          <Text style={styles.metric}>{getMetricLabel(item, mode, period)}</Text>
         </View>
 
-        <View style={styles.progressRow}>
-          <View style={styles.progressBarBg}>
-            <View style={[styles.progressBarFill, { width: `${Math.min(100, (item.xp % 2000) / 20)}%` }]} />
-          </View>
-          <Text style={styles.dailyPoints}>+{item.dailyPoints}/dia</Text>
-        </View>
+        <Text style={styles.meta}>
+          {item.totalRuns || 0} corridas • Nivel {item.level || 1}
+        </Text>
       </View>
     </View>
   );
 }
 
-/* -----------------------
-   RankingScreen
-------------------------*/
 export default function RankingScreen({ route }) {
-  const injectedCity = (route && route.params && route.params.city) || "Santa Maria";
-  const injectedData = (route && route.params && route.params.rankingData) || null;
+  const injectedCity = route?.params?.city || "Santa Maria";
 
   const [city, setCity] = useState(injectedCity);
-  const [scope, setScope] = useState("global"); // global || regional
-  const [criterion, setCriterion] = useState("zones"); // zones | area | xp | elo
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [data, setData] = useState(() => (Array.isArray(injectedData) ? injectedData : makeMockRanking(injectedCity)));
+  const [scope, setScope] = useState("global");
+  const [period, setPeriod] = useState("monthly");
+  const [mode, setMode] = useState("area");
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [data, setData] = useState([]);
 
-  // in-memory cache to avoid re-fetching while screen mounted
-  const cacheRef = useRef({ city: injectedCity, data: Array.isArray(injectedData) ? injectedData : null });
+  const persistMyMonthlyPreview = useCallback(
+    async (ranking) => {
+      const uid = auth.currentUser?.uid;
+      if (!uid || period !== "monthly") return;
 
-  // animated value for top cards
-  const animScale = useRef(new Animated.Value(1)).current;
+      const me = ranking.find((item) => item.id === uid);
+      if (!me?.rank) return;
 
-  // debounce for search input
-  const searchTimeout = useRef(null);
-
-  const db = getFirestore();
-
-  const log = useRef((...args) => console.debug("[RANK]", ...args)).current;
-
-  useEffect(() => {
-    // safe looped animation (gentle pulse)
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(animScale, { toValue: 1.03, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(animScale, { toValue: 0.98, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-      ]),
-      { iterations: -1 }
-    ).start();
-
-    return () => {
-      // stop animation on unmount (Animated.loop is cleaned by RN but keep explicit)
-      animScale.stopAnimation?.();
-    };
-  }, [animScale]);
-
-  const fetchRemoteRanking = useCallback(
-    async (c = city) => {
-      setLoading(true);
-      log("fetchRemoteRanking start", c);
+      const field = mode === "distance" ? "bestMonthlyRankDistance" : "bestMonthlyRankArea";
       try {
-        // guard: if we already have cached data for this city, reuse it
-        if (cacheRef.current && cacheRef.current.city === c && Array.isArray(cacheRef.current.data)) {
-          log("fetchRemoteRanking using cache");
-          setData(cacheRef.current.data);
-          return cacheRef.current.data;
-        }
+        await setDoc(
+          doc(db, "users", uid),
+          {
+            monthlyRankPreview: me.rank,
+            [field]: me.rank,
+            bestMonthlyRank: me.rank,
+            rankingMonth: getRankingMonthKey(),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (error) {
+        console.warn("Ranking preview persist failed:", error);
+      }
+    },
+    [mode, period]
+  );
 
-        // If user not authenticated, fall back to mock (but still try to read public 'ranking' collection)
-        try {
-          const q = query(collection(db, "ranking"), orderBy("eloScore", "desc"), limit(300));
-          const snap = await getDocs(q);
-          const out = [];
-          snap.forEach((d) => {
-            const obj = { id: d.id, ...d.data() };
-            // sanitize fields we use
-            out.push({
-              id: String(obj.id || Math.random()),
-              name: String(obj.name || "Usuário"),
-              avatar: String(obj.avatar || `https://i.pravatar.cc/150?img=${Math.floor(Math.random() * 70) + 1}`),
-              city: String(obj.city || c),
-              zones: Number(obj.zones || 0),
-              area: Number(obj.area || 0),
-              xp: Number(obj.xp || 0),
-              level: Number(obj.level || 1),
-              elo: String(obj.elo || "Bronze"),
-              eloScore: Number(obj.eloScore || 0),
-              dailyPoints: Number(obj.dailyPoints || 0),
-            });
-          });
+  const loadRanking = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) setLoading(true);
+      try {
+        const args = {
+          scope,
+          city: city.trim() || null,
+          criterion: mode,
+          limitTo: 300,
+        };
 
-          if (out.length === 0) {
-            log("fetchRemoteRanking: empty result → using mock");
-            cacheRef.current = { city: c, data: makeMockRanking(c, 60) };
-            setData(cacheRef.current.data);
-            return cacheRef.current.data;
-          }
+        const remote =
+          period === "monthly"
+            ? await fetchMonthlyRanking(args)
+            : await fetchAllRanking(args);
 
-          cacheRef.current = { city: c, data: out };
-          setData(out);
-          log("fetchRemoteRanking success", out.length);
-          return out;
-        } catch (e) {
-          // firestore read error → fallback to mock
-          console.warn("fetchRemoteRanking firestore error:", e);
-          cacheRef.current = { city: c, data: makeMockRanking(c, 60) };
-          setData(cacheRef.current.data);
-          return cacheRef.current.data;
-        }
+        const normalized = normalizeRanking(remote.length ? remote : makeMockRanking(city), mode, period);
+        setData(normalized);
+        persistMyMonthlyPreview(normalized);
+      } catch (error) {
+        console.warn("Ranking load error:", error);
+        setData(normalizeRanking(makeMockRanking(city), mode, period));
+        Alert.alert("Ranking", "Usando dados locais de exemplo porque o ranking remoto falhou.");
       } finally {
         setLoading(false);
       }
     },
-    [db, log, city]
+    [city, mode, period, persistMyMonthlyPreview, scope]
   );
 
-  // initial load and when injectedData changes
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      setLoading(true);
-      try {
-        if (Array.isArray(injectedData) && injectedData.length) {
-          cacheRef.current = { city, data: injectedData };
-          setData(injectedData);
-          log("using injectedData from route");
-        } else {
-          await fetchRemoteRanking(city);
-        }
-      } catch (e) {
-        console.warn("Ranking initial load error:", e);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-    return () => { mounted = false; };
-  }, [injectedData, city, fetchRemoteRanking, log]);
+    loadRanking();
+  }, [loadRanking]);
 
-  // refresh handler
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      cacheRef.current = { city: city, data: null }; // clear cache for this city
-      await fetchRemoteRanking(city);
-    } catch (e) {
-      console.warn("refresh error:", e);
-      Alert.alert("Erro", "Falha ao atualizar ranking.");
+      await loadRanking({ silent: true });
     } finally {
       setRefreshing(false);
     }
-  }, [city, fetchRemoteRanking]);
+  }, [loadRanking]);
 
-  // debounce search input (keeps the UI snappy)
-  useEffect(() => {
-    if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    searchTimeout.current = setTimeout(() => {
-      // nothing else: filtering happens in memo below
-      log("search debounce fired", query);
-    }, 350);
-    return () => {
-      if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    };
-  }, [query, log]);
-
-  // filtered + sorted list (memoized)
   const filtered = useMemo(() => {
-    let list = Array.isArray(data) ? data : [];
-    if (scope === "regional") {
-      list = list.filter((u) => (u.city || "").toLowerCase() === (city || "").toLowerCase());
-    }
-    const q = (query || "").trim().toLowerCase();
-    if (q) list = list.filter((u) => (u.name || "").toLowerCase().includes(q));
-    const out = sortBy(list, criterion);
-    return out;
-  }, [data, scope, city, criterion, query]);
+    const q = search.trim().toLowerCase();
+    if (!q) return data;
+    return data.filter((item) => {
+      const name = String(item.name || "").toLowerCase();
+      const username = String(item.username || "").toLowerCase();
+      return name.includes(q) || username.includes(q);
+    });
+  }, [data, search]);
 
   const top3 = useMemo(() => filtered.slice(0, 3), [filtered]);
+  const monthLabel = getRankingMonthKey();
 
-  // header component extracted (keeps FlatList stable)
-  const Header = useCallback(() => {
-    return (
+  const Header = useCallback(
+    () => (
       <View style={styles.headerContainer}>
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
             <Ionicons name="trophy-outline" size={28} color={colors.primary} />
             <View style={{ marginLeft: 10 }}>
               <Text style={styles.title}>Ranking</Text>
-              <Text style={styles.subtitle}>Global • Regional</Text>
+              <Text style={styles.subtitle}>
+                {period === "monthly" ? `Mensal ${monthLabel}` : "Geral"} • {scope === "regional" ? city : "Global"}
+              </Text>
             </View>
           </View>
 
-          <View style={styles.headerRight}>
-            <TextInput
-              value={city}
-              onChangeText={setCity}
-              placeholder="Cidade"
-              placeholderTextColor="#888"
-              style={styles.cityInput}
-            />
-          </View>
+          <TextInput
+            value={city}
+            onChangeText={setCity}
+            placeholder="Cidade"
+            placeholderTextColor="#78858d"
+            style={styles.cityInput}
+          />
         </View>
 
         <View style={styles.controlsRow}>
+          <View style={styles.segment}>
+            <TouchableOpacity onPress={() => setPeriod("monthly")} style={[styles.segmentBtn, period === "monthly" && styles.segmentActive]}>
+              <Text style={[styles.segmentText, period === "monthly" && styles.segmentTextActive]}>Mensal</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setPeriod("all")} style={[styles.segmentBtn, period === "all" && styles.segmentActive]}>
+              <Text style={[styles.segmentText, period === "all" && styles.segmentTextActive]}>Geral</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.segment}>
             <TouchableOpacity onPress={() => setScope("global")} style={[styles.segmentBtn, scope === "global" && styles.segmentActive]}>
               <Text style={[styles.segmentText, scope === "global" && styles.segmentTextActive]}>Global</Text>
@@ -327,61 +256,67 @@ export default function RankingScreen({ route }) {
               <Text style={[styles.segmentText, scope === "regional" && styles.segmentTextActive]}>Regional</Text>
             </TouchableOpacity>
           </View>
-
-          <View style={styles.filterGroup}>
-            <TouchableOpacity onPress={() => setCriterion("zones")} style={[styles.filterBtn, criterion === "zones" && styles.filterActive]}>
-              <Text style={[styles.filterText, criterion === "zones" && styles.filterTextActive]}>Zonas</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => setCriterion("area")} style={[styles.filterBtn, criterion === "area" && styles.filterActive]}>
-              <Text style={[styles.filterText, criterion === "area" && styles.filterTextActive]}>Área</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => setCriterion("xp")} style={[styles.filterBtn, criterion === "xp" && styles.filterActive]}>
-              <Text style={[styles.filterText, criterion === "xp" && styles.filterTextActive]}>XP</Text>
-            </TouchableOpacity>
-          </View>
         </View>
+
+        <View style={styles.modeRow}>
+          <TouchableOpacity onPress={() => setMode("area")} style={[styles.modeBtn, mode === "area" && styles.modeActive]}>
+            <Ionicons name="map-outline" size={16} color={mode === "area" ? "#07111a" : colors.textMain} />
+            <Text style={[styles.modeText, mode === "area" && styles.modeTextActive]}>Area</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setMode("distance")} style={[styles.modeBtn, mode === "distance" && styles.modeActive]}>
+            <Ionicons name="walk-outline" size={16} color={mode === "distance" ? "#07111a" : colors.textMain} />
+            <Text style={[styles.modeText, mode === "distance" && styles.modeTextActive]}>Km</Text>
+          </TouchableOpacity>
+        </View>
+
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Buscar atleta"
+          placeholderTextColor="#78858d"
+          style={styles.searchInput}
+        />
 
         <View style={styles.heroRow}>
-          <View style={styles.heroLeft}>
+          <View>
             <Text style={styles.heroTitle}>Top 3</Text>
-            <Text style={styles.heroSub}>Líderes do momento</Text>
+            <Text style={styles.heroSub}>
+              Medalhas mensais: Top 100, 50, 10, 3, 2 e 1
+            </Text>
           </View>
 
-          <Animated.View style={[styles.heroRight, { transform: [{ scale: animScale }] }]}>
-            {top3.map((u) => (
-              <View key={u.id} style={styles.topCard}>
-                <Image source={{ uri: u.avatar }} style={styles.topAvatar} />
-                <Text style={styles.topName}>{u.name}</Text>
-                <Text style={styles.topSmall}>
-                  {u.zones} zonas • {u.area} km²
+          <View style={styles.heroRight}>
+            {top3.map((item) => (
+              <View key={item.id} style={styles.topCard}>
+                <Image source={{ uri: item.avatar }} style={styles.topAvatar} />
+                <Text style={styles.topName} numberOfLines={1}>
+                  {item.name}
                 </Text>
+                <Text style={styles.topSmall}>{getMetricLabel(item, mode, period)}</Text>
               </View>
             ))}
-          </Animated.View>
+          </View>
         </View>
-
-        <View style={styles.separator} />
       </View>
-    );
-  }, [animScale, city, criterion, scope, top3]);
+    ),
+    [city, mode, monthLabel, period, scope, search, top3]
+  );
 
   return (
     <View style={styles.container}>
       {loading ? (
-        <View style={{ padding: 24, alignItems: "center" }}>
+        <View style={styles.loading}>
           <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Carregando ranking...</Text>
         </View>
       ) : (
         <FlatList
           data={filtered}
           keyExtractor={(item) => String(item.id)}
-          renderItem={({ item, index }) => <RankItem item={item} index={index} />}
-          contentContainerStyle={{ paddingBottom: 160 }}
+          renderItem={({ item }) => <RankItem item={item} mode={mode} period={period} />}
+          contentContainerStyle={{ paddingBottom: 140 }}
           ListHeaderComponent={<Header />}
-          stickyHeaderIndices={[0]}
-          ListEmptyComponent={<Text style={{ textAlign: "center", marginTop: 20, color: colors.textMuted }}>Sem resultados</Text>}
+          ListEmptyComponent={<Text style={styles.empty}>Sem resultados</Text>}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />}
         />
       )}
@@ -389,9 +324,6 @@ export default function RankingScreen({ route }) {
   );
 }
 
-/* -----------------------
-   Styles (mantive visual)
-------------------------*/
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -399,106 +331,85 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: Platform.OS === "ios" ? 54 : 20,
   },
-
+  loading: { padding: 24, alignItems: "center" },
+  loadingText: { color: colors.textMuted, marginTop: 10 },
   headerContainer: {
-    backgroundColor: colors.bgCard,
+    backgroundColor: colors.bg,
     paddingVertical: 10,
-    borderBottomColor: "#0d2837",
+    borderBottomColor: colors.border,
     borderBottomWidth: 1,
   },
-
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 4,
-  },
-
-  headerLeft: { flexDirection: "row", alignItems: "center" },
-  headerRight: { width: 160 },
-
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  headerLeft: { flexDirection: "row", alignItems: "center", flex: 1 },
   title: { fontSize: 20, fontWeight: "900", color: colors.textMain },
-  subtitle: { fontSize: 12, color: colors.textMuted },
-
+  subtitle: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   cityInput: {
+    width: 130,
     backgroundColor: "#0f1920",
     borderRadius: 10,
     paddingHorizontal: 10,
     height: 40,
     color: colors.textMain,
     fontWeight: "600",
-    borderColor: "#143040",
+    borderColor: colors.border,
     borderWidth: 1,
   },
-
-  controlsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 8,
-    marginBottom: 6,
-  },
-
+  controlsRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 10, gap: 8 },
   segment: {
     flexDirection: "row",
     backgroundColor: "#0f1920",
     borderRadius: 10,
     overflow: "hidden",
-    borderColor: "#12333f",
+    borderColor: colors.border,
     borderWidth: 1,
   },
-
   segmentBtn: { paddingHorizontal: 12, paddingVertical: 8 },
   segmentActive: { backgroundColor: colors.primary },
-  segmentText: { color: colors.textMain, fontWeight: "700" },
-  segmentTextActive: { color: "#fff" },
-
-  filterGroup: { flexDirection: "row", gap: 8 },
-  filterBtn: {
-    backgroundColor: "#07121a",
+  segmentText: { color: colors.textMain, fontWeight: "800", fontSize: 12 },
+  segmentTextActive: { color: "#07111a" },
+  modeRow: { flexDirection: "row", marginTop: 10, gap: 10 },
+  modeBtn: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "#0f1920",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  modeActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  modeText: { color: colors.textMain, fontWeight: "900" },
+  modeTextActive: { color: "#07111a" },
+  searchInput: {
+    marginTop: 10,
+    backgroundColor: "#0f1920",
+    borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-    borderColor: "#12333f",
+    height: 42,
+    color: colors.textMain,
+    borderColor: colors.border,
     borderWidth: 1,
   },
-  filterActive: { backgroundColor: colors.accent },
-  filterText: { color: colors.textMain, fontWeight: "700" },
-  filterTextActive: { color: "#fff" },
-
-  heroRow: { flexDirection: "row", alignItems: "center", marginTop: 10, marginBottom: 12 },
-  heroLeft: { flex: 1 },
+  heroRow: { marginTop: 14, marginBottom: 10 },
   heroTitle: { fontSize: 16, fontWeight: "900", color: colors.textMain },
-  heroSub: { fontSize: 12, color: colors.textMuted },
-
-  heroRight: { flexDirection: "row", alignItems: "center" },
-
+  heroSub: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  heroRight: { flexDirection: "row", marginTop: 10 },
   topCard: {
-    width: 90,
+    flex: 1,
     alignItems: "center",
-    marginLeft: 8,
-    backgroundColor: "#071a21",
+    marginRight: 8,
+    backgroundColor: colors.bgCard,
     padding: 8,
-    borderRadius: 10,
-    borderColor: "#0d2d39",
-    borderWidth: 1.2,
+    borderRadius: 8,
+    borderColor: colors.border,
+    borderWidth: 1,
   },
-
-  topAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    marginBottom: 6,
-    borderColor: "#13414f",
-    borderWidth: 2,
-    backgroundColor: "#0c1d24",
-  },
-
-  topName: { fontSize: 12, fontWeight: "800", color: colors.textMain },
-  topSmall: { fontSize: 11, color: colors.textMuted, textAlign: "center" },
-
-  separator: { height: 1, backgroundColor: "#081a22", marginVertical: 6 },
-
+  topAvatar: { width: 50, height: 50, borderRadius: 25, marginBottom: 6, backgroundColor: "#0c1d24" },
+  topName: { fontSize: 12, fontWeight: "800", color: colors.textMain, maxWidth: 82 },
+  topSmall: { fontSize: 11, color: colors.textMuted, textAlign: "center", marginTop: 2 },
   item: {
     flexDirection: "row",
     paddingVertical: 14,
@@ -506,61 +417,26 @@ const styles = StyleSheet.create({
     borderBottomColor: "#0a2630",
     borderBottomWidth: 1,
   },
-
-  positionCol: { width: 40, alignItems: "center" },
-  position: { fontWeight: "900", color: colors.textMain },
-
-  medal: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+  positionCol: { width: 44, alignItems: "center" },
+  rankBadge: {
+    minWidth: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#0f1920",
+    borderColor: colors.border,
+    borderWidth: 1,
   },
-  medalText: { color: "#fff", fontWeight: "900" },
-
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#0b1316",
-    borderColor: "#13414f",
-    borderWidth: 1.2,
-  },
-
-  rowBetween: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 4,
-  },
-
+  rankText: { fontWeight: "900", color: colors.textMain },
+  avatar: { width: 54, height: 54, borderRadius: 27, backgroundColor: "#0b1316", borderColor: colors.border, borderWidth: 1 },
+  itemBody: { flex: 1, marginLeft: 12 },
+  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 4 },
   name: { fontSize: 15, fontWeight: "900", color: colors.textMain, maxWidth: 160 },
   info: { fontSize: 13, color: colors.textMuted },
-
-  eloBox: {
-    backgroundColor: "#0a2a31",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderColor: "#13414f",
-    borderWidth: 1,
-  },
-  eloText: { color: colors.accent, fontSize: 12, fontWeight: "900" },
-
-  xpBox: {
-    backgroundColor: "#07161a",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderColor: "#13303c",
-    borderWidth: 1,
-  },
-  xpText: { color: colors.textMain, fontSize: 12, fontWeight: "700" },
-
-  progressRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
-  progressBarBg: { flex: 1, height: 6, backgroundColor: "#07161a", borderRadius: 6, overflow: "hidden", marginRight: 8 },
-  progressBarFill: { height: 6, backgroundColor: colors.primary },
-
-  dailyPoints: { fontSize: 11, color: colors.textMuted },
+  metric: { color: colors.textMain, fontSize: 13, fontWeight: "900" },
+  meta: { color: colors.textMuted, fontSize: 12, marginTop: 6 },
+  medalPill: { backgroundColor: "#10252b", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  medalText: { color: colors.accent, fontWeight: "900", fontSize: 11 },
+  empty: { textAlign: "center", marginTop: 20, color: colors.textMuted },
 });

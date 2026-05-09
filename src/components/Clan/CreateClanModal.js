@@ -1,7 +1,7 @@
 // src/components/CreateClanModal.js
 import React, { useState } from "react";
 import { Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "react-native";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, doc, setDoc } from "firebase/firestore";
 import { db, auth } from "../../firebaseConfig";
 import { colors } from "../../theme/colors";
 import { Platform } from "react-native";
@@ -11,6 +11,7 @@ export default function CreateClanModal({ visible, onClose }) {
   const [name, setName] = useState("");
   const [tag, setTag] = useState("");
   const [desc, setDesc] = useState("");
+  const [nextRun, setNextRun] = useState("");
   const [saving, setSaving] = useState(false);
 
   const handleCreate = async () => {
@@ -28,16 +29,17 @@ export default function CreateClanModal({ visible, onClose }) {
         coLeaders: [],
         membersCount: 1,
         public: true,
+        nextRun: nextRun.trim(),
         createdAt: serverTimestamp()
       });
       // add member record
-      await addDoc(collection(db, "clans", docRef.id, "members"), {
+      await setDoc(doc(db, "clans", docRef.id, "members", ownerId), {
         uid: ownerId, role: "owner", joinedAt: serverTimestamp()
       });
       // add user->clans index
-      await addDoc(collection(db, "users", ownerId, "clans"), { clanId: docRef.id, role: "owner", joinedAt: serverTimestamp()});
+      await setDoc(doc(db, "users", ownerId, "clans", docRef.id), { clanId: docRef.id, role: "owner", joinedAt: serverTimestamp()});
       Alert.alert("Clã criado!");
-      setName(""); setTag(""); setDesc("");
+      setName(""); setTag(""); setDesc(""); setNextRun("");
       onClose();
     } catch (e) {
       console.warn("create clan", e);
@@ -55,6 +57,7 @@ export default function CreateClanModal({ visible, onClose }) {
           <TextInput placeholder="Nome do clã" value={name} onChangeText={setName} style={mstyles.input}/>
           <TextInput placeholder="TAG (ex: WPR)" value={tag} onChangeText={setTag} style={mstyles.input}/>
           <TextInput placeholder="Descrição (opcional)" value={desc} onChangeText={setDesc} style={[mstyles.input, {height:80}]} multiline/>
+          <TextInput placeholder="Proxima corrida do grupo (opcional)" value={nextRun} onChangeText={setNextRun} style={mstyles.input}/>
           <View style={{flexDirection:"row", justifyContent:"space-between", marginTop:10}}>
             <TouchableOpacity onPress={onClose} style={[mstyles.btn, {backgroundColor:colors.backgroundCard}]}>
               <Text style={{color:colors.textMain}}>Cancelar</Text>

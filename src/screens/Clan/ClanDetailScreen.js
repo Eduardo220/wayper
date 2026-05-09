@@ -1,7 +1,7 @@
 // src/screens/ClanDetailScreen.js
 import React, { useEffect, useState } from "react";
 import { View, Text, Image, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
-import { doc, getDoc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, setDoc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
 import { db, auth } from "../../firebaseConfig";
 import { colors } from "../../theme/colors";
 import ClanChat from "../../components/Clan/ClanChat";
@@ -15,6 +15,30 @@ export default function ClanDetailScreen({ route, navigation }) {
   const [isMember, setIsMember] = useState(false);
   const [memberRole, setMemberRole] = useState(null);
 
+  const joinClan = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || !clanId || isMember) return;
+    try {
+      await setDoc(doc(db, "clans", clanId, "members", uid), {
+        uid,
+        role: "member",
+        joinedAt: serverTimestamp(),
+      });
+      await setDoc(doc(db, "users", uid, "clans", clanId), {
+        clanId,
+        role: "member",
+        joinedAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, "clans", clanId), {
+        membersCount: increment(1),
+      });
+      setIsMember(true);
+      setMemberRole("member");
+    } catch (e) {
+      console.warn("join clan failed", e);
+    }
+  };
+
   useEffect(() => {
     if (!clanId) return navigation.goBack();
 
@@ -26,7 +50,8 @@ export default function ClanDetailScreen({ route, navigation }) {
     });
 
     const check = async () => {
-      const uid = auth.currentUser.uid;
+      const uid = auth.currentUser?.uid;
+      if (!uid) return;
       const mRef = doc(db, "clans", clanId, "members", uid);
       const snap = await getDoc(mRef);
 
@@ -57,7 +82,7 @@ export default function ClanDetailScreen({ route, navigation }) {
       {/* HEADER FIXO */}
       <View style={styles.header}>
         <View style={styles.avatarWrap}>
-          <Image source={{ uri: clan.avatar || null }} style={styles.avatar} />
+          <Image source={{ uri: clan.avatar || "https://i.pravatar.cc/150?u=wayper_group" }} style={styles.avatar} />
         </View>
 
         <View style={{ flex: 1, marginLeft: 12 }}>
@@ -80,6 +105,8 @@ export default function ClanDetailScreen({ route, navigation }) {
       <View style={styles.btnRow}>
         <TouchableOpacity
           style={[styles.actionBtn, { backgroundColor: isMember ? colors.backgroundCard : colors.primary }]}
+          onPress={joinClan}
+          disabled={isMember}
         >
           <Text style={{ color: colors.white }}>
             {isMember ? "Dentro" : "Entrar"}
@@ -104,6 +131,13 @@ export default function ClanDetailScreen({ route, navigation }) {
           <Text style={styles.sectionText}>{clan.announcement}</Text>
         </View>
       )}
+
+      {clan.nextRun ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Proxima corrida</Text>
+          <Text style={styles.sectionText}>{clan.nextRun}</Text>
+        </View>
+      ) : null}
 
       {/* LISTA DE MEMBROS (TEM SCROLL PRÓPRIO) */}
       <ClanMembersList clanId={clanId} />

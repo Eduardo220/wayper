@@ -23,9 +23,6 @@ export default function RunSummaryModal({
   onSave,
   baseRunData = {},
 }) {
-  if (!visible) return null;
-  if (!baseRunData) return null;
-
   const [name, setName] = useState("Minha Corrida");
   const [effort, setEffort] = useState(5);
   const [mood, setMood] = useState("🙂");
@@ -48,6 +45,9 @@ export default function RunSummaryModal({
     setTags(Array.isArray(baseRunData.tags) ? baseRunData.tags : []);
     setPhotoUri(baseRunData.photoUri || null);
   }, [visible, baseRunData]);
+
+  if (!visible) return null;
+  if (!baseRunData) return null;
 
   const moodOptions = ["🤩", "🙂", "😐", "😫", "😤"];
 

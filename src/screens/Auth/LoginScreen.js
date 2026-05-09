@@ -16,7 +16,7 @@ import {
   Alert,
   Platform,
 } from "react-native";
-import Icon from "react-native-vector-icons/Feather";
+import { Feather as Icon } from "@expo/vector-icons";
 
 import {
   signInEmail,
@@ -51,11 +51,11 @@ export default function LoginScreen({ navigation }) {
     let mounted = true;
     (async () => {
       try {
-        if (response?.type === "success" && response.authentication?.idToken) {
+        const googleIdToken = response?.authentication?.idToken || response?.params?.id_token;
+        if (response?.type === "success" && googleIdToken) {
           setLoading(true);
           setError("");
-          const idToken = response.authentication.idToken;
-          await signInWithGoogleAsync(idToken);
+          await signInWithGoogleAsync(googleIdToken);
           if (mounted) navigation.replace("Main");
         } else if (response?.type === "error") {
           setError("Falha no login com Google.");

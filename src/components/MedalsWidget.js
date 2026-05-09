@@ -56,6 +56,48 @@ const DEFAULT_MEDALS = [
     icon: "https://img.icons8.com/emoji/48/fire.png",
     condition: ({ user }) => (user?.streak ?? 0) >= 7,
   },
+  {
+    id: "monthly_rank_100",
+    label: "Top 100",
+    desc: "Ranking mensal Top 100",
+    icon: "https://img.icons8.com/emoji/48/sports-medal-emoji.png",
+    condition: ({ user }) => Number(user?.bestMonthlyRank ?? user?.monthlyRankPreview ?? Infinity) <= 100,
+  },
+  {
+    id: "monthly_rank_50",
+    label: "Top 50",
+    desc: "Ranking mensal Top 50",
+    icon: "https://img.icons8.com/emoji/48/medal-emoji.png",
+    condition: ({ user }) => Number(user?.bestMonthlyRank ?? user?.monthlyRankPreview ?? Infinity) <= 50,
+  },
+  {
+    id: "monthly_rank_10",
+    label: "Top 10",
+    desc: "Ranking mensal Top 10",
+    icon: "https://img.icons8.com/emoji/48/trophy-emoji.png",
+    condition: ({ user }) => Number(user?.bestMonthlyRank ?? user?.monthlyRankPreview ?? Infinity) <= 10,
+  },
+  {
+    id: "monthly_rank_3",
+    label: "Top 3",
+    desc: "Ranking mensal Top 3",
+    icon: "https://img.icons8.com/emoji/48/3rd-place-medal-emoji.png",
+    condition: ({ user }) => Number(user?.bestMonthlyRank ?? user?.monthlyRankPreview ?? Infinity) <= 3,
+  },
+  {
+    id: "monthly_rank_2",
+    label: "Top 2",
+    desc: "Ranking mensal Top 2",
+    icon: "https://img.icons8.com/emoji/48/2nd-place-medal-emoji.png",
+    condition: ({ user }) => Number(user?.bestMonthlyRank ?? user?.monthlyRankPreview ?? Infinity) <= 2,
+  },
+  {
+    id: "monthly_rank_1",
+    label: "Top 1",
+    desc: "Ranking mensal Top 1",
+    icon: "https://img.icons8.com/emoji/48/1st-place-medal-emoji.png",
+    condition: ({ user }) => Number(user?.bestMonthlyRank ?? user?.monthlyRankPreview ?? Infinity) <= 1,
+  },
 ];
 
 /* ---------------------- small helpers ---------------------- */
@@ -96,7 +138,8 @@ export default function MedalsWidget({
     mountedRef.current = true;
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        const userKey = `${STORAGE_KEY}:${user?.uid || user?.id || "local"}`;
+        const raw = await AsyncStorage.getItem(userKey);
         let parsed = {};
         if (raw) {
           parsed = JSON.parse(raw);
@@ -114,7 +157,7 @@ export default function MedalsWidget({
     return () => {
       mountedRef.current = false;
     };
-  }, []);
+  }, [user?.uid, user?.id]);
 
   /* ------------------------- Evaluate medal conditions ---------------------- */
   const evaluate = useCallback(
@@ -144,11 +187,12 @@ export default function MedalsWidget({
   /* ------------------- Persist awarded locally ------------------- */
   const persistAwarded = useCallback(async (obj) => {
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(obj || {}));
+      const userKey = `${STORAGE_KEY}:${user?.uid || user?.id || "local"}`;
+      await AsyncStorage.setItem(userKey, JSON.stringify(obj || {}));
     } catch (e) {
       debug("persistAwarded failed", e);
     }
-  }, []);
+  }, [user?.uid, user?.id]);
 
   /* ------------------ Handle awarding logic ------------------ */
   useEffect(() => {
@@ -298,6 +342,7 @@ export default function MedalsWidget({
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "space-between",
     backgroundColor: colors.backgroundCard || "#0b151d",
     paddingVertical: 12,
