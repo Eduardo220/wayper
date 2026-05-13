@@ -16,6 +16,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { MotiView, MotiText } from "moti";
 
+const BRAND_LOGO = require("../../assets/logo.png");
+
 export default memo(function CustomDrawer(props) {
   const user = props.user || {};
 
@@ -45,6 +47,10 @@ export default memo(function CustomDrawer(props) {
     <View style={styles.container}>
       {/* HEADER */}
       <LinearGradient colors={["#13161a", "#0d0f12"]} style={styles.header}>
+        <View style={styles.brandRow}>
+          <Image source={BRAND_LOGO} style={styles.brandLogo} resizeMode="contain" />
+          <Text style={styles.brandText}>Wayper</Text>
+        </View>
         
         {/* AVATAR */}
         <MotiView
@@ -139,6 +145,25 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 25,
     borderBottomLeftRadius: 25,
     overflow: "hidden",
+  },
+
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 20,
+  },
+
+  brandLogo: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+  },
+
+  brandText: {
+    color: "#ffffff",
+    fontSize: 24,
+    fontWeight: "900",
   },
 
   avatar: {

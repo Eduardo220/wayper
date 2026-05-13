@@ -43,7 +43,7 @@ Tornar a corrida uma experiência mais envolvente por meio de **estratégia**, *
 - Comparativos pessoais e progresso ao longo do tempo  
 
 ### 🌍 Mapa Interativo
-- Visualização clara das suas zonas  
+- Visualização nítida das suas zonas  
 - Exibição de áreas de outros usuários  
 - Possibilidade de explorar novas regiões para expansão  
 
@@ -59,7 +59,7 @@ Tornar a corrida uma experiência mais envolvente por meio de **estratégia**, *
 **Frontend:** React Native  
 **Backend:** Node.js / Firebase  
 **Banco de Dados:** Firestore  
-**Mapas & Localização:** Google Maps API  
+**Mapas & Localização:** MapLibre + OpenFreeMap  
 **Autenticação:** Firebase Auth  
 
 ---
@@ -79,7 +79,7 @@ Novas funcionalidades, melhorias de experiência e expansão do sistema de zonas
    <img src="./assets/screens/perfil.png" width="200"/>
    <img src="./assets/screens/ranking.png" width="200"/>
    <img src="./assets/screens/amigos.png" width="200"/>
-   <img src="./assets/screens/clan.png" width="200"/>
+   <img src="./assets/screens/group.png" width="200"/>
 </p>
 
 ---

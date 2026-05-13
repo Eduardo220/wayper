@@ -54,7 +54,7 @@ const ROOT = [
   "medals",
   "friend_requests",
   "friends",
-  "clans",
+  "groups",
 ].map(c => ({
   path: `${c}/_init`,
   data: { system: true }
@@ -77,7 +77,7 @@ const USER = {
 const SUBS = [
   { path: `users/wayper_demo_user/runs/_init`, data: {} },
   { path: `users/wayper_demo_user/friends/_init`, data: {} },
-  { path: `users/wayper_demo_user/clans/_init`, data: {} },
+  { path: `users/wayper_demo_user/groups/_init`, data: {} },
 ];
 
 // ===========================================

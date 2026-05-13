@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Image,
   Keyboard,
   Alert,
   Platform,
@@ -27,6 +28,7 @@ import {
 
 // regex simples para validar email (suficiente para UX)
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const BRAND_LOGO = require("../../../assets/logo.png");
 
 // mensagens padrão para mapeamento de erros firebase (pode ser estendido)
 const ERROR_MAP = {
@@ -135,6 +137,11 @@ export default function LoginScreen({ navigation }) {
 
   return (
     <View style={styles.container} accessible accessibilityLabel="Tela de login">
+      <View style={styles.brandBlock}>
+        <Image source={BRAND_LOGO} style={styles.logo} resizeMode="contain" />
+        <Text style={styles.brandName}>Wayper</Text>
+      </View>
+
       <Text style={styles.title}>Entrar</Text>
 
       {!!error && <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>}
@@ -213,6 +220,9 @@ export default function LoginScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, justifyContent: "center", backgroundColor: "#fff" },
+  brandBlock: { alignItems: "center", marginBottom: 28 },
+  logo: { width: 118, height: 118, borderRadius: 26, marginBottom: 12 },
+  brandName: { color: "#0d0f12", fontSize: 34, fontWeight: "900" },
   title: { fontSize: 28, fontWeight: "700", marginBottom: 20 },
   input: { backgroundColor: "#f5f6fb", padding: 12, marginBottom: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e6e9f0" },
   passwordContainer: { backgroundColor: "#f5f6fb", flexDirection: "row", alignItems: "center", paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e6e9f0", marginBottom: 12 },

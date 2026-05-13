@@ -1,63 +1,51 @@
-// src/screens/Clan/ClanChatScreen.js
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
   FlatList,
-  TextInput,
-  TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-
 import { Ionicons } from "@expo/vector-icons";
-import { auth, db } from "../../firebaseConfig";
-import {
-  collection,
-  addDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  serverTimestamp,
-} from "firebase/firestore";
+import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp } from "firebase/firestore";
 
+import { auth, db } from "../../firebaseConfig";
 import { colors } from "../../theme/colors";
 
-export default function ClanChatScreen({ route }) {
-  const { clanId } = route.params;
-
+export default function GroupChatScreen({ route }) {
+  const { groupId } = route.params;
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
-
   const flatRef = useRef(null);
   const user = auth.currentUser;
 
   useEffect(() => {
-    if (!clanId) return;
+    if (!groupId) return undefined;
 
-    const msgRef = collection(db, "clans", clanId, "messages");
-    const q = query(msgRef, orderBy("createdAt", "asc"));
+    const msgRef = collection(db, "groups", groupId, "messages");
+    const messagesQuery = query(msgRef, orderBy("createdAt", "asc"));
 
-    const unsub = onSnapshot(q, (snap) => {
-      const arr = [];
-      snap.forEach((d) => arr.push({ id: d.id, ...d.data() }));
-      setMessages(arr);
+    const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
+      const nextMessages = [];
+      snapshot.forEach((docSnap) => nextMessages.push({ id: docSnap.id, ...docSnap.data() }));
+      setMessages(nextMessages);
 
       setTimeout(() => {
-        if (flatRef.current) {
-          flatRef.current.scrollToEnd({ animated: true });
-        }
+        flatRef.current?.scrollToEnd({ animated: true });
       }, 100);
     });
 
-    return () => unsub();
-  }, [clanId]);
+    return () => unsubscribe();
+  }, [groupId]);
 
   const sendMsg = async () => {
-    if (!text.trim()) return;
+    if (!text.trim() || !user?.uid) return;
+
     try {
-      await addDoc(collection(db, "clans", clanId, "messages"), {
+      await addDoc(collection(db, "groups", groupId, "messages"), {
         text: text.trim(),
         userId: user.uid,
         username: user.displayName || "misterioso",
@@ -66,25 +54,18 @@ export default function ClanChatScreen({ route }) {
       setText("");
 
       setTimeout(() => {
-        if (flatRef.current) {
-          flatRef.current.scrollToEnd({ animated: true });
-        }
+        flatRef.current?.scrollToEnd({ animated: true });
       }, 80);
-    } catch (e) {
-      console.log("Erro ao enviar msg", e);
+    } catch (error) {
+      console.log("Erro ao enviar mensagem", error);
     }
   };
 
   const renderItem = ({ item }) => {
-    const mine = item.userId === user.uid;
+    const mine = item.userId === user?.uid;
 
     return (
-      <View
-        style={[
-          styles.msgBox,
-          mine ? styles.mine : styles.theirs,
-        ]}
-      >
+      <View style={[styles.msgBox, mine ? styles.mine : styles.theirs]}>
         <Text style={styles.username}>{item.username}</Text>
         <Text style={styles.msg}>{item.text}</Text>
       </View>
@@ -100,15 +81,15 @@ export default function ClanChatScreen({ route }) {
       <FlatList
         ref={flatRef}
         data={messages}
-        keyExtractor={(i) => i.id}
+        keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        contentContainerStyle={{ padding: 12, paddingBottom: 90 }}
+        contentContainerStyle={styles.listContent}
       />
 
       <View style={styles.inputRow}>
         <TextInput
           style={styles.input}
-          placeholder="Fala algo pro clã..."
+          placeholder="Fala algo pro grupo..."
           placeholderTextColor={colors.textSoft}
           value={text}
           onChangeText={setText}
@@ -127,38 +108,33 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-
+  listContent: { padding: 12, paddingBottom: 90 },
   msgBox: {
     maxWidth: "78%",
     padding: 10,
     borderRadius: 12,
     marginVertical: 6,
   },
-
   mine: {
     backgroundColor: colors.primary,
     alignSelf: "flex-end",
   },
-
   theirs: {
     backgroundColor: colors.backgroundCard,
     borderWidth: 1,
     borderColor: colors.border,
     alignSelf: "flex-start",
   },
-
   username: {
     color: colors.textSoft,
     fontSize: 11,
     marginBottom: 3,
   },
-
   msg: {
     color: colors.white,
     fontSize: 15,
     fontWeight: "600",
   },
-
   inputRow: {
     position: "absolute",
     bottom: 0,
@@ -169,7 +145,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: colors.border,
   },
-
   input: {
     flex: 1,
     backgroundColor: colors.backgroundLight,
@@ -179,7 +154,6 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: 14,
   },
-
   sendBtn: {
     marginLeft: 10,
     backgroundColor: colors.primary,

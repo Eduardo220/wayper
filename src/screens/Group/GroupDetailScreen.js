@@ -1,76 +1,91 @@
-// src/screens/ClanDetailScreen.js
 import React, { useEffect, useState } from "react";
-import { View, Text, Image, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
-import { doc, getDoc, onSnapshot, setDoc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
-import { db, auth } from "../../firebaseConfig";
-import { colors } from "../../theme/colors";
-import ClanChat from "../../components/Clan/ClanChat";
-import ClanMembersList from "../../components/Clan/ClanMembersList";
-import { Platform } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { doc, getDoc, increment, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 
-export default function ClanDetailScreen({ route, navigation }) {
-  const clanId = route?.params?.clanId;
-  const [clan, setClan] = useState(null);
+import GroupChat from "../../components/Group/GroupChat";
+import GroupMembersList from "../../components/Group/GroupMembersList";
+import { auth, db } from "../../firebaseConfig";
+import { colors } from "../../theme/colors";
+
+export default function GroupDetailScreen({ route, navigation }) {
+  const groupId = route?.params?.groupId;
+  const [group, setGroup] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isMember, setIsMember] = useState(false);
   const [memberRole, setMemberRole] = useState(null);
 
-  const joinClan = async () => {
+  const joinGroup = async () => {
     const uid = auth.currentUser?.uid;
-    if (!uid || !clanId || isMember) return;
+    if (!uid || !groupId || isMember) return;
+
     try {
-      await setDoc(doc(db, "clans", clanId, "members", uid), {
+      await setDoc(doc(db, "groups", groupId, "members", uid), {
         uid,
         role: "member",
         joinedAt: serverTimestamp(),
       });
-      await setDoc(doc(db, "users", uid, "clans", clanId), {
-        clanId,
+      await setDoc(doc(db, "users", uid, "groups", groupId), {
+        groupId,
         role: "member",
         joinedAt: serverTimestamp(),
       });
-      await updateDoc(doc(db, "clans", clanId), {
+      await updateDoc(doc(db, "groups", groupId), {
         membersCount: increment(1),
       });
       setIsMember(true);
       setMemberRole("member");
-    } catch (e) {
-      console.warn("join clan failed", e);
+    } catch (error) {
+      console.warn("join group failed", error);
     }
   };
 
   useEffect(() => {
-    if (!clanId) return navigation.goBack();
+    if (!groupId) {
+      navigation.goBack();
+      return undefined;
+    }
 
-    const ref = doc(db, "clans", clanId);
-    const unsub = onSnapshot(ref, s => {
-      if (s.exists()) setClan({ id: s.id, ...s.data() });
-      else navigation.goBack();
+    const groupRef = doc(db, "groups", groupId);
+    const unsubscribe = onSnapshot(groupRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setGroup({ id: snapshot.id, ...snapshot.data() });
+      } else {
+        navigation.goBack();
+      }
       setLoading(false);
     });
 
-    const check = async () => {
+    const checkMembership = async () => {
       const uid = auth.currentUser?.uid;
       if (!uid) return;
-      const mRef = doc(db, "clans", clanId, "members", uid);
-      const snap = await getDoc(mRef);
 
-      if (snap.exists()) {
+      const memberRef = doc(db, "groups", groupId, "members", uid);
+      const snapshot = await getDoc(memberRef);
+
+      if (snapshot.exists()) {
         setIsMember(true);
-        setMemberRole(snap.data().role);
+        setMemberRole(snapshot.data().role);
       } else {
         setIsMember(false);
         setMemberRole(null);
       }
     };
 
-    check();
-    return () => unsub();
-  }, [clanId]);
+    checkMembership();
+    return () => unsubscribe();
+  }, [groupId, navigation]);
 
-  if (loading || !clan) {
+  if (loading || !group) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <View style={styles.loadingScreen}>
         <ActivityIndicator color={colors.primary} size="large" />
       </View>
     );
@@ -78,39 +93,34 @@ export default function ClanDetailScreen({ route, navigation }) {
 
   return (
     <View style={styles.container}>
-      
-      {/* HEADER FIXO */}
       <View style={styles.header}>
         <View style={styles.avatarWrap}>
-          <Image source={{ uri: clan.avatar || "https://i.pravatar.cc/150?u=wayper_group" }} style={styles.avatar} />
+          <Image source={{ uri: group.avatar || "https://i.pravatar.cc/150?u=wayper_group" }} style={styles.avatar} />
         </View>
 
-        <View style={{ flex: 1, marginLeft: 12 }}>
+        <View style={styles.headerText}>
           <Text style={styles.name}>
-            {clan.name} <Text style={styles.tag}>#{clan.tag}</Text>
+            {group.name} <Text style={styles.tag}>#{group.tag}</Text>
           </Text>
 
-          <Text style={styles.desc}>{clan.description}</Text>
+          <Text style={styles.desc}>{group.description}</Text>
 
-          <View style={{ flexDirection: "row", marginTop: 8 }}>
-            <Text style={styles.small}>Membros: {clan.membersCount || 0}</Text>
-            <Text style={[styles.small, { marginLeft: 12 }]}>
-              Criado por: {clan.ownerId}
+          <View style={styles.metaRow}>
+            <Text style={styles.small}>Membros: {group.membersCount || 0}</Text>
+            <Text style={[styles.small, styles.ownerText]}>
+              Criado por: {group.ownerId}
             </Text>
           </View>
         </View>
       </View>
 
-      {/* BOTÕES */}
       <View style={styles.btnRow}>
         <TouchableOpacity
           style={[styles.actionBtn, { backgroundColor: isMember ? colors.backgroundCard : colors.primary }]}
-          onPress={joinClan}
+          onPress={joinGroup}
           disabled={isMember}
         >
-          <Text style={{ color: colors.white }}>
-            {isMember ? "Dentro" : "Entrar"}
-          </Text>
+          <Text style={styles.actionText}>{isMember ? "Dentro" : "Entrar"}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.backgroundCard }]}>
@@ -119,45 +129,41 @@ export default function ClanDetailScreen({ route, navigation }) {
 
         {memberRole === "owner" && (
           <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.accent }]}>
-            <Text style={{ color: colors.white }}>Gerenciar</Text>
+            <Text style={styles.actionText}>Gerenciar</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* ANÚNCIO */}
-      {clan.announcement && (
+      {group.announcement && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Anúncio</Text>
-          <Text style={styles.sectionText}>{clan.announcement}</Text>
+          <Text style={styles.sectionText}>{group.announcement}</Text>
         </View>
       )}
 
-      {clan.nextRun ? (
+      {group.nextRun ? (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Proxima corrida</Text>
-          <Text style={styles.sectionText}>{clan.nextRun}</Text>
+          <Text style={styles.sectionTitle}>Próxima corrida</Text>
+          <Text style={styles.sectionText}>{group.nextRun}</Text>
         </View>
       ) : null}
 
-      {/* LISTA DE MEMBROS (TEM SCROLL PRÓPRIO) */}
-      <ClanMembersList clanId={clanId} />
+      <GroupMembersList groupId={groupId} />
 
-      {/* CHAT (TEM SCROLL PRÓPRIO) */}
-      <Text style={styles.chatTitle}>Chat do clã</Text>
-      <ClanChat clanId={clanId} />
-
+      <Text style={styles.chatTitle}>Chat do grupo</Text>
+      <GroupChat groupId={groupId} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  loadingScreen: { flex: 1, justifyContent: "center", alignItems: "center" },
   container: {
     flex: 1,
     backgroundColor: colors.background,
     padding: 16,
     paddingTop: Platform.OS === "ios" ? 56 : 20,
   },
-
   header: {
     flexDirection: "row",
     backgroundColor: colors.backgroundCard,
@@ -166,7 +172,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-
   avatarWrap: {
     width: 84,
     height: 84,
@@ -175,19 +180,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-
   avatar: { width: 80, height: 80, borderRadius: 10 },
-
+  headerText: { flex: 1, marginLeft: 12 },
   name: { color: colors.textMain, fontWeight: "900", fontSize: 18 },
-
   tag: { color: colors.textMuted, fontWeight: "700" },
-
   desc: { color: colors.textMuted, marginTop: 6 },
-
+  metaRow: { flexDirection: "row", marginTop: 8 },
   small: { color: colors.textMuted },
-
+  ownerText: { marginLeft: 12 },
   btnRow: { flexDirection: "row", gap: 12, marginTop: 12 },
-
   actionBtn: {
     padding: 10,
     borderRadius: 10,
@@ -195,7 +196,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flex: 1,
   },
-
+  actionText: { color: colors.white },
   section: {
     backgroundColor: colors.backgroundCard,
     padding: 12,
@@ -204,11 +205,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderWidth: 1,
   },
-
   sectionTitle: { color: colors.textSoft, fontWeight: "800", marginBottom: 6 },
-
   sectionText: { color: colors.textMain },
-
   chatTitle: {
     color: colors.textMain,
     fontWeight: "900",

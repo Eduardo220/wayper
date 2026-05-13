@@ -11,9 +11,9 @@ import {
   Alert,
   Platform,
 } from "react-native";
-import MapView, { Polygon } from "react-native-maps";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
+import WayperMapLibre from "../../components/Map/WayperMapLibre";
 
 let captureRef = null;
 try {
@@ -203,26 +203,14 @@ function ZoneDetailScreen({ route }) {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
       <View ref={viewRef} collapsable={false} style={styles.preview}>
-        <MapView
+        <WayperMapLibre
           style={styles.map}
-          initialRegion={{
-            latitude: Number(center.latitude ?? 0),
-            longitude: Number(center.longitude ?? 0),
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          }}
-          scrollEnabled={false}
-          pitchEnabled={false}
-        >
-          {coords && coords.length > 2 && (
-            <Polygon
-              coordinates={coords}
-              strokeColor={WAYPER_GREEN}
-              fillColor={"rgba(0,230,118,0.18)"}
-              strokeWidth={3}
-            />
-          )}
-        </MapView>
+          zones={[{ coords }]}
+          centerCoordinate={center}
+          showUserLocation={false}
+          interactive={false}
+          fitToContent={true}
+        />
       </View>
 
       <View style={styles.body}>

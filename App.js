@@ -3,7 +3,7 @@
 import "react-native-reanimated";
 
 import React, { useEffect, useState } from "react";
-import { LogBox, View, ActivityIndicator } from "react-native";
+import { LogBox, View, ActivityIndicator, Image, StyleSheet, Text } from "react-native";
 
 // ===============================
 // NAVIGATION
@@ -36,6 +36,7 @@ LogBox.ignoreAllLogs();
 
 const Stack = createNativeStackNavigator();
 const USE_AUTH = true;
+const BRAND_LOGO = require("./assets/logo.png");
 
 // ===============================
 // QUERY CLIENT
@@ -88,8 +89,10 @@ export default function App() {
   // ============================
   if (!authChecked) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator size="large" />
+      <View style={styles.bootScreen}>
+        <Image source={BRAND_LOGO} style={styles.bootLogo} resizeMode="contain" />
+        <Text style={styles.bootTitle}>Wayper</Text>
+        <ActivityIndicator size="large" color="#00e676" />
       </View>
     );
   }
@@ -120,3 +123,25 @@ export default function App() {
     </QueryClientProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  bootScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#05070a",
+    padding: 24,
+  },
+  bootLogo: {
+    width: 150,
+    height: 150,
+    marginBottom: 18,
+    borderRadius: 32,
+  },
+  bootTitle: {
+    color: "#ffffff",
+    fontSize: 30,
+    fontWeight: "900",
+    marginBottom: 24,
+  },
+});

@@ -11,13 +11,12 @@ import {
   Alert,
   AppState,
   Animated,
-  Platform,
 } from "react-native";
-import MapView, { Marker, Polyline, Polygon, AnimatedRegion, PROVIDER_GOOGLE } from "react-native-maps";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
 import { captureRef } from "react-native-view-shot";
+import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../components/Map/WayperMapLibre";
 import RunSummaryModal from "../components/Runs/RunSummaryModal";
 import formatTime from "../utils/formatTime";
 import { getDistance } from "../utils/geo";
@@ -25,7 +24,6 @@ import zones from "../utils/zones";
 import sync from "../utils/sync";
 import xpService from "../services/xp/xpService";
 import { updateProfileStats } from "../services/profile/profileService";
-import myLocationIcon from "../../assets/icons/my_location_android.png";
 import KalmanFilter2D from "../utils/kalman";
 
 /* Tunáveis */
@@ -39,7 +37,6 @@ const MAX_SPIKE_DISTANCE_M = 1000;
 const ZONE_MIN_AREA_M2 = 5;
 const WAYPER_GREEN = "#00e676";
 const ROUTE_CAP = 5000;
-const ANIMATE_THROTTLE_MS = 100;
 const ANTI_JITTER_M = 0.4;
 
 const debug = (...args) => {
@@ -61,7 +58,7 @@ const sanitizePath = (arr = []) =>
     })
     .filter(Boolean);
 
-const DEFAULT_COORD = { latitude: -23.55, longitude: -46.63 }; // SP fallback (ajusta se quiser)
+const DEFAULT_COORD = WAYPER_FALLBACK_COORD;
 
 /* ================= Component ================= */
 const MapScreen = () => {
@@ -71,7 +68,7 @@ const MapScreen = () => {
 
   const [running, setRunning] = useState(false);
   const [replaying, setReplaying] = useState(false);
-  const [showZones, setShowZones] = useState(true);
+  const [showZones] = useState(true);
   const [selectModeVisible, setSelectModeVisible] = useState(false);
   const [counting, setCounting] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -93,17 +90,7 @@ const MapScreen = () => {
   const [lastSavedRun, setLastSavedRun] = useState(null);
 
   const kalman2dRef = useRef(new KalmanFilter2D()).current;
-  const mapRef = useRef(null);
   const mapCaptureRef = useRef(null);
-  const markerRef = useRef(null);
-  const coordinate = useRef(
-    new AnimatedRegion({
-      latitude: DEFAULT_COORD.latitude,
-      longitude: DEFAULT_COORD.longitude,
-      latitudeDelta: 0.001,
-      longitudeDelta: 0.001,
-    })
-  ).current;
 
   const watcherRef = useRef(null);
   const timerRef = useRef(null);
@@ -117,9 +104,52 @@ const MapScreen = () => {
   const runningRef = useRef(false);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
+  const startPulseAnim = useRef(new Animated.Value(0)).current;
+  const startPressAnim = useRef(new Animated.Value(1)).current;
 
-  const runsCount = useMemo(() => (Array.isArray(runsList) ? runsList.length : 0), [runsList]);
-  const zonesCount = useMemo(() => (Array.isArray(polygons) ? polygons.length : 0), [polygons]);
+  useEffect(() => {
+    if (running || replaying) {
+      startPulseAnim.stopAnimation();
+      startPulseAnim.setValue(0);
+      return undefined;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(startPulseAnim, {
+          toValue: 1,
+          duration: 1800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(startPulseAnim, {
+          toValue: 0,
+          duration: 1800,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    loop.start();
+    return () => loop.stop();
+  }, [running, replaying, startPulseAnim]);
+
+  const handleStartPressIn = useCallback(() => {
+    Animated.spring(startPressAnim, {
+      toValue: 0.975,
+      speed: 22,
+      bounciness: 5,
+      useNativeDriver: true,
+    }).start();
+  }, [startPressAnim]);
+
+  const handleStartPressOut = useCallback(() => {
+    Animated.spring(startPressAnim, {
+      toValue: 1,
+      speed: 18,
+      bounciness: 7,
+      useNativeDriver: true,
+    }).start();
+  }, [startPressAnim]);
 
   /* ===== INIT ===== */
   useEffect(() => {
@@ -172,9 +202,6 @@ const MapScreen = () => {
 
         if (mountedRef.current) {
           setLocation(initial);
-          try {
-            coordinate.setValue(initial);
-          } catch {}
         }
 
         appStateSub = AppState.addEventListener("change", (next) => {
@@ -293,28 +320,7 @@ const MapScreen = () => {
           return { latitude: sLat, longitude: sLon };
         });
 
-        const newPoint = { latitude: sLat, longitude: sLon };
         const now = Date.now();
-
-        if (!handleLocationUpdate._lastAnimate) handleLocationUpdate._lastAnimate = 0;
-        if (now - handleLocationUpdate._lastAnimate < ANIMATE_THROTTLE_MS) {
-          try {
-            coordinate.setValue(newPoint);
-          } catch {}
-        } else {
-          handleLocationUpdate._lastAnimate = now;
-          try {
-            if (Platform.OS === "android" && markerRef.current?.animateMarkerToCoordinate) {
-              markerRef.current.animateMarkerToCoordinate(newPoint, 280);
-            } else {
-              coordinate.timing({ ...newPoint, duration: 280, useNativeDriver: false }).start();
-            }
-          } catch (e) {
-            try {
-              coordinate.setValue(newPoint);
-            } catch {}
-          }
-        }
 
         if (!runningRef.current) return;
 
@@ -341,7 +347,7 @@ const MapScreen = () => {
         debug("handleLocationUpdate", e);
       }
     },
-    [coordinate, kalman2dRef]
+    [kalman2dRef]
   );
 
   /* ===== Start / Stop run (mantive lógica, sem alterações semânticas) ===== */
@@ -408,17 +414,6 @@ const MapScreen = () => {
         }
 
         if (pos?.coords) {
-          const { latitude: lat, longitude: lon } = pos.coords;
-          try {
-            coordinate.setValue({ latitude: lat, longitude: lon });
-          } catch {}
-          if (mapRef.current && Number.isFinite(lat) && Number.isFinite(lon)) {
-            try {
-              mapRef.current.animateCamera?.({ center: { latitude: lat, longitude: lon }, zoom: 17 });
-            } catch (e) {
-              debug("animateCamera failed", e);
-            }
-          }
           handleLocationUpdate({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy });
         }
 
@@ -592,23 +587,12 @@ const MapScreen = () => {
             return merged.length > ROUTE_CAP ? merged.slice(merged.length - ROUTE_CAP) : merged;
           });
 
-          try {
-            if (Platform.OS === "android" && markerRef.current?.animateMarkerToCoordinate) {
-              markerRef.current.animateMarkerToCoordinate({ latitude: p.latitude, longitude: p.longitude }, 200);
-            } else {
-              coordinate.timing({ latitude: p.latitude, longitude: p.longitude, duration: 200, useNativeDriver: false }).start();
-            }
-          } catch {
-            try {
-              coordinate.setValue({ latitude: p.latitude, longitude: p.longitude });
-            } catch {}
-          }
         }, 250);
       } catch (e) {
         debug("startReplay catch", e);
       }
     },
-    [coordinate, stopWatcherAndPolling]
+    [stopWatcherAndPolling]
   );
 
   const stopReplay = useCallback(() => {
@@ -624,15 +608,12 @@ const MapScreen = () => {
   }, []);
 
   /* ============ UI helpers ============ */
-  const openRunsModal = useCallback(() => setShowRunsModal(true), []);
   const closeRunsModal = useCallback(() => {
     setShowRunsModal(false);
     setSelectedRun(null);
   }, []);
   const openRunDetails = useCallback((run) => setSelectedRun(run), []);
-  const toggleZones = useCallback(() => setShowZones((s) => !s), []);
   const openStartModal = useCallback(() => setSelectModeVisible(true), []);
-  const openRunsList = useCallback(() => setShowRunsModal(true), []);
 
   /* Capture/share + exports (mantive, sem alterações) */
   const autoCapture = useCallback(async (savedRun) => {
@@ -707,27 +688,6 @@ const MapScreen = () => {
     }
   }, []);
 
-  /* Fit map to zones */
-  const fitMapToAllZones = useCallback(() => {
-    try {
-      if (!mapRef.current || !polygons || !Array.isArray(polygons) || polygons.length === 0) return;
-      const all = polygons.flatMap((p) => (p && Array.isArray(p.coords) ? p.coords : [])).filter(Boolean);
-      if (!all || all.length === 0) return;
-      const coords = all.map((c) => ({ latitude: Number(c.latitude), longitude: Number(c.longitude) })).filter((c) => Number.isFinite(c.latitude) && Number.isFinite(c.longitude));
-      if (coords.length === 0) return;
-      mapRef.current.fitToCoordinates(coords, { edgePadding: { top: 80, right: 80, bottom: 220, left: 80 }, animated: true });
-    } catch (e) {
-      debug("fitMapToAllZones", e);
-    }
-  }, [polygons]);
-
-  useEffect(() => {
-    if (showZones) {
-      const t = setTimeout(() => fitMapToAllZones(), 300);
-      return () => clearTimeout(t);
-    }
-  }, [showZones, fitMapToAllZones]);
-
   /* ============= RENDER GUARD (corrigido) ============= */
   // Não travar a UI apenas por falta de location. Se permissões negadas, mostrar mensagem/fallback.
   if (loading) {
@@ -783,6 +743,7 @@ const MapScreen = () => {
 
   // Se chegou aqui, garantimos que o app não ficará preso. Use location fallback se necessário.
   const safeLocation = location || DEFAULT_COORD;
+  const replayCenter = Array.isArray(replayPathState) && replayPathState.length > 0 ? replayPathState[replayPathState.length - 1] : null;
   if (!location) {
     return (
       <View style={styles.loading}>
@@ -792,53 +753,32 @@ const MapScreen = () => {
     );
   }
 
+  const startPulseScale = startPulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.018],
+  });
+  const startAuraOpacity = startPulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.16, 0.34],
+  });
+
   return (
     <View style={styles.container}>
       <View ref={mapCaptureRef} style={{ flex: 1 }}>
-        <MapView
-          ref={mapRef}
-          provider={PROVIDER_GOOGLE}
+        <WayperMapLibre
           style={styles.map}
-          initialRegion={{
-            latitude: safeLocation.latitude,
-            longitude: safeLocation.longitude,
-            latitudeDelta: 0.001,
-            longitudeDelta: 0.001,
-          }}
-          showsUserLocation={false}
-          toolbarEnabled={false}
-          loadingEnabled={true}
-          loadingIndicatorColor="#00e676"
-          moveOnMarkerPress={false}
-        >
-          {showZones &&
-            Array.isArray(polygons) &&
-            polygons.map((z, i) =>
-              z && Array.isArray(z.coords) && z.coords.length >= 3 ? (
-                <Polygon key={z.id || i} coordinates={z.coords} strokeColor="#00b894" fillColor="rgba(0,184,148,0.25)" strokeWidth={4} />
-              ) : null
-            )}
-
-          {Array.isArray(routeState) && routeState.length >= 2 && routeState.every((p) => p && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (
-            <Polyline coordinates={routeState} strokeWidth={4} strokeColor="#0984e3" lineJoin="round" lineCap="round" />
-          )}
-
-          {Array.isArray(replayPathState) && replayPathState.length >= 2 && replayPathState.every((p) => p && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (
-            <Polyline coordinates={replayPathState} strokeWidth={4} strokeColor="#fdcb6e" lineJoin="round" lineCap="round" />
-          )}
-
-          {safeLocation && Number.isFinite(safeLocation.latitude) && Number.isFinite(safeLocation.longitude) && (
-            <Marker.Animated
-              ref={markerRef}
-              coordinate={coordinate}
-              anchor={{ x: 0.5, y: 0.5 }}
-              flat={true}
-              tracksViewChanges={false}
-              style={{ width: 48, height: 48 }}
-              image={myLocationIcon}
-            />
-          )}
-        </MapView>
+          location={safeLocation}
+          centerCoordinate={replaying ? replayCenter : safeLocation}
+          routePath={routeState}
+          replayPath={replayPathState}
+          zones={polygons}
+          showZones={showZones}
+          showUserLocation={!replaying}
+          followUserLocation={running}
+          initialZoom={15}
+          followZoomLevel={17}
+          fitToContent={showZones && !running && !replaying && Array.isArray(polygons) && polygons.length > 0}
+        />
       </View>
 
       {(running || replaying) && (
@@ -857,23 +797,32 @@ const MapScreen = () => {
 
       {!running && !replaying && (
         <View style={styles.menuPanel}>
-          <TouchableOpacity style={styles.startMainBtn} onPress={openStartModal}>
-            <Text style={styles.startMainBtnTxt}>Iniciar Corrida</Text>
-          </TouchableOpacity>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.startButtonAura,
+              {
+                opacity: startAuraOpacity,
+                transform: [{ scale: startPulseScale }],
+              },
+            ]}
+          />
+          <Animated.View style={{ transform: [{ scale: startPulseScale }] }}>
+            <Animated.View style={{ transform: [{ scale: startPressAnim }] }}>
+              <TouchableOpacity
+                activeOpacity={0.94}
+                style={styles.startMainBtn}
+                onPress={openStartModal}
+                onPressIn={handleStartPressIn}
+                onPressOut={handleStartPressOut}
+              >
+                <View pointerEvents="none" style={styles.startMainBtnHighlight} />
+                <Text style={styles.startMainBtnTxt}>Iniciar Corrida</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          </Animated.View>
 
-          <View style={styles.menuRow}>
-            <TouchableOpacity style={styles.menuItem} onPress={toggleZones}>
-              <Text style={styles.menuItemTitle}>Zonas</Text>
-              <Text style={styles.menuItemValue}>{showZones ? "Exibindo" : "Ocultas"}</Text>
-            </TouchableOpacity>
 
-            <TouchableOpacity style={styles.menuItem} onPress={openRunsList}>
-              <Text style={styles.menuItemTitle}>Corridas</Text>
-              <Text style={styles.menuItemValue}>{runsCount}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.metaText}>Zonas: {zonesCount} • Corridas: {runsCount}</Text>
         </View>
       )}
 
@@ -1018,10 +967,15 @@ const MapScreen = () => {
           <View style={styles.detailsContent}>
             <Text style={styles.detailsTitle}>Detalhes da Corrida</Text>
             <View style={{ height: 200, width: "100%", borderRadius: 12, overflow: "hidden", marginBottom: 12 }}>
-              <MapView style={{ flex: 1 }} initialRegion={{ latitude: Number(selectedRun?.path?.[0]?.latitude) || 0, longitude: Number(selectedRun?.path?.[0]?.longitude) || 0, latitudeDelta: 0.01, longitudeDelta: 0.01 }} scrollEnabled={false} rotateEnabled={false} pitchEnabled={false} zoomEnabled={false} provider={PROVIDER_GOOGLE}>
-                {Array.isArray(selectedRun?.path) && selectedRun.path.length >= 2 && selectedRun.path.every(p => p && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (<Polyline coordinates={selectedRun.path} strokeWidth={4} strokeColor={WAYPER_GREEN} />)}
-                {Array.isArray(selectedRun?.path) && selectedRun.path.length >= 3 && selectedRun.path.every(p => p && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (<Polygon coordinates={selectedRun.path} strokeColor="rgba(0,230,118,0.8)" fillColor="rgba(0,230,118,0.15)" strokeWidth={2} />)}
-              </MapView>
+              <WayperMapLibre
+                style={{ flex: 1 }}
+                routePath={selectedRun?.path || []}
+                zones={[{ coords: selectedRun?.path || [] }]}
+                showUserLocation={false}
+                interactive={false}
+                fitToContent={true}
+                centerCoordinate={selectedRun?.path?.[0] || DEFAULT_COORD}
+              />
             </View>
             <Text style={styles.detailsInfo}>Distância: {(selectedRun?.distance / 1000)?.toFixed(2)} km</Text>
             <Text style={styles.detailsInfo}>Duração: {selectedRun?.duration} s</Text>
@@ -1069,16 +1023,56 @@ const styles = StyleSheet.create({
   runLabel: { color: "#c4f6f6", fontWeight: "600" },
   runValue: { color: "#fff", fontWeight: "800" },
 
-  menuPanel: { position: "absolute", bottom: 26, left: 16, right: 16, padding: 18, borderRadius: 18, backgroundColor: "rgba(15,15,15,0.65)", borderColor: "rgba(0,255,200,0.15)", borderWidth: 1 },
-  startMainBtn: { width: "100%", paddingVertical: 16, borderRadius: 14, alignItems: "center", marginBottom: 18, backgroundColor: WAYPER_GREEN, shadowColor: WAYPER_GREEN, shadowOpacity: 0.4, shadowRadius: 10 },
-  startMainBtnTxt: { color: "#000", fontSize: 19, fontWeight: "900", letterSpacing: 0.5 },
-
-  menuRow: { flexDirection: "row", width: "100%", justifyContent: "space-between", marginBottom: 10 },
-  menuItem: { flex: 1, marginHorizontal: 6, paddingVertical: 12, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.04)", borderColor: "rgba(0,255,200,0.1)", borderWidth: 1, alignItems: "center" },
-  menuItemTitle: { fontWeight: "800", fontSize: 14, color: "#eaffff" },
-  menuItemValue: { marginTop: 4, color: "#9dd", fontSize: 12 },
-
-  metaText: { marginTop: 10, color: "#9dd", fontSize: 12, textAlign: "center", opacity: 0.8 },
+  menuPanel: {
+    position: "absolute",
+    bottom: 28,
+    left: 22,
+    right: 22,
+    padding: 8,
+    borderRadius: 24,
+    backgroundColor: "rgba(7, 10, 9, 0.58)",
+    borderColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
+  },
+  startButtonAura: {
+    position: "absolute",
+    left: 10,
+    right: 10,
+    top: 10,
+    bottom: 10,
+    borderRadius: 20,
+    backgroundColor: WAYPER_GREEN,
+  },
+  startMainBtn: {
+    width: "100%",
+    minHeight: 58,
+    paddingVertical: 17,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    backgroundColor: WAYPER_GREEN,
+    shadowColor: WAYPER_GREEN,
+    shadowOpacity: 0.24,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 7,
+  },
+  startMainBtnHighlight: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    top: 6,
+    height: 18,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  startMainBtnTxt: { color: "#07110d", fontSize: 19, fontWeight: "900" },
 
   bottomButtons: { position: "absolute", bottom: 22, width: "100%", alignItems: "center" },
   mainButton: { width: "75%", paddingVertical: 14, borderRadius: 16, alignItems: "center", backgroundColor: "#ff1744", shadowColor: "#ff1744", shadowOpacity: 0.5, shadowRadius: 12 },

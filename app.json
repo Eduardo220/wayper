@@ -1,18 +1,18 @@
 {
   "expo": {
     "scheme": "wayper",
-    "name": "wayper",
+    "name": "Wayper",
     "slug": "wayper",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
 
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#05070a"
     },
 
     "ios": {
@@ -40,14 +40,8 @@
       ],
 
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#ffffff"
-      },
-
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyDMEuHH1fq9qlGL6cfIK6jA9UvqD4YFS6Y"
-        }
       },
 
       "softwareKeyboardLayoutMode": "pan",
@@ -55,6 +49,7 @@
     },
 
     "plugins": [
+      "@maplibre/maplibre-react-native",
       "expo-web-browser",
       [
         "expo-location",

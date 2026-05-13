@@ -11,9 +11,8 @@ import {
   TouchableOpacity,
   Alert,
   Animated,
-  Platform,
 } from "react-native";
-import MapView, { Polyline } from "react-native-maps";
+import WayperMapLibre from "../../components/Map/WayperMapLibre";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 let captureRef;
@@ -346,7 +345,6 @@ function RunDetailScreenInner({ route, navigation }) {
   /* ---------------- Map region (safe) ---------------- */
   const mid = Math.floor((run.path?.length || 1) / 2);
   const midPoint = run.path && run.path[mid] ? run.path[mid] : { latitude: run.path?.[0]?.latitude || 0, longitude: run.path?.[0]?.longitude || 0 };
-  const initialRegion = { latitude: midPoint.latitude, longitude: midPoint.longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 };
 
   const animStyle = useMemo(() => ({
     transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }],
@@ -357,11 +355,14 @@ function RunDetailScreenInner({ route, navigation }) {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
       <Animated.View ref={viewRef} style={[styles.topSection, { backgroundColor: "#000" }, animStyle]}>
-        <MapView style={styles.map} initialRegion={initialRegion} scrollEnabled={false} pitchEnabled={false}>
-          {run.path && run.path.length > 1 && (
-            <Polyline coordinates={run.path} strokeWidth={5} strokeColor={WAYPER_GREEN} lineJoin="round" />
-          )}
-        </MapView>
+        <WayperMapLibre
+          style={styles.map}
+          routePath={run.path || []}
+          centerCoordinate={midPoint}
+          showUserLocation={false}
+          interactive={false}
+          fitToContent={true}
+        />
 
         <View style={styles.header}>
           <Text style={styles.title}>{run.name || "Corrida"}</Text>
