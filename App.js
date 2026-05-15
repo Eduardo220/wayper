@@ -1,6 +1,10 @@
 // APP.JS — WAYPER (CLEAN, STABLE, SEM FIRULA)
 
 import "react-native-reanimated";
+import {
+  configureReanimatedLogger,
+  ReanimatedLogLevel,
+} from "react-native-reanimated";
 
 import React, { useEffect, useState } from "react";
 import { LogBox, View, ActivityIndicator, Image, StyleSheet, Text } from "react-native";
@@ -32,6 +36,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // ===============================
 // CONFIG
 // ===============================
+configureReanimatedLogger({
+  level: ReanimatedLogLevel.error,
+  strict: false,
+});
+
 LogBox.ignoreAllLogs();
 
 const Stack = createNativeStackNavigator();

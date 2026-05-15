@@ -1,14 +1,16 @@
 // MAIN NAVIGATOR — WAYPER (STABLE, OFFLINE-SAFE)
 
 import React, { useEffect, useState } from "react";
-import { View, ActivityIndicator, Image, StyleSheet, Text } from "react-native";
+import { View, ActivityIndicator, Image, StyleSheet, Text, Pressable } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 
 import { createDrawerNavigator } from "@react-navigation/drawer";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 // FIREBASE
 import { auth, db } from "../firebaseConfig";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 
 // SCREENS
@@ -34,6 +36,7 @@ import DashboardScreen from "../screens/Runs/DashboardScreen";
 
 // UI
 import CustomDrawer from "../components/CustomDrawer";
+import { WayperTheme } from "../theme/wayperTheme";
 
 // SYNC
 import * as sync from "../utils/sync";
@@ -46,6 +49,8 @@ function HeaderTitle({ title }) {
   return (
     <View style={styles.headerTitle}>
       <Image source={BRAND_LOGO} style={styles.headerLogo} resizeMode="contain" />
+      <Text style={styles.headerBrand}>Wayper</Text>
+      <View style={styles.headerDivider} />
       <Text style={styles.headerText}>{title}</Text>
     </View>
   );
@@ -58,8 +63,17 @@ function FriendsStack() {
   return (
     <Stack.Navigator
       screenOptions={{
-        headerStyle: { backgroundColor: "#0d0f12" },
-        headerTintColor: "#fff",
+        headerStyle: { backgroundColor: WayperTheme.colors.background, height: 102 },
+        headerShadowVisible: false,
+        headerBackground: () => (
+          <LinearGradient
+            colors={[WayperTheme.colors.background, WayperTheme.colors.backgroundAlt]}
+            style={StyleSheet.absoluteFill}
+          />
+        ),
+        headerTintColor: WayperTheme.colors.text,
+        headerLeftContainerStyle: { paddingLeft: 10 },
+        headerTitleContainerStyle: { marginLeft: 18 },
         headerTitleStyle: { fontWeight: "900", fontSize: 20 },
       }}
     >
@@ -77,9 +91,7 @@ function GroupStack() {
   return (
     <Stack.Navigator
       screenOptions={{
-        headerStyle: { backgroundColor: "#0d0f12" },
-        headerTintColor: "#fff",
-        headerTitleStyle: { fontWeight: "900", fontSize: 20 },
+        headerShown: false,
       }}
     >
       <Stack.Screen name="GroupsHome" component={GroupsScreen} options={{ title: "Grupos" }} />
@@ -96,8 +108,8 @@ function RunsStack() {
   return (
     <Stack.Navigator
       screenOptions={{
-        headerStyle: { backgroundColor: "#0d0f12" },
-        headerTintColor: "#fff",
+        headerStyle: { backgroundColor: WayperTheme.colors.background },
+        headerTintColor: WayperTheme.colors.text,
         headerTitleStyle: { fontWeight: "900", fontSize: 20 },
       }}
     >
@@ -119,25 +131,30 @@ export default function MainNavigator() {
   // LOAD USER DATA (SAFE)
   // ===========================
   useEffect(() => {
-    const loadUser = async () => {
-      const uid = auth.currentUser?.uid;
-      if (!uid) {
-        setLoadingUser(false);
-        return;
-      }
+    const uid = auth.currentUser?.uid;
+    if (!uid) {
+      setUserData(null);
+      setLoadingUser(false);
+      return undefined;
+    }
 
-      try {
-        const snap = await getDoc(doc(db, "users", uid));
+    const unsubscribe = onSnapshot(
+      doc(db, "users", uid),
+      (snap) => {
         setUserData(snap.exists() ? snap.data() : null);
-      } catch (err) {
-        console.log("Erro ao carregar usuário:", err);
+        setLoadingUser(false);
+      },
+      (err) => {
+        const code = String(err?.code || "");
+        if (code !== "unavailable") {
+          console.warn("Erro ao carregar usuario:", err);
+        }
         setUserData(null);
-      } finally {
         setLoadingUser(false);
       }
-    };
+    );
 
-    loadUser();
+    return unsubscribe;
   }, []);
 
   // ===========================
@@ -173,7 +190,7 @@ export default function MainNavigator() {
     return (
       <View style={styles.loadingScreen}>
         <Image source={BRAND_LOGO} style={styles.loadingLogo} resizeMode="contain" />
-        <ActivityIndicator size="large" color="#00e676" />
+        <ActivityIndicator size="large" color={WayperTheme.colors.primary} />
       </View>
     );
   }
@@ -184,17 +201,33 @@ export default function MainNavigator() {
   return (
     <Drawer.Navigator
       initialRouteName="Mapa"
-      screenOptions={{
+      screenOptions={({ navigation }) => ({
         headerShown: true,
-        headerStyle: { backgroundColor: "#0d0f12" },
-        headerTintColor: "#fff",
+        headerStyle: { backgroundColor: WayperTheme.colors.background, height: 102 },
+        headerShadowVisible: false,
+        headerBackground: () => (
+          <LinearGradient
+            colors={[WayperTheme.colors.background, WayperTheme.colors.backgroundAlt]}
+            style={StyleSheet.absoluteFill}
+          />
+        ),
+        headerTintColor: WayperTheme.colors.text,
+        headerLeftContainerStyle: { paddingLeft: 10 },
+        headerTitleContainerStyle: { marginLeft: 18 },
+        headerLeft: () => (
+          <Pressable style={styles.headerMenu} onPress={() => navigation.openDrawer()}>
+            <Ionicons name="menu" size={28} color={WayperTheme.colors.text} />
+          </Pressable>
+        ),
         headerTitle: ({ children }) => <HeaderTitle title={children} />,
         headerTitleStyle: { fontWeight: "900", fontSize: 22 },
-        drawerStyle: { backgroundColor: "#0d0f12", width: 300 },
-        drawerInactiveTintColor: "#9aa0a6",
-        drawerActiveTintColor: "#00e676",
+        drawerStyle: { backgroundColor: WayperTheme.colors.background, width: 315 },
+        drawerType: "front",
+        overlayColor: "rgba(3, 7, 11, 0.58)",
+        drawerInactiveTintColor: WayperTheme.colors.textMuted,
+        drawerActiveTintColor: WayperTheme.colors.primary,
         drawerLabelStyle: { fontSize: 16, fontWeight: "700" },
-      }}
+      })}
       drawerContent={(props) => (
         <CustomDrawer {...props} user={userData} onSignOut={handleLogout} />
       )}
@@ -215,7 +248,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#05070a",
+    backgroundColor: WayperTheme.colors.background,
   },
   loadingLogo: {
     width: 120,
@@ -228,14 +261,40 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
+  headerMenu: {
+    width: 62,
+    height: 62,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 7,
+  },
   headerLogo: {
-    width: 34,
+    width: 48,
+    height: 42,
+    borderRadius: 10,
+  },
+  headerBrand: {
+    color: WayperTheme.colors.text,
+    fontSize: 27,
+    fontWeight: "900",
+  },
+  headerDivider: {
+    width: 1,
     height: 34,
-    borderRadius: 8,
+    backgroundColor: WayperTheme.colors.borderStrong,
+    marginHorizontal: 12,
   },
   headerText: {
-    color: "#ffffff",
-    fontSize: 22,
+    color: WayperTheme.colors.primary,
+    fontSize: 24,
     fontWeight: "900",
   },
 });

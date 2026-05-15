@@ -1,180 +1,164 @@
-/**
- * src/screens/Runs/RunDetailScreen.js */
-
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  Image,
-  ScrollView,
-  TouchableOpacity,
-  Alert,
-  Animated,
-} from "react-native";
-import WayperMapLibre from "../../components/Map/WayperMapLibre";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Animated, Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
+import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../../components/Map/WayperMapLibre";
+import { WPButton } from "../../components/ui";
+import { WayperTheme } from "../../theme/wayperTheme";
+import sync from "../../utils/sync";
+
 let captureRef;
 try {
-  // optional dependency - guard if not installed
   // eslint-disable-next-line global-require
   captureRef = require("react-native-view-shot").captureRef;
 } catch {
   captureRef = null;
 }
 
-import sync from "../../utils/sync";
+const MIN_BAR_HEIGHT = 22;
+const CHART_BASE_HEIGHT = 118;
 
-const WAYPER_GREEN = "#00e676";
-const MIN_BAR_HEIGHT = 20;
-const CHART_BASE_HEIGHT = 120;
-
-/* ------------------------------- Small debug util ------------------------------- */
 const debug = (...args) => {
-  // set to true to enable console logs for debugging
-  const ENABLE = false;
-  if (ENABLE) console.log("[RunDetail]", ...args);
+  const enabled = false;
+  if (enabled) console.log("[RunDetail]", ...args);
 };
 
-/* ------------------------------- Numeric helpers ------------------------------- */
-const safeNum = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+const safeNum = (value, fallback = 0) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
 
-function formatDuration(sec) {
-  sec = safeNum(sec, 0);
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
+const sanitizePath = (path = []) =>
+  (Array.isArray(path) ? path : [])
+    .map((point) => {
+      if (!point) return null;
+      const latitude = safeNum(point.latitude ?? point.lat, NaN);
+      const longitude = safeNum(point.longitude ?? point.lon ?? point.lng, NaN);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+      return { latitude, longitude, timestamp: point.timestamp ?? null };
+    })
+    .filter(Boolean);
+
+function formatDuration(seconds = 0) {
+  const total = Math.max(0, Math.round(safeNum(seconds)));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function formatPace(secPerKm) {
-  secPerKm = safeNum(secPerKm, 0);
-  const m = Math.floor(secPerKm / 60);
-  const s = Math.round(secPerKm % 60);
+function formatPace(secondsPerKm = 0) {
+  const total = Math.max(0, Math.round(safeNum(secondsPerKm)));
+  if (!total) return "--/km";
+  const m = Math.floor(total / 60);
+  const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}/km`;
 }
 
-/* ------------------------------- Geodesy (Haversine) ------------------------------- */
-function haversine(p1, p2) {
-  const R = 6371e3;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const φ1 = toRad(safeNum(p1.latitude));
-  const φ2 = toRad(safeNum(p2.latitude));
-  const Δφ = toRad(safeNum(p2.latitude) - safeNum(p1.latitude));
-  const Δλ = toRad(safeNum(p2.longitude) - safeNum(p1.longitude));
+function formatDate(date) {
+  try {
+    if (!date) return "Data indisponivel";
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) return String(date);
+    return parsed.toLocaleString();
+  } catch {
+    return "Data indisponivel";
+  }
+}
+
+function haversine(pointA, pointB) {
+  const radius = 6371e3;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const latA = toRad(safeNum(pointA.latitude));
+  const latB = toRad(safeNum(pointB.latitude));
+  const deltaLat = toRad(safeNum(pointB.latitude) - safeNum(pointA.latitude));
+  const deltaLng = toRad(safeNum(pointB.longitude) - safeNum(pointA.longitude));
   const a =
-    Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(latA) * Math.cos(latB) * Math.sin(deltaLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
+  return radius * c;
 }
 
-/* ------------------------------- Timeline & Splits (robust) ------------------------------- */
-/**
- * buildTimeline(path, totalDuration)
- * - returns array of points with cumulativeMeters & cumulativeTime
- * - safe to call with missing timestamps (will distribute time proportionally)
- */
 function buildTimeline(path = [], totalDuration = 0) {
-  if (!Array.isArray(path) || path.length === 0) return [];
+  const points = sanitizePath(path);
+  if (points.length === 0) return [];
+  if (points.length === 1) return [{ ...points[0], cumulativeMeters: 0, cumulativeTime: 0 }];
 
-  const pts = path
-    .map((p) => {
-      if (!p) return null;
-      const lat = safeNum(p.latitude ?? p.lat);
-      const lon = safeNum(p.longitude ?? p.lon ?? p.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-      return { latitude: lat, longitude: lon, timestamp: p.timestamp ?? null };
-    })
-    .filter(Boolean);
-
-  if (pts.length === 0) return [];
-
-  if (pts.length === 1) {
-    return [{ ...pts[0], cumulativeMeters: 0, cumulativeTime: 0 }];
-  }
-
-  const segments = new Array(pts.length - 1);
+  const segments = [];
   let totalMeters = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const d = haversine(pts[i - 1], pts[i]);
-    segments[i - 1] = d;
-    totalMeters += d;
+
+  for (let index = 1; index < points.length; index += 1) {
+    const meters = haversine(points[index - 1], points[index]);
+    segments[index - 1] = meters;
+    totalMeters += meters;
   }
 
-  const hasTimestamps = pts.every((p) => Number.isFinite(Number(p.timestamp)));
-  const out = [];
-  let cumMeters = 0;
-  let cumTime = 0;
+  const hasTimestamps = points.every((point) => Number.isFinite(Number(point.timestamp)));
+  const output = [{ ...points[0], cumulativeMeters: 0, cumulativeTime: 0 }];
+  let cumulativeMeters = 0;
+  let cumulativeTime = 0;
 
-  if (hasTimestamps) {
-    out.push({ ...pts[0], cumulativeMeters: 0, cumulativeTime: 0 });
-    for (let i = 1; i < pts.length; i++) {
-      const segMeters = segments[i - 1] || 0;
-      const tPrev = Number(pts[i - 1].timestamp);
-      const tCur = Number(pts[i].timestamp);
-      const dtSec = Math.max(0, (tCur - tPrev) / 1000);
-      cumMeters += segMeters;
-      cumTime += dtSec;
-      out.push({ ...pts[i], cumulativeMeters: cumMeters, cumulativeTime: cumTime });
+  for (let index = 1; index < points.length; index += 1) {
+    const segmentMeters = segments[index - 1] || 0;
+    let segmentTime = 0;
+
+    if (hasTimestamps) {
+      const previousTime = Number(points[index - 1].timestamp);
+      const currentTime = Number(points[index].timestamp);
+      segmentTime = Math.max(0, (currentTime - previousTime) / 1000);
+    } else {
+      const duration = Math.max(1, safeNum(totalDuration, points.length - 1));
+      segmentTime = totalMeters > 0 ? (segmentMeters / totalMeters) * duration : duration / (points.length - 1);
     }
-  } else {
-    const dur = Math.max(1, safeNum(totalDuration, pts.length - 1));
-    out.push({ ...pts[0], cumulativeMeters: 0, cumulativeTime: 0 });
-    for (let i = 1; i < pts.length; i++) {
-      const segMeters = segments[i - 1] || 0;
-      const segTime = totalMeters > 0 ? (segMeters / totalMeters) * dur : dur / (pts.length - 1);
-      cumMeters += segMeters;
-      cumTime += segTime;
-      out.push({ ...pts[i], cumulativeMeters: cumMeters, cumulativeTime: cumTime });
-    }
+
+    cumulativeMeters += segmentMeters;
+    cumulativeTime += segmentTime;
+    output.push({ ...points[index], cumulativeMeters, cumulativeTime });
   }
-  return out;
+
+  return output;
 }
 
-/**
- * computeSplits(path, totalDuration)
- * - returns { splits[], pacePerKm[], avgSpeedKmh, maxSpeedKmh, totalMeters, totalTime }
- */
 function computeSplits(path = [], totalDuration = 0) {
   const timeline = buildTimeline(path, totalDuration);
-  if (!timeline || timeline.length < 2) {
+  if (timeline.length < 2) {
     return { splits: [], pacePerKm: [], avgSpeedKmh: 0, maxSpeedKmh: 0, totalMeters: 0, totalTime: 0 };
   }
 
-  const totalMeters = safeNum(timeline[timeline.length - 1].cumulativeMeters, 0);
-  const totalTime = safeNum(timeline[timeline.length - 1].cumulativeTime, 0);
-
-  let maxSpeed = 0;
-  for (let i = 1; i < timeline.length; i++) {
-    const d = Math.max(0, timeline[i].cumulativeMeters - timeline[i - 1].cumulativeMeters);
-    const dt = Math.max(0.001, timeline[i].cumulativeTime - timeline[i - 1].cumulativeTime);
-    const spKmh = (d / dt) * 3.6;
-    if (spKmh > maxSpeed) maxSpeed = spKmh;
-  }
+  const totalMeters = safeNum(timeline[timeline.length - 1].cumulativeMeters);
+  const totalTime = safeNum(timeline[timeline.length - 1].cumulativeTime);
   const avgSpeedKmh = totalTime > 0 ? (totalMeters / totalTime) * 3.6 : 0;
+  let maxSpeedKmh = 0;
+
+  for (let index = 1; index < timeline.length; index += 1) {
+    const meters = Math.max(0, timeline[index].cumulativeMeters - timeline[index - 1].cumulativeMeters);
+    const seconds = Math.max(0.001, timeline[index].cumulativeTime - timeline[index - 1].cumulativeTime);
+    maxSpeedKmh = Math.max(maxSpeedKmh, (meters / seconds) * 3.6);
+  }
 
   const splits = [];
   const pacePerKm = [];
   let kmIndex = 1;
   let lastKmTime = 0;
   let lastKmMeters = 0;
-  let idx = 0;
+  let pointIndex = 0;
 
   while (kmIndex * 1000 <= totalMeters + 1e-6) {
-    while (idx < timeline.length && timeline[idx].cumulativeMeters < kmIndex * 1000) idx++;
-    if (idx >= timeline.length) break;
+    while (pointIndex < timeline.length && timeline[pointIndex].cumulativeMeters < kmIndex * 1000) {
+      pointIndex += 1;
+    }
+    if (pointIndex >= timeline.length) break;
 
-    const cur = timeline[idx];
-    const prev = timeline[idx - 1] || timeline[0];
-    const segMeters = (cur.cumulativeMeters || 0) - (prev.cumulativeMeters || 0);
-    const segTime = (cur.cumulativeTime || 0) - (prev.cumulativeTime || 0);
-    const metersBefore = kmIndex * 1000 - (prev.cumulativeMeters || 0);
-    const ratio = segMeters > 0 ? metersBefore / segMeters : 0;
-    const timeAtKm = (prev.cumulativeTime || 0) + segTime * ratio;
-
+    const current = timeline[pointIndex];
+    const previous = timeline[pointIndex - 1] || timeline[0];
+    const segmentMeters = current.cumulativeMeters - previous.cumulativeMeters;
+    const segmentTime = current.cumulativeTime - previous.cumulativeTime;
+    const metersBefore = kmIndex * 1000 - previous.cumulativeMeters;
+    const ratio = segmentMeters > 0 ? metersBefore / segmentMeters : 0;
+    const timeAtKm = previous.cumulativeTime + segmentTime * ratio;
     const kmTime = timeAtKm - lastKmTime;
+
     splits.push({ km: kmIndex, time: Math.round(kmTime), paceSec: kmTime });
     pacePerKm.push(Math.round(kmTime));
     lastKmTime = timeAtKm;
@@ -185,330 +169,653 @@ function computeSplits(path = [], totalDuration = 0) {
   if (totalMeters - lastKmMeters > 10) {
     const partialMeters = totalMeters - lastKmMeters;
     const partialTime = totalTime - lastKmTime;
-    splits.push({ km: +( (lastKmMeters / 1000) + (partialMeters / 1000) ).toFixed(2), time: Math.round(partialTime), paceSec: partialTime });
+    splits.push({
+      km: +((lastKmMeters / 1000) + (partialMeters / 1000)).toFixed(2),
+      time: Math.round(partialTime),
+      paceSec: partialTime,
+    });
     pacePerKm.push(Math.round(partialTime));
   }
 
-  return { splits, pacePerKm, avgSpeedKmh, maxSpeedKmh: maxSpeed, totalMeters, totalTime };
+  return { splits, pacePerKm, avgSpeedKmh, maxSpeedKmh, totalMeters, totalTime };
 }
 
-/* ------------------------------- Component ------------------------------- */
-function RunDetailScreenInner({ route, navigation }) {
-  const run = route?.params?.run;
-  const viewRef = useRef(null);
-  const anim = useRef(new Animated.Value(0)).current;
+function buildGpx(run, path) {
+  const safeName = String(run?.name || "Corrida Wayper").replace(/[<>]/g, "");
+  const points = sanitizePath(path)
+    .map((point) => {
+      const time = point.timestamp ? new Date(point.timestamp).toISOString() : "";
+      return `<trkpt lat="${point.latitude}" lon="${point.longitude}"><time>${time}</time></trkpt>`;
+    })
+    .join("\n");
 
-  // animate on mount
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="Wayper" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>${safeName}</name></metadata>
+  <trk><name>${safeName}</name><trkseg>
+${points}
+  </trkseg></trk>
+</gpx>`;
+}
+
+function RunDetailScreenInner({ route }) {
+  const run = route?.params?.run;
+  const captureViewRef = useRef(null);
+  const anim = useRef(new Animated.Value(0)).current;
+  const [userAvgPace, setUserAvgPace] = useState(null);
+
+  const path = useMemo(() => sanitizePath(run?.path || []), [run]);
+  const midPoint = useMemo(() => {
+    if (path.length === 0) return WAYPER_FALLBACK_COORD;
+    return path[Math.floor(path.length / 2)] || path[0] || WAYPER_FALLBACK_COORD;
+  }, [path]);
+
+  const stats = useMemo(() => computeSplits(path, run?.duration || 0), [path, run]);
+  const totalMeters = stats.totalMeters > 0 ? stats.totalMeters : safeNum(run?.distance);
+  const totalTime = stats.totalTime > 0 ? stats.totalTime : safeNum(run?.duration);
+  const totalKm = (totalMeters / 1000).toFixed(2);
+  const paceSec = totalMeters > 0 ? totalTime / (totalMeters / 1000) : 0;
+  const paceDisplay = formatPace(paceSec);
+  const avgSpeedDisplay = (safeNum(stats.avgSpeedKmh) || safeNum(run?.avgSpeed)).toFixed(1);
+  const maxSpeedDisplay = safeNum(stats.maxSpeedKmh).toFixed(1);
+  const runTitle = run?.name || "Corrida";
+  const effort = run?.effort ?? "--";
+
   useEffect(() => {
     Animated.timing(anim, { toValue: 1, duration: 420, useNativeDriver: true }).start();
   }, [anim]);
 
-  // guard run presence early
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadAveragePace() {
+      if (!run) return;
+      try {
+        const localRuns = await sync.loadLocalRuns();
+        if (!mounted) return;
+        const comparable = (Array.isArray(localRuns) ? localRuns : []).filter(
+          (item) => item.id !== run.id && safeNum(item.distance) > 0 && safeNum(item.duration) > 0
+        );
+        const total = comparable.reduce(
+          (acc, item) => {
+            acc.seconds += safeNum(item.duration);
+            acc.km += safeNum(item.distance) / 1000;
+            return acc;
+          },
+          { seconds: 0, km: 0 }
+        );
+        setUserAvgPace(total.km > 0 ? total.seconds / total.km : null);
+      } catch (error) {
+        debug("loadAveragePace", error);
+      }
+    }
+
+    loadAveragePace();
+    return () => {
+      mounted = false;
+    };
+  }, [run]);
+
+  const insight = useMemo(() => {
+    if (!userAvgPace || !paceSec) return null;
+    const percentage = ((userAvgPace - paceSec) / userAvgPace) * 100;
+    const absolute = Math.abs(Math.round(percentage));
+    return {
+      faster: percentage > 0,
+      text: percentage > 0
+        ? `Voce foi ${absolute}% mais rapido que sua media.`
+        : `Voce ficou ${absolute}% mais lento que sua media.`,
+    };
+  }, [paceSec, userAvgPace]);
+
+  const exportGPX = useCallback(async () => {
+    try {
+      if (!run || path.length === 0) {
+        Alert.alert("Nada para exportar");
+        return;
+      }
+
+      const filePath = `${FileSystem.cacheDirectory}wayper_run_${run.id || Date.now()}.gpx`;
+      await FileSystem.writeAsStringAsync(filePath, buildGpx(run, path), { encoding: FileSystem.EncodingUTF8 });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(filePath, { mimeType: "application/gpx+xml", dialogTitle: "Exportar GPX - Wayper" });
+      } else {
+        Alert.alert("Exportado", `GPX salvo em: ${filePath}`);
+      }
+    } catch (error) {
+      debug("exportGPX", error);
+      Alert.alert("Erro", "Nao foi possivel exportar GPX.");
+    }
+  }, [path, run]);
+
+  const exportJSON = useCallback(async () => {
+    try {
+      if (!run) return;
+      const filePath = `${FileSystem.cacheDirectory}wayper_run_${run.id || Date.now()}.json`;
+      await FileSystem.writeAsStringAsync(filePath, JSON.stringify(run), { encoding: FileSystem.EncodingUTF8 });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(filePath, { dialogTitle: "Exportar JSON - Wayper" });
+      } else {
+        Alert.alert("Exportado", `JSON salvo em: ${filePath}`);
+      }
+    } catch (error) {
+      debug("exportJSON", error);
+      Alert.alert("Erro", "Nao foi possivel exportar JSON.");
+    }
+  }, [run]);
+
+  const shareMapImage = useCallback(async () => {
+    try {
+      if (!captureRef || !captureViewRef.current) {
+        Alert.alert("Compartilhar", "Preview indisponivel para captura.");
+        return;
+      }
+
+      const uri = await captureRef(captureViewRef.current, { format: "png", quality: 0.95, result: "tmpfile" });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: "image/png", dialogTitle: "Compartilhar imagem da corrida" });
+      } else {
+        Alert.alert("Imagem pronta", uri);
+      }
+    } catch (error) {
+      debug("shareMapImage", error);
+      Alert.alert("Erro", "Nao foi possivel compartilhar a imagem.");
+    }
+  }, []);
+
+  const animStyle = useMemo(
+    () => ({
+      opacity: anim,
+      transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) }],
+    }),
+    [anim]
+  );
+
   if (!run) {
     return (
       <View style={[styles.container, styles.center]}>
-        <Text style={{ color: "#fff" }}>Corrida inválida</Text>
+        <Text style={styles.invalidText}>Corrida invalida</Text>
       </View>
     );
   }
 
-  // compute splits & stats (memoized)
-  const { splits, pacePerKm, avgSpeedKmh, maxSpeedKmh, totalMeters, totalTime } = useMemo(
-    () => computeSplits(run?.path || [], run?.duration || 0),
-    [run]
-  );
-
-  const runPaceSec = useMemo(() => {
-    if (!run || !run.distance || !run.duration) return 0;
-    return safeNum(run.duration) / (safeNum(run.distance) / 1000 || 1);
-  }, [run]);
-
-  const totalKm = useMemo(() => {
-    return Number.isFinite(totalMeters) && totalMeters > 0
-      ? (totalMeters / 1000).toFixed(2)
-      : ((safeNum(run.distance) / 1000).toFixed?.(2) ?? "0.00");
-  }, [totalMeters, run]);
-
-  // compute user's historical avg pace for insight (non-blocking)
-  const [userAvgPace, setUserAvgPace] = useState(null);
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const local = await sync.loadLocalRuns();
-        if (!mounted) return;
-        const filtered = (Array.isArray(local) ? local : []).filter((r) => r.distance && r.duration && r.id !== run?.id);
-        if (filtered.length === 0) {
-          setUserAvgPace(null);
-          return;
-        }
-        let totalSec = 0;
-        let totalKm = 0;
-        for (const r of filtered) {
-          const distKm = safeNum(r.distance) / 1000;
-          const sec = safeNum(r.duration);
-          if (distKm > 0 && sec > 0) {
-            totalSec += sec;
-            totalKm += distKm;
-          }
-        }
-        if (totalKm > 0) setUserAvgPace(totalSec / totalKm);
-      } catch (e) {
-        debug("loadLocalRuns for avg pace failed", e);
-      }
-    })();
-    return () => { mounted = false; };
-  }, [run]);
-
-  const paceDisplay = useMemo(() => formatPace(runPaceSec), [runPaceSec]);
-  const avgSpeedDisplay = useMemo(() => (safeNum(avgSpeedKmh) || safeNum(run.avgSpeed, 0)).toFixed(1), [avgSpeedKmh, run]);
-
-  // insights
-  const insight = useMemo(() => {
-    if (!userAvgPace || !runPaceSec) return null;
-    const pct = ((userAvgPace - runPaceSec) / userAvgPace) * 100;
-    const faster = pct > 0;
-    const pctAbs = Math.abs(Math.round(pct));
-    return { faster, pct: pctAbs, text: faster ? `Você foi ${pctAbs}% mais rápido que sua média` : `Você ficou ${pctAbs}% mais lento que sua média` };
-  }, [userAvgPace, runPaceSec]);
-
-  /* ---------------- Export GPX & JSON (safe) ---------------- */
-  const exportGPX = useCallback(async () => {
-    try {
-      if (!run || !Array.isArray(run.path) || run.path.length === 0) {
-        Alert.alert("Nada para exportar");
-        return;
-      }
-      const safeName = (run.name || "Corrida Wayper").replace(/</g, "");
-      const header = `<?xml version="1.0" encoding="UTF-8"?>
-<gpx creator="Wayper" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
-<trk><name>${safeName}</name><trkseg>`;
-      const pts = (run.path || [])
-        .map((p) => {
-          const t = p.timestamp ? new Date(p.timestamp).toISOString() : "";
-          return `<trkpt lat="${p.latitude}" lon="${p.longitude}"><time>${t}</time></trkpt>`;
-        })
-        .join("\n");
-      const footer = `</trkseg></trk></gpx>`;
-      const gpx = `${header}\n${pts}\n${footer}`;
-      const path = `${FileSystem.cacheDirectory}wayper_run_${run.id || Date.now()}.gpx`;
-      await FileSystem.writeAsStringAsync(path, gpx, { encoding: FileSystem.EncodingUTF8 });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(path, { mimeType: "application/gpx+xml", dialogTitle: "Exportar GPX - Wayper" });
-      } else {
-        Alert.alert("Exportado", `GPX salvo: ${path}`);
-      }
-    } catch (e) {
-      debug("exportGPX", e);
-      Alert.alert("Erro", "Não foi possível exportar GPX.");
-    }
-  }, [run]);
-
-  const exportJSON = useCallback(async () => {
-    try {
-      const path = `${FileSystem.cacheDirectory}wayper_run_${run.id || Date.now()}.json`;
-      await FileSystem.writeAsStringAsync(path, JSON.stringify(run), { encoding: FileSystem.EncodingUTF8 });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(path, { dialogTitle: "Exportar JSON - Wayper" });
-      } else {
-        Alert.alert("Exportado", `JSON salvo: ${path}`);
-      }
-    } catch (e) {
-      debug("exportJSON", e);
-      Alert.alert("Erro", "Não foi possível exportar JSON.");
-    }
-  }, [run]);
-
-  /* ---------------- Share map image (guard view-shot) ---------------- */
-  const shareMapImage = useCallback(async () => {
-    try {
-      if (!captureRef) {
-        Alert.alert("Funcionalidade indisponível", "Instale react-native-view-shot para habilitar captura de tela.");
-        return;
-      }
-      if (!viewRef.current) {
-        Alert.alert("Preview não disponível");
-        return;
-      }
-      const uri = await captureRef(viewRef, { format: "png", quality: 0.9 });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { dialogTitle: "Compartilhar imagem da corrida" });
-      } else {
-        Alert.alert("Pronto", uri);
-      }
-    } catch (e) {
-      debug("shareMapImage", e);
-      Alert.alert("Erro ao compartilhar imagem", "Falha ao capturar/compartilhar imagem.");
-    }
-  }, [viewRef]);
-
-  /* ---------------- Map region (safe) ---------------- */
-  const mid = Math.floor((run.path?.length || 1) / 2);
-  const midPoint = run.path && run.path[mid] ? run.path[mid] : { latitude: run.path?.[0]?.latitude || 0, longitude: run.path?.[0]?.longitude || 0 };
-
-  const animStyle = useMemo(() => ({
-    transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }],
-    opacity: anim,
-  }), [anim]);
-
-  /* ---------------- Render ---------------- */
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
-      <Animated.View ref={viewRef} style={[styles.topSection, { backgroundColor: "#000" }, animStyle]}>
-        <WayperMapLibre
-          style={styles.map}
-          routePath={run.path || []}
-          centerCoordinate={midPoint}
-          showUserLocation={false}
-          interactive={false}
-          fitToContent={true}
-        />
-
-        <View style={styles.header}>
-          <Text style={styles.title}>{run.name || "Corrida"}</Text>
-          <Text style={styles.date}>{run.date ? new Date(run.date).toLocaleString() : "—"}</Text>
-        </View>
-
-        {run.photoUri ? <Image source={{ uri: run.photoUri }} style={styles.heroImage} /> : null}
-      </Animated.View>
-
-      <View style={styles.content}>
-        {/* Summary row */}
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryBox}>
-            <Text style={styles.label}>Distância</Text>
-            <Text style={styles.value}>{totalKm} km</Text>
-          </View>
-          <View style={styles.summaryBox}>
-            <Text style={styles.label}>Duração</Text>
-            <Text style={styles.value}>{formatDuration(run.duration)}</Text>
-          </View>
-          <View style={styles.summaryBox}>
-            <Text style={styles.label}>Pace Médio</Text>
-            <Text style={styles.value}>{paceDisplay}</Text>
-          </View>
-        </View>
-
-        {/* insight */}
-        {insight && (
-          <View style={styles.insight}>
-            <Text style={{ color: "#fff", fontWeight: "700" }}>{insight.text}</Text>
-          </View>
-        )}
-
-        {/* pace chart */}
-        <View style={{ marginTop: 12 }}>
-          <Text style={styles.sectionTitle}>Pace por km</Text>
-          <View style={styles.chartRow}>
-            {(pacePerKm.length ? pacePerKm : [Math.round(runPaceSec)]).map((sec, idx) => {
-              const isFaster = userAvgPace ? sec < userAvgPace : false;
-              const denom = userAvgPace || Math.max(...(pacePerKm.length ? pacePerKm : [sec]), 1);
-              const height = Math.max(MIN_BAR_HEIGHT, (sec / denom) * CHART_BASE_HEIGHT);
-              return (
-                <View style={styles.barWrap} key={`bar-${idx}`}>
-                  <View style={[styles.bar, { height, backgroundColor: isFaster ? WAYPER_GREEN : "#ff7043" }]} />
-                  <Text style={styles.barLabel}>{formatPace(sec)}</Text>
-                  <Text style={styles.barSub}>{idx + 1} km</Text>
-                </View>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* splits */}
-        <View style={{ marginTop: 18 }}>
-          <Text style={styles.sectionTitle}>Splits</Text>
-          {splits.length === 0 ? (
-            <Text style={{ color: "#aaa" }}>Splits não disponíveis</Text>
-          ) : (
-            splits.map((s, i) => (
-              <View key={`split-${i}`} style={styles.splitRow}>
-                <Text style={styles.splitKm}>{s.km} km</Text>
-                <Text style={styles.splitTime}>{formatDuration(s.time)}</Text>
-                <Text style={styles.splitPace}>{formatPace(s.time)}</Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <Animated.View style={animStyle}>
+        <View ref={captureViewRef} collapsable={false} style={styles.captureCard}>
+          <View style={styles.heroMap}>
+            <WayperMapLibre
+              style={styles.map}
+              routePath={path}
+              centerCoordinate={midPoint}
+              showUserLocation={false}
+              interactive={false}
+              fitToContent={path.length > 1}
+              contentPadding={{ top: 58, right: 48, bottom: 62, left: 48 }}
+            />
+            <LinearGradient
+              pointerEvents="none"
+              colors={["rgba(3,7,11,0.20)", "rgba(3,7,11,0.05)", "rgba(3,7,11,0.88)"]}
+              locations={[0, 0.48, 1]}
+              style={styles.heroGradient}
+            />
+            <View style={styles.heroContent}>
+              <View style={styles.heroBadge}>
+                <Ionicons name="walk-outline" size={22} color={WayperTheme.colors.textInverse} />
               </View>
-            ))
-          )}
-        </View>
-
-        {/* details */}
-        <View style={{ marginTop: 18 }}>
-          <Text style={styles.sectionTitle}>Detalhes</Text>
-          <View style={styles.detailRow}><Text style={styles.detailLabel}>Humor: </Text><Text style={styles.detailValue}>{run.mood || "—"}</Text></View>
-          <View style={styles.detailRow}><Text style={styles.detailLabel}>Clima: </Text><Text style={styles.detailValue}>{run.weather || "—"}</Text></View>
-          <View style={styles.detailRow}><Text style={styles.detailLabel}>Esforço (RPE): </Text><Text style={styles.detailValue}>{run.effort ?? "—"}</Text></View>
-          <View style={[styles.detailRow, { marginTop: 8 }]}><Text style={styles.detailLabel}>Tags:</Text></View>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 6 }}>
-            {(run.tags || []).length === 0 ? <Text style={{ color: "#777" }}>—</Text> : (run.tags || []).map((t) => <View style={styles.tag} key={t}><Text style={styles.tagText}>{t}</Text></View>)}
+              <View style={styles.heroTextWrap}>
+                <Text style={styles.eyebrow}>Wayper Run</Text>
+                <Text style={styles.title} numberOfLines={2}>{runTitle}</Text>
+                <Text style={styles.date}>{formatDate(run.date)}</Text>
+              </View>
+            </View>
           </View>
 
-          <View style={{ marginTop: 12 }}>
-            <Text style={styles.detailLabel}>Notas</Text>
-            <Text style={{ color: "#ddd", marginTop: 6 }}>{run.notes || "—"}</Text>
+          <View style={styles.captureMetrics}>
+            <MetricTile icon="navigate-outline" label="Distancia" value={`${totalKm} km`} />
+            <MetricTile icon="timer-outline" label="Tempo" value={formatDuration(totalTime)} />
+            <MetricTile icon="speedometer-outline" label="Pace" value={paceDisplay} />
           </View>
         </View>
 
-        {/* actions */}
-        <View style={{ marginTop: 20, marginBottom: 40 }}>
-          <TouchableOpacity style={[styles.actionBtn, { backgroundColor: WAYPER_GREEN }]} onPress={exportGPX}>
-            <Text style={styles.actionText}>Exportar GPX</Text>
-          </TouchableOpacity>
+        <View style={styles.content}>
+          <View style={styles.metricGrid}>
+            <MetricTile icon="flash-outline" label="Vel. media" value={`${avgSpeedDisplay} km/h`} compact />
+            <MetricTile icon="trending-up-outline" label="Vel. max" value={`${maxSpeedDisplay} km/h`} compact />
+            <MetricTile icon="fitness-outline" label="Esforco" value={String(effort)} compact accent="cyan" />
+          </View>
 
-          <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#333", marginTop: 8 }]} onPress={exportJSON}>
-            <Text style={styles.actionText}>Exportar JSON</Text>
-          </TouchableOpacity>
+          {insight ? (
+            <LinearGradient
+              colors={[
+                insight.faster ? "rgba(0,230,118,0.23)" : "rgba(255,204,51,0.18)",
+                WayperTheme.colors.surfaceElevated,
+              ]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.insight}
+            >
+              <Ionicons
+                name={insight.faster ? "rocket-outline" : "pulse-outline"}
+                size={22}
+                color={insight.faster ? WayperTheme.colors.primary : WayperTheme.colors.warning}
+              />
+              <Text style={styles.insightText}>{insight.text}</Text>
+            </LinearGradient>
+          ) : null}
 
-          <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#111", marginTop: 8 }]} onPress={shareMapImage}>
-            <Text style={styles.actionText}>Compartilhar Imagem</Text>
-          </TouchableOpacity>
+          <SectionCard title="Pace por km" icon="analytics-outline">
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chartRow}>
+              {(stats.pacePerKm.length ? stats.pacePerKm : [Math.round(paceSec || 0)]).map((seconds, index) => {
+                const denominator = userAvgPace || Math.max(...(stats.pacePerKm.length ? stats.pacePerKm : [seconds]), 1);
+                const isFaster = userAvgPace ? seconds < userAvgPace : true;
+                const height = Math.max(MIN_BAR_HEIGHT, Math.min(CHART_BASE_HEIGHT, (seconds / denominator) * CHART_BASE_HEIGHT));
+                return (
+                  <View style={styles.barWrap} key={`pace-${index}`}>
+                    <View style={styles.barRail}>
+                      <View
+                        style={[
+                          styles.bar,
+                          {
+                            height,
+                            backgroundColor: isFaster ? WayperTheme.colors.primary : WayperTheme.colors.warning,
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.barLabel}>{formatPace(seconds)}</Text>
+                    <Text style={styles.barSub}>{index + 1} km</Text>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </SectionCard>
+
+          <SectionCard title="Splits" icon="list-outline">
+            {stats.splits.length === 0 ? (
+              <Text style={styles.emptyText}>Splits indisponiveis para esta corrida.</Text>
+            ) : (
+              stats.splits.map((split, index) => (
+                <View style={styles.splitRow} key={`split-${index}`}>
+                  <Text style={styles.splitKm}>{split.km} km</Text>
+                  <Text style={styles.splitTime}>{formatDuration(split.time)}</Text>
+                  <Text style={styles.splitPace}>{formatPace(split.time)}</Text>
+                </View>
+              ))
+            )}
+          </SectionCard>
+
+          <SectionCard title="Detalhes" icon="document-text-outline">
+            <View style={styles.tagWrap}>
+              {(run.tags || []).length ? (
+                (run.tags || []).map((tag) => (
+                  <View style={styles.tag} key={tag}>
+                    <Ionicons name="pricetag-outline" size={14} color={WayperTheme.colors.primary} />
+                    <Text style={styles.tagText}>{tag}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.emptyText}>Sem tags</Text>
+              )}
+            </View>
+
+            <View style={styles.notesBox}>
+              <Text style={styles.notesLabel}>Notas</Text>
+              <Text style={styles.notesText}>{run.notes || "Sem notas para esta corrida."}</Text>
+            </View>
+
+            {run.photoUri ? <Image source={{ uri: run.photoUri }} style={styles.photo} /> : null}
+          </SectionCard>
+
+          <View style={styles.actions}>
+            <WPButton
+              title="Compartilhar imagem"
+              icon={<Ionicons name="image-outline" size={21} color={WayperTheme.colors.textInverse} />}
+              onPress={shareMapImage}
+            />
+            <WPButton
+              title="Exportar GPX"
+              variant="secondary"
+              icon={<Ionicons name="map-outline" size={21} color={WayperTheme.colors.primary} />}
+              onPress={exportGPX}
+              style={styles.actionGap}
+            />
+            <WPButton
+              title="Exportar JSON"
+              variant="ghost"
+              icon={<Ionicons name="code-slash-outline" size={21} color={WayperTheme.colors.textMuted} />}
+              onPress={exportJSON}
+              style={styles.actionGap}
+            />
+          </View>
         </View>
-      </View>
+      </Animated.View>
     </ScrollView>
   );
 }
 
-/* wrap with memo for stability */
+function MetricTile({ icon, label, value, compact = false, accent = "green" }) {
+  const color = accent === "cyan" ? WayperTheme.colors.cyan : WayperTheme.colors.primary;
+  return (
+    <View style={[styles.metricTile, compact && styles.metricTileCompact]}>
+      <View style={[styles.metricIcon, { borderColor: accent === "cyan" ? WayperTheme.colors.cyanBorder : WayperTheme.colors.primaryBorder }]}>
+        <Ionicons name={icon} size={compact ? 16 : 18} color={color} />
+      </View>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={[styles.metricValue, { color }]} numberOfLines={1}>{value}</Text>
+    </View>
+  );
+}
+
+function SectionCard({ title, icon, children }) {
+  return (
+    <View style={styles.sectionCard}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionIcon}>
+          <Ionicons name={icon} size={19} color={WayperTheme.colors.primary} />
+        </View>
+        <Text style={styles.sectionTitle}>{title}</Text>
+      </View>
+      {children}
+    </View>
+  );
+}
+
 const RunDetailScreen = React.memo(RunDetailScreenInner);
 export default RunDetailScreen;
 
-/* ------------------------------- Styles (kept visually similar) ------------------------------- */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
-  center: { justifyContent: "center", alignItems: "center" },
-  topSection: { backgroundColor: "#000" },
-  map: { width: "100%", height: 240 },
-  header: { padding: 12 },
-  title: { color: WAYPER_GREEN, fontWeight: "800", fontSize: 20 },
-  date: { color: "#aaa", marginTop: 6 },
-  heroImage: { width: "100%", height: 160, marginTop: 8 },
-  content: { padding: 12 },
-  summaryRow: { flexDirection: "row", justifyContent: "space-between" },
-  summaryBox: { flex: 1, backgroundColor: "#0d0d0d", margin: 6, padding: 12, borderRadius: 10, alignItems: "center" },
-  label: { color: "#aaa", fontSize: 12 },
-  value: { color: "#fff", fontWeight: "800", marginTop: 6 },
-
-  insight: { backgroundColor: "#081c12", borderLeftWidth: 4, borderLeftColor: WAYPER_GREEN, padding: 12, marginTop: 12, borderRadius: 8 },
-
-  sectionTitle: { color: WAYPER_GREEN, fontWeight: "800", marginBottom: 8 },
-
-  chartRow: { flexDirection: "row", alignItems: "flex-end", paddingVertical: 8 },
-  barWrap: { width: 54, alignItems: "center", marginRight: 8 },
-  bar: { width: 40, borderRadius: 8, backgroundColor: WAYPER_GREEN },
-  barLabel: { color: "#ddd", fontSize: 12, marginTop: 6 },
-  barSub: { color: "#888", fontSize: 11 },
-
-  splitRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 12, borderBottomWidth: 1, borderColor: "#111" },
-  splitKm: { color: "#fff", fontWeight: "700" },
-  splitTime: { color: "#ccc" },
-  splitPace: { color: "#aaa" },
-
-  detailRow: { flexDirection: "row", marginTop: 8 },
-  detailLabel: { color: "#999", width: 120, fontWeight: "700" },
-  detailValue: { color: "#fff" },
-
-  tag: { backgroundColor: "#111", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 18, marginRight: 8, marginTop: 6 },
-  tagText: { color: "#fff", fontWeight: "700" },
-
-  actionBtn: { padding: 14, borderRadius: 12, alignItems: "center" },
-  actionText: { color: "#fff", fontWeight: "800" },
+  container: {
+    flex: 1,
+    backgroundColor: WayperTheme.colors.background,
+  },
+  scrollContent: {
+    paddingBottom: 42,
+  },
+  center: {
+    justifyContent: "center",
+    alignItems: "center",
+    padding: WayperTheme.spacing.xl,
+  },
+  invalidText: {
+    ...WayperTheme.typography.body,
+    color: WayperTheme.colors.textMuted,
+  },
+  captureCard: {
+    backgroundColor: WayperTheme.colors.background,
+  },
+  heroMap: {
+    height: 360,
+    overflow: "hidden",
+    backgroundColor: WayperTheme.colors.background,
+  },
+  map: {
+    flex: 1,
+  },
+  heroGradient: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  heroContent: {
+    position: "absolute",
+    left: WayperTheme.spacing.page,
+    right: WayperTheme.spacing.page,
+    bottom: WayperTheme.spacing.xl,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  heroBadge: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: WayperTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryLight,
+    marginRight: WayperTheme.spacing.md,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  heroTextWrap: {
+    flex: 1,
+  },
+  eyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
+  },
+  title: {
+    color: WayperTheme.colors.text,
+    fontSize: 31,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  date: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  captureMetrics: {
+    flexDirection: "row",
+    gap: WayperTheme.spacing.sm,
+    paddingHorizontal: WayperTheme.spacing.page,
+    paddingTop: WayperTheme.spacing.lg,
+    paddingBottom: WayperTheme.spacing.sm,
+  },
+  content: {
+    paddingHorizontal: WayperTheme.spacing.page,
+  },
+  metricGrid: {
+    flexDirection: "row",
+    gap: WayperTheme.spacing.sm,
+    marginTop: WayperTheme.spacing.md,
+  },
+  metricTile: {
+    flex: 1,
+    minHeight: 106,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    padding: WayperTheme.spacing.md,
+    justifyContent: "center",
+    overflow: "hidden",
+    ...WayperTheme.shadows.card,
+  },
+  metricTileCompact: {
+    minHeight: 92,
+  },
+  metricIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    marginBottom: WayperTheme.spacing.sm,
+  },
+  metricLabel: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  metricValue: {
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  insight: {
+    minHeight: 64,
+    borderRadius: WayperTheme.radius.xl,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    padding: WayperTheme.spacing.lg,
+    marginTop: WayperTheme.spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.md,
+  },
+  insightText: {
+    flex: 1,
+    color: WayperTheme.colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 20,
+  },
+  sectionCard: {
+    marginTop: WayperTheme.spacing.lg,
+    borderRadius: WayperTheme.radius.xxl,
+    backgroundColor: WayperTheme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    padding: WayperTheme.spacing.lg,
+    ...WayperTheme.shadows.card,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: WayperTheme.spacing.lg,
+  },
+  sectionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    marginRight: WayperTheme.spacing.md,
+  },
+  sectionTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+  chartRow: {
+    alignItems: "flex-end",
+    paddingRight: WayperTheme.spacing.lg,
+  },
+  barWrap: {
+    width: 68,
+    alignItems: "center",
+    marginRight: WayperTheme.spacing.sm,
+  },
+  barRail: {
+    width: 42,
+    height: CHART_BASE_HEIGHT,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    justifyContent: "flex-end",
+    overflow: "hidden",
+  },
+  bar: {
+    width: "100%",
+    borderTopLeftRadius: WayperTheme.radius.pill,
+    borderTopRightRadius: WayperTheme.radius.pill,
+  },
+  barLabel: {
+    color: WayperTheme.colors.text,
+    fontSize: 12,
+    fontWeight: "900",
+    marginTop: WayperTheme.spacing.sm,
+  },
+  barSub: {
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 1,
+  },
+  splitRow: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: WayperTheme.colors.border,
+  },
+  splitKm: {
+    flex: 1,
+    color: WayperTheme.colors.text,
+    fontWeight: "900",
+  },
+  splitTime: {
+    flex: 1,
+    textAlign: "center",
+    color: WayperTheme.colors.textMuted,
+    fontWeight: "800",
+  },
+  splitPace: {
+    flex: 1,
+    textAlign: "right",
+    color: WayperTheme.colors.primary,
+    fontWeight: "900",
+  },
+  emptyText: {
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  tagWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: WayperTheme.spacing.sm,
+  },
+  tag: {
+    minHeight: 38,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    paddingHorizontal: WayperTheme.spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.xs,
+  },
+  tagText: {
+    color: WayperTheme.colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  notesBox: {
+    marginTop: WayperTheme.spacing.lg,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    padding: WayperTheme.spacing.lg,
+  },
+  notesLabel: {
+    color: WayperTheme.colors.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    marginBottom: WayperTheme.spacing.sm,
+  },
+  notesText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 14,
+    fontWeight: "600",
+    lineHeight: 21,
+  },
+  photo: {
+    width: "100%",
+    height: 190,
+    borderRadius: WayperTheme.radius.xl,
+    marginTop: WayperTheme.spacing.lg,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+  },
+  actions: {
+    marginTop: WayperTheme.spacing.xl,
+    marginBottom: WayperTheme.spacing.xxl,
+  },
+  actionGap: {
+    marginTop: WayperTheme.spacing.sm,
+  },
 });

@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
+  ScrollView,
   Alert,
   AppState,
   Animated,
@@ -15,9 +16,14 @@ import {
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
-import { captureRef } from "react-native-view-shot";
+import { LinearGradient } from "expo-linear-gradient";
+import ViewShot, { captureRef } from "react-native-view-shot";
+import { Ionicons } from "@expo/vector-icons";
+import Svg, { Circle as SvgCircle, Defs, LinearGradient as SvgLinearGradient, Polyline as SvgPolyline, Stop } from "react-native-svg";
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../components/Map/WayperMapLibre";
 import RunSummaryModal from "../components/Runs/RunSummaryModal";
+import { WPButton } from "../components/ui";
+import { WayperTheme } from "../theme/wayperTheme";
 import formatTime from "../utils/formatTime";
 import { getDistance } from "../utils/geo";
 import zones from "../utils/zones";
@@ -35,9 +41,15 @@ const INITIAL_REGION_DELTA = 0.001;
 const COUNTDOWN_DEFAULT = 3;
 const MAX_SPIKE_DISTANCE_M = 1000;
 const ZONE_MIN_AREA_M2 = 5;
-const WAYPER_GREEN = "#00e676";
+const WAYPER_GREEN = WayperTheme.colors.primary;
 const ROUTE_CAP = 5000;
 const ANTI_JITTER_M = 0.4;
+const SHARE_CAPTURE_OPTIONS = {
+  format: "png",
+  quality: 1,
+  result: "tmpfile",
+  handleGLSurfaceViewOnAndroid: true,
+};
 
 const debug = (...args) => {
   // habilite se precisar
@@ -58,15 +70,60 @@ const sanitizePath = (arr = []) =>
     })
     .filter(Boolean);
 
+const formatSavedDuration = (seconds = 0) => {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+};
+
+const formatSavedDate = (date) => {
+  try {
+    if (!date) return "Agora";
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) return String(date);
+    return parsed.toLocaleString();
+  } catch {
+    return "Agora";
+  }
+};
+
+const buildRouteSvgPoints = (path = [], width = 320, height = 210, padding = 28) => {
+  const points = sanitizePath(path);
+  if (points.length < 2) return "";
+
+  const lats = points.map((p) => p.latitude);
+  const lngs = points.map((p) => p.longitude);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  const latRange = Math.max(maxLat - minLat, 0.000001);
+  const lngRange = Math.max(maxLng - minLng, 0.000001);
+  const drawWidth = width - padding * 2;
+  const drawHeight = height - padding * 2;
+
+  return points
+    .map((p) => {
+      const x = padding + ((p.longitude - minLng) / lngRange) * drawWidth;
+      const y = padding + (1 - (p.latitude - minLat) / latRange) * drawHeight;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+};
+
 const DEFAULT_COORD = WAYPER_FALLBACK_COORD;
 
 /* ================= Component ================= */
-const MapScreen = () => {
+const MapScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
 
   const [running, setRunning] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [replaying, setReplaying] = useState(false);
   const [showZones] = useState(true);
   const [selectModeVisible, setSelectModeVisible] = useState(false);
@@ -85,12 +142,12 @@ const MapScreen = () => {
   const [mode, setMode] = useState(null);
 
   const [showRunsModal, setShowRunsModal] = useState(false);
-  const [selectedRun, setSelectedRun] = useState(null);
   const [showSavedModal, setShowSavedModal] = useState(false);
   const [lastSavedRun, setLastSavedRun] = useState(null);
 
   const kalman2dRef = useRef(new KalmanFilter2D()).current;
-  const mapCaptureRef = useRef(null);
+  const savedFullShareRef = useRef(null);
+  const savedRouteShareRef = useRef(null);
 
   const watcherRef = useRef(null);
   const timerRef = useRef(null);
@@ -100,6 +157,7 @@ const MapScreen = () => {
 
   const lastPointRef = useRef(null);
   const routeBufferRef = useRef([]);
+  const routeStateRef = useRef([]);
   const distanceRef = useRef(0);
   const runningRef = useRef(false);
 
@@ -212,15 +270,10 @@ const MapScreen = () => {
 
         // carregar dados locais sem bloquear UI
         try {
-          const [persistedRuns, persistedZones] = await Promise.all([sync.loadLocalRuns?.(), sync.loadLocalZones?.()]);
+          const [persistedRuns] = await Promise.all([sync.loadLocalRuns?.()]);
           if (Array.isArray(persistedRuns) && persistedRuns.length > 0) setRunsList(persistedRuns.slice().reverse());
-          if (Array.isArray(persistedZones) && persistedZones.length > 0) {
-            setPolygons(
-              persistedZones
-                .filter((z) => Array.isArray(z.coords) && z.coords.length >= 3)
-                .map((z) => ({ coords: z.coords, area: z.area, id: z.id, date: z.date }))
-            );
-          }
+          // Zonas salvas continuam no histórico, mas o mapa inicial deve abrir limpo para a próxima corrida.
+          setPolygons([]);
         } catch (e) {
           debug("load persisted failed", e);
         }
@@ -285,7 +338,9 @@ const MapScreen = () => {
       }
       setRouteState((prev) => {
         const merged = prev.concat(mapped);
-        return merged.length > ROUTE_CAP ? merged.slice(merged.length - ROUTE_CAP) : merged;
+        const capped = merged.length > ROUTE_CAP ? merged.slice(merged.length - ROUTE_CAP) : merged;
+        routeStateRef.current = capped;
+        return capped;
       });
       routeBufferRef.current = [];
       setDistanceState(distanceRef.current);
@@ -350,7 +405,48 @@ const MapScreen = () => {
     [kalman2dRef]
   );
 
-  /* ===== Start / Stop run (mantive lógica, sem alterações semânticas) ===== */
+  const startLocationWatcher = useCallback(async () => {
+    stopWatcherAndPolling();
+
+    try {
+      const sub = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: WATCH_TIME_INTERVAL_MS,
+          distanceInterval: WATCH_DISTANCE_INTERVAL,
+          mayShowUserSettingsDialog: true,
+        },
+        (loc) => {
+          if (!loc?.coords) return;
+          handleLocationUpdate({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+            accuracy: loc.coords.accuracy,
+          });
+        }
+      );
+      watcherRef.current = sub;
+    } catch (e) {
+      debug("watchPositionAsync failed, fallback polling", e);
+      const poll = setInterval(async () => {
+        try {
+          const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+          if (p?.coords) {
+            handleLocationUpdate({
+              latitude: p.coords.latitude,
+              longitude: p.coords.longitude,
+              accuracy: p.coords.accuracy,
+            });
+          }
+        } catch (err) {
+          debug("polling error", err);
+        }
+      }, WATCH_TIME_INTERVAL_MS);
+      watcherRef.current = { pollingInterval: poll };
+    }
+  }, [handleLocationUpdate, stopWatcherAndPolling]);
+
+  /* ===== Start / Pause / Stop run ===== */
   const startWithCountdown = useCallback(
     (selectedMode = "free") => {
       if (counting || running) return;
@@ -391,10 +487,13 @@ const MapScreen = () => {
         if (runningRef.current || running) return;
 
         setRunning(true);
+        setPaused(false);
         runningRef.current = true;
         setReplaying(false);
         setRouteState([]);
+        routeStateRef.current = [];
         routeBufferRef.current = [];
+        setPolygons([]);
         distanceRef.current = 0;
         setDistanceState(0);
         lastPointRef.current = null;
@@ -417,40 +516,62 @@ const MapScreen = () => {
           handleLocationUpdate({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy });
         }
 
-        try {
-          const sub = await Location.watchPositionAsync(
-            {
-              accuracy: Location.Accuracy.BestForNavigation,
-              timeInterval: WATCH_TIME_INTERVAL_MS,
-              distanceInterval: WATCH_DISTANCE_INTERVAL,
-              mayShowUserSettingsDialog: true,
-            },
-            (loc) => {
-              if (!loc?.coords) return;
-              handleLocationUpdate({ latitude: loc.coords.latitude, longitude: loc.coords.longitude, accuracy: loc.coords.accuracy });
-            }
-          );
-          watcherRef.current = sub;
-        } catch (e) {
-          debug("watchPositionAsync failed, fallback polling", e);
-          const poll = setInterval(async () => {
-            try {
-              const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-              if (p?.coords) {
-                handleLocationUpdate({ latitude: p.coords.latitude, longitude: p.coords.longitude, accuracy: p.coords.accuracy });
-              }
-            } catch (err) {
-              debug("polling error", err);
-            }
-          }, WATCH_TIME_INTERVAL_MS);
-          watcherRef.current = { pollingInterval: poll };
-        }
+        await startLocationWatcher();
       } catch (e) {
         debug("startRun catch", e);
       }
     },
-    [handleLocationUpdate, running]
+    [handleLocationUpdate, running, startLocationWatcher]
   );
+
+  const pauseRun = useCallback(() => {
+    if (!running || paused) return;
+
+    runningRef.current = false;
+    setPaused(true);
+    flushRouteBufferToState();
+    stopWatcherAndPolling();
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, [flushRouteBufferToState, paused, running, stopWatcherAndPolling]);
+
+  const resumeRun = useCallback(async () => {
+    if (!running || !paused) return;
+
+    try {
+      setPaused(false);
+      runningRef.current = true;
+
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      timerRef.current = setInterval(() => setTimeSec((t) => t + 1), 1000);
+
+      try {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest, timeout: 7000 });
+        if (pos?.coords) {
+          const point = {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            timestamp: Date.now(),
+          };
+          setLocation({ latitude: point.latitude, longitude: point.longitude });
+          lastPointRef.current = point;
+        }
+      } catch (e) {
+        debug("resumeRun getCurrentPosition failed", e);
+      }
+
+      await startLocationWatcher();
+    } catch (e) {
+      debug("resumeRun catch", e);
+    }
+  }, [paused, running, startLocationWatcher]);
 
   const fadeOutRoute = useCallback(() => {
     return new Promise((resolve) => {
@@ -471,9 +592,12 @@ const MapScreen = () => {
     setDistanceState(0);
     lastPointRef.current = null;
     setRouteState([]);
+    routeStateRef.current = [];
     setReplayPathState([]);
+    setPolygons([]);
     setTimeSec(0);
     setMode(null);
+    setPaused(false);
   }, []);
 
   const stopRun = useCallback(
@@ -483,6 +607,7 @@ const MapScreen = () => {
 
         runningRef.current = false;
         setRunning(false);
+        setPaused(false);
 
         stopWatcherAndPolling();
 
@@ -491,17 +616,13 @@ const MapScreen = () => {
           timerRef.current = null;
         }
 
-        const bufferedPath = routeState.concat(routeBufferRef.current || []);
+        const bufferedPath = routeStateRef.current.concat(routeBufferRef.current || []);
         flushRouteBufferToState();
 
-        const path = sanitizePath(bufferedPath.length ? bufferedPath : routeState);
+        const sanitizedPath = sanitizePath(bufferedPath);
+        const fallbackPoint = location || DEFAULT_COORD;
+        const path = sanitizedPath.length > 0 ? sanitizedPath : sanitizePath([fallbackPoint]);
         const totalDistance = distanceRef.current;
-
-        const hasValidRun = path.length > 1 && totalDistance > 1 && timeSec > 2;
-        if (!hasValidRun) {
-          resetRunVisuals();
-          return;
-        }
 
         const runData = {
           path,
@@ -514,13 +635,13 @@ const MapScreen = () => {
           zoneId: null,
         };
 
-        if (mode === "zones") {
+        const canCreateZone = mode === "zones" && path.length >= 3 && totalDistance > 1;
+        if (canCreateZone) {
           try {
             const savedZone = await sync.createAndSaveZoneFromPath?.(path, { simplifyTolerance: 0.0006, smoothIterations: 0, maxPoints: 300, compressMax: 300 });
             if (savedZone) {
               runData.area = Number(savedZone.area || 0);
               runData.zoneId = savedZone.id || null;
-              setPolygons((prev) => [{ coords: savedZone.coords, area: savedZone.area, id: savedZone.id, date: savedZone.date }, ...(Array.isArray(prev) ? prev : [])]);
             }
           } catch (e) {
             debug("zone creation via sync failed", e);
@@ -532,7 +653,6 @@ const MapScreen = () => {
                 sync.scheduleZonesSync?.();
                 runData.area = Number(z?.area || area || 0);
                 runData.zoneId = z?.id || null;
-                setPolygons((prev) => [{ coords: z.coords, area: z.area, id: z.id, date: z.date }, ...(Array.isArray(prev) ? prev : [])]);
               }
             } catch (fallbackErr) {
               debug("fallback zone save failed", fallbackErr);
@@ -549,7 +669,7 @@ const MapScreen = () => {
         debug("stopRun catch", e);
       }
     },
-    [running, routeState, timeSec, resetRunVisuals, fadeOutRoute, stopWatcherAndPolling, flushRouteBufferToState, mode]
+    [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopWatcherAndPolling, flushRouteBufferToState, mode]
   );
 
   /* ============ Replay (mantive) ============ */
@@ -561,7 +681,9 @@ const MapScreen = () => {
         setReplaying(true);
         runningRef.current = false;
         setRunning(false);
+        setPaused(false);
         setRouteState([]);
+        routeStateRef.current = [];
         setReplayPathState([]);
         setMode(null);
 
@@ -579,6 +701,7 @@ const MapScreen = () => {
             setReplaying(false);
             setReplayPathState([]);
             setRouteState([]);
+            routeStateRef.current = [];
             return;
           }
           const p = path[idx++];
@@ -602,6 +725,7 @@ const MapScreen = () => {
       setReplaying(false);
       setReplayPathState([]);
       setRouteState([]);
+      routeStateRef.current = [];
     } catch (e) {
       debug("stopReplay catch", e);
     }
@@ -610,83 +734,70 @@ const MapScreen = () => {
   /* ============ UI helpers ============ */
   const closeRunsModal = useCallback(() => {
     setShowRunsModal(false);
-    setSelectedRun(null);
   }, []);
-  const openRunDetails = useCallback((run) => setSelectedRun(run), []);
+  const openRunDetails = useCallback((run) => {
+    if (!run) return;
+    setShowRunsModal(false);
+    navigation?.navigate("Corridas", { screen: "RunDetail", params: { run } });
+  }, [navigation]);
   const openStartModal = useCallback(() => setSelectModeVisible(true), []);
 
-  /* Capture/share + exports (mantive, sem alterações) */
-  const autoCapture = useCallback(async (savedRun) => {
+  /* Capture/share + exports */
+  const shareCapturedView = useCallback(async (targetRef, filenamePrefix, dialogTitle) => {
     try {
-      if (!mapCaptureRef.current) return;
-      const uri = await captureRef(mapCaptureRef.current, { format: "png", quality: 0.9, result: "tmpfile" });
-      const dest = FileSystem.cacheDirectory + `wayper_run_${savedRun?.id || Date.now()}.png`;
-      await FileSystem.copyAsync({ from: uri, to: dest });
-      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(dest, { dialogTitle: "Compartilhar Replay Wayper" });
-    } catch (e) {
-      debug("autoCapture catch", e);
-    }
-  }, []);
-
-  const captureAndShareMap = useCallback(async (filenamePrefix = "wayper_run") => {
-    try {
-      if (!mapCaptureRef.current) {
-        Alert.alert("Erro", "Mapa indisponível para captura.");
+      const target = targetRef?.current;
+      if (!target) {
+        Alert.alert("Compartilhar", "Preview ainda não está pronto.");
         return;
       }
-      const uri = await captureRef(mapCaptureRef.current, { format: "png", quality: 0.9, result: "tmpfile" });
+
+      const uri =
+        typeof target.capture === "function"
+          ? await target.capture()
+          : await captureRef(target, SHARE_CAPTURE_OPTIONS);
       const dest = FileSystem.cacheDirectory + `${filenamePrefix}_${Date.now()}.png`;
       await FileSystem.copyAsync({ from: uri, to: dest });
+
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(dest, { dialogTitle: "Compartilhar Replay Wayper" });
+        await Sharing.shareAsync(dest, { dialogTitle, mimeType: "image/png" });
       } else {
         Alert.alert("Compartilhar", "Compartilhamento não disponível neste dispositivo.");
       }
     } catch (e) {
-      debug("captureAndShareMap catch", e);
-      Alert.alert("Erro", "Não foi possível capturar o mapa.");
+      debug("shareCapturedView catch", e);
+      console.warn("shareCapturedView failed", e);
+      Alert.alert("Erro", "Não foi possível gerar a imagem para compartilhar.");
     }
   }, []);
 
-  const pointsToGPX = useCallback((coords = [], meta = {}) => {
-    try {
-      const safeName = (meta.name || "Wayper Run").replace(/</g, "");
-      const header = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Wayper" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${safeName}</name><time>${meta.time || new Date().toISOString()}</time></metadata>\n  <trk><name>${safeName}</name><trkseg>`;
-      const pts = sanitizePath(coords).map((p) => `<trkpt lat="${p.latitude}" lon="${p.longitude}"><time>${p.timestamp || ""}</time></trkpt>`).join("\n");
-      const footer = `</trkseg></trk></gpx>`;
-      return `${header}\n${pts}\n${footer}`;
-    } catch (e) {
-      debug("pointsToGPX catch", e);
-      return "";
-    }
-  }, []);
+  const goToSavedRunDetail = useCallback(() => {
+    if (!lastSavedRun) return;
+    setShowSavedModal(false);
+    setShowRunModal(false);
+    setShowRunsModal(false);
+    navigation?.closeDrawer?.();
+    navigation?.navigate("Corridas", { screen: "RunDetail", params: { run: lastSavedRun } });
+  }, [lastSavedRun, navigation]);
 
-  const shareRunAsGPX = useCallback(async (run) => {
-    try {
-      if (!run || !Array.isArray(run.path)) return;
-      const gpx = pointsToGPX(run.path, { name: `Wayper Run ${run.date}`, time: new Date(run.date).toISOString() });
-      const path = FileSystem.cacheDirectory + `wayper_run_${run.id || Date.now()}.gpx`;
-      await FileSystem.writeAsStringAsync(path, gpx, { encoding: FileSystem.EncodingUTF8 });
-      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(path);
-      else Alert.alert("Compartilhar", "Compartilhamento não disponível neste dispositivo.");
-    } catch (e) {
-      debug("shareRunAsGPX catch", e);
-      Alert.alert("Erro", "Falha ao gerar/compartilhar GPX.");
-    }
-  }, [pointsToGPX]);
+  const replaySavedRun = useCallback(() => {
+    if (!lastSavedRun) return;
+    setShowSavedModal(false);
+    setShowRunModal(false);
+    setShowRunsModal(false);
+    navigation?.closeDrawer?.();
+    navigation?.navigate("Mapa");
+    setTimeout(() => startReplay(lastSavedRun), 220);
+  }, [lastSavedRun, navigation, startReplay]);
 
-  const shareRunAsJSON = useCallback(async (run) => {
-    try {
-      if (!run) return;
-      const path = FileSystem.cacheDirectory + `wayper_run_${run.id || Date.now()}.json`;
-      await FileSystem.writeAsStringAsync(path, JSON.stringify(run));
-      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(path);
-      else Alert.alert("Compartilhar", "Compartilhamento não disponível neste dispositivo.");
-    } catch (e) {
-      debug("shareRunAsJSON catch", e);
-      Alert.alert("Erro", "Falha ao gerar/compartilhar JSON.");
-    }
-  }, []);
+  const shareSavedRunFullImage = useCallback(() => {
+    if (!lastSavedRun) return;
+    shareCapturedView(savedFullShareRef, `wayper_run_full_${lastSavedRun.id || Date.now()}`, "Compartilhar imagem da corrida");
+  }, [lastSavedRun, shareCapturedView]);
+
+  const shareSavedRunRouteImage = useCallback(() => {
+    if (!lastSavedRun) return;
+    shareCapturedView(savedRouteShareRef, `wayper_run_trace_${lastSavedRun.id || Date.now()}`, "Compartilhar traçado da corrida");
+  }, [lastSavedRun, shareCapturedView]);
 
   /* ============= RENDER GUARD (corrigido) ============= */
   // Não travar a UI apenas por falta de location. Se permissões negadas, mostrar mensagem/fallback.
@@ -744,6 +855,7 @@ const MapScreen = () => {
   // Se chegou aqui, garantimos que o app não ficará preso. Use location fallback se necessário.
   const safeLocation = location || DEFAULT_COORD;
   const replayCenter = Array.isArray(replayPathState) && replayPathState.length > 0 ? replayPathState[replayPathState.length - 1] : null;
+  const visibleMapZones = showZones && running && mode === "zones" && Array.isArray(polygons) ? polygons : [];
   if (!location) {
     return (
       <View style={styles.loading}>
@@ -761,42 +873,86 @@ const MapScreen = () => {
     inputRange: [0, 1],
     outputRange: [0.16, 0.34],
   });
+  const savedRunPath = sanitizePath(lastSavedRun?.path || []);
+  const savedRoutePoints = buildRouteSvgPoints(savedRunPath);
+  const savedRunName = lastSavedRun?.name || "Corrida salva";
+  const savedRunDistance = `${((Number(lastSavedRun?.distance) || 0) / 1000).toFixed(2)} km`;
+  const savedRunDuration = formatSavedDuration(lastSavedRun?.duration);
+  const savedRunDate = formatSavedDate(lastSavedRun?.date);
+  const savedRunCenter = savedRunPath[0] || safeLocation || DEFAULT_COORD;
 
   return (
     <View style={styles.container}>
-      <View ref={mapCaptureRef} style={{ flex: 1 }}>
+      <View style={{ flex: 1 }}>
         <WayperMapLibre
           style={styles.map}
           location={safeLocation}
           centerCoordinate={replaying ? replayCenter : safeLocation}
           routePath={routeState}
           replayPath={replayPathState}
-          zones={polygons}
-          showZones={showZones}
+          zones={visibleMapZones}
+          showZones={visibleMapZones.length > 0}
           showUserLocation={!replaying}
-          followUserLocation={running}
+          followUserLocation={running && !paused}
           initialZoom={15}
           followZoomLevel={17}
-          fitToContent={showZones && !running && !replaying && Array.isArray(polygons) && polygons.length > 0}
+          fitToContent={false}
         />
       </View>
 
+      <LinearGradient
+        pointerEvents="none"
+        colors={["rgba(3,7,11,0)", "rgba(3,7,11,0.38)", "rgba(3,7,11,0.82)"]}
+        locations={[0, 0.48, 1]}
+        style={styles.mapBottomFade}
+      />
+      <LinearGradient
+        pointerEvents="none"
+        colors={["rgba(3,7,11,0.42)", "rgba(3,7,11,0)"]}
+        style={styles.mapTopVignette}
+      />
+
       {(running || replaying) && (
-        <View style={styles.runPanel}>
-          <Text style={styles.runTitle}>{running ? (mode === "zones" ? "Capturando Zonas" : "Corrida Livre") : "Reproduzindo"}</Text>
-          <View style={styles.runRow}>
-            <Text style={styles.runLabel}>Tempo</Text>
-            <Text style={styles.runValue}>{formatTime(timeSec)}</Text>
+        <View style={[styles.runPanel, paused && styles.runPanelPaused]}>
+          <View pointerEvents="none" style={styles.runPanelGlow} />
+          <View style={styles.runHeaderRow}>
+            <View>
+              <Text style={styles.runEyebrow}>{paused ? "Pausada" : running ? "Wayper live" : "Replay"}</Text>
+              <Text style={styles.runTitle}>{running ? (mode === "zones" ? "Capturando Zonas" : "Corrida Livre") : "Reproduzindo"}</Text>
+            </View>
+            <View style={[styles.runStatusPill, paused && styles.runStatusPillPaused]}>
+              <View style={[styles.runStatusDot, paused && styles.runStatusDotPaused]} />
+              <Text style={styles.runStatusText}>{paused ? "Pausa" : running ? "Ativa" : "Replay"}</Text>
+            </View>
           </View>
-          <View style={styles.runRow}>
-            <Text style={styles.runLabel}>Distância</Text>
-            <Text style={styles.runValue}>{(distanceState / 1000).toFixed(2)} km</Text>
+          <View style={styles.runMetricsRow}>
+            <View style={styles.runMetricCard}>
+              <View style={styles.runMetricIconWrap}>
+                <Ionicons name="time-outline" size={17} color={WayperTheme.colors.primary} />
+              </View>
+              <Text style={styles.runLabel}>Tempo</Text>
+              <Text style={styles.runValue}>{formatTime(timeSec)}</Text>
+            </View>
+            <View style={styles.runMetricCard}>
+              <View style={styles.runMetricIconWrap}>
+                <Ionicons name="navigate-outline" size={17} color={WayperTheme.colors.primary} />
+              </View>
+              <Text style={styles.runLabel}>Distância</Text>
+              <Text style={styles.runValue}>{(distanceState / 1000).toFixed(2)} km</Text>
+            </View>
           </View>
+          {paused && (
+            <View style={styles.pausedNotice}>
+              <Ionicons name="pause-circle" size={16} color={WayperTheme.colors.warning} />
+              <Text style={styles.pausedNoticeText}>GPS pausado. Toque em Retomar para continuar.</Text>
+            </View>
+          )}
         </View>
       )}
 
       {!running && !replaying && (
         <View style={styles.menuPanel}>
+          <View pointerEvents="none" style={styles.menuTopGlow} />
           <Animated.View
             pointerEvents="none"
             style={[
@@ -816,8 +972,26 @@ const MapScreen = () => {
                 onPressIn={handleStartPressIn}
                 onPressOut={handleStartPressOut}
               >
-                <View pointerEvents="none" style={styles.startMainBtnHighlight} />
-                <Text style={styles.startMainBtnTxt}>Iniciar Corrida</Text>
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.startMainBtnHighlight,
+                    {
+                      opacity: startAuraOpacity,
+                      transform: [
+                        { translateX: startPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [-150, 260] }) },
+                        { rotate: "18deg" },
+                      ],
+                    },
+                  ]}
+                />
+                <View pointerEvents="none" style={styles.startMainBtnGloss} />
+                <View style={styles.startMainBtnContent}>
+                  <Text style={styles.startMainBtnTxt}>Iniciar Corrida</Text>
+                  <View style={styles.startChevronCircle}>
+                    <Ionicons name="chevron-forward" size={27} color={WayperTheme.colors.text} />
+                  </View>
+                </View>
               </TouchableOpacity>
             </Animated.View>
           </Animated.View>
@@ -827,17 +1001,36 @@ const MapScreen = () => {
       )}
 
       {running && (
-        <View style={styles.bottomButtons}>
-          <TouchableOpacity style={[styles.mainButton, { backgroundColor: "#d63031" }]} onPress={stopRun}>
-            <Text style={styles.mainButtonText}>Finalizar</Text>
+        <View style={styles.runActionDock}>
+          <View pointerEvents="none" style={styles.runActionDockGlow} />
+          <TouchableOpacity
+            activeOpacity={0.9}
+            style={[styles.runControlButton, paused ? styles.resumeControlButton : styles.pauseControlButton]}
+            onPress={paused ? resumeRun : pauseRun}
+          >
+            <Ionicons
+              name={paused ? "play" : "pause"}
+              size={21}
+              color={paused ? WayperTheme.colors.textInverse : WayperTheme.colors.primary}
+            />
+            <Text style={[styles.runControlText, paused && styles.resumeControlText]}>{paused ? "Retomar" : "Pausar"}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity activeOpacity={0.9} style={[styles.runControlButton, styles.finishControlButton]} onPress={stopRun}>
+            <Ionicons name="stop" size={20} color={WayperTheme.colors.text} />
+            <Text style={[styles.runControlText, styles.finishControlText]}>Finalizar</Text>
           </TouchableOpacity>
         </View>
       )}
       {replaying && (
         <View style={styles.bottomButtons}>
-          <TouchableOpacity style={[styles.mainButton, { backgroundColor: "#d63031" }]} onPress={stopReplay}>
-            <Text style={styles.mainButtonText}>Parar Reprodução</Text>
-          </TouchableOpacity>
+          <WPButton
+            title="Parar Reprodução"
+            variant="danger"
+            icon={<Ionicons name="stop-circle-outline" size={20} color={WayperTheme.colors.text} />}
+            onPress={stopReplay}
+            style={styles.bottomAction}
+          />
         </View>
       )}
 
@@ -867,20 +1060,131 @@ const MapScreen = () => {
 
       {/* Run saved modal */}
       <Modal visible={showSavedModal} animationType="slide" transparent={true} onRequestClose={() => setShowSavedModal(false)}>
-        <View style={styles.modalContainer}>
+        <View style={styles.savedOverlay}>
           <View style={styles.savedModalContent}>
-            <Text style={styles.detailsTitle}>Corrida salva</Text>
-            <Text style={styles.detailsInfo}>Distância: {(lastSavedRun?.distance / 1000)?.toFixed(2) ?? "—"} km</Text>
-            <Text style={styles.detailsInfo}>Duração: {lastSavedRun?.duration ?? "—"} s</Text>
-            <Text style={styles.detailsInfo}>Data: {lastSavedRun ? new Date(lastSavedRun.date).toLocaleString() : "—"}</Text>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => { setShowSavedModal(false); setSelectedRun(lastSavedRun); setShowRunsModal(true); }}>
-              <Text style={styles.actionBtnText}>Ver Corrida</Text>
+            <View style={styles.savedHandle} />
+            <View style={styles.savedHeroRow}>
+              <View style={styles.savedBadgeOuter}>
+                <View style={styles.savedBadgeInner}>
+                  <Ionicons name="checkmark" size={32} color={WayperTheme.colors.textInverse} />
+                </View>
+              </View>
+              <View style={styles.savedHeroText}>
+                <Text style={styles.savedEyebrow}>Wayper finalizado</Text>
+                <Text style={styles.savedTitle}>Corrida salva</Text>
+                <Text style={styles.savedSubtitle} numberOfLines={1}>{savedRunName}</Text>
+              </View>
+            </View>
+
+            <View style={styles.savedMetricRow}>
+              <View style={styles.savedMetric}>
+                <Ionicons name="navigate-outline" size={19} color={WayperTheme.colors.primary} />
+                <Text style={styles.savedMetricValue}>{savedRunDistance}</Text>
+                <Text style={styles.savedMetricLabel}>Distância</Text>
+              </View>
+              <View style={styles.savedMetric}>
+                <Ionicons name="timer-outline" size={19} color={WayperTheme.colors.primary} />
+                <Text style={styles.savedMetricValue}>{savedRunDuration}</Text>
+                <Text style={styles.savedMetricLabel}>Tempo</Text>
+              </View>
+              <View style={styles.savedMetric}>
+                <Ionicons name="calendar-outline" size={19} color={WayperTheme.colors.primary} />
+                <Text style={styles.savedMetricValue} numberOfLines={1}>{savedRunDate}</Text>
+                <Text style={styles.savedMetricLabel}>Data</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity activeOpacity={0.9} style={styles.savedPrimaryAction} onPress={goToSavedRunDetail}>
+              <Ionicons name="reader-outline" size={21} color={WayperTheme.colors.textInverse} />
+              <Text style={styles.savedPrimaryText}>Ver corrida</Text>
+              <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.textInverse} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => { setShowSavedModal(false); captureAndShareMap(`wayper_run_${lastSavedRun?.id || Date.now()}`); }}>
-              <Text style={styles.actionBtnText}>Compartilhar imagem</Text>
+
+            <TouchableOpacity activeOpacity={0.88} style={styles.savedSecondaryAction} onPress={replaySavedRun}>
+              <Ionicons name="play-circle-outline" size={22} color={WayperTheme.colors.primary} />
+              <Text style={styles.savedSecondaryText}>Reproduzir corrida</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setShowSavedModal(false)}>
-              <Text style={styles.closeBtnText}>Fechar</Text>
+
+            <View style={styles.savedShareBlock}>
+              <View style={styles.savedShareHeader}>
+                <View>
+                  <Text style={styles.savedShareTitle}>Compartilhar corrida</Text>
+                  <Text style={styles.savedShareHint}>Arraste para escolher o visual</Text>
+                </View>
+                <Ionicons name="swap-horizontal-outline" size={22} color={WayperTheme.colors.textMuted} />
+              </View>
+
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                removeClippedSubviews={false}
+                contentContainerStyle={styles.shareCarousel}
+              >
+                <ViewShot ref={savedFullShareRef} options={SHARE_CAPTURE_OPTIONS} style={styles.shareCard}>
+                  <View style={styles.shareMapPreview}>
+                    <WayperMapLibre
+                      style={styles.shareMap}
+                      routePath={savedRunPath}
+                      centerCoordinate={savedRunCenter}
+                      showUserLocation={false}
+                      interactive={false}
+                      fitToContent={savedRunPath.length > 1}
+                      contentPadding={{ top: 34, right: 34, bottom: 34, left: 34 }}
+                    />
+                  </View>
+                  <View style={styles.shareCardFooter}>
+                    <View>
+                      <Text style={styles.shareCardTitle}>Wayper Run</Text>
+                      <Text style={styles.shareCardSubtitle}>{savedRunDistance} • {savedRunDuration}</Text>
+                    </View>
+                    <View style={styles.shareMiniLogo}>
+                      <Ionicons name="flash" size={16} color={WayperTheme.colors.textInverse} />
+                    </View>
+                  </View>
+                </ViewShot>
+
+                <ViewShot ref={savedRouteShareRef} options={SHARE_CAPTURE_OPTIONS} style={[styles.shareCard, styles.shareTraceCard]}>
+                  <Text style={styles.traceTitle}>Wayper Trace</Text>
+                  <View style={styles.traceSvgWrap}>
+                    <Svg width="100%" height="100%" viewBox="0 0 320 210">
+                      <Defs>
+                        <SvgLinearGradient id="traceGlow" x1="0" y1="0" x2="1" y2="1">
+                          <Stop offset="0" stopColor={WayperTheme.colors.primaryLight} stopOpacity="1" />
+                          <Stop offset="1" stopColor={WayperTheme.colors.primary} stopOpacity="1" />
+                        </SvgLinearGradient>
+                      </Defs>
+                      {savedRoutePoints ? (
+                        <>
+                          <SvgPolyline points={savedRoutePoints} fill="none" stroke={WayperTheme.colors.primaryGlow} strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" opacity="0.32" />
+                          <SvgPolyline points={savedRoutePoints} fill="none" stroke="url(#traceGlow)" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
+                        </>
+                      ) : (
+                        <SvgCircle cx="160" cy="105" r="20" fill={WayperTheme.colors.primary} opacity="0.9" />
+                      )}
+                    </Svg>
+                  </View>
+                  <View style={styles.traceFooter}>
+                    <Text style={styles.traceMetric}>{savedRunDistance}</Text>
+                    <Text style={styles.traceMetricMuted}>{savedRunDuration}</Text>
+                  </View>
+                </ViewShot>
+              </ScrollView>
+
+              <View style={styles.shareActionRow}>
+                <TouchableOpacity activeOpacity={0.88} style={styles.shareActionButton} onPress={shareSavedRunFullImage}>
+                  <Ionicons name="image-outline" size={19} color={WayperTheme.colors.textInverse} />
+                  <Text style={styles.shareActionText}>Imagem</Text>
+                </TouchableOpacity>
+                <TouchableOpacity activeOpacity={0.88} style={[styles.shareActionButton, styles.shareActionButtonSecondary]} onPress={shareSavedRunRouteImage}>
+                  <Ionicons name="git-branch-outline" size={19} color={WayperTheme.colors.primary} />
+                  <Text style={[styles.shareActionText, styles.shareActionTextSecondary]}>Traçado PNG</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <TouchableOpacity activeOpacity={0.82} style={styles.savedCloseAction} onPress={() => setShowSavedModal(false)}>
+              <Text style={styles.savedCloseText}>Fechar</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -902,14 +1206,6 @@ const MapScreen = () => {
             setRunsList((prev) => [saved, ...(Array.isArray(prev) ? prev : [])]);
             setLastSavedRun(saved);
             setShowSavedModal(true);
-
-            setTimeout(() => {
-              try {
-                autoCapture(saved);
-              } catch (e) {
-                debug("autoCapture failed", e);
-              }
-            }, 400);
 
             try {
               const distanceMeters = Number(normalized.distance) || 0;
@@ -961,48 +1257,92 @@ const MapScreen = () => {
         }}
       />
 
-      {/* Run details modal */}
-      <Modal visible={!!selectedRun} animationType="slide" transparent={true} onRequestClose={() => setSelectedRun(null)}>
-        <View style={styles.modalContainer}>
-          <View style={styles.detailsContent}>
-            <Text style={styles.detailsTitle}>Detalhes da Corrida</Text>
-            <View style={{ height: 200, width: "100%", borderRadius: 12, overflow: "hidden", marginBottom: 12 }}>
-              <WayperMapLibre
-                style={{ flex: 1 }}
-                routePath={selectedRun?.path || []}
-                zones={[{ coords: selectedRun?.path || [] }]}
-                showUserLocation={false}
-                interactive={false}
-                fitToContent={true}
-                centerCoordinate={selectedRun?.path?.[0] || DEFAULT_COORD}
-              />
-            </View>
-            <Text style={styles.detailsInfo}>Distância: {(selectedRun?.distance / 1000)?.toFixed(2)} km</Text>
-            <Text style={styles.detailsInfo}>Duração: {selectedRun?.duration} s</Text>
-            <Text style={styles.detailsInfo}>Vel. Média: {selectedRun?.avgSpeed} km/h</Text>
-            <Text style={styles.detailsInfo}>Data: {selectedRun?.date}</Text>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => { startReplay(selectedRun); setSelectedRun(null); setShowRunsModal(false); }}><Text style={styles.actionBtnText}>Assistir Replay</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => shareRunAsGPX(selectedRun)}><Text style={styles.actionBtnText}>Exportar GPX</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => shareRunAsJSON(selectedRun)}><Text style={styles.actionBtnText}>Exportar JSON</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedRun(null)}><Text style={styles.closeBtnText}>Fechar</Text></TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       {/* mode picker */}
       <Modal visible={selectModeVisible} transparent animationType="fade">
         <View style={styles.modeOverlay}>
           <View style={styles.modeBox}>
-            <Text style={styles.modeTitle}>Selecione o tipo de corrida</Text>
-            <TouchableOpacity style={styles.modeBtn} onPress={() => { setSelectModeVisible(false); startWithCountdown("free"); }}><Text style={styles.modeBtnText}>Corrida Livre</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.modeBtn} onPress={() => { setSelectModeVisible(false); startWithCountdown("zones"); }}><Text style={styles.modeBtnText}>Capturar Zonas</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setSelectModeVisible(false)}><Text style={styles.cancelBtnText}>Cancelar</Text></TouchableOpacity>
+            <View style={styles.modeHandle} />
+            <View style={styles.modeHeaderRow}>
+              <View style={styles.modeIconWrap}>
+                <Ionicons name="flash-outline" size={25} color={WayperTheme.colors.primary} />
+              </View>
+              <View style={styles.modeTitleWrap}>
+                <Text style={styles.modeEyebrow}>Wayper run</Text>
+                <Text style={styles.modeTitle}>Tipo de corrida</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={styles.modeOption}
+              onPress={() => {
+                setSelectModeVisible(false);
+                startWithCountdown("free");
+              }}
+            >
+              <View style={styles.modeOptionIcon}>
+                <Ionicons name="walk-outline" size={23} color={WayperTheme.colors.textInverse} />
+              </View>
+              <View style={styles.modeOptionTextWrap}>
+                <Text style={styles.modeOptionTitle}>Corrida Livre</Text>
+                <Text style={styles.modeOptionSubtitle}>Registre percurso, tempo e distância.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.primary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={[styles.modeOption, styles.modeOptionSecondary]}
+              onPress={() => {
+                setSelectModeVisible(false);
+                startWithCountdown("zones");
+              }}
+            >
+              <View style={[styles.modeOptionIcon, styles.modeOptionIconSecondary]}>
+                <Ionicons name="map-outline" size={23} color={WayperTheme.colors.primary} />
+              </View>
+              <View style={styles.modeOptionTextWrap}>
+                <Text style={[styles.modeOptionTitle, styles.modeOptionSecondaryTitle]}>Capturar Zonas</Text>
+                <Text style={[styles.modeOptionSubtitle, styles.modeOptionSecondarySubtitle]}>Transforme seu trajeto em área conquistada.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.primary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity activeOpacity={0.85} style={styles.cancelBtn} onPress={() => setSelectModeVisible(false)}>
+              <Text style={styles.cancelBtnText}>Cancelar</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
       {counting && (
-        <View style={styles.countdownOverlay}><View style={styles.countdownBox}><Text style={styles.countdownNumber}>{countdown > 0 ? countdown : "VAI"}</Text></View></View>
+        <View style={styles.countdownOverlay}>
+          <LinearGradient
+            pointerEvents="none"
+            colors={["rgba(0,230,118,0.10)", "rgba(3,7,11,0.86)", "rgba(3,7,11,0.94)"]}
+            style={styles.countdownBackdrop}
+          />
+          <Animated.View
+            style={[
+              styles.countdownAura,
+              {
+                opacity: startAuraOpacity,
+                transform: [{ scale: startPulseScale }],
+              },
+            ]}
+          />
+          <Animated.View style={[styles.countdownBox, { transform: [{ scale: startPulseScale }] }]}>
+            <View style={styles.countdownRingOuter}>
+              <View style={styles.countdownRingMiddle}>
+                <View style={styles.countdownRingInner}>
+                  <Text style={styles.countdownLabel}>{countdown > 0 ? "Prepare-se" : "Agora"}</Text>
+                  <Text style={styles.countdownNumber}>{countdown > 0 ? countdown : "VAI"}</Text>
+                  <Text style={styles.countdownHint}>GPS ativo • Wayper Run</Text>
+                </View>
+              </View>
+            </View>
+          </Animated.View>
+        </View>
       )}
     </View>
   );
@@ -1011,98 +1351,825 @@ const MapScreen = () => {
 export default React.memo(MapScreen);
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
+  container: { flex: 1, backgroundColor: WayperTheme.colors.background },
   map: { flex: 1 },
-  loading: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
+  loading: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20, backgroundColor: WayperTheme.colors.background },
+  mapBottomFade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 270,
+  },
+  mapTopVignette: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 120,
+  },
 
-  myLocationDot: { width: 18, height: 18, borderRadius: 9, backgroundColor: WAYPER_GREEN, borderWidth: 3, borderColor: "#000", shadowColor: WAYPER_GREEN, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.9, shadowRadius: 8, elevation: 6 },
-
-  runPanel: { position: "absolute", top: 22, left: 16, right: 16, padding: 14, borderRadius: 16, backgroundColor: "rgba(15, 15, 15, 0.55)", borderWidth: 1, borderColor: "rgba(0,255,200,0.15)" },
-  runTitle: { fontSize: 17, fontWeight: "900", textAlign: "center", color: "#eaffff", marginBottom: 8, letterSpacing: 0.8 },
+  runPanel: {
+    position: "absolute",
+    top: 18,
+    left: 18,
+    right: 18,
+    padding: 15,
+    borderRadius: WayperTheme.radius.xxl,
+    backgroundColor: "rgba(8, 16, 24, 0.86)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    ...WayperTheme.shadows.card,
+    overflow: "hidden",
+  },
+  runPanelPaused: {
+    borderColor: "rgba(255, 204, 51, 0.36)",
+    backgroundColor: "rgba(11, 20, 29, 0.9)",
+  },
+  runPanelGlow: {
+    position: "absolute",
+    top: -28,
+    left: 42,
+    right: 42,
+    height: 70,
+    borderRadius: 70,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    opacity: 0.72,
+  },
+  runHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 13,
+  },
+  runEyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  runTitle: {
+    ...WayperTheme.typography.subtitle,
+    letterSpacing: 0.2,
+  },
+  runStatusPill: {
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  runStatusPillPaused: {
+    backgroundColor: "rgba(255, 204, 51, 0.13)",
+    borderColor: "rgba(255, 204, 51, 0.36)",
+  },
+  runStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: WayperTheme.colors.primary,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+  },
+  runStatusDotPaused: {
+    backgroundColor: WayperTheme.colors.warning,
+    shadowColor: WayperTheme.colors.warning,
+  },
+  runStatusText: {
+    color: WayperTheme.colors.text,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  runMetricsRow: { flexDirection: "row", gap: 10 },
+  runMetricCard: {
+    flex: 1,
+    minHeight: 82,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: "rgba(16, 27, 37, 0.88)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+  },
+  runMetricIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    marginBottom: 5,
+  },
   runRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 6 },
-  runLabel: { color: "#c4f6f6", fontWeight: "600" },
-  runValue: { color: "#fff", fontWeight: "800" },
+  runLabel: { color: WayperTheme.colors.textMuted, fontWeight: "800", fontSize: 12, textTransform: "uppercase" },
+  runValue: { color: WayperTheme.colors.primary, fontWeight: "900", fontSize: 20, marginTop: 1 },
+  pausedNotice: {
+    marginTop: 12,
+    minHeight: 38,
+    borderRadius: WayperTheme.radius.pill,
+    paddingHorizontal: 13,
+    backgroundColor: "rgba(255, 204, 51, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 204, 51, 0.24)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  pausedNoticeText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: "800",
+    flexShrink: 1,
+    textAlign: "center",
+  },
 
   menuPanel: {
     position: "absolute",
-    bottom: 28,
-    left: 22,
-    right: 22,
-    padding: 8,
-    borderRadius: 24,
-    backgroundColor: "rgba(7, 10, 9, 0.58)",
-    borderColor: "rgba(255,255,255,0.08)",
+    bottom: 34,
+    left: 28,
+    right: 28,
+    padding: 16,
+    borderRadius: WayperTheme.radius.xxl,
+    backgroundColor: "rgba(11, 20, 29, 0.74)",
+    borderColor: WayperTheme.colors.borderStrong,
     borderWidth: 1,
-    shadowColor: "#000",
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 12 },
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.14,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 0 },
+    ...WayperTheme.shadows.card,
+  },
+  menuTopGlow: {
+    position: "absolute",
+    top: -1,
+    left: "42%",
+    right: "42%",
+    height: 2,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primaryLight,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
     elevation: 8,
   },
   startButtonAura: {
     position: "absolute",
-    left: 10,
-    right: 10,
-    top: 10,
-    bottom: 10,
-    borderRadius: 20,
+    left: 22,
+    right: 22,
+    top: 22,
+    bottom: 22,
+    borderRadius: WayperTheme.radius.pill,
     backgroundColor: WAYPER_GREEN,
   },
   startMainBtn: {
     width: "100%",
-    minHeight: 58,
-    paddingVertical: 17,
-    borderRadius: 20,
+    minHeight: 72,
+    paddingVertical: 19,
+    borderRadius: WayperTheme.radius.pill,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
     backgroundColor: WAYPER_GREEN,
-    shadowColor: WAYPER_GREEN,
-    shadowOpacity: 0.24,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 7,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryLight,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.52,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 0 },
+    ...WayperTheme.shadows.greenGlow,
   },
   startMainBtnHighlight: {
     position: "absolute",
-    left: 18,
-    right: 18,
-    top: 6,
-    height: 18,
+    top: -26,
+    bottom: -26,
+    width: 86,
     borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.20)",
   },
-  startMainBtnTxt: { color: "#07110d", fontSize: 19, fontWeight: "900" },
+  startMainBtnGloss: {
+    position: "absolute",
+    left: 24,
+    right: 24,
+    top: 8,
+    height: 20,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  startMainBtnContent: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+  },
+  startMainBtnTxt: { color: WayperTheme.colors.textInverse, fontSize: 22, fontWeight: "900" },
+  startChevronCircle: {
+    position: "absolute",
+    right: 28,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(3,16,9,0.18)",
+  },
 
-  bottomButtons: { position: "absolute", bottom: 22, width: "100%", alignItems: "center" },
-  mainButton: { width: "75%", paddingVertical: 14, borderRadius: 16, alignItems: "center", backgroundColor: "#ff1744", shadowColor: "#ff1744", shadowOpacity: 0.5, shadowRadius: 12 },
-  mainButtonText: { color: "#fff", fontWeight: "900", fontSize: 16, letterSpacing: 0.6 },
+  bottomButtons: { position: "absolute", bottom: 28, left: 22, right: 22, alignItems: "stretch" },
+  bottomAction: { width: "100%" },
+  runActionDock: {
+    position: "absolute",
+    bottom: 28,
+    left: 22,
+    right: 22,
+    minHeight: 86,
+    borderRadius: WayperTheme.radius.xxl,
+    padding: 10,
+    backgroundColor: "rgba(8, 16, 24, 0.84)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    overflow: "hidden",
+    ...WayperTheme.shadows.card,
+  },
+  runActionDockGlow: {
+    position: "absolute",
+    top: -1,
+    left: "38%",
+    right: "38%",
+    height: 2,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primaryLight,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.9,
+    shadowRadius: 12,
+  },
+  runControlButton: {
+    flex: 1,
+    minHeight: 62,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 9,
+    borderWidth: 1,
+  },
+  pauseControlButton: {
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  resumeControlButton: {
+    backgroundColor: WayperTheme.colors.primary,
+    borderColor: WayperTheme.colors.primaryLight,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  finishControlButton: {
+    backgroundColor: WayperTheme.colors.danger,
+    borderColor: WayperTheme.colors.dangerBorder,
+    ...WayperTheme.shadows.dangerGlow,
+  },
+  runControlText: {
+    color: WayperTheme.colors.text,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  resumeControlText: {
+    color: WayperTheme.colors.textInverse,
+  },
+  finishControlText: {
+    color: WayperTheme.colors.text,
+  },
+  modeOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.58)",
+    justifyContent: "flex-end",
+  },
+  modeBox: {
+    width: "100%",
+    backgroundColor: "rgba(8, 16, 24, 0.97)",
+    paddingHorizontal: 22,
+    paddingTop: 14,
+    paddingBottom: 22,
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.18,
+    shadowRadius: 26,
+    shadowOffset: { width: 0, height: -10 },
+    elevation: 16,
+  },
+  modeHandle: {
+    alignSelf: "center",
+    width: 48,
+    height: 5,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.borderStrong,
+    marginBottom: 18,
+  },
+  modeHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 18,
+  },
+  modeIconWrap: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    marginRight: 14,
+  },
+  modeTitleWrap: {
+    flex: 1,
+  },
+  modeEyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  modeTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 24,
+    fontWeight: "900",
+  },
+  modeOption: {
+    minHeight: 82,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: WayperTheme.colors.primary,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryLight,
+    marginBottom: 12,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 10,
+  },
+  modeOptionSecondary: {
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderColor: WayperTheme.colors.primaryBorder,
+    shadowOpacity: 0.08,
+  },
+  modeOptionSecondaryTitle: {
+    color: WayperTheme.colors.text,
+  },
+  modeOptionSecondarySubtitle: {
+    color: WayperTheme.colors.textMuted,
+  },
+  modeOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(3,16,9,0.18)",
+    marginRight: 14,
+  },
+  modeOptionIconSecondary: {
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  modeOptionTextWrap: {
+    flex: 1,
+  },
+  modeOptionTitle: {
+    color: WayperTheme.colors.textInverse,
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  modeOptionSubtitle: {
+    color: "rgba(3, 16, 9, 0.72)",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  cancelBtn: {
+    minHeight: 48,
+    backgroundColor: WayperTheme.colors.dangerSoft,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.dangerBorder,
+  },
+  cancelBtnText: { color: WayperTheme.colors.text, fontWeight: "900", fontSize: 15 },
 
-  modeOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "center", alignItems: "center", paddingHorizontal: 20 },
-  modeBox: { width: "100%", backgroundColor: "rgba(15,15,15,0.9)", padding: 22, borderRadius: 16, borderWidth: 1, borderColor: "rgba(0,255,200,0.2)" },
-  modeTitle: { fontSize: 22, fontWeight: "900", textAlign: "center", marginBottom: 22, color: "#eaffff" },
-  modeBtn: { backgroundColor: WAYPER_GREEN, paddingVertical: 14, borderRadius: 12, alignItems: "center", marginBottom: 12 },
-  modeBtnText: { color: "#000", fontWeight: "900", fontSize: 17 },
-  cancelBtn: { backgroundColor: "#ff1744", paddingVertical: 12, borderRadius: 12, alignItems: "center", marginTop: 6 },
-  cancelBtnText: { color: "#fff", fontWeight: "900", fontSize: 15 },
+  modalContainer: { flex: 1, backgroundColor: "rgba(0,0,0,0.66)", justifyContent: "center", padding: 20 },
+  modalContent: { backgroundColor: WayperTheme.colors.surfaceElevated, borderRadius: WayperTheme.radius.xl, padding: 20, height: "80%", borderWidth: 1, borderColor: WayperTheme.colors.borderStrong },
+  modalTitle: { ...WayperTheme.typography.title, marginBottom: 12 },
+  runItem: { paddingVertical: 14, borderBottomWidth: 1, borderColor: WayperTheme.colors.border },
+  runDate: { color: WayperTheme.colors.text, fontSize: 16, fontWeight: "700" },
+  runStats: { color: WayperTheme.colors.textMuted, fontSize: 13, marginTop: 2 },
+  closeBtn: { backgroundColor: WayperTheme.colors.surfaceSoft, paddingVertical: 14, borderRadius: WayperTheme.radius.pill, marginTop: 18, borderWidth: 1, borderColor: WayperTheme.colors.border },
+  closeBtnText: { color: WayperTheme.colors.text, fontWeight: "700", textAlign: "center" },
+  savedOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.72)",
+  },
+  savedModalContent: {
+    width: "100%",
+    maxHeight: "92%",
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 22,
+    alignSelf: "center",
+    backgroundColor: "rgba(8, 16, 24, 0.97)",
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.18,
+    shadowRadius: 26,
+    shadowOffset: { width: 0, height: -10 },
+    elevation: 18,
+  },
+  savedHandle: {
+    width: 48,
+    height: 5,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.borderStrong,
+    alignSelf: "center",
+    marginBottom: 18,
+  },
+  savedHeroRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 15,
+  },
+  savedBadgeOuter: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  savedBadgeInner: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primary,
+  },
+  savedHeroText: {
+    flex: 1,
+  },
+  savedEyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  savedTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 27,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  savedSubtitle: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 14,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  savedMetricRow: {
+    flexDirection: "row",
+    gap: 9,
+    marginTop: 18,
+  },
+  savedMetric: {
+    flex: 1,
+    minHeight: 78,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    padding: 10,
+    justifyContent: "center",
+  },
+  savedMetricValue: {
+    color: WayperTheme.colors.text,
+    fontSize: 14,
+    fontWeight: "900",
+    marginTop: 5,
+  },
+  savedMetricLabel: {
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 11,
+    fontWeight: "800",
+    marginTop: 1,
+  },
+  savedPrimaryAction: {
+    minHeight: 58,
+    marginTop: 18,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primary,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryLight,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  savedPrimaryText: {
+    color: WayperTheme.colors.textInverse,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  savedSecondaryAction: {
+    minHeight: 54,
+    marginTop: 10,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+  },
+  savedSecondaryText: {
+    color: WayperTheme.colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  savedShareBlock: {
+    marginTop: 18,
+    borderRadius: WayperTheme.radius.xxl,
+    backgroundColor: "rgba(16, 27, 37, 0.72)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    padding: 12,
+  },
+  savedShareHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  savedShareTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  savedShareHint: {
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  shareCarousel: {
+    gap: 12,
+    paddingRight: 12,
+  },
+  shareCard: {
+    width: 292,
+    minHeight: 250,
+    borderRadius: WayperTheme.radius.xl,
+    overflow: "hidden",
+    backgroundColor: WayperTheme.colors.background,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  shareMapPreview: {
+    height: 170,
+    overflow: "hidden",
+  },
+  shareMap: {
+    flex: 1,
+  },
+  shareCardFooter: {
+    minHeight: 78,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(3, 7, 11, 0.94)",
+  },
+  shareCardTitle: {
+    color: WayperTheme.colors.primary,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  shareCardSubtitle: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  shareMiniLogo: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primary,
+  },
+  shareTraceCard: {
+    padding: 14,
+    backgroundColor: "#020507",
+  },
+  traceTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 18,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  traceSvgWrap: {
+    height: 174,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: "rgba(0, 230, 118, 0.06)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    overflow: "hidden",
+  },
+  traceFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 11,
+  },
+  traceMetric: {
+    color: WayperTheme.colors.primary,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  traceMetricMuted: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  shareActionRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  shareActionButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primary,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryLight,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  shareActionButtonSecondary: {
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  shareActionText: {
+    color: WayperTheme.colors.textInverse,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  shareActionTextSecondary: {
+    color: WayperTheme.colors.text,
+  },
+  savedCloseAction: {
+    minHeight: 50,
+    marginTop: 12,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  savedCloseText: {
+    color: WayperTheme.colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+  },
 
-  modalContainer: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 20 },
-  modalContent: { backgroundColor: "#0d0f12", borderRadius: 18, padding: 20, height: "80%" },
-  modalTitle: { color: "#fff", fontSize: 22, fontWeight: "800", marginBottom: 12 },
-  runItem: { paddingVertical: 12, borderBottomWidth: 1, borderColor: "#333" },
-  runDate: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  runStats: { color: "#aaa", fontSize: 13, marginTop: 2 },
-
-  detailsContent: { backgroundColor: "#0d0f12", borderRadius: 18, padding: 20 },
-  detailsTitle: { color: "#fff", fontSize: 22, fontWeight: "800", marginBottom: 12, textAlign: "center" },
-  detailsInfo: { color: "#aaa", fontSize: 14, marginTop: 8 },
-  actionBtn: { backgroundColor: WAYPER_GREEN, paddingVertical: 12, borderRadius: 12, marginTop: 12 },
-  actionBtnText: { color: "#000", fontWeight: "800", textAlign: "center", fontSize: 16 },
-  closeBtn: { backgroundColor: "#1c1c1c", paddingVertical: 12, borderRadius: 12, marginTop: 18 },
-  closeBtnText: { color: "#fff", fontWeight: "700", textAlign: "center" },
-  savedModalContent: { backgroundColor: "#0d0f12", borderRadius: 18, padding: 20, width: "100%", maxHeight: 360, alignSelf: "center" },
-
-  countdownOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", alignItems: "center" },
-  countdownBox: { width: 240, height: 240, borderRadius: 20, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,255,200,0.05)", borderColor: "rgba(0,255,200,0.25)", borderWidth: 1 },
-  countdownNumber: { fontSize: 110, fontWeight: "900", color: "#00ffe1" },
+  countdownOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  countdownBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  countdownAura: {
+    position: "absolute",
+    width: 310,
+    height: 310,
+    borderRadius: 155,
+    backgroundColor: WayperTheme.colors.primary,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.55,
+    shadowRadius: 42,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 18,
+  },
+  countdownBox: {
+    width: 282,
+    height: 282,
+    borderRadius: 141,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(8, 16, 24, 0.78)",
+    borderColor: WayperTheme.colors.primaryBorder,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  countdownRingOuter: {
+    width: 242,
+    height: 242,
+    borderRadius: 121,
+    borderWidth: 2,
+    borderColor: WayperTheme.colors.primary,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+  },
+  countdownRingMiddle: {
+    width: 202,
+    height: 202,
+    borderRadius: 101,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(3, 7, 11, 0.76)",
+  },
+  countdownRingInner: {
+    width: 164,
+    height: 164,
+    borderRadius: 82,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: WayperTheme.colors.surfaceGlass,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+  },
+  countdownLabel: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: -4,
+  },
+  countdownNumber: {
+    fontSize: 76,
+    fontWeight: "900",
+    color: WayperTheme.colors.primary,
+    textShadowColor: WayperTheme.colors.primaryGlow,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 22,
+  },
+  countdownHint: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: -4,
+  },
 });

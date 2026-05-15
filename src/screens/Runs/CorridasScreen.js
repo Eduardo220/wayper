@@ -1,24 +1,12 @@
-/**
- * src/screens/Runs/CorridasScreen.js */
-
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  FlatList,
-  Image,
-  StyleSheet,
-  RefreshControl,
-  Alert,
-} from "react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
+import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../../components/Map/WayperMapLibre";
+import { WPButton, WPCard, WPChip, WPScreen, WPSectionTitle } from "../../components/ui";
+import { WayperTheme } from "../../theme/wayperTheme";
 import sync from "../../utils/sync";
 
-const WAYPER_GREEN = "#00e676";
-const PLACEHOLDER_IMG = null; // se quiser um fallback local coloque require('...')
-
-/* ---------------- utils ---------------- */
 const safeDate = (d) => {
   try {
     if (!d) return "—";
@@ -30,45 +18,33 @@ const safeDate = (d) => {
   }
 };
 
-const safeNumber = (v, fallback = 0) =>
-  Number.isFinite(Number(v)) ? Number(v) : fallback;
-
+const safeNumber = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
 const formatKm = (meters) => (safeNumber(meters) / 1000).toFixed(2);
 
-const formatMinutes = (seconds) => {
-  const s = Math.max(0, Math.round(Number(seconds) || 0));
-  return `${Math.round(s / 60)} min`;
+const formatDuration = (seconds) => {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  return `${m}m ${String(s).padStart(2, "0")}s`;
 };
 
-/* ---------------- main component ---------------- */
 function CorridasScreen({ navigation }) {
   const [runs, setRuns] = useState([]);
   const [zones, setZones] = useState([]);
-  const [filter, setFilter] = useState("all"); // all | free | zones
+  const [filter, setFilter] = useState("all");
   const [refreshing, setRefreshing] = useState(false);
 
-  // load cached + local on demand
   const loadAll = useCallback(async () => {
     setRefreshing(true);
     try {
       const [rRaw, zRaw] = await Promise.allSettled([sync.loadLocalRuns(), sync.loadLocalZones()]);
-
       const r = rRaw.status === "fulfilled" && Array.isArray(rRaw.value) ? rRaw.value : [];
       const z = zRaw.status === "fulfilled" && Array.isArray(zRaw.value) ? zRaw.value : [];
 
-      // sanitize & sort (newest first)
-      const safeRuns = r
-        .map((x) => ({ ...x }))
-        .filter(Boolean)
-        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-
-      const safeZones = z
-        .map((x) => ({ ...x }))
-        .filter(Boolean)
-        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-
-      setRuns(safeRuns);
-      setZones(safeZones);
+      setRuns(r.map((x) => ({ ...x })).filter(Boolean).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)));
+      setZones(z.map((x) => ({ ...x })).filter(Boolean).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)));
     } catch (e) {
       console.warn("CorridasScreen.loadAll unexpected error", e);
       Alert.alert("Erro", "Falha ao carregar corridas/zonas.");
@@ -77,14 +53,12 @@ function CorridasScreen({ navigation }) {
     }
   }, []);
 
-  // On focus, refresh list (keeps UI fresh when returning from detail/screens)
   useFocusEffect(
     useCallback(() => {
       let mounted = true;
       (async () => {
         if (!mounted) return;
         await loadAll();
-        // try to start auto sync (optional)
         try {
           sync.startAutoSync?.();
         } catch (e) {
@@ -100,7 +74,6 @@ function CorridasScreen({ navigation }) {
     }, [loadAll])
   );
 
-  // merged dataset memoized
   const merged = useMemo(() => {
     const r = (runs || []).map((x) => ({ ...x, __type: "run" }));
     const z = (zones || []).map((x) => ({ ...x, __type: "zone" }));
@@ -109,66 +82,59 @@ function CorridasScreen({ navigation }) {
     return [...r, ...z].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
   }, [runs, zones, filter]);
 
-  // navigation safe wrappers
-  const goToRun = useCallback(
-    (item) => {
-      try {
-        navigation.navigate("RunDetail", { run: item });
-      } catch (e) {
-        console.warn("navigation to RunDetail failed", e);
-      }
-    },
-    [navigation]
-  );
-
-  const goToZone = useCallback(
-    (item) => {
-      try {
-        navigation.navigate("ZoneDetail", { zone: item });
-      } catch (e) {
-        console.warn("navigation to ZoneDetail failed", e);
-      }
-    },
-    [navigation]
-  );
-
+  const goToRun = useCallback((item) => navigation.navigate("RunDetail", { run: item }), [navigation]);
+  const goToZone = useCallback((item) => navigation.navigate("ZoneDetail", { zone: item }), [navigation]);
   const goToMap = useCallback(() => {
-    // MainNavigator uses "Mapa" route name; adjust if different
-    try {
-      navigation.navigate("Mapa");
-    } catch (e) {
-      // fallback try english name
-      try {
-        navigation.navigate("Map");
-      } catch {
-        console.warn("Navigation to map failed");
-      }
-    }
+    const parent = navigation.getParent?.();
+    if (parent) parent.navigate("Mapa");
+    else navigation.navigate("Mapa");
   }, [navigation]);
 
-  /* ---------------- renderers (memoized) ---------------- */
   const RenderRun = useCallback(
     ({ item }) => {
-      const distance = formatKm(item.distance || item.totalMeters || 0);
-      const duration = formatMinutes(item.duration || 0);
-      const title = item.name || "Corrida";
-      const img = item.photoUri || PLACEHOLDER_IMG;
+      const path = Array.isArray(item.path) ? item.path : [];
+      const center = path[0] || WAYPER_FALLBACK_COORD;
+
       return (
-        <TouchableOpacity style={styles.card} onPress={() => goToRun(item)}>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.date}>{safeDate(item.date)}</Text>
+        <Pressable onPress={() => goToRun(item)} style={styles.cardPressable}>
+          <WPCard style={styles.card} glow={path.length > 1}>
+            <View style={styles.cardHeader}>
+              <View style={styles.runIcon}>
+                <Ionicons name="walk-outline" size={21} color={WayperTheme.colors.textInverse} />
+              </View>
+              <View style={styles.cardTitleWrap}>
+                <Text style={styles.runTitle}>{item.name || "Corrida"}</Text>
+                <Text style={styles.date}>{safeDate(item.date)}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.textSubtle} />
+            </View>
 
-          <Text style={styles.info}>
-            {distance} km • {duration}
-          </Text>
+            {path.length > 1 ? (
+              <View pointerEvents="none" style={styles.preview}>
+                <WayperMapLibre
+                  style={styles.previewMap}
+                  routePath={path}
+                  centerCoordinate={center}
+                  showUserLocation={false}
+                  interactive={false}
+                  fitToContent
+                  contentPadding={{ top: 40, right: 40, bottom: 40, left: 40 }}
+                />
+              </View>
+            ) : null}
 
-          {img ? <Image source={{ uri: img }} style={styles.image} /> : null}
+            <View style={styles.metricRow}>
+              <Metric label="Distância" value={`${formatKm(item.distance || item.totalMeters || 0)} km`} />
+              <Metric label="Tempo" value={formatDuration(item.duration || 0)} />
+              <Metric label="RPE" value={item.effort ?? "—"} />
+            </View>
 
-          <View style={styles.rowMeta}>
-            <Text style={styles.metaText}>RPE: {item.effort ?? "—"}</Text>
-            <Text style={styles.metaText}>♢ {item.tags?.slice(0, 2).join(", ") || "—"}</Text>
-          </View>
-        </TouchableOpacity>
+            <View style={styles.footerRow}>
+              <Text style={styles.tagText}>{item.tags?.slice(0, 2).join(", ") || "Sem tags"}</Text>
+              <Ionicons name="arrow-forward-circle" size={24} color={WayperTheme.colors.primary} />
+            </View>
+          </WPCard>
+        </Pressable>
       );
     },
     [goToRun]
@@ -176,23 +142,46 @@ function CorridasScreen({ navigation }) {
 
   const RenderZone = useCallback(
     ({ item }) => {
+      const coords = Array.isArray(item.coords) ? item.coords : [];
+      const center = coords[0] || WAYPER_FALLBACK_COORD;
       const area = Math.round(item.area || 0);
-      const pts = (item.coords || []).length || 0;
+
       return (
-        <TouchableOpacity style={[styles.card, styles.zoneCard]} onPress={() => goToZone(item)}>
-          <Text style={[styles.title, styles.zoneTitle]}>Zona • {area} m²</Text>
-          <Text style={styles.date}>{safeDate(item.date)}</Text>
-          <Text style={styles.info}>{pts} pontos</Text>
-        </TouchableOpacity>
+        <WPCard style={styles.card} accent="cyan">
+          <View style={styles.cardHeader}>
+            <View style={[styles.runIcon, styles.zoneIcon]}>
+              <Ionicons name="map-outline" size={21} color={WayperTheme.colors.textInverse} />
+            </View>
+            <View style={styles.cardTitleWrap}>
+              <Text style={styles.zoneTitle}>Zona • {area} m²</Text>
+              <Text style={styles.date}>{safeDate(item.date)}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.textSubtle} onPress={() => goToZone(item)} />
+          </View>
+
+          {coords.length >= 3 ? (
+            <View style={styles.preview}>
+              <WayperMapLibre
+                style={styles.previewMap}
+                zones={[{ coords }]}
+                centerCoordinate={center}
+                showUserLocation={false}
+                interactive={false}
+                fitToContent
+                contentPadding={{ top: 40, right: 40, bottom: 40, left: 40 }}
+              />
+            </View>
+          ) : null}
+
+          <View style={styles.metricRow}>
+            <Metric label="Área" value={`${area} m²`} accent="cyan" />
+            <Metric label="Pontos" value={coords.length} accent="cyan" />
+          </View>
+        </WPCard>
       );
     },
     [goToZone]
   );
-
-  const keyExtractor = useCallback((i) => {
-    // ensure unique key; fallback to generated id
-    return i?.id || `${i?.__type || "item"}_${String(i?.date || Date.now())}`;
-  }, []);
 
   const renderItem = useCallback(
     ({ item }) => {
@@ -203,108 +192,155 @@ function CorridasScreen({ navigation }) {
     [RenderRun, RenderZone]
   );
 
-  /* pull-to-refresh handler */
-  const onRefresh = useCallback(async () => {
-    await loadAll();
-  }, [loadAll]);
-
-  /* ---------------- UI ---------------- */
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Corridas</Text>
-        <View style={styles.filterRow}>
-          <TouchableOpacity
-            style={[styles.filterBtn, filter === "all" && styles.filterSelected]}
-            onPress={() => setFilter("all")}
-            accessibilityLabel="Filtrar todas"
-          >
-            <Text style={[styles.filterText, filter === "all" && styles.filterTextSelected]}>Todas</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.filterBtn, filter === "free" && styles.filterSelected]}
-            onPress={() => setFilter("free")}
-            accessibilityLabel="Filtrar corridas"
-          >
-            <Text style={[styles.filterText, filter === "free" && styles.filterTextSelected]}>Corridas</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.filterBtn, filter === "zones" && styles.filterSelected]}
-            onPress={() => setFilter("zones")}
-            accessibilityLabel="Filtrar zonas"
-          >
-            <Text style={[styles.filterText, filter === "zones" && styles.filterTextSelected]}>Zonas</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
+    <WPScreen safe={false}>
       <FlatList
         data={merged}
-        keyExtractor={keyExtractor}
+        keyExtractor={(item) => item?.id || `${item?.__type || "item"}_${String(item?.date || Date.now())}`}
         renderItem={renderItem}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={WAYPER_GREEN} />}
-        contentContainerStyle={{ paddingBottom: 32 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadAll} tintColor={WayperTheme.colors.primary} />}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <WPSectionTitle title="Corridas" subtitle="Histórico de rotas, zonas e atividades salvas." />
+            <View style={styles.filterRow}>
+              <WPChip label="Todas" active={filter === "all"} onPress={() => setFilter("all")} />
+              <WPChip label="Corridas" active={filter === "free"} onPress={() => setFilter("free")} />
+              <WPChip label="Zonas" active={filter === "zones"} onPress={() => setFilter("zones")} color="cyan" />
+            </View>
+          </View>
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={{ color: "#aaa" }}>Nenhuma corrida encontrada</Text>
-            <TouchableOpacity style={styles.quickBtn} onPress={goToMap}>
-              <Text style={{ color: "#000", fontWeight: "700" }}>Ir para o mapa</Text>
-            </TouchableOpacity>
+            <Text style={styles.emptyText}>Nenhuma atividade encontrada.</Text>
+            <WPButton title="Ir para o mapa" compact onPress={goToMap} style={styles.emptyButton} />
           </View>
         }
       />
+    </WPScreen>
+  );
+}
+
+function Metric({ label, value, accent = "green" }) {
+  const color = accent === "cyan" ? WayperTheme.colors.cyan : WayperTheme.colors.primary;
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={[styles.metricValue, { color }]}>{value}</Text>
     </View>
   );
 }
 
-/* memo export to avoid parent re-renders recreating component */
 export default React.memo(CorridasScreen);
 
-/* ---------------- styles (visual preserved) ---------------- */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
-  header: { padding: 16, borderBottomWidth: 0.5, borderColor: "#111" },
-  headerTitle: { color: WAYPER_GREEN, fontSize: 26, fontWeight: "800" },
-  filterRow: { flexDirection: "row", marginTop: 12 },
-  filterBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: "#111",
-    marginRight: 8,
+  listContent: {
+    paddingBottom: 36,
   },
-  filterSelected: { backgroundColor: WAYPER_GREEN },
-  filterText: { color: "#ddd", fontWeight: "700" },
-  filterTextSelected: { color: "#000" },
-
+  header: {
+    paddingHorizontal: WayperTheme.spacing.page,
+    paddingTop: WayperTheme.spacing.xl,
+    paddingBottom: WayperTheme.spacing.md,
+  },
+  filterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: WayperTheme.spacing.sm,
+  },
   card: {
-    backgroundColor: "#111",
-    marginHorizontal: 12,
-    marginTop: 12,
-    padding: 12,
-    borderRadius: 12,
+    marginHorizontal: WayperTheme.spacing.page,
+    marginTop: WayperTheme.spacing.lg,
   },
-  zoneCard: {
-    borderLeftWidth: 4,
-    borderLeftColor: "#4fc3f7",
+  cardPressable: {
+    borderRadius: WayperTheme.radius.xxl,
   },
-  title: { color: WAYPER_GREEN, fontSize: 18, fontWeight: "800" },
-  zoneTitle: { color: "#4fc3f7" },
-  date: { color: "#888", marginTop: 6 },
-  info: { color: "#fff", marginTop: 8 },
-  image: { width: "100%", height: 140, borderRadius: 10, marginTop: 10 },
-
-  rowMeta: { flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
-  metaText: { color: "#999", fontSize: 13 },
-
-  empty: { padding: 24, alignItems: "center" },
-  quickBtn: {
-    marginTop: 12,
-    backgroundColor: WAYPER_GREEN,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  cardTitleWrap: {
+    flex: 1,
+    marginHorizontal: WayperTheme.spacing.md,
+  },
+  runIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  zoneIcon: {
+    backgroundColor: WayperTheme.colors.cyan,
+  },
+  runTitle: {
+    color: WayperTheme.colors.primary,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  zoneTitle: {
+    color: WayperTheme.colors.cyan,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  date: {
+    ...WayperTheme.typography.caption,
+    marginTop: WayperTheme.spacing.xs,
+  },
+  preview: {
+    height: 132,
+    borderRadius: WayperTheme.radius.lg,
+    overflow: "hidden",
+    marginTop: WayperTheme.spacing.lg,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+  },
+  previewMap: {
+    flex: 1,
+  },
+  metricRow: {
+    flexDirection: "row",
+    gap: WayperTheme.spacing.sm,
+    marginTop: WayperTheme.spacing.lg,
+  },
+  metric: {
+    flex: 1,
+    minHeight: 68,
+    borderRadius: WayperTheme.radius.lg,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    justifyContent: "center",
+    paddingHorizontal: WayperTheme.spacing.md,
+  },
+  metricLabel: {
+    ...WayperTheme.typography.caption,
+  },
+  metricValue: {
+    marginTop: WayperTheme.spacing.xs,
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  footerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: WayperTheme.spacing.lg,
+  },
+  tagText: {
+    ...WayperTheme.typography.caption,
+    color: WayperTheme.colors.textMuted,
+  },
+  empty: {
+    padding: WayperTheme.spacing.xxl,
+    alignItems: "center",
+  },
+  emptyText: {
+    ...WayperTheme.typography.body,
+    color: WayperTheme.colors.textMuted,
+    textAlign: "center",
+  },
+  emptyButton: {
+    marginTop: WayperTheme.spacing.lg,
   },
 });

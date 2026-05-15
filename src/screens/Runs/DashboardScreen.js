@@ -1,449 +1,803 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  RefreshControl,
   ScrollView,
   StyleSheet,
-  ActivityIndicator,
-  RefreshControl,
+  Text,
   TouchableOpacity,
-  Alert,
+  View,
 } from "react-native";
-
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import sync from "../../utils/sync";
-import { colors } from "../../theme/colors";
+import { WPCard, WPScreen } from "../../components/ui";
+import { WayperTheme } from "../../theme/wayperTheme";
 
-const WAYPER_GREEN = colors.wayperGreen || "#00e676";
-const MS_IN_WEEK = 7 * 24 * 3600 * 1000;
+const MS_IN_DAY = 24 * 60 * 60 * 1000;
+const MS_IN_WEEK = 7 * MS_IN_DAY;
+const CHART_HEIGHT = 128;
 
-/* ============================================================
-   🔧 SMALL UTILS (MEMO-SAFE)
-   ============================================================ */
-const formatKm = (m = 0) => (Number(m) / 1000).toFixed(2);
-
-const safeNumber = (v, d = 0) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
+const safeNumber = (value, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 };
 
-const nowTs = () => Date.now();
+const safeDateTs = (value) => {
+  const ts = new Date(value || 0).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+};
 
-/** pace em segundos por KM */
+const formatKm = (meters = 0, digits = 2) => `${(safeNumber(meters) / 1000).toFixed(digits)} km`;
+
+const formatDuration = (seconds = 0) => {
+  const total = Math.max(0, Math.round(safeNumber(seconds)));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${s}s`;
+};
+
 const paceSeconds = (run) => {
-  if (!run || !run.distance || !run.duration) return Infinity;
-  const km = run.distance / 1000 || 1;
-  return run.duration / km;
+  const distance = safeNumber(run?.distance);
+  const duration = safeNumber(run?.duration);
+  if (distance <= 0 || duration <= 0) return Infinity;
+  return duration / (distance / 1000);
 };
 
-const formatPaceSecToMMSS = (sec) => {
-  if (!isFinite(sec)) return "--:--";
-  const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
+const formatPace = (seconds) => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "--:--/km";
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
   return `${m}:${String(s).padStart(2, "0")}/km`;
 };
 
-/* ============================================================
-   📊 DASHBOARD MAIN COMPONENT
-   ============================================================ */
+const formatShortDate = (value) => {
+  const ts = safeDateTs(value);
+  if (!ts) return "Sem data";
+  return new Date(ts).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+};
+
+const getRunName = (run, index) => run?.name || `Corrida #${index + 1}`;
+
+const getWeekKey = (ts) => Math.floor(ts / MS_IN_WEEK) * MS_IN_WEEK;
+
 export default function DashboardScreen() {
   const [runs, setRuns] = useState([]);
   const [zones, setZones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [autoSyncActive, setAutoSyncActive] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(18)).current;
 
-  const log = useCallback((msg, ctx) => {
-    console.debug("[DASH]", msg, ctx || "");
+  const loadAll = useCallback(async ({ forceSync = false } = {}) => {
+    if (forceSync) setRefreshing(true);
+    else setLoading(true);
+
+    try {
+      if (forceSync && typeof sync.syncNow === "function") {
+        setSyncing(true);
+        try {
+          await sync.syncNow();
+        } catch (error) {
+          console.warn("[Dashboard] syncNow failed", error);
+        } finally {
+          setSyncing(false);
+        }
+      }
+
+      const [loadedRuns, loadedZones] = await Promise.all([
+        sync.loadLocalRuns?.(),
+        sync.loadLocalZones?.(),
+      ]);
+
+      setRuns(Array.isArray(loadedRuns) ? loadedRuns : []);
+      setZones(Array.isArray(loadedZones) ? loadedZones : []);
+    } catch (error) {
+      console.warn("[Dashboard] loadAll failed", error);
+      Alert.alert("Erro", "Falha ao carregar dados do dashboard.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  /* ============================================================
-     🔄 LOAD DATA
-     ============================================================ */
-  const loadAll = useCallback(
-    async (opts = { force: false }) => {
-      setLoading(true);
-      try {
-        const [loadedRuns, loadedZones] = await Promise.all([
-          sync.loadLocalRuns(opts),
-          sync.loadLocalZones(opts),
-        ]);
-
-        setRuns(Array.isArray(loadedRuns) ? loadedRuns : []);
-        setZones(Array.isArray(loadedZones) ? loadedZones : []);
-
-        log("loadAll OK", {
-          runs: loadedRuns?.length,
-          zones: loadedZones?.length,
-        });
-      } catch (e) {
-        console.warn("[DASH] loadAll error", e);
-        Alert.alert("Erro", "Falha ao carregar dados do dashboard.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [log]
-  );
-
-  /* ============================================================
-     🚀 INIT + AUTO-SYNC
-     ============================================================ */
   useEffect(() => {
     let mounted = true;
 
     (async () => {
       await loadAll();
-
+      if (!mounted) return;
       try {
-        if (typeof sync.startAutoSync === "function") {
-          sync.startAutoSync();
-          mounted && setAutoSyncActive(true);
-          log("autoSync started");
-        }
-      } catch (e) {
-        console.warn("[DASH] autoSync fail", e);
+        sync.startAutoSync?.();
+      } catch (error) {
+        console.warn("[Dashboard] startAutoSync failed", error);
       }
     })();
+
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 380,
+        useNativeDriver: true,
+      }),
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        speed: 16,
+        bounciness: 7,
+        useNativeDriver: true,
+      }),
+    ]).start();
 
     return () => {
       mounted = false;
       try {
-        if (typeof sync.stopAutoSync === "function") {
-          sync.stopAutoSync();
-          log("autoSync stopped (cleanup)");
-        }
-      } catch (e) {}
+        sync.stopAutoSync?.();
+      } catch {}
     };
-  }, [loadAll, log]);
+  }, [fadeAnim, loadAll, slideAnim]);
 
-  /* ============================================================
-     🔃 PULL TO REFRESH
-     ============================================================ */
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await loadAll({ force: true });
+  const onRefresh = useCallback(() => loadAll({ forceSync: true }), [loadAll]);
 
-      if (typeof sync.syncNow === "function") {
-        try {
-          await sync.syncNow();
-          log("syncNow OK");
-          await loadAll({ force: true });
-        } catch (e) {
-          console.warn("[DASH] syncNow error", e);
-        }
-      }
-    } catch (e) {
-      // já tratado
-    } finally {
-      setRefreshing(false);
+  const stats = useMemo(() => {
+    const cleanRuns = (Array.isArray(runs) ? runs : [])
+      .filter(Boolean)
+      .map((run) => ({
+        ...run,
+        distance: safeNumber(run.distance),
+        duration: safeNumber(run.duration),
+        ts: safeDateTs(run.date),
+      }))
+      .sort((a, b) => b.ts - a.ts);
+
+    const cleanZones = (Array.isArray(zones) ? zones : []).filter(Boolean);
+    const now = Date.now();
+    const weekStart = now - 7 * MS_IN_DAY;
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    const totalMeters = cleanRuns.reduce((sum, run) => sum + run.distance, 0);
+    const totalDuration = cleanRuns.reduce((sum, run) => sum + run.duration, 0);
+    const weeklyMeters = cleanRuns
+      .filter((run) => run.ts >= weekStart)
+      .reduce((sum, run) => sum + run.distance, 0);
+    const monthlyMeters = cleanRuns
+      .filter((run) => run.ts >= monthStart.getTime())
+      .reduce((sum, run) => sum + run.distance, 0);
+    const zoneArea = cleanZones.reduce((sum, zone) => sum + safeNumber(zone.area), 0);
+
+    const bestDistance = [...cleanRuns]
+      .filter((run) => run.distance > 0)
+      .sort((a, b) => b.distance - a.distance)
+      .slice(0, 6);
+
+    const bestPace = [...cleanRuns]
+      .filter((run) => run.distance > 0 && run.duration > 0)
+      .sort((a, b) => paceSeconds(a) - paceSeconds(b))
+      .slice(0, 6);
+
+    const avgPace = totalMeters > 0 && totalDuration > 0
+      ? totalDuration / (totalMeters / 1000)
+      : Infinity;
+
+    const weekMap = new Map();
+    cleanRuns.forEach((run) => {
+      if (!run.ts) return;
+      const key = getWeekKey(run.ts);
+      weekMap.set(key, (weekMap.get(key) || 0) + run.distance);
+    });
+
+    const weeks = [];
+    for (let index = 11; index >= 0; index -= 1) {
+      const key = getWeekKey(now - index * MS_IN_WEEK);
+      weeks.push({
+        key,
+        meters: weekMap.get(key) || 0,
+        label: new Date(key).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
+      });
     }
-  }, [loadAll, log]);
-
-  /* ============================================================
-     📊 TOTALS (MEMO)
-     ============================================================ */
-  const totals = useMemo(() => {
-    const totalMeters = runs.reduce(
-      (acc, r) => acc + safeNumber(r.distance),
-      0
-    );
 
     return {
-      totalKm: totalMeters / 1000,
-      totalRuns: runs.length,
-      totalZones: zones.length,
+      runs: cleanRuns,
+      totalMeters,
+      totalRuns: cleanRuns.length,
+      totalZones: cleanZones.length,
+      totalDuration,
+      weeklyMeters,
+      monthlyMeters,
+      zoneArea,
+      bestDistance,
+      bestPace,
+      avgPace,
+      weeks,
+      maxWeekMeters: Math.max(...weeks.map((week) => week.meters), 1),
     };
   }, [runs, zones]);
 
-  /* ============================================================
-     📈 LAST 12 WEEKS CHART (MEMO)
-     ============================================================ */
-  const weeks = useMemo(() => {
-    const map = new Map();
-    const now = nowTs();
-
-    runs.forEach((r) => {
-      const ts = Number(new Date(r.date).getTime());
-      const weekStart = Math.floor(ts / MS_IN_WEEK) * MS_IN_WEEK;
-      map.set(weekStart, (map.get(weekStart) || 0) + safeNumber(r.distance));
-    });
-
-    const out = [];
-    for (let i = 11; i >= 0; i--) {
-      const start =
-        Math.floor((now - i * MS_IN_WEEK) / MS_IN_WEEK) * MS_IN_WEEK;
-      out.push({
-        start,
-        meters: map.get(start) || 0,
-      });
-    }
-    return out;
-  }, [runs]);
-
-  const maxWeekKm = useMemo(() => {
-    const maxMeters = Math.max(...weeks.map((w) => w.meters || 0), 1);
-    return Math.max(1, maxMeters / 1000);
-  }, [weeks]);
-
-  /* ============================================================
-     🥇 RANKING (MEMO)
-     ============================================================ */
-  const ranking = useMemo(() => {
-    const byDistance = [...runs]
-      .filter((r) => r.distance)
-      .sort((a, b) => b.distance - a.distance)
-      .slice(0, 8);
-
-    const validPace = runs.filter((r) => r.distance && r.duration);
-
-    const byPace = [...validPace]
-      .sort((a, b) => paceSeconds(a) - paceSeconds(b))
-      .slice(0, 8);
-
-    return { byDistance, byPace };
-  }, [runs]);
-
-  /* ============================================================
-     🧩 RENDER HELPERS
-     ============================================================ */
-  const renderKmBar = useCallback(
-    (w) => {
-      const km = (w.meters || 0) / 1000;
-      const height = Math.min(120, (km / maxWeekKm) * 120 || 6);
-
-      return (
-        <View key={String(w.start)} style={styles.barWrap}>
-          <View
-            style={[styles.bar, { height: Math.max(6, height) }]}
-          />
-          <Text style={styles.barLabel}>{formatKm(w.meters)} km</Text>
-        </View>
-      );
-    },
-    [maxWeekKm]
-  );
-
-  const handleExportSummary = useCallback(() => {
-    try {
-      const sample = runs.slice(0, 8).map((r) => ({
-        id: r.id,
-        date: r.date,
-        distance_km: (r.distance || 0) / 1000,
-        duration_sec: r.duration || 0,
-      }));
-      Alert.alert("Export preview", JSON.stringify(sample, null, 2));
-    } catch (e) {
-      console.warn("[DASH] export error", e);
-      Alert.alert("Erro", "Falha ao exportar.");
-    }
-  }, [runs]);
-
-  /* ============================================================
-     🖥️ LOADING
-     ============================================================ */
   if (loading) {
     return (
-      <View style={styles.loadingWrap}>
-        <ActivityIndicator size="large" color={WAYPER_GREEN} />
-        <Text style={{ color: "#fff", marginTop: 8 }}>
-          Carregando dashboard...
-        </Text>
-      </View>
+      <WPScreen>
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator size="large" color={WayperTheme.colors.primary} />
+          <Text style={styles.loadingText}>Carregando dashboard...</Text>
+        </View>
+      </WPScreen>
     );
   }
 
-  /* ============================================================
-     🎨 MAIN UI
-     ============================================================ */
   return (
-    <ScrollView
-      style={styles.container}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor={WAYPER_GREEN}
-        />
-      }
-    >
-      {/* HEADER */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Dashboard</Text>
-        <Text style={styles.subtitle}>Resumo pessoal</Text>
-      </View>
-
-      {/* CARDS */}
-      <View style={styles.cardsRow}>
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Total km</Text>
-          <Text style={styles.cardValue}>
-            {totals.totalKm.toFixed(2)}
-          </Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Corridas</Text>
-          <Text style={styles.cardValue}>{totals.totalRuns}</Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Zonas</Text>
-          <Text style={styles.cardValue}>{totals.totalZones}</Text>
-        </View>
-      </View>
-
-      {/* 12 WEEKS CHART */}
-      <View style={{ padding: 16 }}>
-        <Text style={styles.sectionTitle}>
-          Km nas últimas 12 semanas
-        </Text>
-        <View style={styles.chartRow}>
-          {weeks.map((w) => renderKmBar(w))}
-        </View>
-      </View>
-
-      {/* RANKING – DISTANCE */}
-      <View style={{ padding: 16 }}>
-        <View style={styles.rowBetween}>
-          <Text style={styles.sectionTitle}>
-            Ranking – maiores distâncias
-          </Text>
-          <TouchableOpacity onPress={handleExportSummary}>
-            <Text style={{ color: WAYPER_GREEN }}>Export</Text>
-          </TouchableOpacity>
-        </View>
-
-        {ranking.byDistance.length === 0 ? (
-          <Text style={styles.empty}>Sem dados</Text>
-        ) : (
-          ranking.byDistance.map((r) => (
-            <View key={r.id} style={styles.rankRow}>
-              <Text style={styles.rankName}>
-                {r.name || "Corrida"}
-              </Text>
-              <Text style={styles.rankVal}>
-                {formatKm(r.distance)} km
-              </Text>
-            </View>
-          ))
-        )}
-      </View>
-
-      {/* RANKING – PACE */}
-      <View style={{ padding: 16 }}>
-        <Text style={styles.sectionTitle}>Melhor pace</Text>
-
-        {ranking.byPace.length === 0 ? (
-          <Text style={styles.empty}>Sem dados</Text>
-        ) : (
-          ranking.byPace.map((r) => {
-            const sec = paceSeconds(r);
-            return (
-              <View key={r.id} style={styles.rankRow}>
-                <Text style={styles.rankName}>
-                  {r.name || "Corrida"}
-                </Text>
-                <Text style={styles.rankVal}>
-                  {formatPaceSecToMMSS(sec)}
-                </Text>
+    <WPScreen safe={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={WayperTheme.colors.primary}
+            colors={[WayperTheme.colors.primary]}
+          />
+        }
+      >
+        <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
+          <LinearGradient
+            colors={["rgba(0,230,118,0.22)", "rgba(56,217,255,0.08)", "rgba(3,7,11,0)"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.hero}
+          >
+            <View style={styles.heroTop}>
+              <View>
+                <Text style={styles.heroEyebrow}>Wayper analytics</Text>
+                <Text style={styles.heroTitle}>Dashboard</Text>
+                <Text style={styles.heroSubtitle}>Seu ritmo, volume e melhores marcas em um painel unico.</Text>
               </View>
-            );
-          })
-        )}
-      </View>
+              <TouchableOpacity activeOpacity={0.85} style={styles.syncButton} onPress={onRefresh}>
+                {syncing ? (
+                  <ActivityIndicator size="small" color={WayperTheme.colors.primary} />
+                ) : (
+                  <Ionicons name="sync-outline" size={22} color={WayperTheme.colors.primary} />
+                )}
+              </TouchableOpacity>
+            </View>
 
-      <View style={{ height: 120 }} />
-    </ScrollView>
+            <View style={styles.heroMetrics}>
+              <HeroMetric label="Total" value={formatKm(stats.totalMeters)} icon="navigate-outline" />
+              <HeroMetric label="Pace medio" value={formatPace(stats.avgPace)} icon="speedometer-outline" accent="cyan" />
+            </View>
+          </LinearGradient>
+
+          <View style={styles.metricGrid}>
+            <MetricTile label="Corridas" value={String(stats.totalRuns)} icon="walk-outline" />
+            <MetricTile label="Esta semana" value={formatKm(stats.weeklyMeters)} icon="calendar-outline" />
+            <MetricTile label="Este mes" value={formatKm(stats.monthlyMeters)} icon="trending-up-outline" accent="cyan" />
+            <MetricTile label="Zonas" value={String(stats.totalZones)} sub={`${Math.round(stats.zoneArea)} m2`} icon="map-outline" accent="cyan" />
+          </View>
+
+          <SectionCard
+            title="Volume semanal"
+            subtitle="Km acumulados nas ultimas 12 semanas"
+            icon="bar-chart-outline"
+          >
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chartRow}>
+              {stats.weeks.map((week) => (
+                <WeekBar
+                  key={String(week.key)}
+                  week={week}
+                  maxMeters={stats.maxWeekMeters}
+                />
+              ))}
+            </ScrollView>
+          </SectionCard>
+
+          <SectionCard
+            title="Maiores distancias"
+            subtitle="Suas corridas mais longas"
+            icon="trophy-outline"
+            rightLabel={stats.bestDistance.length ? formatKm(stats.bestDistance[0]?.distance || 0) : "--"}
+          >
+            {stats.bestDistance.length ? (
+              stats.bestDistance.map((run, index) => (
+                <RankingRow
+                  key={run.id || `distance-${index}`}
+                  index={index}
+                  title={getRunName(run, index)}
+                  meta={`${formatShortDate(run.date)} • ${formatDuration(run.duration)}`}
+                  value={formatKm(run.distance)}
+                  progress={run.distance / Math.max(stats.bestDistance[0]?.distance || 1, 1)}
+                  icon="flag-outline"
+                  accent={index === 0 ? "green" : "cyan"}
+                />
+              ))
+            ) : (
+              <EmptyState text="Ainda nao ha corridas com distancia registrada." />
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Melhor pace"
+            subtitle="Menor tempo por quilometro"
+            icon="flash-outline"
+            rightLabel={stats.bestPace.length ? formatPace(paceSeconds(stats.bestPace[0])) : "--"}
+          >
+            {stats.bestPace.length ? (
+              stats.bestPace.map((run, index) => {
+                const best = paceSeconds(stats.bestPace[0]);
+                const current = paceSeconds(run);
+                const progress = best > 0 && Number.isFinite(current) ? Math.min(1, best / current) : 0;
+                return (
+                  <RankingRow
+                    key={run.id || `pace-${index}`}
+                    index={index}
+                    title={getRunName(run, index)}
+                    meta={`${formatShortDate(run.date)} • ${formatKm(run.distance)}`}
+                    value={formatPace(current)}
+                    progress={progress}
+                    icon="speedometer-outline"
+                    accent="green"
+                  />
+                );
+              })
+            ) : (
+              <EmptyState text="Ainda nao ha corridas com pace valido." />
+            )}
+          </SectionCard>
+
+          <View style={styles.footerCard}>
+            <Ionicons name="sparkles-outline" size={22} color={WayperTheme.colors.primary} />
+            <Text style={styles.footerText}>
+              Puxe para atualizar e sincronizar seus dados locais com o Firebase.
+            </Text>
+          </View>
+        </Animated.View>
+      </ScrollView>
+    </WPScreen>
   );
 }
 
-/* ============================================================
-   🎨 STYLES
-   ============================================================ */
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.backgroundDark },
+function HeroMetric({ label, value, icon, accent = "green" }) {
+  const color = accent === "cyan" ? WayperTheme.colors.cyan : WayperTheme.colors.primary;
+  return (
+    <View style={styles.heroMetric}>
+      <View style={[styles.heroMetricIcon, { borderColor: accent === "cyan" ? WayperTheme.colors.cyanBorder : WayperTheme.colors.primaryBorder }]}>
+        <Ionicons name={icon} size={18} color={color} />
+      </View>
+      <Text style={styles.heroMetricLabel}>{label}</Text>
+      <Text style={styles.heroMetricValue} numberOfLines={1}>{value}</Text>
+    </View>
+  );
+}
 
+function MetricTile({ label, value, sub, icon, accent = "green" }) {
+  const color = accent === "cyan" ? WayperTheme.colors.cyan : WayperTheme.colors.primary;
+  return (
+    <WPCard style={styles.metricTile} accent={accent === "cyan" ? "cyan" : "green"}>
+      <View style={[styles.metricIcon, { backgroundColor: accent === "cyan" ? WayperTheme.colors.cyanSoft : WayperTheme.colors.primarySoft }]}>
+        <Ionicons name={icon} size={20} color={color} />
+      </View>
+      <Text style={styles.metricTileLabel}>{label}</Text>
+      <Text style={[styles.metricTileValue, { color }]} numberOfLines={1}>{value}</Text>
+      {sub ? <Text style={styles.metricTileSub}>{sub}</Text> : null}
+    </WPCard>
+  );
+}
+
+function SectionCard({ title, subtitle, icon, rightLabel, children }) {
+  return (
+    <View style={styles.sectionCard}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionIcon}>
+          <Ionicons name={icon} size={20} color={WayperTheme.colors.primary} />
+        </View>
+        <View style={styles.sectionTextWrap}>
+          <Text style={styles.sectionTitle}>{title}</Text>
+          {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
+        </View>
+        {rightLabel ? <Text style={styles.sectionRight}>{rightLabel}</Text> : null}
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function WeekBar({ week, maxMeters }) {
+  const ratio = Math.max(0.04, Math.min(1, safeNumber(week.meters) / Math.max(maxMeters, 1)));
+  const height = Math.max(10, ratio * CHART_HEIGHT);
+
+  return (
+    <View style={styles.weekWrap}>
+      <View style={styles.weekRail}>
+        <LinearGradient
+          colors={[WayperTheme.colors.primary, WayperTheme.colors.cyan]}
+          start={{ x: 0, y: 1 }}
+          end={{ x: 0, y: 0 }}
+          style={[styles.weekFill, { height }]}
+        />
+      </View>
+      <Text style={styles.weekKm}>{(safeNumber(week.meters) / 1000).toFixed(1)}</Text>
+      <Text style={styles.weekLabel}>{week.label}</Text>
+    </View>
+  );
+}
+
+function RankingRow({ index, title, meta, value, progress, icon, accent = "green" }) {
+  const color = accent === "cyan" ? WayperTheme.colors.cyan : WayperTheme.colors.primary;
+  const width = `${Math.max(8, Math.min(100, progress * 100))}%`;
+
+  return (
+    <View style={styles.rankRow}>
+      <View style={[styles.rankPosition, index === 0 && styles.rankPositionLeader]}>
+        <Text style={[styles.rankPositionText, index === 0 && styles.rankPositionLeaderText]}>{index + 1}</Text>
+      </View>
+      <View style={styles.rankBody}>
+        <View style={styles.rankTopLine}>
+          <View style={styles.rankTitleWrap}>
+            <Ionicons name={icon} size={15} color={color} />
+            <Text style={styles.rankTitle} numberOfLines={1}>{title}</Text>
+          </View>
+          <Text style={[styles.rankValue, { color }]}>{value}</Text>
+        </View>
+        <Text style={styles.rankMeta} numberOfLines={1}>{meta}</Text>
+        <View style={styles.rankProgressTrack}>
+          <LinearGradient
+            colors={accent === "cyan"
+              ? [WayperTheme.colors.cyan, WayperTheme.colors.primary]
+              : [WayperTheme.colors.primaryLight, WayperTheme.colors.primaryDark]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[styles.rankProgressFill, { width }]}
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function EmptyState({ text }) {
+  return (
+    <View style={styles.emptyState}>
+      <Ionicons name="analytics-outline" size={22} color={WayperTheme.colors.textSubtle} />
+      <Text style={styles.emptyText}>{text}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  scroll: {
+    flex: 1,
+    backgroundColor: WayperTheme.colors.background,
+  },
+  content: {
+    paddingBottom: 44,
+  },
   loadingWrap: {
     flex: 1,
+    alignItems: "center",
     justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: colors.backgroundDark,
+    backgroundColor: WayperTheme.colors.background,
   },
-
-  header: { padding: 16 },
-  title: {
-    color: WAYPER_GREEN,
-    fontSize: 28,
-    fontWeight: "800",
+  loadingText: {
+    marginTop: WayperTheme.spacing.md,
+    color: WayperTheme.colors.textMuted,
+    fontWeight: "700",
   },
-  subtitle: { color: colors.textMuted },
-
-  cardsRow: {
+  hero: {
+    marginHorizontal: WayperTheme.spacing.page,
+    marginTop: WayperTheme.spacing.xl,
+    borderRadius: WayperTheme.radius.xxl,
+    padding: WayperTheme.spacing.xl,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    overflow: "hidden",
+    ...WayperTheme.shadows.card,
+  },
+  heroTop: {
     flexDirection: "row",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    padding: 16,
+    gap: WayperTheme.spacing.lg,
   },
-  card: {
-    backgroundColor: colors.backgroundCard,
+  heroEyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  heroTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 34,
+    fontWeight: "900",
+    marginTop: WayperTheme.spacing.xs,
+  },
+  heroSubtitle: {
+    maxWidth: 260,
+    marginTop: WayperTheme.spacing.sm,
+    color: WayperTheme.colors.textMuted,
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+  syncButton: {
+    width: 50,
+    height: 50,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceGlass,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  heroMetrics: {
+    flexDirection: "row",
+    gap: WayperTheme.spacing.md,
+    marginTop: WayperTheme.spacing.xl,
+  },
+  heroMetric: {
     flex: 1,
-    marginRight: 8,
-    padding: 12,
-    borderRadius: 14,
+    minHeight: 96,
+    borderRadius: WayperTheme.radius.xl,
+    padding: WayperTheme.spacing.lg,
+    backgroundColor: WayperTheme.colors.surfaceGlass,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
   },
-  cardLabel: { color: colors.textSoft },
-  cardValue: {
-    color: colors.white,
-    fontSize: 22,
+  heroMetricIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    marginBottom: WayperTheme.spacing.sm,
+  },
+  heroMetricLabel: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 12,
     fontWeight: "800",
   },
-
+  heroMetricValue: {
+    marginTop: WayperTheme.spacing.xs,
+    color: WayperTheme.colors.text,
+    fontSize: 21,
+    fontWeight: "900",
+  },
+  metricGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: WayperTheme.spacing.md,
+    paddingHorizontal: WayperTheme.spacing.page,
+    marginTop: WayperTheme.spacing.lg,
+  },
+  metricTile: {
+    width: "48%",
+    minHeight: 140,
+    margin: 0,
+  },
+  metricIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: WayperTheme.spacing.md,
+  },
+  metricTileLabel: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  metricTileValue: {
+    marginTop: WayperTheme.spacing.xs,
+    fontSize: 24,
+    fontWeight: "900",
+  },
+  metricTileSub: {
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: WayperTheme.spacing.xs,
+  },
+  sectionCard: {
+    marginHorizontal: WayperTheme.spacing.page,
+    marginTop: WayperTheme.spacing.lg,
+    padding: WayperTheme.spacing.lg,
+    borderRadius: WayperTheme.radius.xxl,
+    backgroundColor: WayperTheme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    overflow: "hidden",
+    ...WayperTheme.shadows.card,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: WayperTheme.spacing.lg,
+  },
+  sectionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    marginRight: WayperTheme.spacing.md,
+  },
+  sectionTextWrap: {
+    flex: 1,
+  },
   sectionTitle: {
-    color: WAYPER_GREEN,
-    fontWeight: "800",
-    marginBottom: 8,
+    color: WayperTheme.colors.text,
+    fontSize: 19,
+    fontWeight: "900",
   },
-
+  sectionSubtitle: {
+    marginTop: 2,
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  sectionRight: {
+    color: WayperTheme.colors.primary,
+    fontSize: 15,
+    fontWeight: "900",
+  },
   chartRow: {
-    flexDirection: "row",
     alignItems: "flex-end",
-    paddingVertical: 12,
+    gap: WayperTheme.spacing.sm,
+    paddingRight: WayperTheme.spacing.lg,
   },
-
-  barWrap: {
-    width: 40,
+  weekWrap: {
+    width: 46,
     alignItems: "center",
-    marginRight: 8,
   },
-  bar: {
-    width: 30,
-    backgroundColor: WAYPER_GREEN,
-    borderRadius: 6,
+  weekRail: {
+    width: 24,
+    height: CHART_HEIGHT,
+    borderRadius: WayperTheme.radius.pill,
+    justifyContent: "flex-end",
+    overflow: "hidden",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
   },
-  barLabel: {
-    color: colors.textMuted,
+  weekFill: {
+    width: "100%",
+    borderTopLeftRadius: WayperTheme.radius.pill,
+    borderTopRightRadius: WayperTheme.radius.pill,
+  },
+  weekKm: {
+    marginTop: WayperTheme.spacing.sm,
+    color: WayperTheme.colors.text,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  weekLabel: {
+    marginTop: 2,
+    color: WayperTheme.colors.textSubtle,
     fontSize: 10,
-    marginTop: 4,
+    fontWeight: "700",
   },
-
-  rowBetween: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-
   rankRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 8,
+    alignItems: "center",
+    minHeight: 82,
+    paddingVertical: WayperTheme.spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: WayperTheme.colors.border,
   },
-  rankName: { color: colors.white },
-  rankVal: { color: colors.white, fontWeight: "700" },
-
-  empty: { color: colors.textMuted, paddingVertical: 10 },
+  rankPosition: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    marginRight: WayperTheme.spacing.md,
+  },
+  rankPositionLeader: {
+    backgroundColor: WayperTheme.colors.primary,
+    borderColor: WayperTheme.colors.primaryLight,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  rankPositionText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  rankPositionLeaderText: {
+    color: WayperTheme.colors.textInverse,
+  },
+  rankBody: {
+    flex: 1,
+  },
+  rankTopLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: WayperTheme.spacing.md,
+  },
+  rankTitleWrap: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.xs,
+  },
+  rankTitle: {
+    flex: 1,
+    color: WayperTheme.colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  rankValue: {
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  rankMeta: {
+    marginTop: 3,
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  rankProgressTrack: {
+    height: 7,
+    marginTop: WayperTheme.spacing.sm,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    overflow: "hidden",
+  },
+  rankProgressFill: {
+    height: "100%",
+    borderRadius: WayperTheme.radius.pill,
+  },
+  emptyState: {
+    minHeight: 96,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    padding: WayperTheme.spacing.lg,
+  },
+  emptyText: {
+    marginTop: WayperTheme.spacing.sm,
+    color: WayperTheme.colors.textMuted,
+    textAlign: "center",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  footerCard: {
+    marginHorizontal: WayperTheme.spacing.page,
+    marginTop: WayperTheme.spacing.lg,
+    minHeight: 70,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    padding: WayperTheme.spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.md,
+  },
+  footerText: {
+    flex: 1,
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 19,
+  },
 });

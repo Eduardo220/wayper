@@ -7,13 +7,14 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   Alert,
   Platform,
 } from "react-native";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import WayperMapLibre from "../../components/Map/WayperMapLibre";
+import { WPButton, WPCard, WPMetricCard } from "../../components/ui";
+import { WayperTheme } from "../../theme/wayperTheme";
 
 let captureRef = null;
 try {
@@ -33,7 +34,7 @@ try {
   ExpoClipboard = null;
 }
 
-const WAYPER_GREEN = "#00e676";
+const WAYPER_GREEN = WayperTheme.colors.primary;
 
 /* ------------------------- helpers ------------------------- */
 const debug = (...args) => {
@@ -201,7 +202,7 @@ function ZoneDetailScreen({ route }) {
 
   /* -------------------- UI -------------------- */
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <View ref={viewRef} collapsable={false} style={styles.preview}>
         <WayperMapLibre
           style={styles.map}
@@ -218,38 +219,23 @@ function ZoneDetailScreen({ route }) {
         <Text style={styles.date}>{zone.date ? new Date(zone.date).toLocaleString() : "—"}</Text>
 
         <View style={styles.infoRow}>
-          <View style={styles.infoBox}>
-            <Text style={styles.infoLabel}>Área</Text>
-            <Text style={styles.infoVal}>{formatArea(zone.area)}</Text>
-          </View>
-
-          <View style={styles.infoBox}>
-            <Text style={styles.infoLabel}>Pontos</Text>
-            <Text style={styles.infoVal}>{coords.length}</Text>
-          </View>
+          <WPMetricCard label="Área" value={formatArea(zone.area)} accent="cyan" />
+          <WPMetricCard label="Pontos" value={coords.length} accent="cyan" />
         </View>
 
         <View style={{ marginTop: 12 }}>
           <Text style={styles.sectionTitle}>Ações</Text>
 
-          <TouchableOpacity style={[styles.btn, { backgroundColor: WAYPER_GREEN }]} onPress={exportGeoJSON}>
-            <Text style={styles.btnText}>Exportar GeoJSON</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={[styles.btn, { backgroundColor: "#333", marginTop: 8 }]} onPress={copyCoordsToClipboard}>
-            <Text style={styles.btnText}>Copiar coordenadas</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={[styles.btn, { backgroundColor: "#111", marginTop: 8 }]} onPress={shareZoneImage}>
-            <Text style={styles.btnText}>Compartilhar imagem</Text>
-          </TouchableOpacity>
+          <WPButton title="Exportar GeoJSON" onPress={exportGeoJSON} />
+          <WPButton title="Copiar coordenadas" variant="secondary" onPress={copyCoordsToClipboard} style={styles.actionGap} />
+          <WPButton title="Compartilhar imagem" variant="secondary" onPress={shareZoneImage} style={styles.actionGap} />
         </View>
 
-        <View style={{ marginTop: 16 }}>
+        <WPCard accent="cyan" style={{ marginTop: 16 }}>
           <Text style={styles.sectionTitle}>Resumo</Text>
           <Text style={styles.meta}>ID: {zone.id ?? "—"}</Text>
           <Text style={styles.meta}>Criada: {zone.date ? new Date(zone.date).toLocaleString() : "—"}</Text>
-        </View>
+        </WPCard>
 
         <View style={{ height: 40 }} />
       </View>
@@ -261,19 +247,16 @@ export default React.memo(ZoneDetailScreen);
 
 /* ------------------------- styles ------------------------- */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
+  container: { flex: 1, backgroundColor: WayperTheme.colors.background },
+  scrollContent: { paddingBottom: 40 },
   center: { justifyContent: "center", alignItems: "center" },
-  preview: { backgroundColor: "#000" },
-  map: { width: "100%", height: 260 },
-  body: { padding: 12 },
-  title: { color: WAYPER_GREEN, fontSize: 22, fontWeight: "800" },
-  date: { color: "#888", marginTop: 6 },
-  infoRow: { flexDirection: "row", marginTop: 12 },
-  infoBox: { flex: 1, backgroundColor: "#111", padding: 12, borderRadius: 10, marginRight: 8, alignItems: "center" },
-  infoLabel: { color: "#999", fontSize: 12 },
-  infoVal: { color: "#fff", fontWeight: "800", marginTop: 6 },
-  sectionTitle: { color: WAYPER_GREEN, fontWeight: "800", marginBottom: 8 },
-  btn: { padding: 12, borderRadius: 12, alignItems: "center" },
-  btnText: { color: "#fff", fontWeight: "800" },
-  meta: { color: "#ccc", marginTop: 6 },
+  preview: { backgroundColor: WayperTheme.colors.background },
+  map: { width: "100%", height: 280 },
+  body: { padding: WayperTheme.spacing.page },
+  title: { color: WAYPER_GREEN, fontSize: 28, fontWeight: "900" },
+  date: { color: WayperTheme.colors.textMuted, marginTop: 6 },
+  infoRow: { flexDirection: "row", marginTop: 16, gap: WayperTheme.spacing.md },
+  sectionTitle: { color: WAYPER_GREEN, fontWeight: "900", marginBottom: 10, fontSize: 18 },
+  meta: { color: WayperTheme.colors.textMuted, marginTop: 6 },
+  actionGap: { marginTop: WayperTheme.spacing.sm },
 });

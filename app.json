@@ -5,14 +5,14 @@
     "slug": "wayper",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo.png",
-    "userInterfaceStyle": "light",
+    "icon": "./assets/logo.jpg",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
 
     "splash": {
       "image": "./assets/logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#05070a"
+      "backgroundColor": "#03070B"
     },
 
     "ios": {
@@ -40,8 +40,8 @@
       ],
 
       "adaptiveIcon": {
-        "foregroundImage": "./assets/logo.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/logo.jpg",
+        "backgroundColor": "#03070B"
       },
 
       "softwareKeyboardLayoutMode": "pan",

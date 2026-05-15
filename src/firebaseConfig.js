@@ -11,8 +11,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 // FIRESTORE PRO MAX — melhor performance para React Native
 import {
   initializeFirestore,
-  persistentLocalCache,
-  persistentSingleTabManager,
+  getFirestore,
+  memoryLocalCache,
 } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
@@ -40,16 +40,21 @@ const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 //
 //  - experimentalForceLongPolling: resolve 100% os problemas em RN / 4G
 //  - useFetchStreams: acelera o android
-//  - persistentLocalCache: caching agressivo para tudo offline
-//  - persistentSingleTabManager: evita conflitos de múltiplas instâncias
+//  - memoryLocalCache: cache correto para React Native/Expo
+//    persistentLocalCache usa IndexedDB, que nao existe no app nativo
 //
-const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-  useFetchStreams: false,
-  localCache: persistentLocalCache({
-    tabManager: persistentSingleTabManager(),
-  }),
-});
+let db;
+
+try {
+  db = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+    useFetchStreams: false,
+    localCache: memoryLocalCache(),
+  });
+} catch (e) {
+  // Fast Refresh/dev-client pode tentar inicializar o Firestore de novo.
+  db = getFirestore(app);
+}
 
 // =========================================================================
 //  🔥 AUTH — INICIALIZAÇÃO SEGURA + PERSISTÊNCIA REAL

@@ -7,10 +7,11 @@ import {
   Layer,
   UserLocation,
 } from "@maplibre/maplibre-react-native";
+import { WayperTheme } from "../../theme/wayperTheme";
 
 export const OPENFREEMAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
-export const WAYPER_GREEN = "#00e676";
-export const WAYPER_DARK = "#0b0f0e";
+export const WAYPER_GREEN = WayperTheme.map.routeColor;
+export const WAYPER_DARK = WayperTheme.colors.background;
 export const WAYPER_DARK_MAP_STYLE = JSON.stringify({
   version: 8,
   name: "Wayper Night",
@@ -578,7 +579,7 @@ function WayperMapLibre({
               source="wayper-zones-source"
               paint={{
                 "fill-color": WAYPER_GREEN,
-                "fill-opacity": 0.09,
+                "fill-opacity": 0.18,
               }}
             />
             <Layer

@@ -1,77 +1,60 @@
-import React, { useEffect, useState } from "react";
-import {
-  Modal,
-  View,
-  Text,
-  TouchableOpacity,
-  TextInput,
-  Image,
-  ScrollView,
-  StyleSheet,
-  Platform,
-} from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Animated, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import Slider from "@react-native-community/slider";
 import * as ImagePicker from "expo-image-picker";
+import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
+import { WPBottomSheet, WPChip, WPInput } from "../ui";
+import { WayperTheme } from "../../theme/wayperTheme";
 
-const WAYPER_GREEN = "#00e676";
+const TAG_OPTIONS = [
+  { label: "Treino Forte", icon: "barbell-outline" },
+  { label: "Ritmo Médio", icon: "trending-up-outline" },
+  { label: "Recuperação", icon: "refresh-outline" },
+  { label: "Longão", icon: "walk-outline" },
+  { label: "Tiro", icon: "locate-outline" },
+  { label: "Leve", icon: "leaf-outline" },
+];
 
-/**
- * RunSummaryModal — versão final corrigida
- */
-export default function RunSummaryModal({
-  visible,
-  onClose,
-  onSave,
-  baseRunData = {},
-}) {
+export default function RunSummaryModal({ visible, onClose, onSave, baseRunData = {} }) {
+  const runData = useMemo(() => baseRunData || {}, [baseRunData]);
   const [name, setName] = useState("Minha Corrida");
   const [effort, setEffort] = useState(5);
-  const [mood, setMood] = useState("🙂");
-  const [weather, setWeather] = useState("sunny");
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState([]);
   const [photoUri, setPhotoUri] = useState(null);
+  const effortPulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (!visible) return;
 
-    setName(
-      baseRunData.name ||
-        `Corrida ${new Date(baseRunData.date || Date.now()).toLocaleString()}`
-    );
-    setEffort(baseRunData.effort ?? 5);
-    setMood(baseRunData.mood || "🙂");
-    setWeather(baseRunData.weather || "sunny");
-    setNotes(baseRunData.notes || "");
-    setTags(Array.isArray(baseRunData.tags) ? baseRunData.tags : []);
-    setPhotoUri(baseRunData.photoUri || null);
-  }, [visible, baseRunData]);
+    setName(runData.name || `Corrida ${new Date(runData.date || Date.now()).toLocaleString()}`);
+    setEffort(Math.min(10, Math.max(1, Math.round(Number(runData.effort ?? 5)))));
+    setNotes(runData.notes || "");
+    setTags(Array.isArray(runData.tags) ? runData.tags : []);
+    setPhotoUri(runData.photoUri || null);
+  }, [visible, runData]);
 
-  if (!visible) return null;
-  if (!baseRunData) return null;
+  useEffect(() => {
+    Animated.sequence([
+      Animated.spring(effortPulse, { toValue: 1.08, useNativeDriver: true, speed: 28, bounciness: 7 }),
+      Animated.spring(effortPulse, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 6 }),
+    ]).start();
+  }, [effort, effortPulse]);
 
-  const moodOptions = ["🤩", "🙂", "😐", "😫", "😤"];
-
-  const weatherOptions = [
-    { id: "sunny", label: "☀️ Sol" },
-    { id: "cloudy", label: "☁️ Nublado" },
-    { id: "rain", label: "🌧 Chuva" },
-    { id: "night", label: "🌙 Noite" },
-  ];
-
-  const tagOptions = [
-    "Treino Forte",
-    "Ritmo Médio",
-    "Recuperação",
-    "Longão",
-    "Tiro",
-    "Leve",
-  ];
+  const metrics = useMemo(
+    () => ({
+      distance: `${((Number(runData.distance) || 0) / 1000).toFixed(2)} km`,
+      duration: formatDuration(runData.duration),
+    }),
+    [runData]
+  );
 
   async function pickPhoto() {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        alert("Permissão negada para acessar fotos.");
+        Alert.alert("Permissão negada", "Permita acesso às fotos para adicionar uma imagem.");
         return;
       }
       const res = await ImagePicker.launchImageLibraryAsync({
@@ -88,20 +71,14 @@ export default function RunSummaryModal({
   }
 
   function toggleTag(tag) {
-    if (tags.includes(tag)) {
-      setTags(tags.filter((t) => t !== tag));
-    } else {
-      setTags([...tags, tag]);
-    }
+    setTags((current) => (current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag]));
   }
 
   async function handleSave() {
     const payload = {
-      ...baseRunData,
+      ...runData,
       name,
       effort,
-      mood,
-      weather,
       notes,
       tags,
       photoUri,
@@ -117,245 +94,388 @@ export default function RunSummaryModal({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View style={styles.overlay}>
-        <View style={styles.sheet}>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <Text style={styles.title}>Finalizar Corrida</Text>
-            <Text style={styles.subtitle}>
-              {(baseRunData.distance / 1000)?.toFixed?.(2)} km •{" "}
-              {formatDuration(baseRunData.duration)}
+    <WPBottomSheet visible={visible} onClose={onClose} maxHeight="92%" contentStyle={styles.sheet}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        <View style={styles.heroRow}>
+          <View style={styles.finishBadgeOuter}>
+            <View style={styles.finishBadgeMid}>
+              <View style={styles.finishBadgeInner}>
+                <Ionicons name="flag" size={32} color={WayperTheme.colors.primary} />
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.heroText}>
+            <Text style={styles.title}>
+              Finalizar <Text style={styles.titleAccent}>Corrida</Text>
             </Text>
-
-            <Text style={styles.label}>Nome</Text>
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder="Ex: Corrida matinal no centro"
-            />
-
-            <Text style={styles.label}>Grau de esforço (1-10)</Text>
-            <View style={styles.effortRow}>
-              {[1,2,3,4,5,6,7,8,9,10].map((n) => (
-                <TouchableOpacity
-                  key={n}
-                  style={[
-                    styles.effortDot,
-                    effort === n && styles.effortDotActive,
-                  ]}
-                  onPress={() => setEffort(n)}
-                >
-                  <Text
-                    style={[
-                      styles.effortText,
-                      effort === n && styles.effortTextActive,
-                    ]}
-                  >
-                    {n}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <View style={styles.metricsRow}>
+              <MetricPill icon="location-outline" value={metrics.distance} label="Distância" />
+              <MetricPill icon="timer-outline" value={metrics.duration} label="Tempo" />
             </View>
-
-            <Text style={styles.label}>Humor</Text>
-            <View style={styles.row}>
-              {moodOptions.map((m) => (
-                <TouchableOpacity
-                  key={m}
-                  onPress={() => setMood(m)}
-                  style={[styles.moodItem, mood === m && styles.moodActive]}
-                >
-                  <Text style={styles.moodText}>{m}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.label}>Clima</Text>
-            <View style={styles.row}>
-              {weatherOptions.map((w) => (
-                <TouchableOpacity
-                  key={w.id}
-                  onPress={() => setWeather(w.id)}
-                  style={[
-                    styles.weatherItem,
-                    weather === w.id && styles.weatherActive,
-                  ]}
-                >
-                  <Text style={styles.weatherText}>{w.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.label}>Tags</Text>
-            <View style={styles.tagContainer}>
-              {tagOptions.map((t) => (
-                <TouchableOpacity
-                  key={t}
-                  onPress={() => toggleTag(t)}
-                  style={[
-                    styles.tagItem,
-                    tags.includes(t) && styles.tagActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.tagText,
-                      tags.includes(t) && styles.tagTextActive,
-                    ]}
-                  >
-                    {t}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.label}>Notas</Text>
-            <TextInput
-              style={styles.notes}
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-              placeholder="Como foi a corrida? comentários..."
-            />
-
-            <Text style={styles.label}>Foto (opcional)</Text>
-            {photoUri ? (
-              <TouchableOpacity onPress={pickPhoto}>
-                <Image source={{ uri: photoUri }} style={styles.photo} />
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.photoBtn} onPress={pickPhoto}>
-                <Text style={{ color: "#fff", fontWeight: "700" }}>
-                  Selecionar foto
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-              <Text style={styles.saveText}>Salvar corrida</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
-              <Text style={styles.cancelText}>Cancelar</Text>
-            </TouchableOpacity>
-          </ScrollView>
+          </View>
         </View>
+
+        <WPInput
+          label="Nome"
+          value={name}
+          onChangeText={setName}
+          placeholder="Ex: Corrida matinal no centro"
+          style={styles.field}
+        />
+
+        <View style={styles.field}>
+          <View style={styles.effortHeader}>
+            <Text style={styles.label}>Grau de esforço (1-10)</Text>
+            <Animated.View style={[styles.effortBubble, { transform: [{ scale: effortPulse }] }]}>
+              <Text style={styles.effortBubbleText}>{effort}</Text>
+            </Animated.View>
+          </View>
+
+          <View style={styles.sliderWrap}>
+            <View pointerEvents="none" style={styles.sliderDots}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                <View key={n} style={[styles.sliderDot, effort >= n && styles.sliderDotActive]} />
+              ))}
+            </View>
+            <Slider
+              style={styles.slider}
+              minimumValue={1}
+              maximumValue={10}
+              step={1}
+              value={effort}
+              onValueChange={(value) => setEffort(Math.round(value))}
+              minimumTrackTintColor={WayperTheme.colors.primary}
+              maximumTrackTintColor={WayperTheme.colors.borderStrong}
+              thumbTintColor={WayperTheme.colors.primary}
+            />
+          </View>
+
+          <View style={styles.effortScaleRow}>
+            <View>
+              <Text style={styles.scaleNumber}>1</Text>
+              <Text style={styles.scaleLabel}>Leve</Text>
+            </View>
+            <View style={styles.scaleEnd}>
+              <Text style={styles.scaleNumber}>10</Text>
+              <Text style={styles.scaleLabel}>Máximo</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.field}>
+          <Text style={styles.label}>Tags</Text>
+          <View style={styles.tagContainer}>
+            {TAG_OPTIONS.map((tag) => (
+              <WPChip
+                key={tag.label}
+                label={tag.label}
+                active={tags.includes(tag.label)}
+                onPress={() => toggleTag(tag.label)}
+                icon={<Ionicons name={tag.icon} size={20} color={tags.includes(tag.label) ? WayperTheme.colors.textInverse : WayperTheme.colors.primary} />}
+                style={styles.tag}
+              />
+            ))}
+          </View>
+        </View>
+
+        <WPInput
+          label="Notas"
+          value={notes}
+          onChangeText={setNotes}
+          multiline
+          placeholder="Como foi a corrida? comentários..."
+          style={styles.field}
+          inputStyle={styles.notesInput}
+        />
+
+        <View style={styles.field}>
+          <Text style={styles.label}>Foto opcional</Text>
+          {photoUri ? (
+            <TouchableOpacity onPress={pickPhoto} activeOpacity={0.85}>
+              <Image source={{ uri: photoUri }} style={styles.photo} />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.photoBtn} onPress={pickPhoto} activeOpacity={0.85}>
+              <Ionicons name="image-outline" size={28} color={WayperTheme.colors.primary} />
+              <Text style={styles.photoText}>Selecionar foto</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <TouchableOpacity activeOpacity={0.9} onPress={handleSave} style={styles.saveTouchable}>
+          <LinearGradient
+            colors={[WayperTheme.colors.primaryLight, WayperTheme.colors.primary, WayperTheme.colors.primaryDark]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.saveButton}
+          >
+            <View pointerEvents="none" style={styles.saveOrb} />
+            <Ionicons name="save-outline" size={28} color={WayperTheme.colors.textInverse} />
+            <Text style={styles.saveText}>Salvar corrida</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+
+        <TouchableOpacity activeOpacity={0.75} onPress={onClose} style={styles.cancelButton}>
+          <Text style={styles.cancelText}>Cancelar</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </WPBottomSheet>
+  );
+}
+
+function MetricPill({ icon, value, label }) {
+  return (
+    <View style={styles.metricPill}>
+      <Ionicons name={icon} size={23} color={WayperTheme.colors.primary} />
+      <View>
+        <Text style={styles.metricValue}>{value}</Text>
+        <Text style={styles.metricLabel}>{label}</Text>
       </View>
-    </Modal>
+    </View>
   );
 }
 
 function formatDuration(sec = 0) {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
+  const total = Math.max(0, Math.round(Number(sec) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "flex-end",
-  },
   sheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    maxHeight: "85%",
-    padding: 16,
+    backgroundColor: "rgba(8, 16, 24, 0.96)",
+    borderColor: WayperTheme.colors.borderStrong,
+  },
+  content: {
+    paddingBottom: WayperTheme.spacing.xl,
+  },
+  heroRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.lg,
+  },
+  finishBadgeOuter: {
+    width: 118,
+    height: 118,
+    borderRadius: 59,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  finishBadgeMid: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: WayperTheme.colors.primary,
+  },
+  finishBadgeInner: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  heroText: {
+    flex: 1,
   },
   title: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: WAYPER_GREEN,
+    color: WayperTheme.colors.text,
+    fontSize: 34,
+    fontWeight: "900",
   },
-  subtitle: { color: "#666", marginBottom: 10 },
-  label: { marginTop: 12, fontWeight: "700", color: "#444" },
-  input: {
-    backgroundColor: "#f5f5f5",
-    padding: 10,
-    borderRadius: 10,
-    marginTop: 6,
+  titleAccent: {
+    color: WayperTheme.colors.primary,
   },
-  effortRow: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
-  effortDot: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  metricsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: WayperTheme.spacing.md,
+    marginTop: WayperTheme.spacing.lg,
+  },
+  metricPill: {
+    minHeight: 62,
+    minWidth: 146,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
     borderWidth: 1,
-    borderColor: "#ddd",
-    justifyContent: "center",
+    borderColor: WayperTheme.colors.borderStrong,
+    paddingHorizontal: WayperTheme.spacing.lg,
+    flexDirection: "row",
     alignItems: "center",
-    margin: 4,
+    gap: WayperTheme.spacing.md,
   },
-  effortDotActive: {
-    backgroundColor: WAYPER_GREEN,
-    borderColor: WAYPER_GREEN,
+  metricValue: {
+    color: WayperTheme.colors.text,
+    fontSize: 19,
+    fontWeight: "900",
   },
-  effortText: { fontWeight: "700" },
-  effortTextActive: { color: "#fff" },
-  row: { flexDirection: "row", marginTop: 8, flexWrap: "wrap" },
-  moodItem: {
-    padding: 8,
-    marginRight: 10,
-    borderRadius: 10,
-    backgroundColor: "#f1f1f1",
+  metricLabel: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 1,
   },
-  moodActive: { backgroundColor: WAYPER_GREEN },
-  moodText: { fontSize: 20 },
-  weatherItem: {
-    backgroundColor: "#f1f1f1",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    marginRight: 8,
+  field: {
+    marginTop: WayperTheme.spacing.xl,
   },
-  weatherActive: { backgroundColor: WAYPER_GREEN },
-  weatherText: { fontWeight: "700" },
-  tagContainer: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
-  tagItem: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: "#eee",
-    borderRadius: 20,
-    marginRight: 8,
-    marginTop: 6,
+  label: {
+    ...WayperTheme.typography.label,
+    fontSize: 16,
+    color: "#C8D2E2",
   },
-  tagActive: { backgroundColor: WAYPER_GREEN },
-  tagText: { color: "#333" },
-  tagTextActive: { color: "#fff", fontWeight: "700" },
-  notes: {
-    backgroundColor: "#f5f5f5",
-    padding: 10,
-    borderRadius: 10,
-    height: 90,
-    marginTop: 6,
-    textAlignVertical: "top",
+  effortHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: WayperTheme.spacing.sm,
+  },
+  effortBubble: {
+    minWidth: 56,
+    minHeight: 56,
+    borderRadius: WayperTheme.radius.lg,
+    backgroundColor: WayperTheme.colors.surface,
+    borderWidth: 2,
+    borderColor: WayperTheme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    ...WayperTheme.shadows.greenGlow,
+  },
+  effortBubbleText: {
+    color: WayperTheme.colors.primary,
+    fontSize: 27,
+    fontWeight: "900",
+  },
+  sliderWrap: {
+    height: 58,
+    justifyContent: "center",
+  },
+  slider: {
+    width: "100%",
+    height: 54,
+  },
+  sliderDots: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    top: 25,
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  sliderDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: WayperTheme.colors.textSubtle,
+    opacity: 0.75,
+  },
+  sliderDotActive: {
+    backgroundColor: WayperTheme.colors.primaryLight,
+    opacity: 1,
+  },
+  effortScaleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  scaleEnd: {
+    alignItems: "flex-end",
+  },
+  scaleNumber: {
+    color: "#C8D2E2",
+    fontSize: 28,
+    fontWeight: "800",
+  },
+  scaleLabel: {
+    color: WayperTheme.colors.primary,
+    fontSize: 14,
+    fontWeight: "800",
+    marginTop: WayperTheme.spacing.xs,
+  },
+  tagContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: WayperTheme.spacing.md,
+    marginTop: WayperTheme.spacing.md,
+  },
+  tag: {
+    marginBottom: WayperTheme.spacing.xs,
+  },
+  notesInput: {
+    paddingRight: 46,
   },
   photoBtn: {
-    backgroundColor: WAYPER_GREEN,
-    padding: 12,
-    borderRadius: 10,
+    minHeight: 98,
+    borderRadius: WayperTheme.radius.xl,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: WayperTheme.colors.borderStrong,
+    backgroundColor: "rgba(16, 27, 37, 0.58)",
     alignItems: "center",
-    marginTop: 6,
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: WayperTheme.spacing.md,
+    marginTop: WayperTheme.spacing.sm,
+  },
+  photoText: {
+    color: WayperTheme.colors.primary,
+    fontWeight: "900",
+    fontSize: 16,
   },
   photo: {
     width: "100%",
-    height: 160,
-    borderRadius: 12,
-    marginTop: 8,
+    height: 170,
+    borderRadius: WayperTheme.radius.xl,
+    marginTop: WayperTheme.spacing.sm,
   },
-  saveBtn: {
-    backgroundColor: WAYPER_GREEN,
-    padding: 14,
-    borderRadius: 12,
-    marginTop: 18,
+  saveTouchable: {
+    marginTop: WayperTheme.spacing.xl,
+    borderRadius: WayperTheme.radius.xl,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  saveButton: {
+    minHeight: 78,
+    borderRadius: WayperTheme.radius.xl,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: WayperTheme.spacing.md,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryLight,
   },
-  saveText: { color: "#fff", fontWeight: "800" },
-  cancelBtn: { padding: 12, alignItems: "center", marginTop: 8 },
-  cancelText: { color: "#888" },
+  saveOrb: {
+    position: "absolute",
+    width: 108,
+    height: 108,
+    borderRadius: 54,
+    left: "34%",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+  },
+  saveText: {
+    color: WayperTheme.colors.textInverse,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  cancelButton: {
+    alignItems: "center",
+    paddingVertical: WayperTheme.spacing.lg,
+  },
+  cancelText: {
+    color: WayperTheme.colors.textMuted,
+    fontWeight: "800",
+  },
 });
