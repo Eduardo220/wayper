@@ -27,6 +27,7 @@ import { auth } from "./src/firebaseConfig";
 import LoginScreen from "./src/screens/Auth/LoginScreen";
 import RegisterScreen from "./src/screens/Auth/RegisterScreen";
 import MainNavigator from "./src/navigation/MainNavigator";
+import { WayperTheme } from "./src/theme/wayperTheme";
 
 // ===============================
 // REACT QUERY
@@ -101,7 +102,7 @@ export default function App() {
       <View style={styles.bootScreen}>
         <Image source={BRAND_LOGO} style={styles.bootLogo} resizeMode="contain" />
         <Text style={styles.bootTitle}>Wayper</Text>
-        <ActivityIndicator size="large" color="#00e676" />
+        <ActivityIndicator size="large" color={WayperTheme.colors.primary} />
       </View>
     );
   }
@@ -138,7 +139,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#05070a",
+    backgroundColor: WayperTheme.colors.background,
     padding: 24,
   },
   bootLogo: {
@@ -148,7 +149,7 @@ const styles = StyleSheet.create({
     borderRadius: 32,
   },
   bootTitle: {
-    color: "#ffffff",
+    color: WayperTheme.colors.text,
     fontSize: 30,
     fontWeight: "900",
     marginBottom: 24,

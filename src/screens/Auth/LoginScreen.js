@@ -1,90 +1,122 @@
-// LoginScreen.updated.js
-// Versão melhorada do LoginScreen
-// - Validações, mensagens amigáveis, proteção contra double-submit
-// - Suporte a login por email/senha e Google (expo-auth-session hook exposto pelo authService)
-// - Comentários em português e boas práticas de performance
-
-import React, { useCallback, useState, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Image,
-  Keyboard,
-  Alert,
-  Platform,
+  View,
 } from "react-native";
-import { Feather as Icon } from "@expo/vector-icons";
+import { Feather, Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 
 import {
-  signInEmail,
   resetPassword,
-  useGoogleAuth,
+  signInEmail,
   signInWithGoogleAsync,
+  useGoogleAuth,
 } from "../../services/auth/authService";
+import { WayperTheme } from "../../theme/wayperTheme";
 
-// regex simples para validar email (suficiente para UX)
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const BRAND_LOGO = require("../../../assets/logo.png");
 
-// mensagens padrão para mapeamento de erros firebase (pode ser estendido)
-const ERROR_MAP = {
-  "auth/invalid-email": "Formato de email inválido.",
-  "auth/user-not-found": "Usuário não encontrado. Verifique o email.",
-  "auth/wrong-password": "Senha incorreta.",
-  "auth/too-many-requests": "Muitas tentativas. Tente novamente mais tarde.",
-};
+function AuthInput({
+  icon,
+  value,
+  onChangeText,
+  placeholder,
+  secureTextEntry,
+  keyboardType,
+  autoCapitalize = "none",
+  textContentType,
+  returnKeyType,
+  onSubmitEditing,
+  right,
+}) {
+  return (
+    <View style={styles.inputShell}>
+      <Ionicons name={icon} size={19} color={WayperTheme.colors.primary} />
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={WayperTheme.colors.textSubtle}
+        secureTextEntry={secureTextEntry}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+        textContentType={textContentType}
+        returnKeyType={returnKeyType}
+        onSubmitEditing={onSubmitEditing}
+        style={styles.input}
+      />
+      {right}
+    </View>
+  );
+}
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Hook para Google (expo-auth-session) — vindo do authService
   const [request, response, promptAsync] = useGoogleAuth();
 
+  const canSubmit = useMemo(() => {
+    return EMAIL_REGEX.test(email.trim().toLowerCase()) && password.trim().length >= 6;
+  }, [email, password]);
+
   useEffect(() => {
-    // quando o response do Google chegar, pegar o id_token e efetuar login
     let mounted = true;
-    (async () => {
-      try {
-        const googleIdToken = response?.authentication?.idToken || response?.params?.id_token;
-        if (response?.type === "success" && googleIdToken) {
-          setLoading(true);
-          setError("");
-          await signInWithGoogleAsync(googleIdToken);
-          if (mounted) navigation.replace("Main");
-        } else if (response?.type === "error") {
-          setError("Falha no login com Google.");
-        }
-      } catch (e) {
-        setError("Erro ao logar com Google.");
-      } finally {
-        setLoading(false);
+
+    async function finishGoogleLogin() {
+      const googleIdToken = response?.authentication?.idToken || response?.params?.id_token;
+      if (response?.type !== "success" || !googleIdToken) {
+        if (response?.type === "error") setError("Nao foi possivel entrar com Google.");
+        return;
       }
-    })();
-    return () => { mounted = false; };
-  }, [response, navigation]);
+
+      try {
+        setGoogleLoading(true);
+        setError("");
+        await signInWithGoogleAsync(googleIdToken);
+        if (mounted) navigation.replace("Main");
+      } catch (err) {
+        if (mounted) setError(err?.message || "Nao foi possivel entrar com Google.");
+      } finally {
+        if (mounted) setGoogleLoading(false);
+      }
+    }
+
+    finishGoogleLogin();
+    return () => {
+      mounted = false;
+    };
+  }, [navigation, response]);
 
   const handleLogin = useCallback(async () => {
-    // protege contra múltiplos submits
     if (loading) return;
 
-    // limpeza e validação básica
-    const mail = (email || "").trim().toLowerCase();
-    const pass = (password || "").trim();
+    const mail = email.trim().toLowerCase();
+    const pass = password.trim();
 
     if (!mail || !pass) {
       setError("Preencha email e senha.");
       return;
     }
+
     if (!EMAIL_REGEX.test(mail)) {
-      setError("Digite um e‑mail válido.");
+      setError("Digite um email valido.");
       return;
     }
 
@@ -92,149 +124,445 @@ export default function LoginScreen({ navigation }) {
       setLoading(true);
       setError("");
       Keyboard.dismiss();
-
       await signInEmail(mail, pass);
-
-      // navega para tela principal substituindo a stack (não permite voltar ao login)
       navigation.replace("Main");
     } catch (err) {
-      // tenta mapear erro conhecido
-      const msg = (err && (err.code && ERROR_MAP[err.code])) ? ERROR_MAP[err.code] : "Falha ao autenticar. Verifique suas credenciais.";
-      setError(msg);
+      setError(err?.message || "Falha ao autenticar. Verifique suas credenciais.");
     } finally {
       setLoading(false);
     }
-  }, [email, password, loading, navigation]);
+  }, [email, loading, navigation, password]);
 
   const handleForgotPassword = useCallback(async () => {
     if (loading) return;
 
-    const mail = (email || "").trim().toLowerCase();
+    const mail = email.trim().toLowerCase();
     if (!mail) {
-      setError("Coloque seu email para receber o link.");
+      setError("Digite seu email para receber o link.");
       return;
     }
+
     if (!EMAIL_REGEX.test(mail)) {
-      setError("Digite um e‑mail válido.");
+      setError("Digite um email valido.");
       return;
     }
 
     try {
       setLoading(true);
       setError("");
-
+      Keyboard.dismiss();
       await resetPassword(mail);
-
-      // feedback amigável
-      Alert.alert("Enviado", "Enviamos um email com instruções para resetar sua senha.");
+      Alert.alert("Email enviado", "Enviamos as instrucoes para redefinir sua senha.");
     } catch (err) {
-      const msg = (err && err.code === "auth/user-not-found") ? "Email não encontrado." : "Não conseguimos enviar o email. Tente novamente.";
-      setError(msg);
+      setError(err?.message || "Nao conseguimos enviar o email. Tente novamente.");
     } finally {
       setLoading(false);
     }
   }, [email, loading]);
 
+  const handleGoogle = useCallback(() => {
+    if (loading || googleLoading) return;
+    if (request) {
+      promptAsync();
+      return;
+    }
+    Alert.alert("Google Auth", "Login com Google ainda nao esta configurado neste build.");
+  }, [googleLoading, loading, promptAsync, request]);
+
   return (
-    <View style={styles.container} accessible accessibilityLabel="Tela de login">
-      <View style={styles.brandBlock}>
-        <Image source={BRAND_LOGO} style={styles.logo} resizeMode="contain" />
-        <Text style={styles.brandName}>Wayper</Text>
-      </View>
-
-      <Text style={styles.title}>Entrar</Text>
-
-      {!!error && <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>}
-
-      <TextInput
-        placeholder="Email"
-        style={styles.input}
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        textContentType="emailAddress"
-        returnKeyType="next"
-        onSubmitEditing={() => { /* foco no próximo campo */ }}
-      />
-
-      <View style={styles.passwordContainer} accessible accessibilityLabel="campo senha">
-        <TextInput
-          placeholder="Senha"
-          style={styles.passwordInput}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry={!showPassword}
-          textContentType="password"
-          returnKeyType="done"
-          onSubmitEditing={handleLogin}
-        />
-
-        <TouchableOpacity
-          onPress={() => setShowPassword((v) => !v)}
-          accessibilityLabel={showPassword ? "Ocultar senha" : "Mostrar senha"}
-          accessibilityRole="button"
-          style={styles.iconButton}
-        >
-          <Icon name={showPassword ? "eye-off" : "eye"} size={20} />
-        </TouchableOpacity>
-      </View>
-
-      <TouchableOpacity
-        style={[styles.button, loading ? styles.buttonDisabled : null]}
-        onPress={handleLogin}
-        disabled={loading}
-        accessibilityRole="button"
-        accessibilityLabel="Entrar"
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      style={styles.screen}
+    >
+      <LinearGradient
+        colors={[WayperTheme.colors.background, WayperTheme.colors.backgroundAlt, WayperTheme.colors.surface]}
+        style={styles.background}
       >
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Entrar</Text>}
-      </TouchableOpacity>
+        <View style={styles.glowTop} />
+        <View style={styles.glowBottom} />
 
-      <View style={styles.row}>
-        <TouchableOpacity onPress={() => navigation.navigate("Register")} disabled={loading}>
-          <Text style={styles.link}>Criar conta</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={handleForgotPassword} disabled={loading}>
-          <Text style={styles.forgot}>Esqueci minha senha</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* botão de login com Google (se configurado) */}
-      <View style={{ marginTop: 20, alignItems: "center" }}>
-        <TouchableOpacity
-          onPress={() => {
-            // caso o request esteja presente, abre o fluxo do Google
-            if (request) promptAsync();
-            else Alert.alert("Google Auth", "Autenticação Google não configurada.");
-          }}
-          style={styles.googleBtn}
-          disabled={loading}
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.content}
         >
-          <Text style={styles.googleTxt}>Entrar com Google</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+          <View style={styles.brandBlock}>
+            <View style={styles.logoFrame}>
+              <Image source={BRAND_LOGO} style={styles.logo} resizeMode="contain" />
+            </View>
+            <View style={styles.brandTextWrap}>
+              <Text style={styles.brandName}>Wayper</Text>
+              <Text style={styles.brandCaption}>Run. Capture. Evolve.</Text>
+            </View>
+          </View>
+
+          <LinearGradient
+            colors={["rgba(0,230,118,0.14)", "rgba(56,217,255,0.06)", WayperTheme.colors.surfaceElevated]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.card}
+          >
+            <View style={styles.cardHeader}>
+              <View style={styles.cardIcon}>
+                <Ionicons name="flash-outline" size={24} color={WayperTheme.colors.primary} />
+              </View>
+              <View style={styles.cardTitleWrap}>
+                <Text style={styles.eyebrow}>Bem-vindo de volta</Text>
+                <Text style={styles.title}>Entrar</Text>
+              </View>
+            </View>
+
+            <Text style={styles.subtitle}>
+              Acesse suas corridas, grupos, zonas e ranking em tempo real.
+            </Text>
+
+            {error ? (
+              <View style={styles.errorBox}>
+                <Ionicons name="alert-circle-outline" size={18} color={WayperTheme.colors.danger} />
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : null}
+
+            <Text style={styles.label}>Email</Text>
+            <AuthInput
+              icon="mail-outline"
+              value={email}
+              onChangeText={setEmail}
+              placeholder="voce@email.com"
+              keyboardType="email-address"
+              textContentType="emailAddress"
+              returnKeyType="next"
+            />
+
+            <Text style={styles.label}>Senha</Text>
+            <AuthInput
+              icon="lock-closed-outline"
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Sua senha"
+              secureTextEntry={!showPassword}
+              textContentType="password"
+              returnKeyType="done"
+              onSubmitEditing={handleLogin}
+              right={
+                <Pressable
+                  onPress={() => setShowPassword((current) => !current)}
+                  style={styles.eyeButton}
+                >
+                  <Feather
+                    name={showPassword ? "eye-off" : "eye"}
+                    size={19}
+                    color={WayperTheme.colors.textMuted}
+                  />
+                </Pressable>
+              }
+            />
+
+            <TouchableOpacity
+              activeOpacity={0.84}
+              onPress={handleForgotPassword}
+              disabled={loading}
+              style={styles.forgotButton}
+            >
+              <Text style={styles.forgotText}>Esqueci minha senha</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.86}
+              style={[styles.primaryButton, (!canSubmit || loading) && styles.disabledButton]}
+              onPress={handleLogin}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color={WayperTheme.colors.textInverse} />
+              ) : (
+                <>
+                  <Text style={styles.primaryButtonText}>Entrar</Text>
+                  <Ionicons name="arrow-forward" size={21} color={WayperTheme.colors.textInverse} />
+                </>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.dividerRow}>
+              <View style={styles.divider} />
+              <Text style={styles.dividerText}>ou</Text>
+              <View style={styles.divider} />
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.84}
+              onPress={handleGoogle}
+              disabled={loading || googleLoading}
+              style={styles.googleButton}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color={WayperTheme.colors.text} />
+              ) : (
+                <>
+                  <Ionicons name="logo-google" size={19} color={WayperTheme.colors.text} />
+                  <Text style={styles.googleText}>Entrar com Google</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </LinearGradient>
+
+          <TouchableOpacity
+            activeOpacity={0.86}
+            onPress={() => navigation.navigate("Register")}
+            disabled={loading}
+            style={styles.switchButton}
+          >
+            <Text style={styles.switchMuted}>Ainda nao tem conta?</Text>
+            <Text style={styles.switchText}> Criar conta</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </LinearGradient>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, justifyContent: "center", backgroundColor: "#fff" },
-  brandBlock: { alignItems: "center", marginBottom: 28 },
-  logo: { width: 118, height: 118, borderRadius: 26, marginBottom: 12 },
-  brandName: { color: "#0d0f12", fontSize: 34, fontWeight: "900" },
-  title: { fontSize: 28, fontWeight: "700", marginBottom: 20 },
-  input: { backgroundColor: "#f5f6fb", padding: 12, marginBottom: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e6e9f0" },
-  passwordContainer: { backgroundColor: "#f5f6fb", flexDirection: "row", alignItems: "center", paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: "#e6e9f0", marginBottom: 12 },
-  passwordInput: { flex: 1, paddingVertical: 12 },
-  iconButton: { padding: 8 },
-  button: { backgroundColor: "#00b894", padding: 14, borderRadius: 10, alignItems: "center" },
-  buttonDisabled: { opacity: 0.7 },
-  buttonText: { color: "#fff", fontWeight: "700" },
-  link: { color: "#00b894", fontWeight: "600" },
-  forgot: { color: "#777" },
-  row: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
-  error: { color: "#c62828", marginBottom: 10 },
-  googleBtn: { backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: "#ddd" },
-  googleTxt: { color: "#444" },
+  screen: {
+    flex: 1,
+    backgroundColor: WayperTheme.colors.background,
+  },
+  background: {
+    flex: 1,
+  },
+  glowTop: {
+    position: "absolute",
+    top: -90,
+    right: -80,
+    width: 210,
+    height: 210,
+    borderRadius: 105,
+    backgroundColor: "rgba(0,230,118,0.12)",
+  },
+  glowBottom: {
+    position: "absolute",
+    bottom: -120,
+    left: -100,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: "rgba(56,217,255,0.08)",
+  },
+  content: {
+    flexGrow: 1,
+    justifyContent: "center",
+    padding: WayperTheme.spacing.page,
+    paddingVertical: 42,
+  },
+  brandBlock: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: WayperTheme.spacing.xl,
+  },
+  logoFrame: {
+    width: 74,
+    height: 74,
+    borderRadius: 26,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  logo: {
+    width: 58,
+    height: 58,
+  },
+  brandTextWrap: {
+    marginLeft: WayperTheme.spacing.lg,
+  },
+  brandName: {
+    color: WayperTheme.colors.text,
+    fontSize: 36,
+    fontWeight: "900",
+  },
+  brandCaption: {
+    color: WayperTheme.colors.primary,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+    marginTop: 2,
+  },
+  card: {
+    borderRadius: WayperTheme.radius.xxl,
+    padding: WayperTheme.spacing.xl,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    overflow: "hidden",
+    ...WayperTheme.shadows.card,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  cardIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    marginRight: WayperTheme.spacing.md,
+  },
+  cardTitleWrap: {
+    flex: 1,
+  },
+  eyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  title: {
+    color: WayperTheme.colors.text,
+    fontSize: 31,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  subtitle: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 21,
+    marginTop: WayperTheme.spacing.md,
+    marginBottom: WayperTheme.spacing.lg,
+  },
+  errorBox: {
+    minHeight: 46,
+    borderRadius: WayperTheme.radius.lg,
+    backgroundColor: WayperTheme.colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.dangerBorder,
+    paddingHorizontal: WayperTheme.spacing.md,
+    paddingVertical: WayperTheme.spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.sm,
+    marginBottom: WayperTheme.spacing.md,
+  },
+  errorText: {
+    flex: 1,
+    color: WayperTheme.colors.text,
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 17,
+  },
+  label: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "900",
+    marginBottom: WayperTheme.spacing.xs,
+    marginTop: WayperTheme.spacing.sm,
+  },
+  inputShell: {
+    minHeight: 58,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    paddingHorizontal: WayperTheme.spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  input: {
+    flex: 1,
+    color: WayperTheme.colors.text,
+    fontSize: 15,
+    fontWeight: "700",
+    paddingVertical: 12,
+    marginLeft: WayperTheme.spacing.sm,
+  },
+  eyeButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  forgotButton: {
+    alignSelf: "flex-end",
+    paddingVertical: WayperTheme.spacing.md,
+  },
+  forgotText: {
+    color: WayperTheme.colors.cyan,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  primaryButton: {
+    minHeight: 60,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primary,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: WayperTheme.spacing.sm,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  disabledButton: {
+    opacity: 0.64,
+  },
+  primaryButtonText: {
+    color: WayperTheme.colors.textInverse,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.md,
+    marginVertical: WayperTheme.spacing.lg,
+  },
+  divider: {
+    flex: 1,
+    height: 1,
+    backgroundColor: WayperTheme.colors.borderStrong,
+  },
+  dividerText: {
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  googleButton: {
+    minHeight: 56,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: WayperTheme.spacing.sm,
+  },
+  googleText: {
+    color: WayperTheme.colors.text,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  switchButton: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: WayperTheme.spacing.xl,
+  },
+  switchMuted: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  switchText: {
+    color: WayperTheme.colors.primary,
+    fontSize: 14,
+    fontWeight: "900",
+  },
 });

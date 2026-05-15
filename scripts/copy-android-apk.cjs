@@ -6,29 +6,37 @@ const rootDir = path.resolve(__dirname, "..");
 const distDir = path.join(rootDir, "dist");
 
 const apks = {
-  debug: {
-    source: path.join(rootDir, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk"),
-    destination: path.join(distDir, "Wayper-local-server-debug.apk"),
+  dev: {
+    source: path.join(rootDir, "android", "app", "build", "outputs", "apk", "dev", "debug", "app-dev-debug.apk"),
+    destination: path.join(distDir, "Wayper-dev-debug.apk"),
+    buildScript: "android:build:dev",
   },
-  release: {
-    source: path.join(rootDir, "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
-    destination: path.join(distDir, "Wayper-standalone-release.apk"),
+  prod: {
+    source: path.join(rootDir, "android", "app", "build", "outputs", "apk", "prod", "release", "app-prod-release.apk"),
+    destination: path.join(distDir, "Wayper-prod-release.apk"),
+    buildScript: "android:build:prod",
   },
 };
 
-const targets = target === "all" ? Object.keys(apks) : [target];
+const aliases = {
+  debug: "dev",
+  release: "prod",
+};
+
+const normalizedTarget = aliases[target] || target;
+const targets = normalizedTarget === "all" ? Object.keys(apks) : [normalizedTarget];
 
 for (const name of targets) {
   const apk = apks[name];
 
   if (!apk) {
-    console.error(`Unknown APK target: ${name}. Use debug, release, or all.`);
+    console.error(`Unknown APK target: ${name}. Use dev, prod, debug, release, or all.`);
     process.exit(1);
   }
 
   if (!fs.existsSync(apk.source)) {
     console.error(`APK not found: ${path.relative(rootDir, apk.source)}`);
-    console.error(`Run npm run android:build:${name} first.`);
+    console.error(`Run npm run ${apk.buildScript} first.`);
     process.exit(1);
   }
 
