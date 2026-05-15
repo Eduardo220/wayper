@@ -100,9 +100,15 @@ export default function App() {
   if (!authChecked) {
     return (
       <View style={styles.bootScreen}>
-        <Image source={BRAND_LOGO} style={styles.bootLogo} resizeMode="contain" />
-        <Text style={styles.bootTitle}>Wayper</Text>
-        <ActivityIndicator size="large" color={WayperTheme.colors.primary} />
+        <View style={styles.bootCard}>
+          <Image source={BRAND_LOGO} style={styles.bootLogo} resizeMode="contain" />
+          <Text style={styles.bootTitle}>Wayper</Text>
+          <Text style={styles.bootMessage}>Conectando sua conta e preparando o app.</Text>
+          <View style={styles.bootStatusPill}>
+            <ActivityIndicator size="small" color={WayperTheme.colors.primary} />
+            <Text style={styles.bootStatusText}>Carregando</Text>
+          </View>
+        </View>
       </View>
     );
   }
@@ -140,18 +146,54 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: WayperTheme.colors.background,
-    padding: 24,
+    padding: WayperTheme.spacing.page,
+  },
+  bootCard: {
+    width: "100%",
+    maxWidth: 330,
+    alignItems: "center",
+    paddingVertical: WayperTheme.spacing.xxl,
+    paddingHorizontal: WayperTheme.spacing.xl,
+    borderRadius: WayperTheme.radius.xxl,
+    backgroundColor: WayperTheme.colors.surfaceGlass,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    ...WayperTheme.shadows.card,
   },
   bootLogo: {
-    width: 150,
-    height: 150,
-    marginBottom: 18,
-    borderRadius: 32,
+    width: 124,
+    height: 124,
+    marginBottom: WayperTheme.spacing.lg,
+    borderRadius: 28,
   },
   bootTitle: {
     color: WayperTheme.colors.text,
     fontSize: 30,
     fontWeight: "900",
-    marginBottom: 24,
+    marginBottom: WayperTheme.spacing.sm,
+  },
+  bootMessage: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: WayperTheme.spacing.xl,
+  },
+  bootStatusPill: {
+    minHeight: 44,
+    paddingHorizontal: WayperTheme.spacing.lg,
+    borderRadius: WayperTheme.radius.pill,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.sm,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  bootStatusText: {
+    color: WayperTheme.colors.primary,
+    fontSize: 13,
+    fontWeight: "800",
   },
 });

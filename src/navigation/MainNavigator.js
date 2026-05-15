@@ -189,8 +189,30 @@ export default function MainNavigator() {
   if (loadingUser) {
     return (
       <View style={styles.loadingScreen}>
-        <Image source={BRAND_LOGO} style={styles.loadingLogo} resizeMode="contain" />
-        <ActivityIndicator size="large" color={WayperTheme.colors.primary} />
+        <LinearGradient
+          colors={[
+            "rgba(0, 230, 118, 0.18)",
+            "rgba(56, 217, 255, 0.08)",
+            "transparent",
+          ]}
+          style={styles.loadingGlow}
+        />
+
+        <View style={styles.loadingCard}>
+          <View style={styles.loadingLogoFrame}>
+            <Image source={BRAND_LOGO} style={styles.loadingLogo} resizeMode="contain" />
+          </View>
+
+          <Text style={styles.loadingTitle}>Preparando seu Wayper</Text>
+          <Text style={styles.loadingMessage}>
+            Estamos carregando seu perfil, corridas e mapa. Isso leva so alguns segundos.
+          </Text>
+
+          <View style={styles.loadingStatusPill}>
+            <ActivityIndicator size="small" color={WayperTheme.colors.primary} />
+            <Text style={styles.loadingStatusText}>Sincronizando dados</Text>
+          </View>
+        </View>
       </View>
     );
   }
@@ -249,12 +271,75 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: WayperTheme.colors.background,
+    padding: WayperTheme.spacing.page,
+    overflow: "hidden",
+  },
+  loadingGlow: {
+    position: "absolute",
+    width: 340,
+    height: 340,
+    borderRadius: 170,
+    top: "24%",
+    opacity: 0.78,
+  },
+  loadingCard: {
+    width: "100%",
+    maxWidth: 340,
+    alignItems: "center",
+    paddingVertical: WayperTheme.spacing.xxl,
+    paddingHorizontal: WayperTheme.spacing.xl,
+    borderRadius: WayperTheme.radius.xxl,
+    backgroundColor: WayperTheme.colors.surfaceGlass,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    ...WayperTheme.shadows.card,
+  },
+  loadingLogoFrame: {
+    width: 122,
+    height: 122,
+    borderRadius: WayperTheme.radius.xxl,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    marginBottom: WayperTheme.spacing.lg,
   },
   loadingLogo: {
-    width: 120,
-    height: 120,
-    borderRadius: 26,
-    marginBottom: 18,
+    width: 96,
+    height: 96,
+    borderRadius: 22,
+  },
+  loadingTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 24,
+    fontWeight: "900",
+    textAlign: "center",
+    marginBottom: WayperTheme.spacing.sm,
+  },
+  loadingMessage: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: WayperTheme.spacing.xl,
+  },
+  loadingStatusPill: {
+    minHeight: 46,
+    paddingHorizontal: WayperTheme.spacing.lg,
+    borderRadius: WayperTheme.radius.pill,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.sm,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  loadingStatusText: {
+    color: WayperTheme.colors.primary,
+    fontSize: 13,
+    fontWeight: "800",
   },
   headerTitle: {
     flexDirection: "row",

@@ -1,7 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -130,16 +129,12 @@ export default function RegisterScreen({ navigation }) {
       Keyboard.dismiss();
 
       await signUpEmail(cleanEmail, pass, cleanUsername);
-
-      Alert.alert("Conta criada", "Seu perfil Wayper esta pronto.", [
-        { text: "Comecar", onPress: () => navigation.replace("Main") },
-      ]);
     } catch (err) {
       setError(err?.message || "Nao foi possivel criar a conta. Tente novamente.");
     } finally {
       setLoading(false);
     }
-  }, [cleanEmail, cleanUsername, confirm, loading, navigation, pass]);
+  }, [cleanEmail, cleanUsername, confirm, loading, pass]);
 
   return (
     <KeyboardAvoidingView
