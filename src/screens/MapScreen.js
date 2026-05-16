@@ -43,10 +43,8 @@ import sync from "../utils/sync";
 import { beautifyRoutePath, calculateRouteDistance, finalizeRoutePath } from "../utils/routeDrawing";
 import xpService from "../services/xp/xpService";
 import { updateProfileStats } from "../services/profile/profileService";
-import KalmanFilter2D from "../utils/kalman";
 
 /* Tunáveis */
-const TARGET_GPS_ACCURACY_M = 42;
 const MAX_GPS_ACCURACY_M = 65;
 const FLUSH_INTERVAL_MS = 300;
 const WATCH_TIME_INTERVAL_MS = 1000;
@@ -206,6 +204,20 @@ const buildPolygonSvgPoints = (coords = [], width = 320, height = 210, padding =
     .join(" ");
 };
 
+const appendLivePointToPath = (path = [], liveLocation = null) => {
+  const clean = sanitizePath(path);
+  const live = sanitizePath([liveLocation])[0];
+  if (!live) return clean;
+  if (clean.length === 0) return [live];
+
+  const last = clean[clean.length - 1];
+  const distanceToLive = getDistance(last.latitude, last.longitude, live.latitude, live.longitude);
+  if (!Number.isFinite(distanceToLive) || distanceToLive < 0.6) return clean;
+  if (distanceToLive > MAX_REASONABLE_STEP_M) return clean;
+
+  return clean.concat(live);
+};
+
 const DEFAULT_COORD = WAYPER_FALLBACK_COORD;
 
 /* ================= Component ================= */
@@ -238,7 +250,6 @@ const MapScreen = ({ navigation }) => {
   const [showSavedModal, setShowSavedModal] = useState(false);
   const [lastSavedRun, setLastSavedRun] = useState(null);
 
-  const kalman2dRef = useRef(new KalmanFilter2D()).current;
   const savedFullShareRef = useRef(null);
   const savedRouteShareRef = useRef(null);
 
@@ -573,31 +584,22 @@ const MapScreen = ({ navigation }) => {
         const timestamp = Number(locObj.timestamp);
         const now = Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now();
 
-        let sLat = lat;
-        let sLon = lon;
-
-        try {
-          const smooth = kalman2dRef.filter(lat, lon, Number.isFinite(accuracy) ? Number(accuracy) : 999, now) || {};
-          if (Number.isFinite(Number(smooth.latitude))) sLat = Number(smooth.latitude);
-          if (Number.isFinite(Number(smooth.longitude))) sLon = Number(smooth.longitude);
-        } catch (kalErr) {
-          debug("kalman error", kalErr);
+        if (!runningRef.current) {
+          setLocation((prev) => {
+            if (prev && prev.latitude === lat && prev.longitude === lon) return prev;
+            return { latitude: lat, longitude: lon, accuracy, timestamp: now };
+          });
+          return;
         }
-
-        setLocation((prev) => {
-          if (prev && prev.latitude === sLat && prev.longitude === sLon) return prev;
-          return { latitude: sLat, longitude: sLon };
-        });
-
-        if (!runningRef.current) return;
 
         if (!Number.isFinite(accuracy) || accuracy > MAX_GPS_ACCURACY_M) return;
 
-        const point = { latitude: sLat, longitude: sLon, accuracy, timestamp: now };
+        const point = { latitude: lat, longitude: lon, accuracy, timestamp: now };
 
         if (!lastPointRef.current) {
           lastPointRef.current = point;
           routeBufferRef.current.push(point);
+          setLocation(point);
           return;
         }
 
@@ -612,8 +614,12 @@ const MapScreen = ({ navigation }) => {
         if (speedMps != null && d > 8 && speedMps > speedLimit) return;
         if (d > MAX_REASONABLE_STEP_M && (speedMps == null || speedMps > speedLimit)) return;
 
+        setLocation((prev) => {
+          if (prev && prev.latitude === point.latitude && prev.longitude === point.longitude) return prev;
+          return point;
+        });
+
         const jitterFloor = Math.max(ANTI_JITTER_M, Math.min(3.2, Math.max(accuracy, Number(last.accuracy) || accuracy) * 0.08));
-        if (accuracy > TARGET_GPS_ACCURACY_M && d < accuracy * 0.55) return;
         if (d < jitterFloor) return;
 
         distanceRef.current += d;
@@ -624,7 +630,7 @@ const MapScreen = ({ navigation }) => {
         debug("handleLocationUpdate", e);
       }
     },
-    [kalman2dRef]
+    []
   );
 
   useEffect(() => {
@@ -827,7 +833,6 @@ const MapScreen = ({ navigation }) => {
         setDistanceState(0);
         lastPointRef.current = null;
         zonePreviewLastAtRef.current = 0;
-        kalman2dRef.reset?.();
         timeSecRef.current = 0;
         setTimeSec(0);
 
@@ -865,7 +870,7 @@ const MapScreen = ({ navigation }) => {
         debug("startRun catch", e);
       }
     },
-    [handleLocationUpdate, kalman2dRef, running, startBackgroundLocationService, startLocationWatcher]
+    [handleLocationUpdate, running, startBackgroundLocationService, startLocationWatcher]
   );
 
   const pauseRun = useCallback(() => {
@@ -889,7 +894,6 @@ const MapScreen = ({ navigation }) => {
     try {
       setPaused(false);
       runningRef.current = true;
-      kalman2dRef.reset?.();
 
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -924,7 +928,7 @@ const MapScreen = ({ navigation }) => {
     } catch (e) {
       debug("resumeRun catch", e);
     }
-  }, [kalman2dRef, paused, running, startBackgroundLocationService, startLocationWatcher]);
+  }, [paused, running, startBackgroundLocationService, startLocationWatcher]);
 
   const fadeOutRoute = useCallback(() => {
     return new Promise((resolve) => {
@@ -973,7 +977,7 @@ const MapScreen = ({ navigation }) => {
           timerRef.current = null;
         }
 
-        const bufferedPath = routeStateRef.current.concat(routeBufferRef.current || []);
+        const bufferedPath = appendLivePointToPath(routeStateRef.current.concat(routeBufferRef.current || []), location);
         flushRouteBufferToState();
 
         const sanitizedPath = sanitizePath(bufferedPath);
@@ -1271,6 +1275,8 @@ const MapScreen = ({ navigation }) => {
   const activeZonePreview = showZones && running && mode === "zones" && Array.isArray(polygons) ? polygons : [];
   const finishedZonePreview = showZones && (showRunModal || showSavedModal) && Array.isArray(completedZonePreview) ? completedZonePreview : [];
   const visibleMapZones = finishedZonePreview.length > 0 ? finishedZonePreview : activeZonePreview;
+  const liveRouteBase = running && !paused ? routeState.concat(sanitizePath(routeBufferRef.current || [])) : routeState;
+  const liveRoutePath = running && !paused ? appendLivePointToPath(liveRouteBase, safeLocation) : routeState;
   if (!location) {
     return (
       <View style={styles.loading}>
@@ -1314,7 +1320,7 @@ const MapScreen = ({ navigation }) => {
           style={styles.map}
           location={safeLocation}
           centerCoordinate={replaying ? replayCenter : safeLocation}
-          routePath={routeState}
+          routePath={liveRoutePath}
           replayPath={replayPathState}
           zones={visibleMapZones}
           showZones={visibleMapZones.length > 0}

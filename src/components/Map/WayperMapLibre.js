@@ -5,7 +5,6 @@ import {
   Camera,
   GeoJSONSource as ShapeSource,
   Layer,
-  UserLocation,
 } from "@maplibre/maplibre-react-native";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { beautifyRoutePath } from "../../utils/routeDrawing";
@@ -527,15 +526,20 @@ function WayperMapLibre({
     () => buildFeatureCollection([buildPointFeature(Array.isArray(replayPath) ? replayPath[replayPath.length - 1] : null, { kind: "replay-head" })]),
     [replayPath]
   );
+  const userLocationCollection = useMemo(
+    () => buildFeatureCollection(showUserLocation ? [buildPointFeature(location, { kind: "user-location" })] : []),
+    [location, showUserLocation]
+  );
   const zonesCollection = useMemo(
     () => buildFeatureCollection(showZones ? buildZoneFeatures(zones) : []),
     [showZones, zones]
   );
 
   const hasRoute = routeCollection.features.length > 0;
-  const hasRouteHead = routeHeadCollection.features.length > 0;
+  const hasRouteHead = routeHeadCollection.features.length > 0 && !showUserLocation;
   const hasReplay = replayCollection.features.length > 0;
   const hasReplayHead = replayHeadCollection.features.length > 0;
+  const hasUserLocation = userLocationCollection.features.length > 0;
   const hasZones = zonesCollection.features.length > 0;
   const initialCenter = useMemo(
     () => pickInitialCenter({ centerCoordinate, location, routePath, replayPath, zones }),
@@ -581,11 +585,10 @@ function WayperMapLibre({
         <Camera
           initialViewState={bounds ? { bounds, padding: contentPadding } : { center: initialCenter, zoom: initialZoom }}
           bounds={bounds || undefined}
-          center={!bounds && !followUserLocation ? initialCenter : undefined}
+          center={!bounds ? initialCenter : undefined}
           zoom={followUserLocation ? followZoomLevel : !bounds ? initialZoom : undefined}
           padding={bounds ? contentPadding : undefined}
           duration={450}
-          trackUserLocation={followUserLocation ? "default" : undefined}
         />
 
         {hasZones && (
@@ -767,16 +770,16 @@ function WayperMapLibre({
           </ShapeSource>
         )}
 
-        {showUserLocation && (
-          <UserLocation animated accuracy={false} heading={false} minDisplacement={1}>
+        {hasUserLocation && (
+          <ShapeSource id="wayper-user-location-source" data={userLocationCollection}>
             <Layer
               id="wayper-user-location-halo"
               type="circle"
-              source="mlrn-user-location"
+              source="wayper-user-location-source"
               paint={{
                 "circle-color": WAYPER_GREEN,
-                "circle-opacity": 0.14,
-                "circle-radius": 22,
+                "circle-opacity": 0.18,
+                "circle-radius": 24,
                 "circle-blur": 0.8,
                 "circle-pitch-alignment": "map",
               }}
@@ -784,28 +787,28 @@ function WayperMapLibre({
             <Layer
               id="wayper-user-location-ring"
               type="circle"
-              source="mlrn-user-location"
+              source="wayper-user-location-source"
               paint={{
                 "circle-color": "#ffffff",
                 "circle-opacity": 1,
-                "circle-radius": 8,
+                "circle-radius": 8.5,
                 "circle-pitch-alignment": "map",
               }}
             />
             <Layer
               id="wayper-user-location-dot"
               type="circle"
-              source="mlrn-user-location"
+              source="wayper-user-location-source"
               paint={{
                 "circle-color": WAYPER_GREEN,
                 "circle-opacity": 1,
-                "circle-radius": 5.5,
+                "circle-radius": 5.8,
                 "circle-stroke-color": "#001c12",
                 "circle-stroke-width": 1.5,
                 "circle-pitch-alignment": "map",
               }}
             />
-          </UserLocation>
+          </ShapeSource>
         )}
       </Map>
 
