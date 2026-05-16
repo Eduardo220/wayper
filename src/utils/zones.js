@@ -10,6 +10,36 @@ const R = 6371e3; // Earth radius (meters)
 
 const isValidNumber = (v) => typeof v === "number" && Number.isFinite(v);
 
+function distanceMeters(a, b) {
+  if (!a || !b) return Number.POSITIVE_INFINITY;
+  const lat1 = Number(a.latitude) * DEG_TO_RAD;
+  const lat2 = Number(b.latitude) * DEG_TO_RAD;
+  const dLat = lat2 - lat1;
+  const dLon = (Number(b.longitude) - Number(a.longitude)) * DEG_TO_RAD;
+  const sinLat = Math.sin(dLat / 2);
+  const sinLon = Math.sin(dLon / 2);
+  const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function removeNearDuplicatePoints(path = [], minDistanceM = 1.2) {
+  if (!Array.isArray(path) || path.length <= 2) return path;
+
+  const out = [path[0]];
+  for (let i = 1; i < path.length - 1; i++) {
+    if (distanceMeters(out[out.length - 1], path[i]) >= minDistanceM) {
+      out.push(path[i]);
+    }
+  }
+  out.push(path[path.length - 1]);
+  return out;
+}
+
+function closeRingDistance(coords = []) {
+  if (!Array.isArray(coords) || coords.length < 2) return Number.POSITIVE_INFINITY;
+  return distanceMeters(coords[0], coords[coords.length - 1]);
+}
+
 /**
  * sanitizePath:
  * - Accepts any shape ([lat,lon], {lat, lon}, {latitude,longitude}, etc)
@@ -144,6 +174,91 @@ export function smoothPolygon(coords = [], iterations = 1) {
     return clean.length >= 3 ? clean : coords;
   } catch {
     return coords;
+  }
+}
+
+/* ============================================================
+   PAPER.IO-LIKE ZONE BUILDER
+   ============================================================ */
+export function buildCapturedZone(rawPath = [], options = {}) {
+  try {
+    const {
+      closeDistanceM = 28,
+      maxCloseDistanceM = Math.max(36, closeDistanceM * 1.6),
+      requireClosedLoop = true,
+      minLoopPoints = 6,
+      minSegmentRatio = 0.18,
+      minAreaM2 = 5,
+      simplifyTolerance = 0.00003,
+      smoothIterations = 0,
+      maxPoints = 300,
+    } = options;
+
+    const path = removeNearDuplicatePoints(sanitizePath(rawPath), 1.2);
+    if (!Array.isArray(path) || path.length < 3) return [];
+
+    const first = path[0];
+    const last = path[path.length - 1];
+    const candidates = [];
+
+    const pushCandidate = (coords, reason, closeDistance = 0) => {
+      const clean = sanitizePath(coords);
+      if (clean.length < 3 || !isValidPolygon(clean)) return;
+      if (requireClosedLoop && closeRingDistance(clean) > maxCloseDistanceM) return;
+      const area = calcArea(clean);
+      if (!Number.isFinite(area) || area < minAreaM2) return;
+      candidates.push({ coords: clean, area, reason, closeDistance });
+    };
+
+    const startCloseDistance = distanceMeters(first, last);
+    if (startCloseDistance <= maxCloseDistanceM) {
+      pushCandidate(path, startCloseDistance <= closeDistanceM ? "start" : "start-soft", startCloseDistance);
+    }
+
+    const searchLimit = Math.max(1, path.length - Math.max(3, minLoopPoints));
+    for (let i = 0; i < searchLimit; i++) {
+      const closeDistance = distanceMeters(path[i], last);
+      if (closeDistance > maxCloseDistanceM) continue;
+      const segment = path.slice(i);
+      if (segment.length < minLoopPoints) continue;
+      if (i > 0 && segment.length / path.length < minSegmentRatio) continue;
+      pushCandidate(segment, i === 0 ? "full" : "nearest", closeDistance);
+    }
+
+    if (!requireClosedLoop) {
+      pushCandidate(path, "fallback-full", startCloseDistance);
+    }
+
+    if (candidates.length === 0) return [];
+
+    candidates.sort((a, b) => {
+      const aStartsAtOrigin = a.reason === "start" || a.reason === "full" ? -1 : 0;
+      const bStartsAtOrigin = b.reason === "start" || b.reason === "full" ? -1 : 0;
+      if (aStartsAtOrigin !== bStartsAtOrigin && Math.min(a.closeDistance, b.closeDistance) <= closeDistanceM) {
+        return aStartsAtOrigin - bStartsAtOrigin;
+      }
+      const aClosePenalty = a.closeDistance <= closeDistanceM ? 0 : 1;
+      const bClosePenalty = b.closeDistance <= closeDistanceM ? 0 : 1;
+      return aClosePenalty - bClosePenalty || a.closeDistance - b.closeDistance || b.area - a.area;
+    });
+
+    let zone = candidates[0].coords;
+
+    if (simplifyTolerance > 0) {
+      zone = simplifyPolygon(zone, simplifyTolerance);
+    }
+
+    if (smoothIterations > 0) {
+      zone = smoothPolygon(zone, smoothIterations);
+    }
+
+    if (Array.isArray(zone) && zone.length > maxPoints) {
+      zone = compressCoords(zone, maxPoints);
+    }
+
+    return isValidPolygon(zone) && calcArea(zone) >= minAreaM2 ? zone : candidates[0].coords;
+  } catch {
+    return [];
   }
 }
 
@@ -321,6 +436,7 @@ export function compressCoords(coords = [], maxPoints = 200) {
 export default {
   sanitizePath,
   isValidPolygon,
+  buildCapturedZone,
   buildConvexZone,
   simplifyPolygon,
   smoothPolygon,

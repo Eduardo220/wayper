@@ -159,7 +159,7 @@ export async function saveLocalRun(run = {}) {
       avgSpeed: Number(run.avgSpeed ?? 0),
       date: run.date || now,
       synced: !!run.synced || false,
-      name: run.name || `Corrida ${new Date(now).toLocaleString()}`,
+      name: run.name || `${run.mode === "zones" ? "Captura por zonas" : "Corrida"} ${new Date(now).toLocaleString()}`,
       effort: Number(run.effort ?? 5),
       notes: run.notes || "",
       tags: Array.isArray(run.tags) ? run.tags : [],
@@ -167,13 +167,29 @@ export async function saveLocalRun(run = {}) {
       mode: run.mode || run.type || "free",
       zoneId: run.zoneId || null,
       area: Number(run.area ?? 0),
+      zoneCoords: sanitizeCoordsArray(run.zoneCoords || run.zone?.coords || []),
+      zoneCount: Number(run.zoneCount ?? (Array.isArray(run.zoneCoords) && run.zoneCoords.length >= 3 ? 1 : 0)),
       visibility: run.visibility || "followers",
     };
-    existing.unshift(normalized);
-    const deduped = uniqueById(existing);
+    const sameZoneRunIndex =
+      normalized.zoneId && (normalized.mode === "zones" || normalized.area > 0 || normalized.zoneCoords.length >= 3)
+        ? existing.findIndex((item) => item?.zoneId === normalized.zoneId && (item?.mode === "zones" || Number(item?.area || 0) > 0))
+        : -1;
+
+    const savedRecord =
+      sameZoneRunIndex >= 0
+        ? { ...existing[sameZoneRunIndex], ...normalized, id: existing[sameZoneRunIndex]?.id || normalized.id }
+        : normalized;
+
+    const next =
+      sameZoneRunIndex >= 0
+        ? existing.map((item, index) => (index === sameZoneRunIndex ? savedRecord : item))
+        : [savedRecord, ...existing];
+
+    const deduped = uniqueById(next);
     deduped.sort((a, b) => (a.date < b.date ? 1 : -1));
     await AsyncStorage.setItem(RUNS_KEY, safeStringify(deduped));
-    return normalized;
+    return savedRecord;
   } catch (err) {
     logError(err, { fn: "saveLocalRun" });
     const now = new Date().toISOString();
@@ -231,17 +247,34 @@ export async function createAndSaveZoneFromPath(path = [], options = {}) {
     if (!Array.isArray(raw) || raw.length < 3) return null;
 
     const {
-      simplifyTolerance = 0.0006,
+      simplifyTolerance = 0.00003,
       smoothIterations = 0,
       maxPoints = 300,
       compressMax = 300,
+      closeDistanceM = 28,
+      maxCloseDistanceM = Math.max(36, closeDistanceM * 1.6),
+      requireClosedLoop = true,
+      allowOpenFallback = false,
+      minLoopPoints = 6,
     } = options;
 
-    const poly = zones.buildConvexZone(raw, {
+    let poly = zones.buildCapturedZone(raw, {
+      closeDistanceM,
+      maxCloseDistanceM,
+      requireClosedLoop,
+      minLoopPoints,
       simplifyTolerance,
       smoothIterations,
       maxPoints,
     });
+
+    if ((!zones.isValidPolygon(poly) || poly.length < 3) && (!requireClosedLoop || allowOpenFallback)) {
+      poly = zones.buildConvexZone(raw, {
+        simplifyTolerance,
+        smoothIterations,
+        maxPoints,
+      });
+    }
 
     if (!zones.isValidPolygon(poly) || poly.length < 3) return null;
 
@@ -502,6 +535,8 @@ export async function syncRunsToFirestore() {
         area: Number(run.area || 0),
         mode: run.mode || "free",
         zoneId: run.zoneId || null,
+        zoneCoords: sanitizeCoordsArray(run.zoneCoords || []).slice(0, 5000),
+        zoneCount: Number(run.zoneCount || 0),
         name: run.name || "Corrida",
         effort: Number(run.effort || 0),
         notes: run.notes || "",
@@ -528,6 +563,7 @@ export async function syncRunsToFirestore() {
             duration: Number(run.duration || 0),
             area: Number(run.area || 0),
             mode: run.mode || "free",
+            zoneCount: Number(run.zoneCount || 0),
             name: run.name || "Corrida",
             description:
               run.mode === "zones" && Number(run.area || 0) > 0

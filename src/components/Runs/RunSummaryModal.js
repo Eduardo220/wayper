@@ -18,22 +18,25 @@ const TAG_OPTIONS = [
 
 export default function RunSummaryModal({ visible, onClose, onSave, baseRunData = {} }) {
   const runData = useMemo(() => baseRunData || {}, [baseRunData]);
+  const isZoneRun = runData.mode === "zones" || Number(runData.area || 0) > 0 || !!runData.zoneId;
   const [name, setName] = useState("Minha Corrida");
   const [effort, setEffort] = useState(5);
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState([]);
   const [photoUri, setPhotoUri] = useState(null);
+  const [saving, setSaving] = useState(false);
   const effortPulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (!visible) return;
 
-    setName(runData.name || `Corrida ${new Date(runData.date || Date.now()).toLocaleString()}`);
+    setName(runData.name || `${isZoneRun ? "Captura por zonas" : "Corrida"} ${new Date(runData.date || Date.now()).toLocaleString()}`);
     setEffort(Math.min(10, Math.max(1, Math.round(Number(runData.effort ?? 5)))));
     setNotes(runData.notes || "");
     setTags(Array.isArray(runData.tags) ? runData.tags : []);
     setPhotoUri(runData.photoUri || null);
-  }, [visible, runData]);
+    setSaving(false);
+  }, [visible, runData, isZoneRun]);
 
   useEffect(() => {
     Animated.sequence([
@@ -46,6 +49,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
     () => ({
       distance: `${((Number(runData.distance) || 0) / 1000).toFixed(2)} km`,
       duration: formatDuration(runData.duration),
+      area: `${Math.round(Number(runData.area) || 0)} m2`,
     }),
     [runData]
   );
@@ -75,6 +79,9 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
   }
 
   async function handleSave() {
+    if (saving) return;
+    setSaving(true);
+
     const payload = {
       ...runData,
       name,
@@ -88,6 +95,8 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
       await onSave(payload);
     } catch (e) {
       console.warn("RunSummaryModal.onSave failed", e);
+      setSaving(false);
+      return;
     }
 
     onClose();
@@ -107,11 +116,11 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
 
           <View style={styles.heroText}>
             <Text style={styles.title}>
-              Finalizar <Text style={styles.titleAccent}>Corrida</Text>
+              Finalizar <Text style={styles.titleAccent}>{isZoneRun ? "Zonas" : "Corrida"}</Text>
             </Text>
             <View style={styles.metricsRow}>
               <MetricPill icon="location-outline" value={metrics.distance} label="Distância" />
-              <MetricPill icon="timer-outline" value={metrics.duration} label="Tempo" />
+              <MetricPill icon={isZoneRun ? "map-outline" : "timer-outline"} value={isZoneRun ? metrics.area : metrics.duration} label={isZoneRun ? "Area" : "Tempo"} />
             </View>
           </View>
         </View>
@@ -120,7 +129,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
           label="Nome"
           value={name}
           onChangeText={setName}
-          placeholder="Ex: Corrida matinal no centro"
+          placeholder={isZoneRun ? "Ex: Zona do parque" : "Ex: Corrida matinal no centro"}
           style={styles.field}
         />
 
@@ -203,7 +212,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
           )}
         </View>
 
-        <TouchableOpacity activeOpacity={0.9} onPress={handleSave} style={styles.saveTouchable}>
+        <TouchableOpacity activeOpacity={0.9} onPress={handleSave} disabled={saving} style={[styles.saveTouchable, saving && styles.saveDisabled]}>
           <LinearGradient
             colors={[WayperTheme.colors.primaryLight, WayperTheme.colors.primary, WayperTheme.colors.primaryDark]}
             start={{ x: 0, y: 0 }}
@@ -212,7 +221,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
           >
             <View pointerEvents="none" style={styles.saveOrb} />
             <Ionicons name="save-outline" size={28} color={WayperTheme.colors.textInverse} />
-            <Text style={styles.saveText}>Salvar corrida</Text>
+            <Text style={styles.saveText}>{saving ? "Salvando..." : isZoneRun ? "Salvar zonas" : "Salvar corrida"}</Text>
           </LinearGradient>
         </TouchableOpacity>
 
@@ -443,6 +452,9 @@ const styles = StyleSheet.create({
     marginTop: WayperTheme.spacing.xl,
     borderRadius: WayperTheme.radius.xl,
     ...WayperTheme.shadows.greenGlow,
+  },
+  saveDisabled: {
+    opacity: 0.68,
   },
   saveButton: {
     minHeight: 78,

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -37,6 +37,7 @@ function AuthInput({
   textContentType,
   returnKeyType,
   onSubmitEditing,
+  onFocus,
   right,
 }) {
   return (
@@ -53,6 +54,7 @@ function AuthInput({
         textContentType={textContentType}
         returnKeyType={returnKeyType}
         onSubmitEditing={onSubmitEditing}
+        onFocus={onFocus}
         style={styles.input}
       />
       {right}
@@ -76,6 +78,7 @@ export default function RegisterScreen({ navigation }) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const scrollRef = useRef(null);
 
   const cleanUsername = username.trim();
   const cleanEmail = email.trim().toLowerCase();
@@ -94,6 +97,12 @@ export default function RegisterScreen({ navigation }) {
       pass === confirm
     );
   }, [cleanEmail, cleanUsername.length, confirm, pass]);
+
+  const scrollToFormPosition = useCallback((y) => {
+    setTimeout(() => {
+      scrollRef.current?.scrollTo?.({ y, animated: true });
+    }, 90);
+  }, []);
 
   const handleRegister = useCallback(async () => {
     if (loading) return;
@@ -138,7 +147,8 @@ export default function RegisterScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 18 : 0}
       style={styles.screen}
     >
       <LinearGradient
@@ -149,7 +159,9 @@ export default function RegisterScreen({ navigation }) {
         <View style={styles.glowBottom} />
 
         <ScrollView
+          ref={scrollRef}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.content}
         >
@@ -200,6 +212,7 @@ export default function RegisterScreen({ navigation }) {
               textContentType="nickname"
               returnKeyType="next"
               autoCapitalize="words"
+              onFocus={() => scrollToFormPosition(135)}
             />
 
             <Text style={styles.label}>Email</Text>
@@ -211,6 +224,7 @@ export default function RegisterScreen({ navigation }) {
               keyboardType="email-address"
               textContentType="emailAddress"
               returnKeyType="next"
+              onFocus={() => scrollToFormPosition(210)}
             />
 
             <Text style={styles.label}>Senha</Text>
@@ -222,6 +236,7 @@ export default function RegisterScreen({ navigation }) {
               secureTextEntry={!showPassword}
               textContentType="newPassword"
               returnKeyType="next"
+              onFocus={() => scrollToFormPosition(285)}
               right={
                 <Pressable
                   onPress={() => setShowPassword((current) => !current)}
@@ -252,6 +267,7 @@ export default function RegisterScreen({ navigation }) {
               textContentType="newPassword"
               returnKeyType="done"
               onSubmitEditing={handleRegister}
+              onFocus={() => scrollToFormPosition(390)}
             />
 
             <TouchableOpacity
@@ -317,6 +333,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: WayperTheme.spacing.page,
     paddingVertical: 36,
+    paddingBottom: 130,
   },
   topRow: {
     flexDirection: "row",

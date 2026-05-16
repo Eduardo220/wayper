@@ -34,6 +34,9 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
         "WAKE_LOCK",
         "INTERNET",
         "VIBRATE"
@@ -55,7 +58,8 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "O Wayper precisa da sua localização mesmo em segundo plano para registrar corridas corretamente.",
-          "isAndroidBackgroundLocationEnabled": true
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       "expo-task-manager"

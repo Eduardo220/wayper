@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -39,6 +39,7 @@ function AuthInput({
   textContentType,
   returnKeyType,
   onSubmitEditing,
+  onFocus,
   right,
 }) {
   return (
@@ -55,6 +56,7 @@ function AuthInput({
         textContentType={textContentType}
         returnKeyType={returnKeyType}
         onSubmitEditing={onSubmitEditing}
+        onFocus={onFocus}
         style={styles.input}
       />
       {right}
@@ -69,8 +71,15 @@ export default function LoginScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
+  const scrollRef = useRef(null);
 
   const [request, response, promptAsync] = useGoogleAuth();
+
+  const scrollToFormPosition = useCallback((y) => {
+    setTimeout(() => {
+      scrollRef.current?.scrollTo?.({ y, animated: true });
+    }, 90);
+  }, []);
 
   const canSubmit = useMemo(() => {
     return EMAIL_REGEX.test(email.trim().toLowerCase()) && password.trim().length >= 6;
@@ -171,7 +180,8 @@ export default function LoginScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 18 : 0}
       style={styles.screen}
     >
       <LinearGradient
@@ -182,7 +192,9 @@ export default function LoginScreen({ navigation }) {
         <View style={styles.glowBottom} />
 
         <ScrollView
+          ref={scrollRef}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.content}
         >
@@ -232,6 +244,7 @@ export default function LoginScreen({ navigation }) {
               keyboardType="email-address"
               textContentType="emailAddress"
               returnKeyType="next"
+              onFocus={() => scrollToFormPosition(170)}
             />
 
             <Text style={styles.label}>Senha</Text>
@@ -244,6 +257,7 @@ export default function LoginScreen({ navigation }) {
               textContentType="password"
               returnKeyType="done"
               onSubmitEditing={handleLogin}
+              onFocus={() => scrollToFormPosition(245)}
               right={
                 <Pressable
                   onPress={() => setShowPassword((current) => !current)}
@@ -352,6 +366,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: WayperTheme.spacing.page,
     paddingVertical: 42,
+    paddingBottom: 120,
   },
   brandBlock: {
     flexDirection: "row",

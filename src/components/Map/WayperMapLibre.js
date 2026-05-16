@@ -8,6 +8,7 @@ import {
   UserLocation,
 } from "@maplibre/maplibre-react-native";
 import { WayperTheme } from "../../theme/wayperTheme";
+import { beautifyRoutePath } from "../../utils/routeDrawing";
 
 export const OPENFREEMAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 export const WAYPER_GREEN = WayperTheme.map.routeColor;
@@ -358,7 +359,14 @@ export function buildFeatureCollection(features = []) {
 }
 
 export function buildLineStringFeature(path = [], properties = {}) {
-  const coordinates = (Array.isArray(path) ? path : []).map(toLngLat).filter(Boolean);
+  const visualPath = beautifyRoutePath(path, {
+    toleranceM: properties?.kind === "replay" ? 3 : 3.4,
+    minPointDistanceM: properties?.kind === "replay" ? 1.2 : 1.4,
+    spikeToleranceM: properties?.kind === "replay" ? 8 : 7,
+    maxPoints: 1200,
+    preserveTurns: true,
+  });
+  const coordinates = visualPath.map(toLngLat).filter(Boolean);
   if (coordinates.length < 2) return null;
 
   return {
@@ -366,6 +374,20 @@ export function buildLineStringFeature(path = [], properties = {}) {
     properties,
     geometry: {
       type: "LineString",
+      coordinates,
+    },
+  };
+}
+
+export function buildPointFeature(coord, properties = {}) {
+  const coordinates = toLngLat(coord);
+  if (!coordinates) return null;
+
+  return {
+    type: "Feature",
+    properties,
+    geometry: {
+      type: "Point",
       coordinates,
     },
   };
@@ -493,8 +515,16 @@ function WayperMapLibre({
     () => buildFeatureCollection([buildLineStringFeature(routePath, { kind: "route" })]),
     [routePath]
   );
+  const routeHeadCollection = useMemo(
+    () => buildFeatureCollection([buildPointFeature(Array.isArray(routePath) ? routePath[routePath.length - 1] : null, { kind: "route-head" })]),
+    [routePath]
+  );
   const replayCollection = useMemo(
     () => buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay" })]),
+    [replayPath]
+  );
+  const replayHeadCollection = useMemo(
+    () => buildFeatureCollection([buildPointFeature(Array.isArray(replayPath) ? replayPath[replayPath.length - 1] : null, { kind: "replay-head" })]),
     [replayPath]
   );
   const zonesCollection = useMemo(
@@ -503,7 +533,9 @@ function WayperMapLibre({
   );
 
   const hasRoute = routeCollection.features.length > 0;
+  const hasRouteHead = routeHeadCollection.features.length > 0;
   const hasReplay = replayCollection.features.length > 0;
+  const hasReplayHead = replayHeadCollection.features.length > 0;
   const hasZones = zonesCollection.features.length > 0;
   const initialCenter = useMemo(
     () => pickInitialCenter({ centerCoordinate, location, routePath, replayPath, zones }),
@@ -568,9 +600,9 @@ function WayperMapLibre({
               }}
               paint={{
                 "line-color": WAYPER_GREEN,
-                "line-blur": 4,
-                "line-opacity": 0.28,
-                "line-width": 8,
+                "line-blur": 5,
+                "line-opacity": 0.34,
+                "line-width": 11,
               }}
             />
             <Layer
@@ -579,7 +611,7 @@ function WayperMapLibre({
               source="wayper-zones-source"
               paint={{
                 "fill-color": WAYPER_GREEN,
-                "fill-opacity": 0.18,
+                "fill-opacity": 0.24,
               }}
             />
             <Layer
@@ -592,15 +624,15 @@ function WayperMapLibre({
               }}
               paint={{
                 "line-color": WAYPER_GREEN,
-                "line-opacity": 0.72,
-                "line-width": 3,
+                "line-opacity": 0.86,
+                "line-width": 3.5,
               }}
             />
           </ShapeSource>
         )}
 
         {hasRoute && (
-          <ShapeSource id="wayper-route-source" data={routeCollection}>
+          <ShapeSource id="wayper-route-source" data={routeCollection} lineMetrics={true}>
             <Layer
               id="wayper-route-glow"
               type="line"
@@ -625,7 +657,17 @@ function WayperMapLibre({
                 "line-join": "round",
               }}
               paint={{
-                "line-color": routeColor,
+                "line-gradient": [
+                  "interpolate",
+                  ["linear"],
+                  ["line-progress"],
+                  0,
+                  "rgba(0, 230, 118, 0.38)",
+                  0.78,
+                  routeColor,
+                  1,
+                  "#ecfff6",
+                ],
                 "line-width": 6,
                 "line-opacity": 1,
               }}
@@ -633,8 +675,38 @@ function WayperMapLibre({
           </ShapeSource>
         )}
 
+        {hasRouteHead && (
+          <ShapeSource id="wayper-route-head-source" data={routeHeadCollection}>
+            <Layer
+              id="wayper-route-head-halo"
+              type="circle"
+              source="wayper-route-head-source"
+              paint={{
+                "circle-color": routeColor,
+                "circle-opacity": 0.25,
+                "circle-radius": 18,
+                "circle-blur": 0.7,
+                "circle-pitch-alignment": "map",
+              }}
+            />
+            <Layer
+              id="wayper-route-head-dot"
+              type="circle"
+              source="wayper-route-head-source"
+              paint={{
+                "circle-color": "#ecfff6",
+                "circle-opacity": 1,
+                "circle-radius": 4.8,
+                "circle-stroke-color": routeColor,
+                "circle-stroke-width": 2.2,
+                "circle-pitch-alignment": "map",
+              }}
+            />
+          </ShapeSource>
+        )}
+
         {hasReplay && (
-          <ShapeSource id="wayper-replay-source" data={replayCollection}>
+          <ShapeSource id="wayper-replay-source" data={replayCollection} lineMetrics={true}>
             <Layer
               id="wayper-replay-glow"
               type="line"
@@ -659,9 +731,37 @@ function WayperMapLibre({
                 "line-join": "round",
               }}
               paint={{
-                "line-color": replayColor,
+                "line-gradient": [
+                  "interpolate",
+                  ["linear"],
+                  ["line-progress"],
+                  0,
+                  "rgba(253, 203, 110, 0.3)",
+                  0.8,
+                  replayColor,
+                  1,
+                  "#fff4cf",
+                ],
                 "line-width": 5,
                 "line-opacity": 0.95,
+              }}
+            />
+          </ShapeSource>
+        )}
+
+        {hasReplayHead && (
+          <ShapeSource id="wayper-replay-head-source" data={replayHeadCollection}>
+            <Layer
+              id="wayper-replay-head-dot"
+              type="circle"
+              source="wayper-replay-head-source"
+              paint={{
+                "circle-color": replayColor,
+                "circle-opacity": 0.92,
+                "circle-radius": 5.5,
+                "circle-stroke-color": "#140d00",
+                "circle-stroke-width": 1.5,
+                "circle-pitch-alignment": "map",
               }}
             />
           </ShapeSource>

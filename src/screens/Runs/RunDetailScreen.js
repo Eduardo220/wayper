@@ -1,24 +1,35 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Animated, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
+import ViewShot, { captureRef } from "react-native-view-shot";
+import Svg, {
+  Circle as SvgCircle,
+  Defs,
+  Line as SvgLine,
+  LinearGradient as SvgLinearGradient,
+  Path as SvgPath,
+  Polygon as SvgPolygon,
+  Polyline as SvgPolyline,
+  Rect as SvgRect,
+  Stop,
+} from "react-native-svg";
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../../components/Map/WayperMapLibre";
 import { WPButton } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
 import sync from "../../utils/sync";
-
-let captureRef;
-try {
-  // eslint-disable-next-line global-require
-  captureRef = require("react-native-view-shot").captureRef;
-} catch {
-  captureRef = null;
-}
+import { beautifyRoutePath } from "../../utils/routeDrawing";
 
 const MIN_BAR_HEIGHT = 22;
 const CHART_BASE_HEIGHT = 118;
+const SHARE_CAPTURE_OPTIONS = {
+  format: "png",
+  quality: 1,
+  result: "tmpfile",
+  handleGLSurfaceViewOnAndroid: true,
+};
 
 const debug = (...args) => {
   const enabled = false;
@@ -37,6 +48,34 @@ const sanitizePath = (path = []) =>
       return { latitude, longitude, timestamp: point.timestamp ?? null };
     })
     .filter(Boolean);
+
+const buildShareSvgPoints = (coords = [], { width = 320, height = 210, padding = 28, smooth = false } = {}) => {
+  const safeCoords = sanitizePath(coords);
+  const points = smooth
+    ? beautifyRoutePath(safeCoords, { toleranceM: 7, minPointDistanceM: 2, spikeToleranceM: 10, maxPoints: 700 })
+    : safeCoords;
+
+  if (points.length < 2) return "";
+
+  const lats = points.map((point) => point.latitude);
+  const lngs = points.map((point) => point.longitude);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  const latRange = Math.max(maxLat - minLat, 0.000001);
+  const lngRange = Math.max(maxLng - minLng, 0.000001);
+  const drawWidth = width - padding * 2;
+  const drawHeight = height - padding * 2;
+
+  return points
+    .map((point) => {
+      const x = padding + ((point.longitude - minLng) / lngRange) * drawWidth;
+      const y = padding + (1 - (point.latitude - minLat) / latRange) * drawHeight;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+};
 
 function formatDuration(seconds = 0) {
   const total = Math.max(0, Math.round(safeNum(seconds)));
@@ -180,35 +219,24 @@ function computeSplits(path = [], totalDuration = 0) {
   return { splits, pacePerKm, avgSpeedKmh, maxSpeedKmh, totalMeters, totalTime };
 }
 
-function buildGpx(run, path) {
-  const safeName = String(run?.name || "Corrida Wayper").replace(/[<>]/g, "");
-  const points = sanitizePath(path)
-    .map((point) => {
-      const time = point.timestamp ? new Date(point.timestamp).toISOString() : "";
-      return `<trkpt lat="${point.latitude}" lon="${point.longitude}"><time>${time}</time></trkpt>`;
-    })
-    .join("\n");
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx creator="Wayper" version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
-  <metadata><name>${safeName}</name></metadata>
-  <trk><name>${safeName}</name><trkseg>
-${points}
-  </trkseg></trk>
-</gpx>`;
-}
-
 function RunDetailScreenInner({ route }) {
   const run = route?.params?.run;
   const captureViewRef = useRef(null);
+  const shareFullRef = useRef(null);
+  const shareTraceRef = useRef(null);
   const anim = useRef(new Animated.Value(0)).current;
   const [userAvgPace, setUserAvgPace] = useState(null);
+  const [shareVisible, setShareVisible] = useState(false);
 
   const path = useMemo(() => sanitizePath(run?.path || []), [run]);
+  const zoneCoords = useMemo(() => sanitizePath(run?.zoneCoords || run?.zone?.coords || []), [run]);
+  const isZoneRun = run?.mode === "zones" || safeNum(run?.area) > 0 || zoneCoords.length >= 3;
+  const hasZoneShape = isZoneRun && zoneCoords.length >= 3;
   const midPoint = useMemo(() => {
+    if (hasZoneShape) return zoneCoords[0] || WAYPER_FALLBACK_COORD;
     if (path.length === 0) return WAYPER_FALLBACK_COORD;
     return path[Math.floor(path.length / 2)] || path[0] || WAYPER_FALLBACK_COORD;
-  }, [path]);
+  }, [hasZoneShape, path, zoneCoords]);
 
   const stats = useMemo(() => computeSplits(path, run?.duration || 0), [path, run]);
   const totalMeters = stats.totalMeters > 0 ? stats.totalMeters : safeNum(run?.distance);
@@ -220,6 +248,15 @@ function RunDetailScreenInner({ route }) {
   const maxSpeedDisplay = safeNum(stats.maxSpeedKmh).toFixed(1);
   const runTitle = run?.name || "Corrida";
   const effort = run?.effort ?? "--";
+  const distanceDisplay = `${totalKm} km`;
+  const durationDisplay = formatDuration(totalTime);
+  const areaDisplay = `${Math.round(safeNum(run?.area))} m2`;
+  const shareCardTitle = isZoneRun ? "Wayper Zone" : "Wayper Run";
+  const shareTraceTitle = isZoneRun ? "Wayper Zone" : "Wayper Trace";
+  const shareTracePoints = useMemo(
+    () => buildShareSvgPoints(hasZoneShape ? zoneCoords : path, { smooth: !hasZoneShape }),
+    [hasZoneShape, path, zoneCoords]
+  );
 
   useEffect(() => {
     Animated.timing(anim, { toValue: 1, duration: 420, useNativeDriver: true }).start();
@@ -268,60 +305,103 @@ function RunDetailScreenInner({ route }) {
     };
   }, [paceSec, userAvgPace]);
 
-  const exportGPX = useCallback(async () => {
+  const captureShareView = useCallback(async (targetRef, filenamePrefix, dialogTitle) => {
     try {
-      if (!run || path.length === 0) {
-        Alert.alert("Nada para exportar");
+      const target = targetRef?.current;
+      if (!target) {
+        Alert.alert("Compartilhar", "Preview ainda nao esta pronto.");
         return;
       }
 
-      const filePath = `${FileSystem.cacheDirectory}wayper_run_${run.id || Date.now()}.gpx`;
-      await FileSystem.writeAsStringAsync(filePath, buildGpx(run, path), { encoding: FileSystem.EncodingUTF8 });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(filePath, { mimeType: "application/gpx+xml", dialogTitle: "Exportar GPX - Wayper" });
-      } else {
-        Alert.alert("Exportado", `GPX salvo em: ${filePath}`);
-      }
-    } catch (error) {
-      debug("exportGPX", error);
-      Alert.alert("Erro", "Nao foi possivel exportar GPX.");
-    }
-  }, [path, run]);
+      await new Promise((resolve) => setTimeout(resolve, 120));
 
-  const exportJSON = useCallback(async () => {
-    try {
-      if (!run) return;
-      const filePath = `${FileSystem.cacheDirectory}wayper_run_${run.id || Date.now()}.json`;
-      await FileSystem.writeAsStringAsync(filePath, JSON.stringify(run), { encoding: FileSystem.EncodingUTF8 });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(filePath, { dialogTitle: "Exportar JSON - Wayper" });
-      } else {
-        Alert.alert("Exportado", `JSON salvo em: ${filePath}`);
-      }
-    } catch (error) {
-      debug("exportJSON", error);
-      Alert.alert("Erro", "Nao foi possivel exportar JSON.");
-    }
-  }, [run]);
-
-  const shareMapImage = useCallback(async () => {
-    try {
-      if (!captureRef || !captureViewRef.current) {
-        Alert.alert("Compartilhar", "Preview indisponivel para captura.");
-        return;
+      let uri = null;
+      try {
+        uri = typeof target.capture === "function" ? await target.capture() : null;
+      } catch (captureError) {
+        debug("direct share capture failed", captureError);
       }
 
-      const uri = await captureRef(captureViewRef.current, { format: "png", quality: 0.95, result: "tmpfile" });
+      if (!uri) {
+        uri = await captureRef(target, SHARE_CAPTURE_OPTIONS);
+      }
+
+      if (!uri) throw new Error("capture returned empty uri");
+
+      const filePath = `${FileSystem.cacheDirectory}${filenamePrefix}_${Date.now()}.png`;
+      await FileSystem.copyAsync({ from: uri, to: filePath });
+
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { mimeType: "image/png", dialogTitle: "Compartilhar imagem da corrida" });
+        await Sharing.shareAsync(filePath, { mimeType: "image/png", dialogTitle });
       } else {
-        Alert.alert("Imagem pronta", uri);
+        Alert.alert("Imagem pronta", filePath);
       }
     } catch (error) {
-      debug("shareMapImage", error);
+      debug("captureShareView", error);
       Alert.alert("Erro", "Nao foi possivel compartilhar a imagem.");
     }
   }, []);
+
+  const saveShareView = useCallback(async (targetRef, filenamePrefix) => {
+    try {
+      const target = targetRef?.current;
+      if (!target) {
+        Alert.alert("Baixar imagem", "Preview ainda nao esta pronto.");
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 120));
+
+      let uri = null;
+      try {
+        uri = typeof target.capture === "function" ? await target.capture() : null;
+      } catch (captureError) {
+        debug("direct save capture failed", captureError);
+      }
+
+      if (!uri) {
+        uri = await captureRef(target, SHARE_CAPTURE_OPTIONS);
+      }
+
+      if (!uri) throw new Error("capture returned empty uri");
+
+      const filename = `${filenamePrefix}_${Date.now()}.png`;
+      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+
+      if (FileSystem.StorageAccessFramework?.requestDirectoryPermissionsAsync) {
+        const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+        if (permission.granted) {
+          const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(permission.directoryUri, filename, "image/png");
+          await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
+          Alert.alert("Imagem salva", "O PNG foi salvo na pasta selecionada.");
+          return;
+        }
+      }
+
+      const filePath = FileSystem.documentDirectory + filename;
+      await FileSystem.copyAsync({ from: uri, to: filePath });
+      Alert.alert("Imagem salva", `Arquivo salvo em: ${filePath}`);
+    } catch (error) {
+      debug("saveShareView", error);
+      Alert.alert("Erro", "Nao foi possivel salvar a imagem.");
+    }
+  }, []);
+
+  const shareFullImage = useCallback(() => {
+    captureShareView(shareFullRef, `wayper_mapa_${run?.id || Date.now()}`, "Compartilhar imagem da corrida");
+  }, [captureShareView, run]);
+
+  const shareTraceImage = useCallback(() => {
+    captureShareView(shareTraceRef, `wayper_png_${run?.id || Date.now()}`, "Compartilhar tracado da corrida");
+  }, [captureShareView, run]);
+
+  const saveFullImage = useCallback(() => {
+    saveShareView(shareFullRef, `wayper_mapa_${run?.id || Date.now()}`);
+  }, [run, saveShareView]);
+
+  const saveTraceImage = useCallback(() => {
+    saveShareView(shareTraceRef, `wayper_png_${run?.id || Date.now()}`);
+  }, [run, saveShareView]);
 
   const animStyle = useMemo(
     () => ({
@@ -340,17 +420,20 @@ function RunDetailScreenInner({ route }) {
   }
 
   return (
+    <>
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Animated.View style={animStyle}>
         <View ref={captureViewRef} collapsable={false} style={styles.captureCard}>
           <View style={styles.heroMap}>
             <WayperMapLibre
               style={styles.map}
-              routePath={path}
+              routePath={hasZoneShape ? [] : path}
+              zones={hasZoneShape ? [{ coords: zoneCoords, area: run?.area }] : []}
+              showZones={hasZoneShape}
               centerCoordinate={midPoint}
               showUserLocation={false}
               interactive={false}
-              fitToContent={path.length > 1}
+              fitToContent={hasZoneShape || path.length > 1}
               contentPadding={{ top: 58, right: 48, bottom: 62, left: 48 }}
             />
             <LinearGradient
@@ -361,10 +444,10 @@ function RunDetailScreenInner({ route }) {
             />
             <View style={styles.heroContent}>
               <View style={styles.heroBadge}>
-                <Ionicons name="walk-outline" size={22} color={WayperTheme.colors.textInverse} />
+                <Ionicons name={isZoneRun ? "map-outline" : "walk-outline"} size={22} color={WayperTheme.colors.textInverse} />
               </View>
               <View style={styles.heroTextWrap}>
-                <Text style={styles.eyebrow}>Wayper Run</Text>
+                <Text style={styles.eyebrow}>{isZoneRun ? "Wayper Zone" : "Wayper Run"}</Text>
                 <Text style={styles.title} numberOfLines={2}>{runTitle}</Text>
                 <Text style={styles.date}>{formatDate(run.date)}</Text>
               </View>
@@ -469,28 +552,154 @@ function RunDetailScreenInner({ route }) {
 
           <View style={styles.actions}>
             <WPButton
-              title="Compartilhar imagem"
+              title="Compartilhar corrida"
               icon={<Ionicons name="image-outline" size={21} color={WayperTheme.colors.textInverse} />}
-              onPress={shareMapImage}
-            />
-            <WPButton
-              title="Exportar GPX"
-              variant="secondary"
-              icon={<Ionicons name="map-outline" size={21} color={WayperTheme.colors.primary} />}
-              onPress={exportGPX}
-              style={styles.actionGap}
-            />
-            <WPButton
-              title="Exportar JSON"
-              variant="ghost"
-              icon={<Ionicons name="code-slash-outline" size={21} color={WayperTheme.colors.textMuted} />}
-              onPress={exportJSON}
-              style={styles.actionGap}
+              onPress={() => setShareVisible(true)}
             />
           </View>
         </View>
       </Animated.View>
     </ScrollView>
+    <Modal
+      visible={shareVisible}
+      animationType="slide"
+      transparent
+      onRequestClose={() => setShareVisible(false)}
+    >
+      <View style={styles.shareOverlay}>
+        <View style={styles.shareSheet}>
+          <View style={styles.shareHandle} />
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.shareSheetContent}
+            nestedScrollEnabled
+          >
+            <View style={styles.shareHeader}>
+              <View>
+                <Text style={styles.shareEyebrow}>Wayper share</Text>
+                <Text style={styles.shareTitle}>Compartilhar corrida</Text>
+                <Text style={styles.shareHint}>Escolha o visual para enviar ou baixar.</Text>
+              </View>
+              <TouchableOpacity activeOpacity={0.82} style={styles.shareCloseIcon} onPress={() => setShareVisible(false)}>
+                <Ionicons name="close" size={22} color={WayperTheme.colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              removeClippedSubviews={false}
+              contentContainerStyle={styles.shareCarousel}
+            >
+              <ViewShot ref={shareFullRef} options={SHARE_CAPTURE_OPTIONS} collapsable={false} style={[styles.shareCard, styles.shareFullCard]}>
+                <View style={styles.shareExportHeader}>
+                  <View>
+                    <Text style={styles.shareExportEyebrow}>Wayper finalizado</Text>
+                    <Text style={styles.shareExportTitle}>{shareCardTitle}</Text>
+                  </View>
+                  <View style={styles.shareMiniLogo}>
+                    <Ionicons name="flash" size={16} color={WayperTheme.colors.textInverse} />
+                  </View>
+                </View>
+                <View style={styles.shareMapArtwork}>
+                  <Svg width="100%" height="100%" viewBox="0 0 320 210">
+                    <Defs>
+                      <SvgLinearGradient id="detailShareRouteGlow" x1="0" y1="0" x2="1" y2="1">
+                        <Stop offset="0" stopColor={WayperTheme.colors.primaryLight} stopOpacity="1" />
+                        <Stop offset="1" stopColor={WayperTheme.colors.primary} stopOpacity="1" />
+                      </SvgLinearGradient>
+                    </Defs>
+                    <SvgRect x="0" y="0" width="320" height="210" fill="#03070B" />
+                    <SvgPath d="M0 54 L74 16 L144 60 L226 24 L320 82 L320 0 L0 0 Z" fill="#0B141D" opacity="0.9" />
+                    <SvgPath d="M0 178 L72 132 L134 168 L206 121 L320 162 L320 210 L0 210 Z" fill="#081018" opacity="0.95" />
+                    <SvgLine x1="-18" y1="70" x2="338" y2="116" stroke="#263542" strokeWidth="13" opacity="0.75" />
+                    <SvgLine x1="-18" y1="70" x2="338" y2="116" stroke="#6F7A86" strokeWidth="3" opacity="0.34" />
+                    <SvgLine x1="42" y1="230" x2="282" y2="-20" stroke="#263542" strokeWidth="10" opacity="0.58" />
+                    <SvgLine x1="42" y1="230" x2="282" y2="-20" stroke="#6F7A86" strokeWidth="2" opacity="0.28" />
+                    <SvgLine x1="0" y1="140" x2="320" y2="42" stroke="#13232E" strokeWidth="4" opacity="0.55" />
+                    {hasZoneShape && shareTracePoints ? (
+                      <>
+                        <SvgPolygon points={shareTracePoints} fill={WayperTheme.colors.primarySoft} stroke={WayperTheme.colors.primaryGlow} strokeWidth="18" strokeLinejoin="round" opacity="0.46" />
+                        <SvgPolygon points={shareTracePoints} fill="rgba(0, 230, 118, 0.30)" stroke="url(#detailShareRouteGlow)" strokeWidth="7" strokeLinejoin="round" />
+                      </>
+                    ) : shareTracePoints ? (
+                      <>
+                        <SvgPolyline points={shareTracePoints} fill="none" stroke={WayperTheme.colors.primaryGlow} strokeWidth="17" strokeLinecap="round" strokeLinejoin="round" opacity="0.36" />
+                        <SvgPolyline points={shareTracePoints} fill="none" stroke="url(#detailShareRouteGlow)" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
+                      </>
+                    ) : (
+                      <SvgCircle cx="160" cy="105" r="22" fill={WayperTheme.colors.primary} opacity="0.9" />
+                    )}
+                  </Svg>
+                </View>
+                <Text style={styles.shareCardName} numberOfLines={1}>{runTitle}</Text>
+                <View style={styles.shareMetricGrid}>
+                  <ShareMiniMetric label="Tempo" value={durationDisplay} />
+                  <ShareMiniMetric label="Pace" value={paceDisplay} />
+                  <ShareMiniMetric label={isZoneRun ? "Area" : "Km"} value={isZoneRun ? areaDisplay : distanceDisplay} />
+                </View>
+              </ViewShot>
+
+              <ViewShot ref={shareTraceRef} options={SHARE_CAPTURE_OPTIONS} collapsable={false} style={[styles.shareCard, styles.shareTraceCard]}>
+                <Text style={styles.traceTitle}>{shareTraceTitle}</Text>
+                <View style={styles.traceSvgWrap}>
+                  <Svg width="100%" height="100%" viewBox="0 0 320 210">
+                    <Defs>
+                      <SvgLinearGradient id="detailTraceGlow" x1="0" y1="0" x2="1" y2="1">
+                        <Stop offset="0" stopColor={WayperTheme.colors.primaryLight} stopOpacity="1" />
+                        <Stop offset="1" stopColor={WayperTheme.colors.primary} stopOpacity="1" />
+                      </SvgLinearGradient>
+                    </Defs>
+                    {hasZoneShape && shareTracePoints ? (
+                      <>
+                        <SvgPolygon points={shareTracePoints} fill={WayperTheme.colors.primarySoft} stroke={WayperTheme.colors.primaryGlow} strokeWidth="18" strokeLinejoin="round" opacity="0.5" />
+                        <SvgPolygon points={shareTracePoints} fill="rgba(0, 230, 118, 0.24)" stroke="url(#detailTraceGlow)" strokeWidth="7" strokeLinejoin="round" />
+                      </>
+                    ) : shareTracePoints ? (
+                      <>
+                        <SvgPolyline points={shareTracePoints} fill="none" stroke={WayperTheme.colors.primaryGlow} strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" opacity="0.32" />
+                        <SvgPolyline points={shareTracePoints} fill="none" stroke="url(#detailTraceGlow)" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
+                      </>
+                    ) : (
+                      <SvgCircle cx="160" cy="105" r="20" fill={WayperTheme.colors.primary} opacity="0.9" />
+                    )}
+                  </Svg>
+                </View>
+                <View style={styles.shareMetricGrid}>
+                  <ShareMiniMetric label="Tempo" value={durationDisplay} />
+                  <ShareMiniMetric label="Pace" value={paceDisplay} />
+                  <ShareMiniMetric label={isZoneRun ? "Area" : "Km"} value={isZoneRun ? areaDisplay : distanceDisplay} />
+                </View>
+              </ViewShot>
+            </ScrollView>
+
+            <View style={styles.shareActionRow}>
+              <TouchableOpacity activeOpacity={0.88} style={styles.shareActionButton} onPress={shareFullImage}>
+                <Ionicons name="image-outline" size={19} color={WayperTheme.colors.textInverse} />
+                <Text style={styles.shareActionText}>Imagem</Text>
+              </TouchableOpacity>
+              <TouchableOpacity activeOpacity={0.88} style={[styles.shareActionButton, styles.shareActionButtonSecondary]} onPress={shareTraceImage}>
+                <Ionicons name="git-branch-outline" size={19} color={WayperTheme.colors.primary} />
+                <Text style={[styles.shareActionText, styles.shareActionTextSecondary]}>{isZoneRun ? "Zona PNG" : "Tracado PNG"}</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.shareDownloadRow}>
+              <TouchableOpacity activeOpacity={0.86} style={styles.shareDownloadButton} onPress={saveFullImage}>
+                <Ionicons name="download-outline" size={18} color={WayperTheme.colors.primary} />
+                <Text style={styles.shareDownloadText}>Baixar mapa</Text>
+              </TouchableOpacity>
+              <TouchableOpacity activeOpacity={0.86} style={styles.shareDownloadButton} onPress={saveTraceImage}>
+                <Ionicons name="download-outline" size={18} color={WayperTheme.colors.primary} />
+                <Text style={styles.shareDownloadText}>Baixar PNG</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
 
@@ -517,6 +726,15 @@ function SectionCard({ title, icon, children }) {
         <Text style={styles.sectionTitle}>{title}</Text>
       </View>
       {children}
+    </View>
+  );
+}
+
+function ShareMiniMetric({ label, value }) {
+  return (
+    <View style={styles.shareMiniMetric}>
+      <Text style={styles.shareMiniMetricLabel}>{label}</Text>
+      <Text style={styles.shareMiniMetricValue} numberOfLines={1}>{value}</Text>
     </View>
   );
 }
@@ -817,5 +1035,224 @@ const styles = StyleSheet.create({
   },
   actionGap: {
     marginTop: WayperTheme.spacing.sm,
+  },
+  shareOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.72)",
+  },
+  shareSheet: {
+    width: "100%",
+    maxHeight: "88%",
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: "rgba(8, 16, 24, 0.98)",
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    overflow: "hidden",
+    ...WayperTheme.shadows.card,
+  },
+  shareHandle: {
+    width: 48,
+    height: 5,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.borderStrong,
+    alignSelf: "center",
+    marginBottom: 18,
+  },
+  shareSheetContent: {
+    paddingBottom: 24,
+  },
+  shareHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: WayperTheme.spacing.lg,
+  },
+  shareEyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1.1,
+  },
+  shareTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 26,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  shareHint: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  shareCloseIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+  },
+  shareCarousel: {
+    gap: 12,
+    paddingRight: 12,
+  },
+  shareCard: {
+    width: 292,
+    minHeight: 340,
+    borderRadius: WayperTheme.radius.xl,
+    overflow: "hidden",
+    backgroundColor: WayperTheme.colors.background,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  shareFullCard: {
+    padding: 12,
+    backgroundColor: "#03070B",
+  },
+  shareExportHeader: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  shareExportEyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  shareExportTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 19,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  shareMiniLogo: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primary,
+  },
+  shareMapArtwork: {
+    height: 166,
+    borderRadius: WayperTheme.radius.xl,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    backgroundColor: WayperTheme.colors.background,
+  },
+  shareCardName: {
+    color: WayperTheme.colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+    marginTop: 11,
+  },
+  shareMetricGrid: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  shareMiniMetric: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: WayperTheme.radius.lg,
+    backgroundColor: "rgba(16, 27, 37, 0.92)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    justifyContent: "center",
+    paddingHorizontal: 9,
+  },
+  shareMiniMetricLabel: {
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  shareMiniMetricValue: {
+    color: WayperTheme.colors.primary,
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  shareTraceCard: {
+    padding: 14,
+    backgroundColor: "#020507",
+  },
+  traceTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 18,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  traceSvgWrap: {
+    height: 214,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: "rgba(0, 230, 118, 0.06)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    overflow: "hidden",
+  },
+  shareActionRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+  },
+  shareActionButton: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primary,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryLight,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  shareActionButtonSecondary: {
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  shareActionText: {
+    color: WayperTheme.colors.textInverse,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  shareActionTextSecondary: {
+    color: WayperTheme.colors.text,
+  },
+  shareDownloadRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 10,
+  },
+  shareDownloadButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: "rgba(0, 230, 118, 0.08)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  shareDownloadText: {
+    color: WayperTheme.colors.text,
+    fontSize: 13,
+    fontWeight: "900",
   },
 });
