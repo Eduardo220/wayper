@@ -63,6 +63,7 @@ function getNotificationIcon(type) {
   if (type === "like") return "heart";
   if (type === "comment") return "chatbubble-ellipses";
   if (type === "friend_request") return "person-add";
+  if (type === "activity_post") return "pulse";
   return "notifications";
 }
 
@@ -130,7 +131,7 @@ function SkeletonCard() {
   );
 }
 
-function EmptyFeed({ navigation }) {
+function EmptyFeed({ onFriendsPress, onMapPress }) {
   return (
     <View style={styles.emptyCard}>
       <View style={styles.emptyIcon}>
@@ -139,17 +140,47 @@ function EmptyFeed({ navigation }) {
       <Text style={styles.emptyTitle}>Nenhuma atividade recente ainda</Text>
       <Text style={styles.emptyText}>Adicione amigos ou comece uma corrida para movimentar seu feed.</Text>
       <View style={styles.emptyActions}>
-        <Pressable style={styles.emptyPrimary} onPress={() => navigation.navigate("Amigos")}>
+        <Pressable style={styles.emptyPrimary} onPress={onFriendsPress}>
           <Ionicons name="people-outline" size={18} color={WayperTheme.colors.textInverse} />
           <Text style={styles.emptyPrimaryText}>Amigos</Text>
         </Pressable>
-        <Pressable style={styles.emptySecondary} onPress={() => navigation.navigate("Mapa")}>
+        <Pressable style={styles.emptySecondary} onPress={onMapPress}>
           <Ionicons name="map-outline" size={18} color={WayperTheme.colors.text} />
           <Text style={styles.emptySecondaryText}>Mapa</Text>
         </Pressable>
       </View>
     </View>
   );
+}
+
+function buildRunDetailFromActivity(activity = {}) {
+  const isZone = activity.type === "zone";
+  const distanceMeters = Math.max(0, Number(activity.distanceKm || 0) * 1000);
+  const duration = Math.max(0, Number(activity.durationSeconds || 0));
+  const avgSpeed = distanceMeters > 0 && duration > 0 ? Number(((distanceMeters / 1000) / (duration / 3600)).toFixed(2)) : 0;
+  const userName = activity.userName || "Atleta Wayper";
+
+  return {
+    id: activity.runId || activity.zoneId || activity.id,
+    name: activity.name || (isZone ? `${userName} conquistou uma nova area` : `${userName} concluiu uma corrida`),
+    date: activity.createdAt || new Date().toISOString(),
+    path: Array.isArray(activity.path) ? activity.path : [],
+    distance: distanceMeters,
+    duration,
+    avgSpeed,
+    mode: isZone ? "zones" : "free",
+    area: isZone ? Number(activity.areaM2 || 0) : 0,
+    zoneCoords: isZone && Array.isArray(activity.polygon) ? activity.polygon : [],
+    zoneCount: isZone ? 1 : 0,
+    effort: activity.effort ?? "--",
+    notes: activity.description || activity.notes || "",
+    tags: Array.isArray(activity.tags) ? activity.tags : [],
+    photoUri: activity.photoUri || null,
+    userName,
+    userAvatar: activity.userAvatar || null,
+    readOnly: true,
+    socialActivity: true,
+  };
 }
 
 export default function HomeScreen({ navigation }) {
@@ -204,9 +235,50 @@ export default function HomeScreen({ navigation }) {
     }
   }, [loadData]);
 
-  const goToFriends = useCallback(() => navigation.navigate("Amigos"), [navigation]);
-  const goToGroups = useCallback(() => navigation.navigate("Grupos"), [navigation]);
-  const renderActivity = useCallback(({ item }) => <ActivityFeedCard activity={item} />, []);
+  const navigateRoot = useCallback(
+    (screen, params) => {
+      const parent = navigation.getParent?.();
+      if (parent) parent.navigate(screen, params);
+      else navigation.navigate(screen, params);
+    },
+    [navigation]
+  );
+  const goToFriends = useCallback(() => navigateRoot("Amigos"), [navigateRoot]);
+  const goToGroups = useCallback(() => navigateRoot("Grupos"), [navigateRoot]);
+  const goToMap = useCallback(() => navigateRoot("Mapa"), [navigateRoot]);
+  const openActivityDetail = useCallback(
+    (activity) => {
+      navigation.navigate("ActivityDetail", {
+        activity,
+        run: buildRunDetailFromActivity(activity),
+        readOnly: true,
+      });
+    },
+    [navigation]
+  );
+  const hideAuthorActivities = useCallback((authorUid) => {
+    if (!authorUid) return;
+    setActivities((current) => current.filter((item) => item.userId !== authorUid));
+  }, []);
+  const handleFriendRemoved = useCallback(
+    (authorUid) => {
+      if (!authorUid) return;
+      setActivities((current) => current.filter((item) => item.userId !== authorUid));
+      setFriends((current) => current.filter((item) => item.friendUid !== authorUid && item.id !== authorUid));
+    },
+    []
+  );
+  const renderActivity = useCallback(
+    ({ item }) => (
+      <ActivityFeedCard
+        activity={item}
+        onOpenActivity={() => openActivityDetail(item)}
+        onAuthorMuted={hideAuthorActivities}
+        onFriendRemoved={handleFriendRemoved}
+      />
+    ),
+    [handleFriendRemoved, hideAuthorActivities, openActivityDetail]
+  );
   const unreadNotifications = useMemo(
     () => notifications.filter((item) => !item.read).length,
     [notifications]
@@ -246,7 +318,7 @@ export default function HomeScreen({ navigation }) {
               <SkeletonCard />
             </View>
           ) : (
-            <EmptyFeed navigation={navigation} />
+            <EmptyFeed onFriendsPress={goToFriends} onMapPress={goToMap} />
           )
         }
         refreshControl={

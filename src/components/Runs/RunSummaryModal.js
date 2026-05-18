@@ -16,9 +16,10 @@ const TAG_OPTIONS = [
   { label: "Leve", icon: "leaf-outline" },
 ];
 
-export default function RunSummaryModal({ visible, onClose, onSave, baseRunData = {} }) {
+export default function RunSummaryModal({ visible, onClose, onSave, baseRunData = {}, mode = "save" }) {
   const runData = useMemo(() => baseRunData || {}, [baseRunData]);
   const isZoneRun = runData.mode === "zones" || Number(runData.area || 0) > 0 || !!runData.zoneId;
+  const isEditing = mode === "edit";
   const [name, setName] = useState("Minha Corrida");
   const [effort, setEffort] = useState(5);
   const [notes, setNotes] = useState("");
@@ -116,7 +117,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
 
           <View style={styles.heroText}>
             <Text style={styles.title}>
-              Finalizar <Text style={styles.titleAccent}>{isZoneRun ? "Zonas" : "Corrida"}</Text>
+              {isEditing ? "Editar" : "Finalizar"} <Text style={styles.titleAccent}>{isZoneRun ? "Zonas" : "Corrida"}</Text>
             </Text>
             <View style={styles.metricsRow}>
               <MetricPill icon="location-outline" value={metrics.distance} label="Distância" />
@@ -201,9 +202,21 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
         <View style={styles.field}>
           <Text style={styles.label}>Foto opcional</Text>
           {photoUri ? (
-            <TouchableOpacity onPress={pickPhoto} activeOpacity={0.85}>
-              <Image source={{ uri: photoUri }} style={styles.photo} />
-            </TouchableOpacity>
+            <View>
+              <TouchableOpacity onPress={pickPhoto} activeOpacity={0.85}>
+                <Image source={{ uri: photoUri }} style={styles.photo} />
+              </TouchableOpacity>
+              <View style={styles.photoActionRow}>
+                <TouchableOpacity style={styles.photoActionButton} onPress={pickPhoto} activeOpacity={0.85}>
+                  <Ionicons name="swap-horizontal-outline" size={18} color={WayperTheme.colors.primary} />
+                  <Text style={styles.photoActionText}>Trocar foto</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.photoActionButton, styles.photoRemoveButton]} onPress={() => setPhotoUri(null)} activeOpacity={0.85}>
+                  <Ionicons name="trash-outline" size={18} color={WayperTheme.colors.danger} />
+                  <Text style={styles.photoRemoveText}>Remover</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           ) : (
             <TouchableOpacity style={styles.photoBtn} onPress={pickPhoto} activeOpacity={0.85}>
               <Ionicons name="image-outline" size={28} color={WayperTheme.colors.primary} />
@@ -221,7 +234,9 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
           >
             <View pointerEvents="none" style={styles.saveOrb} />
             <Ionicons name="save-outline" size={28} color={WayperTheme.colors.textInverse} />
-            <Text style={styles.saveText}>{saving ? "Salvando..." : isZoneRun ? "Salvar zonas" : "Salvar corrida"}</Text>
+            <Text style={styles.saveText}>
+              {saving ? "Salvando..." : isEditing ? "Salvar alteracoes" : isZoneRun ? "Salvar zonas" : "Salvar corrida"}
+            </Text>
           </LinearGradient>
         </TouchableOpacity>
 
@@ -447,6 +462,37 @@ const styles = StyleSheet.create({
     height: 170,
     borderRadius: WayperTheme.radius.xl,
     marginTop: WayperTheme.spacing.sm,
+  },
+  photoActionRow: {
+    flexDirection: "row",
+    gap: WayperTheme.spacing.md,
+    marginTop: WayperTheme.spacing.md,
+  },
+  photoActionButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: WayperTheme.radius.pill,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: WayperTheme.spacing.sm,
+  },
+  photoRemoveButton: {
+    borderColor: WayperTheme.colors.dangerBorder,
+    backgroundColor: WayperTheme.colors.dangerSoft,
+  },
+  photoActionText: {
+    color: WayperTheme.colors.primary,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  photoRemoveText: {
+    color: WayperTheme.colors.danger,
+    fontSize: 14,
+    fontWeight: "900",
   },
   saveTouchable: {
     marginTop: WayperTheme.spacing.xl,

@@ -21,6 +21,7 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "../firebaseConfig";
 import zones from "./zones";
+import { notifyActivitySubscribers } from "../services/notifications/notificationService";
 
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundFetch from "expo-background-fetch";
@@ -170,20 +171,24 @@ export async function saveLocalRun(run = {}) {
       zoneCoords: sanitizeCoordsArray(run.zoneCoords || run.zone?.coords || []),
       zoneCount: Number(run.zoneCount ?? (Array.isArray(run.zoneCoords) && run.zoneCoords.length >= 3 ? 1 : 0)),
       visibility: run.visibility || "followers",
+      subscriberNotificationSent: !!run.subscriberNotificationSent,
+      subscriberNotificationSentAt: run.subscriberNotificationSentAt || null,
     };
     const sameZoneRunIndex =
       normalized.zoneId && (normalized.mode === "zones" || normalized.area > 0 || normalized.zoneCoords.length >= 3)
         ? existing.findIndex((item) => item?.zoneId === normalized.zoneId && (item?.mode === "zones" || Number(item?.area || 0) > 0))
         : -1;
+    const sameRunIndex = existing.findIndex((item) => item?.id === normalized.id);
+    const replaceIndex = sameZoneRunIndex >= 0 ? sameZoneRunIndex : sameRunIndex;
 
     const savedRecord =
-      sameZoneRunIndex >= 0
-        ? { ...existing[sameZoneRunIndex], ...normalized, id: existing[sameZoneRunIndex]?.id || normalized.id }
+      replaceIndex >= 0
+        ? { ...existing[replaceIndex], ...normalized, id: existing[replaceIndex]?.id || normalized.id }
         : normalized;
 
     const next =
-      sameZoneRunIndex >= 0
-        ? existing.map((item, index) => (index === sameZoneRunIndex ? savedRecord : item))
+      replaceIndex >= 0
+        ? existing.map((item, index) => (index === replaceIndex ? savedRecord : item))
         : [savedRecord, ...existing];
 
     const deduped = uniqueById(next);
@@ -202,6 +207,41 @@ export async function saveLocalRun(run = {}) {
       date: now,
       synced: false,
     };
+  }
+}
+
+export async function deleteLocalRun(runId, options = {}) {
+  try {
+    const id = String(runId || "");
+    if (!id) return { deleted: false, remoteDeleted: false };
+
+    const existing = await loadLocalRuns();
+    const next = (Array.isArray(existing) ? existing : []).filter((run) => String(run?.id || "") !== id);
+    await AsyncStorage.setItem(RUNS_KEY, safeStringify(next));
+
+    let remoteDeleted = false;
+    if (options.deleteRemote !== false) {
+      try {
+        const uid = auth?.currentUser?.uid || null;
+        const batch = writeBatch(db);
+        batch.delete(doc(db, "runs", id));
+
+        if (uid) {
+          batch.delete(doc(db, "users", uid, "runs", id));
+          batch.delete(doc(db, "activities", `run_${uid}_${id}`));
+        }
+
+        await batch.commit();
+        remoteDeleted = true;
+      } catch (remoteErr) {
+        logError(remoteErr, { fn: "deleteLocalRun.remote", runId: id });
+      }
+    }
+
+    return { deleted: true, remoteDeleted };
+  } catch (err) {
+    logError(err, { fn: "deleteLocalRun", runId });
+    return { deleted: false, remoteDeleted: false, error: err };
   }
 }
 
@@ -504,18 +544,12 @@ export async function syncRunsToFirestore() {
       return;
     }
 
-    const remoteSet = await fetchRemoteIds("runs");
-
     const batches = [];
+    const pendingPostNotifications = [];
     let batch = writeBatch(db);
     let opsInBatch = 0;
 
     for (const run of unsynced) {
-      if (remoteSet.has(run.id)) {
-        run.synced = true;
-        continue;
-      }
-
       const path = (run.path || [])
         .map((p) => ({
           latitude: Number(p.latitude),
@@ -551,12 +585,14 @@ export async function syncRunsToFirestore() {
       opsInBatch++;
 
       if (uid !== "offline") {
+        const activityId = `run_${uid}_${run.id}`;
+        const activityType = run.mode === "zones" && Number(run.area || 0) > 0 ? "zone" : "run";
         batch.set(doc(db, "users", uid, "runs", run.id), payload, { merge: true });
         batch.set(
-          doc(db, "activities", `run_${uid}_${run.id}`),
+          doc(db, "activities", activityId),
           {
-            id: `run_${uid}_${run.id}`,
-            type: "run",
+            id: activityId,
+            type: activityType,
             userId: uid,
             runId: run.id,
             distance: Number(run.distance || 0),
@@ -576,6 +612,16 @@ export async function syncRunsToFirestore() {
           { merge: true }
         );
         opsInBatch += 2;
+
+        if (!run.subscriberNotificationSent) {
+          pendingPostNotifications.push({
+            run,
+            activityId,
+            activityType,
+            authorUid: uid,
+            authorName: auth?.currentUser?.displayName || auth?.currentUser?.email?.split("@")?.[0] || "Atleta Wayper",
+          });
+        }
       }
 
       run.synced = true;
@@ -607,6 +653,14 @@ export async function syncRunsToFirestore() {
           if (attempts > MAX_RETRY_ATTEMPTS) throw err;
         }
       }
+    }
+
+    for (const item of pendingPostNotifications) {
+      try {
+        await notifyActivitySubscribers(item);
+        item.run.subscriberNotificationSent = true;
+        item.run.subscriberNotificationSentAt = new Date().toISOString();
+      } catch {}
     }
 
     await AsyncStorage.setItem(RUNS_KEY, safeStringify(local));
@@ -929,6 +983,7 @@ export async function unregisterBackgroundSyncTask() {
 export default {
   loadLocalRuns,
   saveLocalRun,
+  deleteLocalRun,
   loadLocalZones,
   saveLocalZone,
   createAndSaveZoneFromPath,

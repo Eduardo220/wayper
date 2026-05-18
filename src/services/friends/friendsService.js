@@ -214,3 +214,47 @@ export async function rejectFriendRequest(requestId, uid) {
 export async function cancelFriendRequest(requestId, uid) {
   return rejectFriendRequest(requestId, uid);
 }
+
+/* ============================================================
+   REMOVE FRIENDSHIP (2-WAY)
+============================================================ */
+async function findFriendshipDocs(ownerUid, friendUid) {
+  const ref = collection(db, `users/${ownerUid}/friends`);
+  const q = query(ref, where("friendId", "==", friendUid));
+  const snap = await getDocs(q);
+  return snap.docs.map((item) => item.ref);
+}
+
+export async function removeFriendship(uid, friendUid) {
+  if (!uid || !friendUid) throw new Error("missing_args");
+  if (uid === friendUid) throw new Error("cannot_remove_self");
+
+  const [forwardRefs, reverseRefs] = await Promise.all([
+    findFriendshipDocs(uid, friendUid),
+    findFriendshipDocs(friendUid, uid),
+  ]);
+
+  const batch = writeBatch(db);
+  [...forwardRefs, ...reverseRefs].forEach((ref) => batch.delete(ref));
+
+  const requestQueries = [
+    query(collection(db, "friend_requests"), where("from", "==", uid), where("to", "==", friendUid)),
+    query(collection(db, "friend_requests"), where("from", "==", friendUid), where("to", "==", uid)),
+  ];
+
+  const requestSnaps = await Promise.all(requestQueries.map((q) => getDocs(q)));
+  requestSnaps.forEach((snap) => {
+    snap.docs.forEach((item) => {
+      batch.set(item.ref, {
+        status: "removed",
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    });
+  });
+
+  await batch.commit();
+  pendingCache.delete(cacheKey(uid, friendUid));
+  pendingCache.delete(cacheKey(friendUid, uid));
+
+  return { success: true };
+}

@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -13,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { auth } from "../../firebaseConfig";
 import { WayperTheme } from "../../theme/wayperTheme";
 import {
   formatActivityDate,
@@ -31,6 +33,13 @@ import {
   subscribeActivityInteractions,
   toggleActivityLike,
 } from "../../services/feed/feedInteractionService";
+import {
+  getFeedAuthorPreference,
+  muteActivityAuthor,
+  removeFriendshipWithActivityAuthor,
+  reportActivity,
+  setAuthorPostNotifications,
+} from "../../services/feed/feedPostActionsService";
 
 function Metric({ label, value, accent = false, flex = 1 }) {
   return (
@@ -42,8 +51,13 @@ function Metric({ label, value, accent = false, flex = 1 }) {
 }
 
 function SocialButton({ icon, label, onPress, active = false }) {
+  const handlePress = useCallback((event) => {
+    event?.stopPropagation?.();
+    onPress?.();
+  }, [onPress]);
+
   return (
-    <Pressable accessibilityRole="button" style={[styles.socialButton, active && styles.socialButtonActive]} onPress={onPress}>
+    <Pressable accessibilityRole="button" style={[styles.socialButton, active && styles.socialButtonActive]} onPress={handlePress}>
       <Ionicons name={icon} size={19} color={active ? WayperTheme.colors.primary : WayperTheme.colors.textMuted} />
       <Text style={[styles.socialText, active && styles.socialTextActive]}>{label}</Text>
     </Pressable>
@@ -124,13 +138,110 @@ function CommentsModal({ visible, activity, comments, text, sending, onChangeTex
   );
 }
 
-function ActivityFeedCard({ activity }) {
+function OptionsModal({
+  visible,
+  activity,
+  notifyEnabled,
+  busyAction,
+  isOwnActivity,
+  onEnableNotifications,
+  onMute,
+  onRemoveFriend,
+  onReport,
+  onClose,
+}) {
+  const name = activity?.userName || "Atleta Wayper";
+  const disabledFriendActions = isOwnActivity || !activity?.userId;
+
+  return (
+    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
+      <Pressable style={styles.optionsOverlay} onPress={onClose}>
+        <Pressable style={styles.optionsSheet} onPress={(event) => event.stopPropagation?.()}>
+          <View style={styles.optionsHandle} />
+          <View style={styles.optionsHeader}>
+            <View>
+              <Text style={styles.optionsTitle}>Opcoes da atividade</Text>
+              <Text style={styles.optionsSubtitle} numberOfLines={1}>{name}</Text>
+            </View>
+            <Pressable style={styles.optionsClose} onPress={onClose}>
+              <Ionicons name="close" size={20} color={WayperTheme.colors.text} />
+            </Pressable>
+          </View>
+
+          <OptionItem
+            icon={notifyEnabled ? "notifications" : "notifications-outline"}
+            title={notifyEnabled ? "Notificacoes ativadas" : "Ativar notificacoes"}
+            description={`Receber avisos quando ${name} publicar uma atividade.`}
+            disabled={disabledFriendActions || notifyEnabled || busyAction === "notify"}
+            loading={busyAction === "notify"}
+            onPress={onEnableNotifications}
+          />
+          <OptionItem
+            icon="volume-mute-outline"
+            title="Silenciar"
+            description="Ocultar atividades dessa pessoa no seu feed."
+            disabled={disabledFriendActions || busyAction === "mute"}
+            loading={busyAction === "mute"}
+            onPress={onMute}
+          />
+          <OptionItem
+            icon="person-remove-outline"
+            title="Remover amizade"
+            description="Desfazer a conexao com essa pessoa."
+            disabled={disabledFriendActions || busyAction === "remove"}
+            loading={busyAction === "remove"}
+            danger
+            onPress={onRemoveFriend}
+          />
+          <OptionItem
+            icon="flag-outline"
+            title="Denunciar atividade"
+            description="Enviar esta atividade para analise."
+            disabled={busyAction === "report"}
+            loading={busyAction === "report"}
+            danger
+            onPress={onReport}
+          />
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function OptionItem({ icon, title, description, onPress, disabled = false, loading = false, danger = false }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      style={[styles.optionItem, danger && styles.optionItemDanger, disabled && styles.optionItemDisabled]}
+      onPress={onPress}
+      disabled={disabled || loading}
+    >
+      <View style={[styles.optionIcon, danger && styles.optionIconDanger]}>
+        {loading ? (
+          <ActivityIndicator size="small" color={danger ? WayperTheme.colors.danger : WayperTheme.colors.primary} />
+        ) : (
+          <Ionicons name={icon} size={21} color={danger ? WayperTheme.colors.danger : WayperTheme.colors.primary} />
+        )}
+      </View>
+      <View style={styles.optionCopy}>
+        <Text style={[styles.optionTitle, danger && styles.optionTitleDanger]}>{title}</Text>
+        <Text style={styles.optionDescription} numberOfLines={2}>{description}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function ActivityFeedCard({ activity, onOpenActivity, onAuthorMuted, onFriendRemoved }) {
   const isZone = activity?.type === "zone";
   const name = activity?.userName || "Atleta Wayper";
+  const isOwnActivity = !!activity?.userId && activity.userId === auth.currentUser?.uid;
   const [likedByMe, setLikedByMe] = useState(false);
   const [likesCount, setLikesCount] = useState(Number(activity?.likesCount || 0));
   const [commentsCount, setCommentsCount] = useState(Number(activity?.commentsCount || 0));
   const [commentsVisible, setCommentsVisible] = useState(false);
+  const [optionsVisible, setOptionsVisible] = useState(false);
+  const [busyAction, setBusyAction] = useState(null);
+  const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
@@ -151,6 +262,18 @@ function ActivityFeedCard({ activity }) {
     if (!commentsVisible) return undefined;
     return subscribeActivityComments(activity, setComments);
   }, [activity, commentsVisible]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadPreference() {
+      const pref = await getFeedAuthorPreference(activity?.userId);
+      if (mounted) setNotifyEnabled(!!pref.notifyPosts);
+    }
+    loadPreference();
+    return () => {
+      mounted = false;
+    };
+  }, [activity?.userId]);
 
   const likeIcon = useMemo(() => (likedByMe ? "heart" : "heart-outline"), [likedByMe]);
 
@@ -189,8 +312,96 @@ function ActivityFeedCard({ activity }) {
     } catch {}
   }, [shareText]);
 
+  const guardFriendAction = useCallback(() => {
+    if (isOwnActivity || !activity?.userId) {
+      Alert.alert("Atividade propria", "Essas opcoes estao disponiveis para atividades de outros atletas.");
+      return false;
+    }
+    return true;
+  }, [activity?.userId, isOwnActivity]);
+
+  const handleEnableNotifications = useCallback(async () => {
+    if (!guardFriendAction() || busyAction) return;
+    setBusyAction("notify");
+    try {
+      const result = await setAuthorPostNotifications(activity, true);
+      if (!result?.ok) {
+        Alert.alert("Notificacoes", "Nao foi possivel ativar notificacoes para essa pessoa.");
+        return;
+      }
+      setNotifyEnabled(true);
+      setOptionsVisible(false);
+      Alert.alert("Notificacoes ativadas", `Voce recebera avisos quando ${name} publicar uma nova atividade.`);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [activity, busyAction, guardFriendAction, name]);
+
+  const handleMute = useCallback(async () => {
+    if (!guardFriendAction() || busyAction) return;
+    setBusyAction("mute");
+    try {
+      const result = await muteActivityAuthor(activity);
+      if (!result?.ok) {
+        Alert.alert("Silenciar", "Nao foi possivel silenciar essa pessoa.");
+        return;
+      }
+      setOptionsVisible(false);
+      onAuthorMuted?.(activity?.userId);
+      Alert.alert("Atividades silenciadas", `${name} nao aparecera mais no seu feed.`);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [activity, busyAction, guardFriendAction, name, onAuthorMuted]);
+
+  const handleRemoveFriend = useCallback(() => {
+    if (!guardFriendAction() || busyAction) return;
+    setOptionsVisible(false);
+    Alert.alert(
+      "Remover amizade",
+      `Tem certeza que deseja remover ${name} da sua lista de amigos?`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Remover",
+          style: "destructive",
+          onPress: async () => {
+            setBusyAction("remove");
+            try {
+              const result = await removeFriendshipWithActivityAuthor(activity);
+              if (!result?.ok) {
+                Alert.alert("Remover amizade", "Nao foi possivel desfazer essa amizade.");
+                return;
+              }
+              onFriendRemoved?.(activity?.userId);
+              Alert.alert("Amizade removida", `${name} foi removido dos seus amigos.`);
+            } finally {
+              setBusyAction(null);
+            }
+          },
+        },
+      ]
+    );
+  }, [activity, busyAction, guardFriendAction, name, onFriendRemoved]);
+
+  const handleReport = useCallback(async () => {
+    if (busyAction) return;
+    setBusyAction("report");
+    try {
+      const result = await reportActivity(activity, "inappropriate");
+      if (!result?.ok) {
+        Alert.alert("Denunciar atividade", "Nao foi possivel enviar a denuncia agora.");
+        return;
+      }
+      setOptionsVisible(false);
+      Alert.alert("Denuncia enviada", "Obrigado. Vamos analisar essa atividade.");
+    } finally {
+      setBusyAction(null);
+    }
+  }, [activity, busyAction]);
+
   return (
-    <View style={styles.card}>
+    <Pressable accessibilityRole="button" style={styles.card} onPress={onOpenActivity}>
       <View style={styles.header}>
         <HomeAvatar uri={activity?.userAvatar} name={name} size={48} />
         <View style={styles.headerText}>
@@ -199,7 +410,14 @@ function ActivityFeedCard({ activity }) {
             {formatActivityDate(activity?.createdAt)}
           </Text>
         </View>
-        <Pressable accessibilityRole="button" style={styles.moreButton}>
+        <Pressable
+          accessibilityRole="button"
+          style={styles.moreButton}
+          onPress={(event) => {
+            event?.stopPropagation?.();
+            setOptionsVisible(true);
+          }}
+        >
           <Ionicons name="ellipsis-horizontal" size={22} color={WayperTheme.colors.textMuted} />
         </Pressable>
       </View>
@@ -254,7 +472,19 @@ function ActivityFeedCard({ activity }) {
         onSend={handleSendComment}
         onClose={() => setCommentsVisible(false)}
       />
-    </View>
+      <OptionsModal
+        visible={optionsVisible}
+        activity={activity}
+        notifyEnabled={notifyEnabled}
+        busyAction={busyAction}
+        isOwnActivity={isOwnActivity}
+        onEnableNotifications={handleEnableNotifications}
+        onMute={handleMute}
+        onRemoveFriend={handleRemoveFriend}
+        onReport={handleReport}
+        onClose={() => setOptionsVisible(false)}
+      />
+    </Pressable>
   );
 }
 
@@ -304,6 +534,110 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  optionsOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.58)",
+    padding: WayperTheme.spacing.page,
+  },
+  optionsSheet: {
+    borderRadius: 28,
+    padding: 18,
+    backgroundColor: WayperTheme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 12,
+  },
+  optionsHandle: {
+    alignSelf: "center",
+    width: 54,
+    height: 5,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.borderStrong,
+    marginBottom: 16,
+  },
+  optionsHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 8,
+  },
+  optionsTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 21,
+    fontWeight: "900",
+  },
+  optionsSubtitle: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  optionsClose: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  optionItem: {
+    minHeight: 72,
+    borderRadius: 20,
+    padding: 12,
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+  },
+  optionItemDanger: {
+    borderColor: WayperTheme.colors.dangerBorder,
+    backgroundColor: "rgba(255, 51, 71, 0.08)",
+  },
+  optionItemDisabled: {
+    opacity: 0.52,
+  },
+  optionIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  optionIconDanger: {
+    backgroundColor: WayperTheme.colors.dangerSoft,
+    borderColor: WayperTheme.colors.dangerBorder,
+  },
+  optionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  optionTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  optionTitleDanger: {
+    color: WayperTheme.colors.danger,
+  },
+  optionDescription: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "700",
+    marginTop: 2,
   },
   recordBadge: {
     alignSelf: "flex-start",

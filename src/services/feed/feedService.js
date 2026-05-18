@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "../../firebaseConfig";
 import sync from "../../utils/sync";
+import { getMutedFeedAuthorIds } from "./feedPostActionsService";
 
 const FEED_CACHE_KEY = "wayper_home_feed_cache_v1";
 const FRIENDS_CACHE_KEY = "wayper_home_friends_cache_v1";
@@ -655,6 +656,16 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
   let friends = [];
   let friendIds = [];
   let usedFallback = false;
+  let mutedAuthorIds = new Set();
+
+  if (uid) {
+    try {
+      mutedAuthorIds = new Set(await getMutedFeedAuthorIds(uid));
+    } catch {}
+  }
+
+  const filterMutedAuthors = (items = []) =>
+    (Array.isArray(items) ? items : []).filter((item) => !mutedAuthorIds.has(item.userId || item.uid || item.__userId));
 
   try {
     if (uid) {
@@ -672,7 +683,7 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
     }
 
     if (rows.length) {
-      activities = await normalizeRows(rows, limit);
+      activities = filterMutedAuthors(await normalizeRows(rows, limit * 2)).slice(0, limit);
       await setJsonCache(FEED_CACHE_KEY, activities);
     }
   } catch (error) {
@@ -683,18 +694,18 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
   if (!activities.length) {
     const cached = await getJsonCache(FEED_CACHE_KEY, []);
     if (cached.length) {
-      activities = cached.slice(0, limit);
+      activities = filterMutedAuthors(cached).slice(0, limit);
       usedFallback = true;
     }
   }
 
   if (!activities.length) {
-    activities = await loadLocalFallback(limit);
+    activities = filterMutedAuthors(await loadLocalFallback(limit * 2)).slice(0, limit);
     usedFallback = true;
   }
 
   if (!activities.length && typeof __DEV__ !== "undefined" && __DEV__) {
-    activities = DEV_MOCK_ACTIVITIES.slice(0, limit);
+    activities = filterMutedAuthors(DEV_MOCK_ACTIVITIES).slice(0, limit);
     usedFallback = true;
   }
 

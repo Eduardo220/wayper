@@ -122,6 +122,28 @@ function RunsStack() {
 }
 
 /* ===========================
+   HOME STACK
+   =========================== */
+function HomeStack() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: WayperTheme.colors.background },
+        headerTintColor: WayperTheme.colors.text,
+        headerTitleStyle: { fontWeight: "900", fontSize: 20 },
+      }}
+    >
+      <Stack.Screen name="InicioHome" component={HomeScreen} options={{ headerShown: false }} />
+      <Stack.Screen
+        name="ActivityDetail"
+        component={RunDetailScreen}
+        options={{ title: "Detalhes da atividade" }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+/* ===========================
    MAIN NAVIGATOR
    =========================== */
 export default function MainNavigator() {
@@ -255,7 +277,7 @@ export default function MainNavigator() {
         <CustomDrawer {...props} user={userData} onSignOut={handleLogout} />
       )}
     >
-      <Drawer.Screen name="Inicio" component={HomeScreen} options={{ title: "Início", headerShown: false }} />
+      <Drawer.Screen name="Inicio" component={HomeStack} options={{ title: "Início", headerShown: false }} />
       <Drawer.Screen name="Mapa" component={MapScreen} options={{ title: "Mapa" }} />
       <Drawer.Screen name="Corridas" component={RunsStack} options={{ title: "Corridas" }} />
       <Drawer.Screen name="Dashboard" component={DashboardScreen} options={{ title: "Dashboard" }} />

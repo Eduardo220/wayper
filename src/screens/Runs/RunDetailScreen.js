@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Alert, Animated, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, {
@@ -16,6 +16,7 @@ import Svg, {
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../../components/Map/WayperMapLibre";
 import RunShareModal from "../../components/Runs/RunShareModal";
 import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../../components/Runs/RunShareCard";
+import RunSummaryModal from "../../components/Runs/RunSummaryModal";
 import { WPButton } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
 import sync from "../../utils/sync";
@@ -237,15 +238,42 @@ function computeSplits(path = [], totalDuration = 0) {
   return { splits, pacePerKm, avgSpeedKmh, maxSpeedKmh, totalMeters, totalTime };
 }
 
-function RunDetailScreenInner({ route }) {
-  const run = route?.params?.run;
+function RunDetailScreenInner({ route, navigation }) {
+  const initialRun = route?.params?.run || null;
+  const readOnly = !!(route?.params?.readOnly || route?.params?.viewOnly || initialRun?.readOnly);
   const captureViewRef = useRef(null);
   const shareFullRef = useRef(null);
   const shareTraceRef = useRef(null);
   const anim = useRef(new Animated.Value(0)).current;
+  const [currentRun, setCurrentRun] = useState(initialRun);
   const [userAvgPace, setUserAvgPace] = useState(null);
   const [shareVisible, setShareVisible] = useState(false);
   const [shareLoading, setShareLoading] = useState(null);
+  const [optionsVisible, setOptionsVisible] = useState(false);
+  const [editVisible, setEditVisible] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const run = currentRun;
+
+  useEffect(() => {
+    setCurrentRun(initialRun);
+  }, [initialRun]);
+
+  useLayoutEffect(() => {
+    navigation?.setOptions?.({
+      headerRight: currentRun && !readOnly
+        ? () => (
+            <TouchableOpacity
+              activeOpacity={0.82}
+              hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
+              style={styles.headerOptionsButton}
+              onPress={() => setOptionsVisible(true)}
+            >
+              <Ionicons name="ellipsis-horizontal" size={24} color={WayperTheme.colors.text} />
+            </TouchableOpacity>
+          )
+        : undefined,
+    });
+  }, [currentRun, navigation, readOnly]);
 
   const path = useMemo(() => sanitizePath(run?.path || []), [run]);
   const zoneCoords = useMemo(() => sanitizePath(run?.zoneCoords || run?.zone?.coords || []), [run]);
@@ -287,6 +315,69 @@ function RunDetailScreenInner({ route }) {
     }),
     [isZoneRun, path, run?.id, totalMeters, totalTime, zoneCoords]
   );
+
+  const handleEditSave = useCallback(
+    async (payload) => {
+      if (!run?.id) {
+        Alert.alert("Editar corrida", "Nao foi possivel identificar esta corrida.");
+        return;
+      }
+
+      const updatedRun = {
+        ...run,
+        ...payload,
+        id: run.id,
+        date: run.date || payload?.date || new Date().toISOString(),
+        synced: false,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const saved = await sync.saveLocalRun(updatedRun);
+      sync.scheduleRunsSync?.();
+      setCurrentRun(saved);
+      navigation?.setParams?.({ run: saved });
+      Alert.alert("Corrida atualizada", "As alteracoes foram salvas.");
+    },
+    [navigation, run]
+  );
+
+  const deleteRun = useCallback(async () => {
+    if (!run?.id || deleting) return;
+
+    try {
+      setDeleting(true);
+      const result = await sync.deleteLocalRun?.(run.id, { deleteRemote: true });
+      if (!result?.deleted) {
+        Alert.alert("Excluir corrida", "Nao foi possivel excluir esta corrida. Tente novamente.");
+        return;
+      }
+
+      setOptionsVisible(false);
+      setEditVisible(false);
+      navigation?.goBack?.();
+    } catch (error) {
+      debug("deleteRun", error);
+      Alert.alert("Excluir corrida", "Nao foi possivel excluir esta corrida. Tente novamente.");
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleting, navigation, run?.id]);
+
+  const confirmDeleteRun = useCallback(() => {
+    setOptionsVisible(false);
+    Alert.alert(
+      "Excluir corrida",
+      "Tem certeza que deseja excluir esta corrida? Essa acao nao pode ser desfeita.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Excluir",
+          style: "destructive",
+          onPress: deleteRun,
+        },
+      ]
+    );
+  }, [deleteRun]);
 
   useEffect(() => {
     Animated.timing(anim, { toValue: 1, duration: 420, useNativeDriver: true }).start();
@@ -572,13 +663,15 @@ function RunDetailScreenInner({ route }) {
             {run.photoUri ? <Image source={{ uri: run.photoUri }} style={styles.photo} /> : null}
           </SectionCard>
 
-          <View style={styles.actions}>
-            <WPButton
-              title="Compartilhar corrida"
-              icon={<Ionicons name="image-outline" size={21} color={WayperTheme.colors.textInverse} />}
-              onPress={() => setShareVisible(true)}
-            />
-          </View>
+          {!readOnly ? (
+            <View style={styles.actions}>
+              <WPButton
+                title="Compartilhar corrida"
+                icon={<Ionicons name="image-outline" size={21} color={WayperTheme.colors.textInverse} />}
+                onPress={() => setShareVisible(true)}
+              />
+            </View>
+          ) : null}
         </View>
       </Animated.View>
     </ScrollView>
@@ -598,6 +691,57 @@ function RunDetailScreenInner({ route }) {
       area={areaDisplay}
       publicLink={run?.publicLink || run?.publicUrl || run?.shareUrl || run?.url}
     />
+    <RunSummaryModal
+      visible={editVisible}
+      mode="edit"
+      onClose={() => setEditVisible(false)}
+      onSave={handleEditSave}
+      baseRunData={run || {}}
+    />
+    <Modal
+      visible={optionsVisible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setOptionsVisible(false)}
+    >
+      <Pressable style={styles.optionsBackdrop} onPress={() => setOptionsVisible(false)}>
+        <Pressable style={styles.optionsMenu} onPress={(event) => event.stopPropagation?.()}>
+          <View style={styles.optionsHandle} />
+          <Text style={styles.optionsTitle}>Mais opcoes</Text>
+          <TouchableOpacity
+            activeOpacity={0.86}
+            style={styles.optionItem}
+            onPress={() => {
+              setOptionsVisible(false);
+              setEditVisible(true);
+            }}
+          >
+            <View style={styles.optionIcon}>
+              <Ionicons name="create-outline" size={21} color={WayperTheme.colors.primary} />
+            </View>
+            <View style={styles.optionTextWrap}>
+              <Text style={styles.optionText}>Editar corrida</Text>
+              <Text style={styles.optionSubtext}>Alterar nome, tags, notas, esforco e imagens</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.86}
+            style={[styles.optionItem, styles.deleteOptionItem]}
+            onPress={confirmDeleteRun}
+            disabled={deleting}
+          >
+            <View style={[styles.optionIcon, styles.deleteOptionIcon]}>
+              <Ionicons name="trash-outline" size={21} color={WayperTheme.colors.danger} />
+            </View>
+            <View style={styles.optionTextWrap}>
+              <Text style={[styles.optionText, styles.deleteOptionText]}>{deleting ? "Excluindo..." : "Excluir corrida"}</Text>
+              <Text style={styles.optionSubtext}>Remover totalmente esta corrida</Text>
+            </View>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
     </>
   );
 }
@@ -645,6 +789,93 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: WayperTheme.colors.background,
+  },
+  headerOptionsButton: {
+    width: 42,
+    height: 42,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    marginRight: 6,
+  },
+  optionsBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.58)",
+    justifyContent: "flex-end",
+    padding: WayperTheme.spacing.page,
+  },
+  optionsMenu: {
+    borderRadius: WayperTheme.radius.xxl,
+    backgroundColor: WayperTheme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    padding: WayperTheme.spacing.lg,
+    ...WayperTheme.shadows.card,
+  },
+  optionsHandle: {
+    alignSelf: "center",
+    width: 52,
+    height: 5,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.borderStrong,
+    marginBottom: WayperTheme.spacing.lg,
+  },
+  optionsTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 22,
+    fontWeight: "900",
+    marginBottom: WayperTheme.spacing.md,
+  },
+  optionItem: {
+    minHeight: 74,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    paddingHorizontal: WayperTheme.spacing.md,
+    paddingVertical: WayperTheme.spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.md,
+    marginTop: WayperTheme.spacing.md,
+  },
+  deleteOptionItem: {
+    borderColor: WayperTheme.colors.dangerBorder,
+    backgroundColor: WayperTheme.colors.dangerSoft,
+  },
+  optionIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  deleteOptionIcon: {
+    backgroundColor: "rgba(255, 51, 71, 0.12)",
+    borderColor: WayperTheme.colors.dangerBorder,
+  },
+  optionTextWrap: {
+    flex: 1,
+  },
+  optionText: {
+    color: WayperTheme.colors.text,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  deleteOptionText: {
+    color: WayperTheme.colors.danger,
+  },
+  optionSubtext: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 3,
   },
   scrollContent: {
     paddingBottom: 42,

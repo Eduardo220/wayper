@@ -1,7 +1,9 @@
 import {
   collection,
+  collectionGroup,
   doc,
   getDoc,
+  getDocs,
   limit as firestoreLimit,
   onSnapshot,
   orderBy,
@@ -85,6 +87,50 @@ export async function createUserNotification({
     return payload;
   } catch {
     return null;
+  }
+}
+
+export async function notifyActivitySubscribers({
+  authorUid,
+  authorName = "Atleta Wayper",
+  activityId,
+  activityType = "run",
+} = {}) {
+  if (!authorUid || !activityId) return 0;
+
+  try {
+    const snapshot = await getDocs(
+      query(
+        collectionGroup(db, "feedPreferences"),
+        where("targetUid", "==", authorUid),
+        firestoreLimit(80)
+      )
+    );
+
+    const recipients = new Set();
+    snapshot.forEach((item) => {
+      const data = item.data() || {};
+      if (data.notifyPosts !== true) return;
+      const ownerUid = data.ownerUid || item.ref?.parent?.parent?.id;
+      if (ownerUid && ownerUid !== authorUid) recipients.add(ownerUid);
+    });
+
+    await Promise.all(
+      Array.from(recipients).map((toUid) =>
+        createUserNotification({
+          toUid,
+          type: "activity_post",
+          title: "Nova atividade",
+          body: `${authorName} publicou ${activityType === "zone" ? "uma nova area" : "uma nova corrida"}.`,
+          actorUid: authorUid,
+          activityId,
+        })
+      )
+    );
+
+    return recipients.size;
+  } catch {
+    return 0;
   }
 }
 
@@ -284,6 +330,7 @@ export function formatNotificationDate(value) {
 
 export default {
   createUserNotification,
+  notifyActivitySubscribers,
   subscribeHomeNotifications,
   subscribeUnreadGroupMessages,
   markGroupMessagesRead,
