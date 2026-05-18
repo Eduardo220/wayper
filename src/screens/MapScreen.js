@@ -67,7 +67,7 @@ import {
 } from "../utils/share/runShareExport";
 import { getFormattedPace } from "../utils/pace";
 import xpService from "../services/xp/xpService";
-import { updateProfileStats } from "../services/profile/profileService";
+import { updateProfileStats, updateTerritoryProfileStats } from "../services/profile/profileService";
 import {
   fetchActiveTerritoriesNear,
   getCellIdForLocation,
@@ -360,6 +360,7 @@ const serializeCaptureResult = (result) => {
     conqueredCount: result.conqueredTerritories?.length || 0,
     splitCount: result.splitTerritories?.length || 0,
     mergedCount: result.mergedTerritories?.length || 0,
+    affectedUsersCount: result.affectedUsers?.length || 0,
     becameLeaderInCells: result.becameLeaderInCells || [],
     lostLeaderInCells: result.lostLeaderInCells || [],
     cellIds: result.cellIds || [],
@@ -2354,6 +2355,8 @@ const MapScreen = ({ navigation }) => {
               const durationSec = Number(normalized.duration) || 0;
               const areaM2 = Number(normalized.area) || 0;
               const durationMs = durationSec * 1000;
+              const territoryCapture = normalized.captureResult;
+              const territoryCaptureOk = normalized.mode === "zones" && territoryCapture?.ok === true;
               const result = await xpService.awardRunXP?.({
                 path: normalized.path,
                 distanceMeters,
@@ -2361,7 +2364,18 @@ const MapScreen = ({ navigation }) => {
                 area: 0,
               });
 
-              if (areaM2 > 0) {
+              if (territoryCaptureOk) {
+                await xpService.awardTerritoryXP?.({
+                  capturedAreaM2: territoryCapture.capturedAreaM2 || areaM2,
+                  newAreaM2: territoryCapture.newAreaM2 || 0,
+                  stolenAreaM2: territoryCapture.stolenAreaM2 || 0,
+                  becameLeaderCount: territoryCapture.becameLeaderInCells?.length || 0,
+                  conqueredCount: territoryCapture.conqueredCount || 0,
+                  affectedUsersCount: territoryCapture.affectedUsersCount || 0,
+                  runId: normalized.id || saved?.id,
+                  territoryId: normalized.territoryId || normalized.zoneId || saved?.territoryId || saved?.zoneId,
+                });
+              } else if (areaM2 > 0 && normalized.territoryCaptureFailedReason !== "capture_failed") {
                 await xpService.awardZoneXP?.({
                   id: normalized.zoneId || saved?.zoneId || saved?.id,
                   area: areaM2,
@@ -2379,12 +2393,22 @@ const MapScreen = ({ navigation }) => {
                   isZone: false,
                 });
                 if (Number(payload.area || 0) > 0) {
-                  await updateProfileStats?.({
-                    distance: 0,
-                    duration: 0,
-                    area: payload.area,
-                    isZone: true,
-                  });
+                  if (payload.captureResult?.ok) {
+                    await updateTerritoryProfileStats?.({
+                      capturedAreaM2: payload.captureResult.capturedAreaM2 || payload.area,
+                      stolenAreaM2: payload.captureResult.stolenAreaM2 || 0,
+                      becameLeaderCount: payload.captureResult.becameLeaderInCells?.length || 0,
+                      conqueredCount: payload.captureResult.conqueredCount || 0,
+                      isActor: true,
+                    });
+                  } else {
+                    await updateProfileStats?.({
+                      distance: 0,
+                      duration: 0,
+                      area: payload.area,
+                      isZone: true,
+                    });
+                  }
                 }
               } catch (e) {
                 debug("Fallback updateProfileStats failed", e);

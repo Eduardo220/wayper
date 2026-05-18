@@ -3,13 +3,14 @@
 // - Versão enxuta, rápida e segura
 // - Integrada ao profileService (stats + ranking points)
 // - Anti-fraud básico, previews, persistência Firestore com retry
-// - API pública: awardRunXP, awardZoneXP, awardPartnerXP, awardMedalXP, awardXP
+// - API publica: awardRunXP, awardZoneXP, awardTerritoryXP, awardPartnerXP, awardMedalXP, awardXP
 // - Uso recomendado: mobile client (expo / react-native)
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { db, auth } from "../../firebaseConfig";
+import { db, auth } from "../../firebaseConfig.js";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import * as profileService from "../profile/profileService";
+import * as profileService from "../profile/profileService.js";
+import { computeTerritoryXP } from "./territoryXp.js";
 
 const ENABLE_LOGS = false;
 const log = (...a) => ENABLE_LOGS && console.log("[xpService]", ...a);
@@ -17,6 +18,7 @@ const log = (...a) => ENABLE_LOGS && console.log("[xpService]", ...a);
 // Keys
 const KEY_DAILY_PARTNERS = "xp_visited_partners_by_day_v2";
 const KEY_ZONE_COOLDOWNS = "xp_zone_cooldowns_v1";
+const KEY_TERRITORY_XP_AWARDS = "xp_territory_awards_v1";
 
 // Defaults / tuning (small, fácil de ajustar)
 const DEFAULTS = {
@@ -190,6 +192,12 @@ async function safePersistToFirestore(profileObj = {}) {
     weeklyPoints: toNum(profileObj.weeklyPoints || 0),
     monthlyPoints: toNum(profileObj.monthlyPoints || 0),
     globalPoints: toNum(profileObj.globalPoints || 0),
+    totalStolenAreaM2: toNum(profileObj.totalStolenAreaM2, 0),
+    totalLostAreaM2: toNum(profileObj.totalLostAreaM2, 0),
+    cellsLedCount: toNum(profileObj.cellsLedCount, 0),
+    territoryCapturesCount: toNum(profileObj.territoryCapturesCount, 0),
+    territoryStealsCount: toNum(profileObj.territoryStealsCount, 0),
+    territoryConqueredCount: toNum(profileObj.territoryConqueredCount, 0),
     lastUpdate: serverTimestamp(),
   };
 
@@ -318,6 +326,75 @@ export async function awardZoneXP(zoneData = {}, options = {}) {
 }
 
 /**
+ * awardTerritoryXP(input, options)
+ * input: { capturedAreaM2, newAreaM2, stolenAreaM2, becameLeaderCount, conqueredCount, affectedUsersCount, runId, territoryId }
+ */
+export async function awardTerritoryXP(input = {}, options = {}) {
+  try {
+    const opts = { persist: true, ...options };
+    const runId = input.runId ? String(input.runId) : null;
+    const territoryId = input.territoryId ? String(input.territoryId) : null;
+    const awardKey = runId || territoryId ? `${runId || "run"}:${territoryId || "territory"}` : null;
+    const awards = await loadJSON(KEY_TERRITORY_XP_AWARDS);
+
+    if (awardKey && awards[awardKey]) {
+      track("xp.territory_duplicate", { runId, territoryId });
+      return {
+        xp: 0,
+        reason: "already_awarded",
+        previous: awards[awardKey],
+        computed: awards[awardKey]?.computed || computeTerritoryXP(input),
+        profile: await profileService.loadProfile(),
+      };
+    }
+
+    const computed = computeTerritoryXP(input);
+    const xp = Math.max(0, Math.round(computed.xp));
+
+    await profileService.updateTerritoryProfileStats?.({
+      capturedAreaM2: computed.input.capturedAreaM2,
+      stolenAreaM2: computed.input.stolenAreaM2,
+      becameLeaderCount: computed.input.becameLeaderCount,
+      conqueredCount: computed.input.conqueredCount,
+      isActor: true,
+    });
+
+    if (xp > 0) {
+      await awardXP(xp, {}, { persist: opts.persist });
+    } else if (opts.persist) {
+      await safePersistToFirestore(await profileService.loadProfile());
+    }
+
+    const receipt = {
+      runId,
+      territoryId,
+      xp,
+      computed,
+      awardedAt: nowIso(),
+    };
+
+    if (awardKey) {
+      awards[awardKey] = receipt;
+      const keys = Object.keys(awards);
+      if (keys.length > 500) {
+        keys
+          .sort((a, b) => String(awards[a]?.awardedAt || "").localeCompare(String(awards[b]?.awardedAt || "")))
+          .slice(0, keys.length - 500)
+          .forEach((key) => delete awards[key]);
+      }
+      await saveJSON(KEY_TERRITORY_XP_AWARDS, awards);
+    }
+
+    track("xp.territory_awarded", { xp, runId, territoryId });
+    return { xp, computed, profile: await profileService.loadProfile(), receipt };
+  } catch (e) {
+    log("awardTerritoryXP error", e);
+    track("xp.territory_error", { error: String(e) });
+    return { error: String(e) };
+  }
+}
+
+/**
  * awardPartnerXP(partner, options)
  * partner: { id, tier?, bonusXP? }
  */
@@ -426,14 +503,16 @@ export function computeZoneXPPreview(zoneData = {}) {
 const xpService = {
   awardRunXP,
   awardZoneXP,
+  awardTerritoryXP,
   awardPartnerXP,
   awardMedalXP,
   awardXP,
   computeRunXPPreview,
   computeZoneXPPreview,
+  computeTerritoryXPPreview: computeTerritoryXP,
   setTelemetryHook,
   // internals for testing/debug
-  _internals: { computeRunXP, antiFraudBasic, safePersistToFirestore },
+  _internals: { computeRunXP, computeTerritoryXP, antiFraudBasic, safePersistToFirestore },
 };
 
 export default xpService;

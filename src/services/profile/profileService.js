@@ -11,9 +11,9 @@
 // -----------------------------------------------------------
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { db, auth } from "../../firebaseConfig";
+import { db, auth } from "../../firebaseConfig.js";
 import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
-import { calculatePaceSecondsPerKm } from "../../utils/pace";
+import { calculatePaceSecondsPerKm } from "../../utils/pace.js";
 
 // STORAGE KEY
 const PROFILE_KEY = "wayper_profile_v3";
@@ -54,6 +54,13 @@ export const DEFAULT_PROFILE = {
   bestMonthlyRank: null,
   bestMonthlyRankArea: null,
   bestMonthlyRankDistance: null,
+
+  totalStolenAreaM2: 0,
+  totalLostAreaM2: 0,
+  cellsLedCount: 0,
+  territoryCapturesCount: 0,
+  territoryStealsCount: 0,
+  territoryConqueredCount: 0,
 
   lastUpdate: null,
 };
@@ -188,6 +195,12 @@ export async function loadProfile() {
     merged.globalPoints = Number(merged.globalPoints || 0);
     merged.monthlyDistance = Number(merged.monthlyDistance || 0);
     merged.monthlyArea = Number(merged.monthlyArea || 0);
+    merged.totalStolenAreaM2 = Number(merged.totalStolenAreaM2 || 0);
+    merged.totalLostAreaM2 = Number(merged.totalLostAreaM2 || 0);
+    merged.cellsLedCount = Number(merged.cellsLedCount || 0);
+    merged.territoryCapturesCount = Number(merged.territoryCapturesCount || 0);
+    merged.territoryStealsCount = Number(merged.territoryStealsCount || 0);
+    merged.territoryConqueredCount = Number(merged.territoryConqueredCount || 0);
     return merged;
   } catch (e) {
     console.warn("profileService.loadProfile error:", e);
@@ -239,6 +252,13 @@ async function saveFirestore(profile) {
     bestMonthlyRank: profile.bestMonthlyRank ?? null,
     bestMonthlyRankArea: profile.bestMonthlyRankArea ?? null,
     bestMonthlyRankDistance: profile.bestMonthlyRankDistance ?? null,
+
+    totalStolenAreaM2: Number(profile.totalStolenAreaM2 || 0),
+    totalLostAreaM2: Number(profile.totalLostAreaM2 || 0),
+    cellsLedCount: Number(profile.cellsLedCount || 0),
+    territoryCapturesCount: Number(profile.territoryCapturesCount || 0),
+    territoryStealsCount: Number(profile.territoryStealsCount || 0),
+    territoryConqueredCount: Number(profile.territoryConqueredCount || 0),
 
     lastUpdate: serverTimestamp(),
   };
@@ -464,6 +484,12 @@ export async function fetchRemoteProfile() {
     merged.bestMonthlyRank = remote.bestMonthlyRank ?? local.bestMonthlyRank ?? null;
     merged.bestMonthlyRankArea = remote.bestMonthlyRankArea ?? local.bestMonthlyRankArea ?? null;
     merged.bestMonthlyRankDistance = remote.bestMonthlyRankDistance ?? local.bestMonthlyRankDistance ?? null;
+    merged.totalStolenAreaM2 = Math.max(Number(local.totalStolenAreaM2 || 0), Number(remote.totalStolenAreaM2 || 0));
+    merged.totalLostAreaM2 = Math.max(Number(local.totalLostAreaM2 || 0), Number(remote.totalLostAreaM2 || 0));
+    merged.cellsLedCount = Math.max(Number(local.cellsLedCount || 0), Number(remote.cellsLedCount || 0));
+    merged.territoryCapturesCount = Math.max(Number(local.territoryCapturesCount || 0), Number(remote.territoryCapturesCount || 0));
+    merged.territoryStealsCount = Math.max(Number(local.territoryStealsCount || 0), Number(remote.territoryStealsCount || 0));
+    merged.territoryConqueredCount = Math.max(Number(local.territoryConqueredCount || 0), Number(remote.territoryConqueredCount || 0));
 
     // bestPace: prefer best (lower) if exists
     if (remote.bestPace != null) {
@@ -556,6 +582,67 @@ export async function updateProfileStats({ distance = 0, duration = 0, area = 0,
 }
 
 // -----------------------------------------------------------
+// updateTerritoryProfileStats()
+// - local/remote profile aggregate fields for the territory game
+// -----------------------------------------------------------
+export async function updateTerritoryProfileStats({
+  capturedAreaM2 = 0,
+  stolenAreaM2 = 0,
+  lostAreaM2 = 0,
+  becameLeaderCount = 0,
+  conqueredCount = 0,
+  isActor = true,
+} = {}) {
+  try {
+    const nonNegative = (value) => Math.max(0, Number(value) || 0);
+    const integer = (value) => Math.max(0, Math.round(Number(value) || 0));
+    const captured = nonNegative(capturedAreaM2);
+    const stolen = nonNegative(stolenAreaM2);
+    const lost = nonNegative(lostAreaM2);
+    const leaderDelta = integer(becameLeaderCount);
+    const conqueredDelta = integer(conqueredCount);
+    const profile = ensureCurrentMonth(await loadProfile());
+
+    const areaDelta = isActor ? captured : -lost;
+    profile.totalArea = nonNegative(nonNegative(profile.totalArea) + areaDelta);
+    profile.monthlyArea = nonNegative(nonNegative(profile.monthlyArea) + areaDelta);
+
+    if (isActor) {
+      if (captured > 0) {
+        profile.totalZones = nonNegative(profile.totalZones) + 1;
+        profile.territoryCapturesCount = integer(profile.territoryCapturesCount) + 1;
+        if (captured > nonNegative(profile.largestZone)) profile.largestZone = captured;
+      }
+
+      profile.totalStolenAreaM2 = nonNegative(profile.totalStolenAreaM2) + stolen;
+      profile.cellsLedCount = integer(profile.cellsLedCount) + leaderDelta;
+      profile.territoryStealsCount = integer(profile.territoryStealsCount) + (stolen > 0 ? 1 : 0);
+      profile.territoryConqueredCount = integer(profile.territoryConqueredCount) + conqueredDelta;
+    } else {
+      profile.totalLostAreaM2 = nonNegative(profile.totalLostAreaM2) + lost;
+    }
+
+    profile.lastUpdate = nowIso();
+
+    const saved = await saveProfile(profile);
+    try {
+      await flushPendingProfile();
+    } catch {}
+
+    track("profile.updateTerritoryProfileStats", {
+      capturedAreaM2: captured,
+      stolenAreaM2: stolen,
+      lostAreaM2: lost,
+      isActor,
+    });
+    return saved;
+  } catch (e) {
+    console.warn("profileService.updateTerritoryProfileStats error:", e);
+    return null;
+  }
+}
+
+// -----------------------------------------------------------
 // resetProfile (safe) - clears local and resets remote defaults
 // -----------------------------------------------------------
 export async function resetProfile() {
@@ -629,6 +716,7 @@ export default {
   saveProfile,
   fetchRemoteProfile,
   updateProfileStats,
+  updateTerritoryProfileStats,
   resetProfile,
   incrementRankingPoints,
   getLevelProgress,
