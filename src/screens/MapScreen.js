@@ -33,8 +33,10 @@ import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../components/Map/WayperM
 import RunShareModal from "../components/Runs/RunShareModal";
 import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../components/Runs/RunShareCard";
 import RunSummaryModal from "../components/Runs/RunSummaryModal";
+import TerritoryBottomSheet from "../components/Territory/TerritoryBottomSheet";
 import { WPButton } from "../components/ui";
 import { WayperTheme } from "../theme/wayperTheme";
+import { auth } from "../firebaseConfig";
 import formatTime from "../utils/formatTime";
 import {
   TRACKING_CONFIG,
@@ -66,6 +68,15 @@ import {
 import { getFormattedPace } from "../utils/pace";
 import xpService from "../services/xp/xpService";
 import { updateProfileStats } from "../services/profile/profileService";
+import {
+  fetchActiveTerritoriesNear,
+  getCellIdForLocation,
+  getCellIdsForBbox,
+  getLeaderCellsForViewport,
+  getLeaderboardForCell,
+  loadLocalTerritories,
+  processRunTerritoryCapture,
+} from "../services/territory";
 
 /* Tunáveis */
 const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
@@ -74,7 +85,6 @@ const WATCH_TIME_INTERVAL_MS = 1000;
 const WATCH_DISTANCE_INTERVAL = 3;
 const INITIAL_REGION_DELTA = 0.001;
 const COUNTDOWN_DEFAULT = 3;
-const ZONE_MIN_AREA_M2 = 5;
 const WAYPER_GREEN = WayperTheme.colors.primary;
 const ROUTE_CAP = 8000;
 const MAX_RUNNING_SPEED_MPS = TRACKING_CONFIG.MAX_HUMAN_SPRINT_SPEED_KMH / 3.6;
@@ -84,6 +94,10 @@ const FOLLOW_MAP_ZOOM = 17.2;
 const FOLLOW_ANIMATION_DURATION = 450;
 const RECENTER_ANIMATION_DURATION = 700;
 const MIN_CAMERA_MOVE_INTERVAL_MS = 900;
+const TERRITORY_VIEWPORT_DEBOUNCE_MS = 950;
+const TERRITORY_INITIAL_BBOX_DELTA = 0.018;
+const TERRITORY_FETCH_LIMIT = 180;
+const TERRITORY_MAX_VIEWPORT_CELLS = 140;
 
 let backgroundLocationUpdateHandler = null;
 
@@ -215,6 +229,170 @@ const buildPolygonSvgPoints = (coords = [], width = 320, height = 210, padding =
 
 const DEFAULT_COORD = WAYPER_FALLBACK_COORD;
 
+const toFiniteNumber = (value, fallback = null) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+const normalizeTerritoryBbox = (bbox) => {
+  if (!Array.isArray(bbox) || bbox.length < 4) return null;
+  const values = bbox.slice(0, 4).map((value) => toFiniteNumber(value));
+  if (values.some((value) => value == null)) return null;
+  return [
+    Math.min(values[0], values[2]),
+    Math.min(values[1], values[3]),
+    Math.max(values[0], values[2]),
+    Math.max(values[1], values[3]),
+  ];
+};
+
+const buildBboxAroundLocation = (point, delta = TERRITORY_INITIAL_BBOX_DELTA) => {
+  const latitude = toFiniteNumber(point?.latitude ?? point?.lat);
+  const longitude = toFiniteNumber(point?.longitude ?? point?.lng ?? point?.lon);
+  if (latitude == null || longitude == null) return null;
+  return [longitude - delta, latitude - delta, longitude + delta, latitude + delta];
+};
+
+const territoryIntersectsBbox = (territory, bbox) => {
+  const target = normalizeTerritoryBbox(bbox);
+  if (!target) return true;
+  const source = normalizeTerritoryBbox(territory?.bbox);
+  if (!source) return true;
+
+  return !(
+    source[2] < target[0] ||
+    source[0] > target[2] ||
+    source[3] < target[1] ||
+    source[1] > target[3]
+  );
+};
+
+const isActiveTerritory = (territory) => !territory?.status || territory.status === "active";
+
+const sortByTerritoryUpdatedAt = (a, b) => {
+  const aTime = new Date(a?.updatedAt || a?.capturedAt || a?.createdAt || 0).getTime();
+  const bTime = new Date(b?.updatedAt || b?.capturedAt || b?.createdAt || 0).getTime();
+  return bTime - aTime;
+};
+
+const mergeTerritoriesForMap = (existing = [], incoming = [], bbox = null) => {
+  const map = new Map();
+  const add = (territory) => {
+    if (!territory?.id || !isActiveTerritory(territory) || !territoryIntersectsBbox(territory, bbox)) return;
+    map.set(String(territory.id), territory);
+  };
+
+  (Array.isArray(existing) ? existing : []).forEach(add);
+  (Array.isArray(incoming) ? incoming : []).forEach(add);
+  return Array.from(map.values()).sort(sortByTerritoryUpdatedAt);
+};
+
+const applyCaptureResultToTerritoryState = (existing = [], result = {}) => {
+  const removedIds = new Set([
+    ...(result.deletedTerritories || []),
+    ...(result.conqueredTerritories || []),
+    ...(result.mergedTerritories || []),
+  ].map((territory) => String(territory?.id || territory)).filter(Boolean));
+
+  const map = new Map();
+  for (const territory of Array.isArray(existing) ? existing : []) {
+    if (!territory?.id || removedIds.has(String(territory.id)) || !isActiveTerritory(territory)) continue;
+    map.set(String(territory.id), territory);
+  }
+
+  for (const territory of result.updatedTerritories || []) {
+    if (!territory?.id) continue;
+    if (isActiveTerritory(territory)) map.set(String(territory.id), territory);
+    else map.delete(String(territory.id));
+  }
+
+  const captured = result.capturedTerritory;
+  if (captured?.id && isActiveTerritory(captured)) {
+    map.set(String(captured.id), captured);
+  }
+
+  return Array.from(map.values()).sort(sortByTerritoryUpdatedAt);
+};
+
+const mergeLeaderCellsForMap = (existing = [], updates = []) => {
+  const map = new Map();
+  for (const cell of Array.isArray(existing) ? existing : []) {
+    if (cell?.cellId || cell?.id) map.set(String(cell.cellId || cell.id), cell);
+  }
+
+  for (const update of Array.isArray(updates) ? updates : []) {
+    const leaderboard = update?.leaderboard || update;
+    if (leaderboard?.cellId || leaderboard?.id) {
+      map.set(String(leaderboard.cellId || leaderboard.id), leaderboard);
+    }
+  }
+
+  return Array.from(map.values());
+};
+
+const getCurrentWayperUser = () => {
+  const user = auth.currentUser;
+  const emailName = user?.email ? user.email.split("@")[0] : null;
+  return {
+    id: user?.uid || "offline",
+    name: user?.displayName || emailName || "Atleta Wayper",
+    avatar: user?.photoURL || null,
+  };
+};
+
+const serializeCaptureResult = (result) => {
+  if (!result) return null;
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: result.reason || "capture_failed",
+      details: result.details || null,
+    };
+  }
+
+  return {
+    ok: true,
+    territoryId: result.capturedTerritory?.id || null,
+    capturedAreaM2: Number(result.capturedAreaM2 || 0),
+    newAreaM2: Number(result.newAreaM2 || 0),
+    stolenAreaM2: Number(result.stolenAreaM2 || 0),
+    ownMergedAreaM2: Number(result.ownMergedAreaM2 || 0),
+    conqueredCount: result.conqueredTerritories?.length || 0,
+    splitCount: result.splitTerritories?.length || 0,
+    mergedCount: result.mergedTerritories?.length || 0,
+    becameLeaderInCells: result.becameLeaderInCells || [],
+    lostLeaderInCells: result.lostLeaderInCells || [],
+    cellIds: result.cellIds || [],
+    highlights: result.summary?.highlights || [],
+  };
+};
+
+const buildCaptureResultMessage = (result) => {
+  if (!result) return null;
+  if (!result.ok) {
+    const reason = result.reason || "erro";
+    if (reason === "not_closed_loop") return "Corrida salva. O trajeto nao fechou um loop para capturar territorio.";
+    if (reason === "not_enough_points") return "Corrida salva. Foram necessarios mais pontos para capturar territorio.";
+    if (reason === "area_too_small") return "Corrida salva. A area ficou pequena demais para virar territorio.";
+    if (reason === "area_too_large") return "Corrida salva. A area ficou grande demais para captura segura.";
+    return "Corrida salva. A captura territorial nao foi aplicada desta vez.";
+  }
+
+  const area = Math.round(Number(result.capturedAreaM2 || 0));
+  const stolen = Math.round(Number(result.stolenAreaM2 || 0));
+  const leaderCells = result.becameLeaderInCells?.length || 0;
+  const extras = [
+    stolen > 0 ? `${stolen} m2 retomados` : null,
+    leaderCells > 0 ? `lideranca em ${leaderCells} celula${leaderCells > 1 ? "s" : ""}` : null,
+  ].filter(Boolean);
+  return `Territorio capturado: ${area} m2${extras.length ? `, ${extras.join(", ")}` : ""}.`;
+};
+
+const getPrimaryTerritoryCellId = (territory) => {
+  if (Array.isArray(territory?.cellIds) && territory.cellIds.length > 0) return territory.cellIds[0];
+  return getCellIdForLocation(territory?.center || territory);
+};
+
 /* ================= Component ================= */
 const MapScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
@@ -233,6 +411,12 @@ const MapScreen = ({ navigation }) => {
 
   const [showRunModal, setShowRunModal] = useState(false);
   const [currentRunData, setCurrentRunData] = useState(null);
+  const [territories, setTerritories] = useState([]);
+  const [leaderCells, setLeaderCells] = useState([]);
+  const [selectedTerritory, setSelectedTerritory] = useState(null);
+  const [selectedTerritoryLeaderboard, setSelectedTerritoryLeaderboard] = useState(null);
+  const [captureResult, setCaptureResult] = useState(null);
+  const [territoryLoading, setTerritoryLoading] = useState(false);
 
   const [routeState, setRouteState] = useState([]);
   const [displayRouteState, setDisplayRouteState] = useState([]);
@@ -282,10 +466,15 @@ const MapScreen = ({ navigation }) => {
   const modeRef = useRef(null);
   const zonePreviewLastAtRef = useRef(0);
   const liveTrackingRef = useRef(false);
+  const territoryViewportDebounceRef = useRef(null);
+  const lastTerritoryFetchRef = useRef(null);
+  const initialTerritoryLoadRef = useRef(false);
+  const selectedTerritoryRequestRef = useRef(null);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
   const startPressAnim = useRef(new Animated.Value(1)).current;
+  const currentUserId = auth.currentUser?.uid || "offline";
 
   useEffect(() => {
     modeRef.current = mode;
@@ -358,6 +547,128 @@ const MapScreen = ({ navigation }) => {
   const recenterMapOnUser = useCallback(() => {
     setMapFollowEnabled(true);
     setMapRecenterSignal((value) => value + 1);
+  }, []);
+
+  const loadTerritoriesForViewport = useCallback(
+    async ({ bbox, includeCache = false } = {}) => {
+      const viewportBbox = normalizeTerritoryBbox(bbox) || buildBboxAroundLocation(location);
+      if (!viewportBbox) return;
+
+      const fetchKey = viewportBbox.map((value) => value.toFixed(5)).join(":");
+      if (!includeCache && lastTerritoryFetchRef.current === fetchKey) return;
+      lastTerritoryFetchRef.current = fetchKey;
+
+      setTerritoryLoading(true);
+      try {
+        if (includeCache) {
+          const cached = await loadLocalTerritories();
+          if (mountedRef.current && Array.isArray(cached)) {
+            setTerritories(mergeTerritoriesForMap([], cached, viewportBbox));
+          }
+        }
+
+        const cellIds = getCellIdsForBbox(viewportBbox).slice(0, TERRITORY_MAX_VIEWPORT_CELLS);
+        if (cellIds.length === 0) return;
+
+        const [remoteTerritories, viewportLeaderCells] = await Promise.all([
+          fetchActiveTerritoriesNear({
+            bbox: viewportBbox,
+            cellIds,
+            limitTo: TERRITORY_FETCH_LIMIT,
+          }),
+          getLeaderCellsForViewport({ bbox: viewportBbox, cellIds }),
+        ]);
+
+        if (!mountedRef.current) return;
+
+        setTerritories((prev) => mergeTerritoriesForMap(prev, remoteTerritories, viewportBbox));
+        setLeaderCells(Array.isArray(viewportLeaderCells) ? viewportLeaderCells : []);
+      } catch (error) {
+        lastTerritoryFetchRef.current = null;
+        console.warn("[Wayper] territory viewport load failed", error);
+      } finally {
+        if (mountedRef.current) setTerritoryLoading(false);
+      }
+    },
+    [location]
+  );
+
+  useEffect(() => {
+    if (!location || initialTerritoryLoadRef.current) return;
+    initialTerritoryLoadRef.current = true;
+    loadTerritoriesForViewport({
+      bbox: buildBboxAroundLocation(location),
+      includeCache: true,
+    });
+  }, [loadTerritoriesForViewport, location]);
+
+  useEffect(() => {
+    return () => {
+      if (territoryViewportDebounceRef.current) {
+        clearTimeout(territoryViewportDebounceRef.current);
+        territoryViewportDebounceRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleTerritoryViewportChange = useCallback(
+    ({ bbox } = {}) => {
+      const viewportBbox = normalizeTerritoryBbox(bbox);
+      if (!viewportBbox) return;
+
+      if (territoryViewportDebounceRef.current) {
+        clearTimeout(territoryViewportDebounceRef.current);
+      }
+
+      territoryViewportDebounceRef.current = setTimeout(() => {
+        loadTerritoriesForViewport({ bbox: viewportBbox, includeCache: false });
+      }, TERRITORY_VIEWPORT_DEBOUNCE_MS);
+    },
+    [loadTerritoriesForViewport]
+  );
+
+  const handleTerritoryPress = useCallback(
+    async (properties = {}) => {
+      if (running || replaying) return;
+      const territoryId = properties?.id ? String(properties.id) : null;
+      const fullTerritory = territoryId
+        ? territories.find((territory) => String(territory.id) === territoryId)
+        : null;
+      const nextTerritory = fullTerritory ? { ...fullTerritory, ...properties } : properties;
+      const requestKey = territoryId || `${Date.now()}`;
+
+      selectedTerritoryRequestRef.current = requestKey;
+      setSelectedTerritory(nextTerritory);
+      setSelectedTerritoryLeaderboard(null);
+
+      const cellId = getPrimaryTerritoryCellId(nextTerritory);
+      if (!cellId) return;
+
+      try {
+        const leaderboard = await getLeaderboardForCell(cellId);
+        if (mountedRef.current && selectedTerritoryRequestRef.current === requestKey) {
+          setSelectedTerritoryLeaderboard(leaderboard);
+        }
+      } catch (error) {
+        console.warn("[Wayper] territory leaderboard load failed", error);
+      }
+    },
+    [replaying, running, territories]
+  );
+
+  const handleLeaderCellPress = useCallback(
+    (properties = {}) => {
+      if (running || replaying) return;
+      const cellId = properties?.cellId || properties?.id || null;
+      navigation?.navigate("Ranking", cellId ? { cellId } : undefined);
+    },
+    [navigation, replaying, running]
+  );
+
+  const closeSelectedTerritory = useCallback(() => {
+    selectedTerritoryRequestRef.current = null;
+    setSelectedTerritory(null);
+    setSelectedTerritoryLeaderboard(null);
   }, []);
 
   /* ===== INIT ===== */
@@ -928,6 +1239,8 @@ const MapScreen = ({ navigation }) => {
         modeRef.current = selectedMode;
         runningRef.current = true;
         setReplaying(false);
+        setCaptureResult(null);
+        closeSelectedTerritory();
         currentRunIdRef.current = uid();
         resetTrackingPipeline({ segmentId: 0 });
         setPolygons([]);
@@ -978,7 +1291,7 @@ const MapScreen = ({ navigation }) => {
         debug("startRun catch", e);
       }
     },
-    [handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startLocationWatcher]
+    [closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startLocationWatcher]
   );
 
   const pauseRun = useCallback(() => {
@@ -1103,13 +1416,16 @@ const MapScreen = ({ navigation }) => {
         const totalDistance = routeDistance > 0 ? routeDistance : distanceRef.current;
         const totalDuration = timeSecRef.current || timeSec;
         const stoppedRunSessionId = currentRunIdRef.current;
+        const runId = stoppedRunSessionId || uid();
+        const finishedAt = new Date().toISOString();
 
         const runData = {
+          id: runId,
           path,
           distance: totalDistance,
           duration: totalDuration,
           avgSpeed: totalDistance && totalDuration ? Number(((totalDistance / 1000) / (totalDuration / 3600)).toFixed(2)) : 0,
-          date: new Date().toISOString(),
+          date: finishedAt,
           mode: mode || "free",
           area: 0,
           zoneId: null,
@@ -1117,51 +1433,73 @@ const MapScreen = ({ navigation }) => {
           zoneCount: 0,
         };
 
-        const canCreateZone = mode === "zones" && path.length >= 6 && totalDistance > 1;
-        if (canCreateZone) {
+        if (mode === "zones") {
           try {
-            const savedZone = await sync.createAndSaveZoneFromPath?.(path, {
-              closeDistanceM: 32,
-              maxCloseDistanceM: 48,
-              requireClosedLoop: true,
-              allowOpenFallback: false,
-              minLoopPoints: 8,
-              simplifyTolerance: 0.000015,
-              smoothIterations: 1,
-              maxPoints: 420,
-              compressMax: 420,
+            const actor = getCurrentWayperUser();
+            const result = await processRunTerritoryCapture({
+              userId: actor.id,
+              userName: actor.name,
+              userAvatar: actor.avatar,
+              runId,
+              path,
+              mode,
+              distanceMeters: totalDistance,
+              durationSeconds: totalDuration,
+              visibility: "followers",
+              createdAt: finishedAt,
             });
-            if (savedZone) {
-              runData.area = Number(savedZone.area || 0);
-              runData.zoneId = savedZone.id || null;
-              runData.zoneCoords = sanitizePath(savedZone.coords || []);
+
+            setCaptureResult(result);
+            runData.captureResult = serializeCaptureResult(result);
+            runData.territoryCaptureMessage = buildCaptureResultMessage(result);
+
+            if (result?.ok) {
+              const captured = result.capturedTerritory || {};
+              runData.area = Number(result.capturedAreaM2 || captured.areaM2 || 0);
+              runData.territoryId = captured.id || null;
+              runData.zoneId = captured.id || null;
+              runData.zoneCoords = sanitizePath(captured.coordsPreview || []);
               runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
+              setTerritories((prev) => applyCaptureResultToTerritoryState(prev, result));
+              if (Array.isArray(result.localLeaderboardUpdates) && result.localLeaderboardUpdates.length > 0) {
+                setLeaderCells((prev) => mergeLeaderCellsForMap(prev, result.localLeaderboardUpdates));
+              }
+            } else {
+              runData.area = 0;
+              runData.territoryCaptureFailedReason = result?.reason || "capture_failed";
             }
           } catch (e) {
-            debug("zone creation via sync failed", e);
+            debug("territory capture failed unexpectedly; using legacy zone fallback", e);
             try {
-              const built = zones.buildCapturedZone(path, {
-                closeDistanceM: 32,
-                maxCloseDistanceM: 48,
-                requireClosedLoop: true,
-                minLoopPoints: 8,
-                simplifyTolerance: 0.000015,
-                smoothIterations: 1,
-                maxPoints: 420,
-              });
-              const area = zones.calcArea(built);
-              if (Array.isArray(built) && built.length >= 3 && area >= ZONE_MIN_AREA_M2) {
-                const z = await sync.saveLocalZone?.({ coords: built, area, date: new Date().toISOString() });
-                sync.scheduleZonesSync?.();
-                runData.area = Number(z?.area || area || 0);
-                runData.zoneId = z?.id || null;
-                runData.zoneCoords = sanitizePath(z?.coords || built);
-                runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
+              if (path.length >= 6 && totalDistance > 1) {
+                const savedZone = await sync.createAndSaveZoneFromPath?.(path, {
+                  closeDistanceM: 32,
+                  maxCloseDistanceM: 48,
+                  requireClosedLoop: true,
+                  allowOpenFallback: false,
+                  minLoopPoints: 8,
+                  simplifyTolerance: 0.000015,
+                  smoothIterations: 1,
+                  maxPoints: 420,
+                  compressMax: 420,
+                });
+                if (savedZone) {
+                  runData.area = Number(savedZone.area || 0);
+                  runData.zoneId = savedZone.id || null;
+                  runData.zoneCoords = sanitizePath(savedZone.coords || []);
+                  runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
+                  runData.territoryCaptureFailedReason = "legacy_zone_fallback";
+                  runData.territoryCaptureMessage = "Corrida salva usando o modo legado de zonas.";
+                }
               }
             } catch (fallbackErr) {
               debug("fallback zone save failed", fallbackErr);
+              runData.territoryCaptureFailedReason = "capture_unavailable";
+              runData.territoryCaptureMessage = "Corrida salva. A captura territorial ficou indisponivel neste momento.";
             }
           }
+        } else {
+          setCaptureResult(null);
         }
 
         await fadeOutRoute();
@@ -1253,6 +1591,17 @@ const MapScreen = ({ navigation }) => {
     navigation?.navigate("Corridas", { screen: "RunDetail", params: { run } });
   }, [navigation]);
   const openStartModal = useCallback(() => setSelectModeVisible(true), []);
+
+  const runFromSelectedTerritory = useCallback(() => {
+    closeSelectedTerritory();
+    startWithCountdown("zones");
+  }, [closeSelectedTerritory, startWithCountdown]);
+
+  const openSelectedTerritoryRanking = useCallback(() => {
+    const cellId = getPrimaryTerritoryCellId(selectedTerritory);
+    closeSelectedTerritory();
+    navigation?.navigate("Ranking", cellId ? { cellId } : undefined);
+  }, [closeSelectedTerritory, navigation, selectedTerritory]);
 
   const goToSavedRunDetail = useCallback(() => {
     if (!lastSavedRun) return;
@@ -1510,7 +1859,13 @@ const MapScreen = ({ navigation }) => {
           routeSegments={liveRouteSegments}
           replayPath={replayPathState}
           zones={visibleMapZones}
+          territories={territories}
+          leaderCells={leaderCells}
+          selectedTerritory={selectedTerritory}
+          currentUserId={currentUserId}
           showZones={visibleMapZones.length > 0}
+          showTerritories
+          showLeaderAreas
           showUserLocation={!replaying}
           followUserLocation={shouldFollowMap}
           initialZoom={15}
@@ -1520,6 +1875,9 @@ const MapScreen = ({ navigation }) => {
           minCameraMoveIntervalMs={MIN_CAMERA_MOVE_INTERVAL_MS}
           recenterSignal={mapRecenterSignal}
           onUserInteraction={handleMapUserInteraction}
+          onTerritoryPress={handleTerritoryPress}
+          onLeaderCellPress={handleLeaderCellPress}
+          onViewportChange={handleTerritoryViewportChange}
           fitToContent={false}
         />
       </View>
@@ -1535,6 +1893,12 @@ const MapScreen = ({ navigation }) => {
         colors={["rgba(3,7,11,0.42)", "rgba(3,7,11,0)"]}
         style={styles.mapTopVignette}
       />
+
+      {territoryLoading && !running && !replaying ? (
+        <View pointerEvents="none" style={styles.territoryLoadingBadge}>
+          <ActivityIndicator size="small" color={WayperTheme.colors.primary} />
+        </View>
+      ) : null}
 
       {shouldShowRecenterMap && (
         <TouchableOpacity activeOpacity={0.9} style={styles.recenterMapButton} onPress={recenterMapOnUser}>
@@ -1949,10 +2313,20 @@ const MapScreen = ({ navigation }) => {
         publicLink={lastSavedRun?.publicLink || lastSavedRun?.publicUrl || lastSavedRun?.shareUrl || lastSavedRun?.url}
       />
 
+      <TerritoryBottomSheet
+        territory={showRunModal ? null : selectedTerritory}
+        leaderboard={selectedTerritoryLeaderboard}
+        currentUserId={currentUserId}
+        onClose={closeSelectedTerritory}
+        onRunHere={runFromSelectedTerritory}
+        onOpenRanking={openSelectedTerritoryRanking}
+      />
+
       {/* RunSummaryModal */}
       <RunSummaryModal
         visible={showRunModal}
         baseRunData={currentRunData}
+        captureResult={captureResult}
         onClose={() => setShowRunModal(false)}
         onSave={async (payload) => {
           try {
@@ -2177,6 +2551,19 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     height: 120,
+  },
+  territoryLoadingBadge: {
+    position: "absolute",
+    top: 18,
+    right: 18,
+    width: 42,
+    height: 42,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(8, 16, 24, 0.86)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
   },
   recenterMapButton: {
     position: "absolute",

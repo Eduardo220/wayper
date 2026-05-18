@@ -16,7 +16,7 @@ const TAG_OPTIONS = [
   { label: "Leve", icon: "leaf-outline" },
 ];
 
-export default function RunSummaryModal({ visible, onClose, onSave, baseRunData = {}, mode = "save" }) {
+export default function RunSummaryModal({ visible, onClose, onSave, baseRunData = {}, captureResult = null, mode = "save" }) {
   const runData = useMemo(() => baseRunData || {}, [baseRunData]);
   const isZoneRun = runData.mode === "zones" || Number(runData.area || 0) > 0 || !!runData.zoneId;
   const isEditing = mode === "edit";
@@ -54,6 +54,8 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
     }),
     [runData]
   );
+  const captureNotice = runData.territoryCaptureMessage || captureResult?.territoryCaptureMessage || null;
+  const captureFailed = Boolean(runData.territoryCaptureFailedReason || captureResult?.ok === false);
 
   async function pickPhoto() {
     try {
@@ -125,6 +127,17 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
             </View>
           </View>
         </View>
+
+        {captureNotice ? (
+          <View style={[styles.captureNotice, captureFailed && styles.captureNoticeWarning]}>
+            <Ionicons
+              name={captureFailed ? "alert-circle-outline" : "trophy-outline"}
+              size={20}
+              color={captureFailed ? WayperTheme.colors.warning : WayperTheme.colors.primary}
+            />
+            <Text style={styles.captureNoticeText}>{captureNotice}</Text>
+          </View>
+        ) : null}
 
         <WPInput
           label="Nome"
@@ -328,6 +341,27 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: WayperTheme.spacing.md,
     marginTop: WayperTheme.spacing.lg,
+  },
+  captureNotice: {
+    minHeight: 48,
+    borderRadius: WayperTheme.radius.lg,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    paddingHorizontal: WayperTheme.spacing.md,
+    paddingVertical: WayperTheme.spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.sm,
+  },
+  captureNoticeWarning: {
+    borderColor: WayperTheme.colors.warningBorder || WayperTheme.colors.borderStrong,
+    backgroundColor: WayperTheme.colors.warningSoft || WayperTheme.colors.surfaceSoft,
+  },
+  captureNoticeText: {
+    ...WayperTheme.typography.body,
+    flex: 1,
+    color: WayperTheme.colors.text,
   },
   metricPill: {
     minHeight: 62,

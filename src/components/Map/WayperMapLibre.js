@@ -498,6 +498,71 @@ function buildBounds(collections = []) {
   return [west, south, east, north];
 }
 
+function bboxFromLngLatPairs(pairs = []) {
+  const points = pairs
+    .map((point) => (Array.isArray(point) ? point : [point?.longitude ?? point?.lng, point?.latitude ?? point?.lat]))
+    .filter((point) => Array.isArray(point) && point.length >= 2)
+    .map(([lng, lat]) => [Number(lng), Number(lat)])
+    .filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat));
+
+  if (points.length === 0) return null;
+
+  const lngs = points.map(([lng]) => lng);
+  const lats = points.map(([, lat]) => lat);
+  return [
+    Math.min(...lngs),
+    Math.min(...lats),
+    Math.max(...lngs),
+    Math.max(...lats),
+  ];
+}
+
+function extractViewportBbox(event) {
+  const payload = event?.nativeEvent || event || {};
+  const properties = payload.properties || payload.payload?.properties || {};
+  const visibleBounds =
+    payload.visibleBounds ||
+    payload.payload?.visibleBounds ||
+    properties.visibleBounds ||
+    properties.bounds ||
+    payload.bounds;
+
+  if (Array.isArray(visibleBounds)) {
+    const flat = visibleBounds.flat(Infinity).map(Number).filter(Number.isFinite);
+    if (flat.length >= 4) {
+      const lngs = [];
+      const lats = [];
+      for (let i = 0; i + 1 < flat.length; i += 2) {
+        lngs.push(flat[i]);
+        lats.push(flat[i + 1]);
+      }
+      return [
+        Math.min(...lngs),
+        Math.min(...lats),
+        Math.max(...lngs),
+        Math.max(...lats),
+      ];
+    }
+  }
+
+  const center =
+    payload.geometry?.coordinates ||
+    payload.payload?.geometry?.coordinates ||
+    properties.center ||
+    payload.center;
+  const centerLngLat = Array.isArray(center)
+    ? center
+    : [center?.longitude ?? center?.lng, center?.latitude ?? center?.lat];
+
+  const centerPoint = bboxFromLngLatPairs([centerLngLat]);
+  if (!centerPoint) return null;
+
+  const delta = 0.018;
+  const lng = (centerPoint[0] + centerPoint[2]) / 2;
+  const lat = (centerPoint[1] + centerPoint[3]) / 2;
+  return [lng - delta, lat - delta, lng + delta, lat + delta];
+}
+
 function pickInitialCenter({ centerCoordinate, location, routePath, replayPath, zones }) {
   const candidates = [
     centerCoordinate,
@@ -562,6 +627,7 @@ function WayperMapLibre({
   contentPadding = { top: 80, right: 80, bottom: 220, left: 80 },
   onTerritoryPress,
   onLeaderCellPress,
+  onViewportChange,
 }) {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -712,6 +778,15 @@ function WayperMapLibre({
     [followUserLocation, interactive, onUserInteraction]
   );
 
+  const handleRegionDidChange = useCallback(
+    (event) => {
+      if (!onViewportChange) return;
+      const bbox = extractViewportBbox(event);
+      if (bbox) onViewportChange({ bbox });
+    },
+    [onViewportChange]
+  );
+
   const handleMapPress = useCallback(() => {
     if (!interactive || !followUserLocation || !onUserInteraction) return;
     onUserInteraction();
@@ -782,6 +857,7 @@ function WayperMapLibre({
           setHasError(true);
         }}
         onRegionWillChange={handleRegionWillChange}
+        onRegionDidChange={handleRegionDidChange}
         onPress={handleMapPress}
       >
         <Camera
