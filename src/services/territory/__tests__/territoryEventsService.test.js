@@ -86,5 +86,19 @@ describe("territoryEventsService", () => {
 
     expect(event.visibility).toBe("private");
   });
-});
 
+  test("gera mensagens de lideranca sem humilhacao", () => {
+    expect(generateTerritoryEventMessage({
+      type: "leader_changed",
+      actorName: "Ana",
+    })).toBe("Ana assumiu a liderança nesta região.");
+    expect(generateTerritoryEventMessage({
+      type: "lost_lead",
+      targetName: "Bruno",
+    })).toBe("Bruno perdeu a liderança nesta região.");
+    expect(generateTerritoryEventMessage({
+      type: "regained_lead",
+      actorName: "Ana",
+    })).toBe("Ana retomou a liderança nesta região.");
+  });
+});

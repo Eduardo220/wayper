@@ -31,11 +31,14 @@ export {
 export {
   TERRITORIES_STORAGE_KEY,
   TERRITORY_EVENTS_STORAGE_KEY,
+  TERRITORY_LEADERBOARDS_STORAGE_KEY,
   TERRITORY_SYNC_META_STORAGE_KEY,
   fetchActiveTerritoriesNear,
   fetchTerritoriesByBbox,
   fetchTerritoriesByCellIds,
+  fetchTerritoryLeaderboardByCellId,
   fetchTerritoryById,
+  loadLocalTerritoryLeaderboards,
   loadLocalTerritories,
   loadLocalTerritoryEvents,
   loadTerritorySyncMeta,
@@ -49,7 +52,10 @@ export {
   saveLocalTerritory,
   saveLocalTerritoryEvent,
   saveLocalTerritoryEvents,
+  saveLocalTerritoryLeaderboard,
+  saveLocalTerritoryLeaderboards,
   saveTerritoryEventRemote,
+  saveTerritoryLeaderboardRemote,
   saveTerritoryRemote,
   saveTerritorySyncMeta,
   updateTerritoryRemote,
@@ -61,3 +67,14 @@ export {
 export {
   processRunTerritoryCapture,
 } from "./territoryCaptureService.js";
+export {
+  getAreaNeededToLead,
+  getLeaderCellsForViewport,
+  getLeaderForLocation,
+  getLeaderboardForCell,
+  getUserLocalStanding,
+  recalculateLeaderboardsForCells,
+} from "./territoryLeaderboardService.js";
+export {
+  applyTerritoryCaptureStats,
+} from "./territoryStatsService.js";

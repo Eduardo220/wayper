@@ -10,13 +10,21 @@ import { getCellIdsForGeometry } from "../territoryCellService.js";
 const fetchActiveTerritoriesNear = jest.fn(async () => []);
 const saveLocalTerritories = jest.fn(async (territories) => territories);
 const saveLocalTerritoryEvents = jest.fn(async (events) => events);
+const loadLocalTerritoryLeaderboards = jest.fn(async () => []);
+const saveLocalTerritoryLeaderboards = jest.fn(async (leaderboards) => leaderboards);
+const fetchTerritoryLeaderboardByCellId = jest.fn(async () => null);
+const saveTerritoryLeaderboardRemote = jest.fn(async (leaderboard) => ({ ok: true, leaderboard }));
 const scheduleTerritoriesSync = jest.fn();
 const scheduleTerritoryEventsSync = jest.fn();
 
 jest.unstable_mockModule("../territoryStorageService.js", () => ({
   fetchActiveTerritoriesNear,
+  fetchTerritoryLeaderboardByCellId,
+  loadLocalTerritoryLeaderboards,
   saveLocalTerritories,
   saveLocalTerritoryEvents,
+  saveLocalTerritoryLeaderboards,
+  saveTerritoryLeaderboardRemote,
 }));
 
 jest.unstable_mockModule("../../../utils/sync.js", () => ({
@@ -122,6 +130,7 @@ describe("territoryCaptureService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     fetchActiveTerritoriesNear.mockResolvedValue([]);
+    loadLocalTerritoryLeaderboards.mockResolvedValue([]);
   });
 
   test("corrida free nao captura", async () => {
@@ -351,6 +360,7 @@ describe("territoryCaptureService", () => {
 
     expect(saveLocalTerritories).not.toHaveBeenCalled();
     expect(saveLocalTerritoryEvents).not.toHaveBeenCalled();
+    expect(saveLocalTerritoryLeaderboards).not.toHaveBeenCalled();
   });
 
   test("persist=true chama storage", async () => {
@@ -389,6 +399,67 @@ describe("territoryCaptureService", () => {
       version: 1,
     });
     expect(result.cellIds.length).toBeGreaterThan(0);
+  });
+
+  test("processRunTerritoryCapture retorna becameLeaderInCells", async () => {
+    const result = await processRunTerritoryCapture({
+      ...baseParams,
+      path: pathFromBbox([0, 0, 0.005, 0.005]),
+      existingTerritories: [],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.becameLeaderInCells.length).toBeGreaterThan(0);
+    expect(result.localLeaderboardUpdates.some((update) => update.leaderUserId === "user-1")).toBe(true);
+  });
+
+  test("roubo pode mudar lider", async () => {
+    const enemy = territoryFromBbox({
+      id: "enemy-1",
+      ownerId: "user-2",
+      ownerName: "Bruno",
+      bbox: [0.001, 0.001, 0.004, 0.004],
+    });
+    loadLocalTerritoryLeaderboards.mockResolvedValue([
+      {
+        cellId: enemy.cellIds[0],
+        leaderUserId: "user-2",
+        leaderUserName: "Bruno",
+        leaderAreaM2: enemy.areaM2,
+        totalAreaM2: enemy.areaM2,
+        users: {
+          "user-2": {
+            userId: "user-2",
+            userName: "Bruno",
+            areaM2: enemy.areaM2,
+            territoryCount: 1,
+          },
+        },
+      },
+    ]);
+
+    const result = await processRunTerritoryCapture({
+      ...baseParams,
+      path: pathFromBbox([0, 0, 0.005, 0.005]),
+      existingTerritories: [enemy],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.localLeaderboardUpdates.some(
+      (update) => update.previousLeaderUserId === "user-2" && update.leaderUserId === "user-1"
+    )).toBe(true);
+  });
+
+  test("eventos leader_changed sao criados", async () => {
+    const result = await processRunTerritoryCapture({
+      ...baseParams,
+      path: pathFromBbox([0, 0, 0.005, 0.005]),
+      existingTerritories: [],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.events.some((event) => event.type === "leader_changed")).toBe(true);
+    expect(result.summary.highlights).toContain("leader_changed");
   });
 
   test("nao lanca erro quando Turf falha", async () => {

@@ -47,6 +47,12 @@ export function generateTerritoryEventMessage(event = {}) {
       return `${actorName} expandiu seu território.`;
     case TERRITORY_EVENT_TYPE.split:
       return `Uma área de ${targetName} foi dividida após nova disputa.`;
+    case TERRITORY_EVENT_TYPE.leader_changed:
+      return `${actorName} assumiu a liderança nesta região.`;
+    case TERRITORY_EVENT_TYPE.lost_lead:
+      return `${targetName} perdeu a liderança nesta região.`;
+    case TERRITORY_EVENT_TYPE.regained_lead:
+      return `${actorName} retomou a liderança nesta região.`;
     default:
       return `${actorName} atualizou um territorio.`;
   }

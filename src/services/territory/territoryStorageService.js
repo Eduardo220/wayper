@@ -9,9 +9,11 @@ import {
 export const TERRITORIES_STORAGE_KEY = "wayper_territories_v1";
 export const TERRITORY_EVENTS_STORAGE_KEY = "wayper_territory_events_v1";
 export const TERRITORY_SYNC_META_STORAGE_KEY = "wayper_territory_sync_meta_v1";
+export const TERRITORY_LEADERBOARDS_STORAGE_KEY = "wayper_territory_leaderboards_v1";
 
 const TERRITORIES_COLLECTION = "territories";
 const TERRITORY_EVENTS_COLLECTION = "territory_events";
+const TERRITORY_LEADERBOARDS_COLLECTION = "territory_leaderboards";
 const FIRESTORE_IN_CHUNK_SIZE = 10;
 
 let firestoreBindings = null;
@@ -75,6 +77,20 @@ function dedupeById(items = []) {
     }
   }
   return Array.from(map.values()).sort(compareByUpdatedAt);
+}
+
+function dedupeLeaderboards(items = []) {
+  const map = new Map();
+  for (const item of items) {
+    if (!item?.cellId) continue;
+    map.set(String(item.cellId), {
+      ...item,
+      cellId: String(item.cellId),
+    });
+  }
+  return Array.from(map.values()).sort((a, b) =>
+    String(a.cellId).localeCompare(String(b.cellId))
+  );
 }
 
 function normalizeBbox(bbox) {
@@ -392,6 +408,38 @@ export async function saveTerritorySyncMeta(meta = {}) {
   }
 }
 
+export async function loadLocalTerritoryLeaderboards() {
+  try {
+    const raw = await AsyncStorage.getItem(TERRITORY_LEADERBOARDS_STORAGE_KEY);
+    const parsed = safeParse(raw, []);
+    if (!Array.isArray(parsed)) return [];
+    return dedupeLeaderboards(parsed);
+  } catch {
+    return [];
+  }
+}
+
+export async function saveLocalTerritoryLeaderboards(leaderboards = [], options = {}) {
+  try {
+    const existing = options.replace ? [] : await loadLocalTerritoryLeaderboards();
+    const incoming = Array.isArray(leaderboards) ? leaderboards : [];
+    const next = dedupeLeaderboards([...existing, ...incoming]);
+    await AsyncStorage.setItem(TERRITORY_LEADERBOARDS_STORAGE_KEY, safeStringify(next));
+    return next;
+  } catch {
+    return [];
+  }
+}
+
+export async function saveLocalTerritoryLeaderboard(leaderboard = {}, options = {}) {
+  try {
+    const saved = await saveLocalTerritoryLeaderboards([leaderboard], options);
+    return saved.find((item) => item.cellId === String(leaderboard.cellId || "")) || saved[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchTerritoryById(id) {
   try {
     const { db, doc, getDoc } = await getFirestoreBindings();
@@ -405,6 +453,21 @@ export async function fetchTerritoryById(id) {
       { id: snap.id || territoryId, ...snap.data() },
       { fromRemote: true, preserveVersion: true }
     );
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchTerritoryLeaderboardByCellId(cellId) {
+  try {
+    const id = String(cellId || "");
+    if (!id) return null;
+
+    const { db, doc, getDoc } = await getFirestoreBindings();
+    const snap = await getDoc(doc(db, TERRITORY_LEADERBOARDS_COLLECTION, id));
+    if (!snap?.exists?.()) return null;
+
+    return { cellId: snap.id || id, ...snap.data() };
   } catch {
     return null;
   }
@@ -540,6 +603,33 @@ export async function saveTerritoryEventRemote(event = {}) {
   }
 }
 
+export async function saveTerritoryLeaderboardRemote(leaderboard = {}) {
+  try {
+    const cellId = String(leaderboard.cellId || "");
+    if (!cellId) return { ok: false, reason: "invalid_cell_id" };
+
+    const { db, doc, setDoc } = await getFirestoreBindings();
+    const payload = {
+      ...leaderboard,
+      cellId,
+      updatedAt: leaderboard.updatedAt || new Date().toISOString(),
+    };
+    await setDoc(doc(db, TERRITORY_LEADERBOARDS_COLLECTION, cellId), payload, { merge: true });
+
+    return {
+      ok: true,
+      leaderboard: payload,
+      reason: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "firestore_error",
+      error,
+    };
+  }
+}
+
 export async function updateTerritoryRemote(id, patch = {}) {
   try {
     const { db, doc, getDoc, setDoc, updateDoc } = await getFirestoreBindings();
@@ -608,6 +698,7 @@ export default {
   TERRITORIES_STORAGE_KEY,
   TERRITORY_EVENTS_STORAGE_KEY,
   TERRITORY_SYNC_META_STORAGE_KEY,
+  TERRITORY_LEADERBOARDS_STORAGE_KEY,
   loadLocalTerritories,
   saveLocalTerritory,
   saveLocalTerritories,
@@ -617,12 +708,17 @@ export default {
   saveLocalTerritoryEvents,
   loadTerritorySyncMeta,
   saveTerritorySyncMeta,
+  loadLocalTerritoryLeaderboards,
+  saveLocalTerritoryLeaderboard,
+  saveLocalTerritoryLeaderboards,
   fetchTerritoryById,
+  fetchTerritoryLeaderboardByCellId,
   fetchTerritoriesByCellIds,
   fetchTerritoriesByBbox,
   fetchActiveTerritoriesNear,
   saveTerritoryRemote,
   saveTerritoryEventRemote,
+  saveTerritoryLeaderboardRemote,
   updateTerritoryRemote,
   markTerritoryDeletedRemote,
   normalizeTerritoryPayload,

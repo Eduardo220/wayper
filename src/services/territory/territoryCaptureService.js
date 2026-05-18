@@ -16,6 +16,8 @@ import {
   saveLocalTerritories,
   saveLocalTerritoryEvents,
 } from "./territoryStorageService.js";
+import { recalculateLeaderboardsForCells } from "./territoryLeaderboardService.js";
+import { applyTerritoryCaptureStats } from "./territoryStatsService.js";
 import { createTerritoryEvent } from "./territoryEventsService.js";
 import {
   TERRITORY_CAPTURE_FAILURE,
@@ -156,6 +158,10 @@ function addAffectedUser(map, territory, areaM2) {
   };
   existing.affectedAreaM2 += Math.max(0, areaM2);
   map.set(ownerId, existing);
+}
+
+function uniqueStrings(values = []) {
+  return Array.from(new Set(values.filter(Boolean).map(String)));
 }
 
 async function scheduleTerritorySync() {
@@ -418,6 +424,111 @@ export async function processRunTerritoryCapture({
     );
 
     const newAreaM2 = Math.max(0, captureAreaM2 - stolenAreaM2 - ownOverlapAreaM2);
+    const affectedUsersList = Array.from(affectedUsers.values());
+    const deletedTerritoryIds = new Set(deletedTerritories.map((territory) => territory.id));
+    const updatedTerritoryIds = new Set(updatedTerritories.map((territory) => territory.id));
+    const activeUnaffectedTerritories = activeCandidates.filter(
+      (territory) => !deletedTerritoryIds.has(territory.id) && !updatedTerritoryIds.has(territory.id)
+    );
+    const leaderboardTerritories = [
+      capturedTerritory,
+      ...activeUnaffectedTerritories,
+      ...updatedTerritories,
+    ];
+    const impactedCellIds = uniqueStrings([
+      ...capturedTerritory.cellIds,
+      ...activeCandidates.flatMap((territory) => territory.cellIds || []),
+      ...updatedTerritories.flatMap((territory) => territory.cellIds || []),
+      ...deletedTerritories.flatMap((territory) => territory.cellIds || []),
+    ]);
+
+    let localLeaderboardUpdates = [];
+    let becameLeaderInCells = [];
+    let lostLeaderInCells = [];
+    let territoryStatsResult = null;
+
+    try {
+      const leaderboardResult = await recalculateLeaderboardsForCells(impactedCellIds, {
+        territories: leaderboardTerritories,
+        persist,
+        updatedAt: createdAt,
+      });
+      localLeaderboardUpdates = leaderboardResult.updates || [];
+      becameLeaderInCells = localLeaderboardUpdates
+        .filter((update) => update.changed && update.leaderUserId === userId)
+        .map((update) => update.cellId);
+      lostLeaderInCells = localLeaderboardUpdates
+        .filter((update) => update.changed && update.previousLeaderUserId === userId && update.leaderUserId !== userId)
+        .map((update) => update.cellId);
+
+      for (const update of localLeaderboardUpdates) {
+        if (!update.changed) continue;
+
+        if (update.leaderUserId === userId) {
+          events.push(
+            createTerritoryEvent({
+              type: TERRITORY_EVENT_TYPE.leader_changed,
+              actor,
+              target: {
+                id: update.previousLeaderUserId,
+                name: update.previousLeaderUserName || "outro atleta",
+                avatar: null,
+              },
+              runId,
+              territoryId: capturedTerritory.id,
+              affectedAreaM2: update.leaderAreaM2,
+              cellIds: [update.cellId],
+              visibility,
+              createdAt,
+            })
+          );
+        } else if (update.previousLeaderUserId === userId) {
+          events.push(
+            createTerritoryEvent({
+              type: TERRITORY_EVENT_TYPE.lost_lead,
+              actor: {
+                id: update.leaderUserId,
+                name: update.leaderUserName || "outro atleta",
+                avatar: update.leaderAvatar || null,
+              },
+              target: actor,
+              runId,
+              territoryId: capturedTerritory.id,
+              affectedAreaM2: update.leaderAreaM2,
+              cellIds: [update.cellId],
+              visibility,
+              createdAt,
+            })
+          );
+        }
+      }
+    } catch (leaderboardError) {
+      localLeaderboardUpdates = [];
+      becameLeaderInCells = [];
+      lostLeaderInCells = [];
+    }
+
+    try {
+      territoryStatsResult = await applyTerritoryCaptureStats({
+        actorUserId: userId,
+        capturedAreaM2,
+        newAreaM2,
+        stolenAreaM2,
+        ownMergedAreaM2,
+        affectedUsers: affectedUsersList,
+        conqueredTerritories,
+        becameLeaderInCells,
+        persist,
+        updatedAt: createdAt,
+      });
+    } catch (statsError) {
+      territoryStatsResult = {
+        ok: false,
+        reason: "stats_error",
+        error: statsError?.message || String(statsError),
+      };
+    }
+
     const territoriesToPersist = [
       capturedTerritory,
       ...updatedTerritories,
@@ -445,6 +556,11 @@ export async function processRunTerritoryCapture({
       splitCount: splitTerritories.length,
       mergedCount: mergedTerritories.length,
       eventCount: events.length,
+      highlights: [
+        becameLeaderInCells.length > 0 ? "leader_changed" : null,
+        stolenAreaM2 > 0 ? "stolen_area" : null,
+        conqueredTerritories.length > 0 ? "conquered_area" : null,
+      ].filter(Boolean),
     };
 
     return {
@@ -454,7 +570,7 @@ export async function processRunTerritoryCapture({
       newAreaM2,
       stolenAreaM2,
       ownMergedAreaM2,
-      affectedUsers: Array.from(affectedUsers.values()),
+      affectedUsers: affectedUsersList,
       conqueredTerritories,
       splitTerritories,
       mergedTerritories,
@@ -462,6 +578,10 @@ export async function processRunTerritoryCapture({
       deletedTerritories,
       events,
       cellIds: capturedTerritory.cellIds,
+      localLeaderboardUpdates,
+      becameLeaderInCells,
+      lostLeaderInCells,
+      territoryStatsResult,
       summary,
     };
   } catch (error) {
@@ -479,4 +599,3 @@ export async function processRunTerritoryCapture({
 export default {
   processRunTerritoryCapture,
 };
-
