@@ -25,6 +25,7 @@ import {
 
 import { auth, db } from "../../firebaseConfig";
 import { WayperTheme } from "../../theme/wayperTheme";
+import { markGroupMessagesRead } from "../../services/notifications/notificationService";
 
 const DEFAULT_GROUP_AVATAR = "https://i.pravatar.cc/160?u=wayper_group_chat";
 
@@ -144,13 +145,14 @@ export default function GroupChatScreen({ route, navigation }) {
         const nextMessages = [];
         snapshot.forEach((docSnap) => nextMessages.push({ id: docSnap.id, ...docSnap.data() }));
         setMessages(nextMessages);
+        markGroupMessagesRead(user?.uid, groupId);
         setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 120);
       },
       (error) => console.warn("[GroupChat] messages snapshot error", error)
     );
 
     return () => unsubscribe();
-  }, [groupId, isMember]);
+  }, [groupId, isMember, user?.uid]);
 
   const openDetails = useCallback(() => {
     if (groupId) navigation.navigate("GroupDetail", { groupId });

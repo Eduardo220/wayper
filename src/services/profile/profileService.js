@@ -13,6 +13,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { db, auth } from "../../firebaseConfig";
 import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { calculatePaceSecondsPerKm } from "../../utils/pace";
 
 // STORAGE KEY
 const PROFILE_KEY = "wayper_profile_v3";
@@ -100,8 +101,7 @@ const monthKey = (date = new Date()) => {
 };
 
 function calcPace(distanceMeters, durationSeconds) {
-  if (!distanceMeters || !durationSeconds) return null;
-  return durationSeconds / (distanceMeters / 1000); // sec/km
+  return calculatePaceSecondsPerKm(durationSeconds, Number(distanceMeters) / 1000);
 }
 
 function safeParse(json) {

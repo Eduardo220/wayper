@@ -16,10 +16,7 @@ import {
 } from "react-native";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
-import * as Sharing from "expo-sharing";
-import * as FileSystem from "expo-file-system";
 import { LinearGradient } from "expo-linear-gradient";
-import ViewShot, { captureRef } from "react-native-view-shot";
 import { Ionicons } from "@expo/vector-icons";
 import Svg, {
   Circle as SvgCircle,
@@ -33,39 +30,60 @@ import Svg, {
   Stop,
 } from "react-native-svg";
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../components/Map/WayperMapLibre";
+import RunShareModal from "../components/Runs/RunShareModal";
+import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../components/Runs/RunShareCard";
 import RunSummaryModal from "../components/Runs/RunSummaryModal";
 import { WPButton } from "../components/ui";
 import { WayperTheme } from "../theme/wayperTheme";
 import formatTime from "../utils/formatTime";
-import { getDistance } from "../utils/geo";
+import {
+  TRACKING_CONFIG,
+  calculateDistanceMeters,
+  debugTracking,
+  limitPathForRendering,
+  normalizeLocation,
+  removePathOutliers,
+  sanitizeRunPath,
+  shouldAppendLocationPoint,
+  smoothDisplayPath,
+  smoothLocationPoint,
+  splitPathIntoSegments,
+} from "../utils/tracking";
 import zones from "../utils/zones";
 import sync from "../utils/sync";
 import { beautifyRoutePath, calculateRouteDistance, finalizeRoutePath } from "../utils/routeDrawing";
+import {
+  assertTraceHasEnoughPoints,
+  captureRunShareImage,
+  generateTracePngFromPath,
+  getShareUnavailableMessage,
+  logShareDiagnostics,
+  logShareError,
+  saveImageToMediaLibrary,
+  shareImageFile,
+  showShareError,
+} from "../utils/share/runShareExport";
+import { getFormattedPace } from "../utils/pace";
 import xpService from "../services/xp/xpService";
 import { updateProfileStats } from "../services/profile/profileService";
 
 /* Tunáveis */
-const MAX_GPS_ACCURACY_M = 65;
+const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
 const FLUSH_INTERVAL_MS = 300;
 const WATCH_TIME_INTERVAL_MS = 1000;
-const WATCH_DISTANCE_INTERVAL = 0;
+const WATCH_DISTANCE_INTERVAL = 3;
 const INITIAL_REGION_DELTA = 0.001;
 const COUNTDOWN_DEFAULT = 3;
-const MAX_SPIKE_DISTANCE_M = 1000;
 const ZONE_MIN_AREA_M2 = 5;
 const WAYPER_GREEN = WayperTheme.colors.primary;
-const ROUTE_CAP = 5000;
-const ANTI_JITTER_M = 1.1;
-const MAX_RUNNING_SPEED_MPS = 10.5;
-const MAX_REASONABLE_STEP_M = 110;
+const ROUTE_CAP = 8000;
+const MAX_RUNNING_SPEED_MPS = TRACKING_CONFIG.MAX_HUMAN_SPRINT_SPEED_KMH / 3.6;
 const ZONE_PREVIEW_INTERVAL_MS = 1400;
-const SHARE_CAPTURE_OPTIONS = {
-  format: "png",
-  quality: 1,
-  result: "tmpfile",
-  handleGLSurfaceViewOnAndroid: true,
-};
 const BACKGROUND_LOCATION_TASK = "WAYPER_ACTIVE_RUN_LOCATION";
+const FOLLOW_MAP_ZOOM = 17.2;
+const FOLLOW_ANIMATION_DURATION = 450;
+const RECENTER_ANIMATION_DURATION = 700;
+const MIN_CAMERA_MOVE_INTERVAL_MS = 900;
 
 let backgroundLocationUpdateHandler = null;
 
@@ -86,7 +104,11 @@ try {
           latitude: loc.coords.latitude,
           longitude: loc.coords.longitude,
           accuracy: loc.coords.accuracy,
+          speed: loc.coords.speed,
+          heading: loc.coords.heading,
+          altitude: loc.coords.altitude,
           timestamp: loc.timestamp,
+          source: "background",
         });
       });
     });
@@ -100,25 +122,19 @@ const debug = (...args) => {
   // console.log("[MapScreen]", ...args);
 };
 
+const showRunShareFailure = (message, error) => {
+  const userMessage = getShareUnavailableMessage(error, message);
+  if (error?.code === "TRACE_POINTS_INSUFFICIENT") {
+    Alert.alert("Tracado indisponivel", userMessage);
+    return;
+  }
+
+  showShareError(userMessage, error);
+};
+
 const uid = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-const sanitizePath = (arr = []) =>
-  (Array.isArray(arr) ? arr : [])
-    .map((p) => {
-      if (!p) return null;
-      const lat = Number(p.latitude ?? p.lat);
-      const lon = Number(p.longitude ?? p.lon ?? p.lng);
-      const ts = p.timestamp ?? p.time ?? null;
-      const accuracy = p.accuracy != null ? Number(p.accuracy) : null;
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-      return {
-        latitude: lat,
-        longitude: lon,
-        timestamp: ts,
-        ...(Number.isFinite(accuracy) ? { accuracy } : {}),
-      };
-    })
-    .filter(Boolean);
+const sanitizePath = (arr = []) => sanitizeRunPath(arr);
 
 const formatSavedDuration = (seconds = 0) => {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
@@ -129,15 +145,8 @@ const formatSavedDuration = (seconds = 0) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
-const formatSavedPace = (seconds = 0, meters = 0) => {
-  const distanceKm = Number(meters) / 1000;
-  if (!Number.isFinite(distanceKm) || distanceKm <= 0.005) return "--";
-  const paceSeconds = Math.round((Number(seconds) || 0) / distanceKm);
-  if (!Number.isFinite(paceSeconds) || paceSeconds <= 0) return "--";
-  const m = Math.floor(paceSeconds / 60);
-  const s = paceSeconds % 60;
-  return `${m}:${String(s).padStart(2, "0")}/km`;
-};
+const formatSavedPace = (seconds = 0, meters = 0) =>
+  getFormattedPace(seconds, Number(meters) / 1000, { suffix: "/km" });
 
 const formatSavedDate = (date) => {
   try {
@@ -204,20 +213,6 @@ const buildPolygonSvgPoints = (coords = [], width = 320, height = 210, padding =
     .join(" ");
 };
 
-const appendLivePointToPath = (path = [], liveLocation = null) => {
-  const clean = sanitizePath(path);
-  const live = sanitizePath([liveLocation])[0];
-  if (!live) return clean;
-  if (clean.length === 0) return [live];
-
-  const last = clean[clean.length - 1];
-  const distanceToLive = getDistance(last.latitude, last.longitude, live.latitude, live.longitude);
-  if (!Number.isFinite(distanceToLive) || distanceToLive < 0.6) return clean;
-  if (distanceToLive > MAX_REASONABLE_STEP_M) return clean;
-
-  return clean.concat(live);
-};
-
 const DEFAULT_COORD = WAYPER_FALLBACK_COORD;
 
 /* ================= Component ================= */
@@ -229,6 +224,8 @@ const MapScreen = ({ navigation }) => {
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
   const [replaying, setReplaying] = useState(false);
+  const [mapFollowEnabled, setMapFollowEnabled] = useState(true);
+  const [mapRecenterSignal, setMapRecenterSignal] = useState(0);
   const [showZones] = useState(true);
   const [selectModeVisible, setSelectModeVisible] = useState(false);
   const [counting, setCounting] = useState(false);
@@ -238,6 +235,8 @@ const MapScreen = ({ navigation }) => {
   const [currentRunData, setCurrentRunData] = useState(null);
 
   const [routeState, setRouteState] = useState([]);
+  const [displayRouteState, setDisplayRouteState] = useState([]);
+  const [displayRouteSegments, setDisplayRouteSegments] = useState([]);
   const [replayPathState, setReplayPathState] = useState([]);
   const [distanceState, setDistanceState] = useState(0);
   const [timeSec, setTimeSec] = useState(0);
@@ -248,7 +247,9 @@ const MapScreen = ({ navigation }) => {
 
   const [showRunsModal, setShowRunsModal] = useState(false);
   const [showSavedModal, setShowSavedModal] = useState(false);
+  const [savedShareVisible, setSavedShareVisible] = useState(false);
   const [lastSavedRun, setLastSavedRun] = useState(null);
+  const [shareLoading, setShareLoading] = useState(null);
 
   const savedFullShareRef = useRef(null);
   const savedRouteShareRef = useRef(null);
@@ -264,12 +265,23 @@ const MapScreen = ({ navigation }) => {
   const mountedRef = useRef(true);
 
   const lastPointRef = useRef(null);
+  const rawPathRef = useRef([]);
+  const savedPathRef = useRef([]);
+  const displayPathRef = useRef([]);
+  const displaySegmentsRef = useRef([]);
+  const lastAcceptedLocationRef = useRef(null);
+  const lastSmoothedLocationRef = useRef(null);
+  const pendingSuspiciousPointRef = useRef(null);
+  const currentRunIdRef = useRef(null);
+  const currentSegmentIdRef = useRef(0);
+  const forceNextSegmentBreakRef = useRef(false);
   const routeBufferRef = useRef([]);
   const routeStateRef = useRef([]);
   const distanceRef = useRef(0);
   const runningRef = useRef(false);
   const modeRef = useRef(null);
   const zonePreviewLastAtRef = useRef(0);
+  const liveTrackingRef = useRef(false);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
@@ -278,6 +290,21 @@ const MapScreen = ({ navigation }) => {
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
+
+  useEffect(() => {
+    const liveTracking = running && !paused && !replaying;
+
+    if (liveTracking && !liveTrackingRef.current) {
+      setMapFollowEnabled(true);
+      setMapRecenterSignal((value) => value + 1);
+    }
+
+    if (!liveTracking && liveTrackingRef.current) {
+      setMapFollowEnabled(true);
+    }
+
+    liveTrackingRef.current = liveTracking;
+  }, [paused, replaying, running]);
 
   useEffect(() => {
     if (running || replaying) {
@@ -322,6 +349,16 @@ const MapScreen = ({ navigation }) => {
       useNativeDriver: true,
     }).start();
   }, [startPressAnim]);
+
+  const handleMapUserInteraction = useCallback(() => {
+    if (!running || paused || replaying) return;
+    setMapFollowEnabled(false);
+  }, [paused, replaying, running]);
+
+  const recenterMapOnUser = useCallback(() => {
+    setMapFollowEnabled(true);
+    setMapRecenterSignal((value) => value + 1);
+  }, []);
 
   /* ===== INIT ===== */
   useEffect(() => {
@@ -437,70 +474,36 @@ const MapScreen = ({ navigation }) => {
         }
       }
       watcherRef.current = null;
+      debugTracking("watcher_stopped", { runSessionId: currentRunIdRef.current });
     } catch (e) {
       debug("stopWatcher caught", e);
     }
   }, []);
 
-  const saveCapturedView = useCallback(async (targetRef, filenamePrefix) => {
-    try {
-      const target = targetRef?.current;
-      if (!target) {
-        Alert.alert("Baixar imagem", "Preview ainda nao esta pronto.");
-        return;
-      }
+  const resetTrackingPipeline = useCallback((options = {}) => {
+    rawPathRef.current = [];
+    savedPathRef.current = [];
+    displayPathRef.current = [];
+    displaySegmentsRef.current = [];
+    routeBufferRef.current = [];
+    routeStateRef.current = [];
+    lastPointRef.current = null;
+    lastAcceptedLocationRef.current = null;
+    lastSmoothedLocationRef.current = null;
+    pendingSuspiciousPointRef.current = null;
+    forceNextSegmentBreakRef.current = false;
+    currentSegmentIdRef.current = Number.isFinite(Number(options.segmentId)) ? Number(options.segmentId) : 0;
 
-      await new Promise((resolve) => setTimeout(resolve, 120));
-
-      let uri = null;
-      try {
-        uri = typeof target.capture === "function" ? await target.capture() : null;
-      } catch (captureErr) {
-        debug("ViewShot direct save capture failed, trying captureRef", captureErr);
-      }
-
-      if (!uri) {
-        uri = await captureRef(target, SHARE_CAPTURE_OPTIONS);
-      }
-
-      if (!uri) throw new Error("capture returned empty uri");
-
-      const filename = `${filenamePrefix}_${Date.now()}.png`;
-      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-
-      if (FileSystem.StorageAccessFramework?.requestDirectoryPermissionsAsync) {
-        const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
-        if (permission.granted) {
-          const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(permission.directoryUri, filename, "image/png");
-          await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
-          Alert.alert("Imagem salva", "O PNG foi salvo na pasta selecionada.");
-          return;
-        }
-      }
-
-      const dest = FileSystem.documentDirectory + filename;
-      await FileSystem.copyAsync({ from: uri, to: dest });
-      Alert.alert("Imagem salva", `Arquivo salvo em: ${dest}`);
-    } catch (e) {
-      debug("saveCapturedView catch", e);
-      console.warn("saveCapturedView failed", e);
-      Alert.alert("Erro", "Nao foi possivel salvar a imagem.");
-    }
+    setRouteState([]);
+    setDisplayRouteState([]);
+    setDisplayRouteSegments([]);
+    debugTracking("path_reset", { segmentId: currentSegmentIdRef.current });
   }, []);
 
   const buildFinalRoutePath = useCallback((path = []) => {
-    const clean = sanitizePath(path);
-    if (clean.length <= 3) return clean;
-
-    return finalizeRoutePath(clean, {
-      minPointDistanceM: 1.1,
-      toleranceM: 2.2,
-      spikeToleranceM: 7,
-      maxPoints: ROUTE_CAP,
-      maxAccuracyM: MAX_GPS_ACCURACY_M,
-      maxSpeedMps: MAX_RUNNING_SPEED_MPS,
-      preserveTurns: true,
-    });
+    const clean = removePathOutliers(sanitizePath(path), TRACKING_CONFIG);
+    if (clean.length <= ROUTE_CAP) return clean;
+    return limitPathForRendering(clean, ROUTE_CAP);
   }, []);
 
   const updateActiveZonePreview = useCallback((path = []) => {
@@ -547,94 +550,183 @@ const MapScreen = ({ navigation }) => {
     try {
       const buf = routeBufferRef.current;
       if (!buf || buf.length === 0) return;
-      const mapped = sanitizePath(buf).map((p) => ({
-        latitude: p.latitude,
-        longitude: p.longitude,
-        timestamp: p.timestamp,
-        ...(Number.isFinite(Number(p.accuracy)) ? { accuracy: Number(p.accuracy) } : {}),
-      }));
-      if (mapped.length === 0) {
-        routeBufferRef.current = [];
-        return;
-      }
-      let nextRouteSnapshot = null;
-      setRouteState((prev) => {
-        const merged = prev.concat(mapped);
-        const capped = merged.length > ROUTE_CAP ? merged.slice(merged.length - ROUTE_CAP) : merged;
-        routeStateRef.current = capped;
-        nextRouteSnapshot = capped;
-        return capped;
-      });
+
+      const savedSnapshot = sanitizePath(savedPathRef.current);
+      const displaySnapshot = limitPathForRendering(
+        smoothDisplayPath(savedSnapshot, { config: TRACKING_CONFIG }),
+        TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
+      );
+      const segmentSnapshot = splitPathIntoSegments(displaySnapshot);
+
+      routeStateRef.current = savedSnapshot;
+      displayPathRef.current = displaySnapshot;
+      displaySegmentsRef.current = segmentSnapshot;
       routeBufferRef.current = [];
+
+      setRouteState(limitPathForRendering(savedSnapshot, ROUTE_CAP));
+      setDisplayRouteState(displaySnapshot);
+      setDisplayRouteSegments(segmentSnapshot);
       setDistanceState(distanceRef.current);
-      updateActiveZonePreview(nextRouteSnapshot || routeStateRef.current);
+      updateActiveZonePreview(savedSnapshot);
     } catch (e) {
       debug("flush catch", e);
     }
   }, [updateActiveZonePreview]);
 
+  const appendAcceptedLocation = useCallback((point, verdict = {}) => {
+    const previous = lastAcceptedLocationRef.current;
+    const segmentBreak = Boolean(verdict.segmentBreak || forceNextSegmentBreakRef.current || !previous);
+    const segmentId = segmentBreak && previous
+      ? currentSegmentIdRef.current + 1
+      : currentSegmentIdRef.current;
+
+    currentSegmentIdRef.current = segmentId;
+    forceNextSegmentBreakRef.current = false;
+
+    const savedPoint = {
+      ...point,
+      source: "gps",
+      segmentId,
+    };
+
+    const sameSegment = previous && previous.segmentId === savedPoint.segmentId;
+    const distanceM = sameSegment
+      ? (verdict.distanceM ?? calculateDistanceMeters(previous, savedPoint))
+      : 0;
+
+    if (sameSegment && Number.isFinite(distanceM) && distanceM > 0) {
+      distanceRef.current += distanceM;
+    }
+
+    savedPathRef.current.push(savedPoint);
+    routeStateRef.current = savedPathRef.current;
+    routeBufferRef.current.push(savedPoint);
+    lastAcceptedLocationRef.current = savedPoint;
+    lastPointRef.current = savedPoint;
+    pendingSuspiciousPointRef.current = null;
+
+    const smoothed = smoothLocationPoint(
+      segmentBreak ? null : lastSmoothedLocationRef.current,
+      savedPoint,
+      {
+        config: TRACKING_CONFIG,
+        segmentBreak,
+        speedKmh: verdict.speedKmh,
+      }
+    );
+    const displayPoint = {
+      ...(smoothed || savedPoint),
+      segmentId,
+      source: "smoothed",
+    };
+
+    lastSmoothedLocationRef.current = displayPoint;
+    displayPathRef.current.push(displayPoint);
+    displayPathRef.current = limitPathForRendering(displayPathRef.current, TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS);
+    displaySegmentsRef.current = splitPathIntoSegments(displayPathRef.current);
+
+    setLocation(displayPoint);
+    setDistanceState(distanceRef.current);
+
+    debugTracking("accept", {
+      reason: verdict.reason,
+      distanceM,
+      speedKmh: verdict.speedKmh,
+      accuracy: savedPoint.accuracy,
+      segmentId,
+      segmentBreak,
+      pathLength: savedPathRef.current.length,
+    });
+  }, []);
+
   /* ===== Core location update ===== */
   const handleLocationUpdate = useCallback(
     (locObj = {}) => {
       try {
-        const lat = Number(locObj.latitude);
-        const lon = Number(locObj.longitude);
-        const accuracy = locObj.accuracy != null ? Number(locObj.accuracy) : Number.POSITIVE_INFINITY;
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-        const timestamp = Number(locObj.timestamp);
-        const now = Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now();
+        if (locObj.source === "background" && appStateRef.current === "active" && watcherRef.current) {
+          return;
+        }
 
-        if (!runningRef.current) {
-          setLocation((prev) => {
-            if (prev && prev.latitude === lat && prev.longitude === lon) return prev;
-            return { latitude: lat, longitude: lon, accuracy, timestamp: now };
+        if (locObj.runSessionId && currentRunIdRef.current && locObj.runSessionId !== currentRunIdRef.current) {
+          debugTracking("reject:stale_session", {
+            pointSession: locObj.runSessionId,
+            currentSession: currentRunIdRef.current,
           });
           return;
         }
 
-        if (!Number.isFinite(accuracy) || accuracy > MAX_GPS_ACCURACY_M) return;
-
-        const point = { latitude: lat, longitude: lon, accuracy, timestamp: now };
-
-        if (!lastPointRef.current) {
-          lastPointRef.current = point;
-          routeBufferRef.current.push(point);
-          setLocation(point);
+        const point = normalizeLocation(locObj);
+        if (!point) {
+          debugTracking("reject:normalize_failed", locObj);
           return;
         }
 
-        const last = lastPointRef.current;
-        const d = getDistance(last.latitude, last.longitude, point.latitude, point.longitude);
-        if (!Number.isFinite(d) || d <= 0 || d > MAX_SPIKE_DISTANCE_M) return;
+        if (!runningRef.current) {
+          setLocation((prev) => {
+            if (prev && prev.latitude === point.latitude && prev.longitude === point.longitude) return prev;
+            return point;
+          });
+          return;
+        }
 
-        const lastTimestamp = Number(last.timestamp);
-        const dtSec = Number.isFinite(lastTimestamp) && now > lastTimestamp ? Math.max(0.25, (now - lastTimestamp) / 1000) : null;
-        const speedMps = dtSec ? d / dtSec : null;
-        const speedLimit = MAX_RUNNING_SPEED_MPS + Math.min(2.5, accuracy / 25);
-        if (speedMps != null && d > 8 && speedMps > speedLimit) return;
-        if (d > MAX_REASONABLE_STEP_M && (speedMps == null || speedMps > speedLimit)) return;
+        rawPathRef.current.push(point);
 
-        setLocation((prev) => {
-          if (prev && prev.latitude === point.latitude && prev.longitude === point.longitude) return prev;
-          return point;
+        const pending = pendingSuspiciousPointRef.current;
+        if (pending && lastAcceptedLocationRef.current) {
+          const confirmDistance = calculateDistanceMeters(pending, point);
+          const pendingAgeMs = point.timestamp - pending.timestamp;
+          const confirmRadius = Math.max(
+            35,
+            Number(pending.accuracy || 0) + Number(point.accuracy || 0)
+          );
+
+          if (pendingAgeMs >= 0 && pendingAgeMs <= 12000 && confirmDistance <= confirmRadius) {
+            appendAcceptedLocation(pending, {
+              reason: "confirmed_new_segment",
+              distanceM: 0,
+              speedKmh: 0,
+              segmentBreak: true,
+            });
+            debugTracking("pending_confirmed", { confirmDistance, pendingAgeMs });
+          } else if (pendingAgeMs > 12000 || confirmDistance > confirmRadius * 2) {
+            pendingSuspiciousPointRef.current = null;
+            debugTracking("pending_discarded", { confirmDistance, pendingAgeMs });
+          }
+        }
+
+        const verdict = shouldAppendLocationPoint(savedPathRef.current, point, {
+          config: TRACKING_CONFIG,
+          now: Date.now(),
+          allowMissingAccuracy: false,
+          forceSegmentBreak: forceNextSegmentBreakRef.current,
         });
 
-        const jitterFloor = Math.max(ANTI_JITTER_M, Math.min(3.2, Math.max(accuracy, Number(last.accuracy) || accuracy) * 0.08));
-        if (d < jitterFloor) return;
+        if (!verdict.accepted) {
+          if (verdict.pending) {
+            pendingSuspiciousPointRef.current = point;
+          }
+          debugTracking(`reject:${verdict.reason}`, {
+            distanceM: verdict.distanceM,
+            dtMs: verdict.dtMs,
+            speedKmh: verdict.speedKmh,
+            accuracy: point.accuracy,
+          });
+          return;
+        }
 
-        distanceRef.current += d;
-        lastPointRef.current = point;
-        routeBufferRef.current.push(point);
-        setDistanceState(distanceRef.current);
+        appendAcceptedLocation(point, verdict);
       } catch (e) {
         debug("handleLocationUpdate", e);
       }
     },
-    []
+    [appendAcceptedLocation]
   );
 
   useEffect(() => {
-    const handler = (locObj) => handleLocationUpdate(locObj);
+    const handler = (locObj) => handleLocationUpdate({
+      ...locObj,
+      runSessionId: currentRunIdRef.current,
+    });
     backgroundLocationUpdateHandler = handler;
 
     return () => {
@@ -737,6 +829,7 @@ const MapScreen = ({ navigation }) => {
 
   const startLocationWatcher = useCallback(async () => {
     stopWatcherAndPolling();
+    const runSessionId = currentRunIdRef.current;
 
     try {
       const sub = await Location.watchPositionAsync(
@@ -752,11 +845,17 @@ const MapScreen = ({ navigation }) => {
             latitude: loc.coords.latitude,
             longitude: loc.coords.longitude,
             accuracy: loc.coords.accuracy,
+            speed: loc.coords.speed,
+            heading: loc.coords.heading,
+            altitude: loc.coords.altitude,
             timestamp: loc.timestamp,
+            source: "foreground",
+            runSessionId,
           });
         }
       );
       watcherRef.current = sub;
+      debugTracking("watcher_started", { runSessionId, distanceInterval: WATCH_DISTANCE_INTERVAL, timeInterval: WATCH_TIME_INTERVAL_MS });
     } catch (e) {
       debug("watchPositionAsync failed, fallback polling", e);
       const poll = setInterval(async () => {
@@ -767,7 +866,12 @@ const MapScreen = ({ navigation }) => {
               latitude: p.coords.latitude,
               longitude: p.coords.longitude,
               accuracy: p.coords.accuracy,
+              speed: p.coords.speed,
+              heading: p.coords.heading,
+              altitude: p.coords.altitude,
               timestamp: p.timestamp,
+              source: "polling",
+              runSessionId,
             });
           }
         } catch (err) {
@@ -824,17 +928,16 @@ const MapScreen = ({ navigation }) => {
         modeRef.current = selectedMode;
         runningRef.current = true;
         setReplaying(false);
-        setRouteState([]);
-        routeStateRef.current = [];
-        routeBufferRef.current = [];
+        currentRunIdRef.current = uid();
+        resetTrackingPipeline({ segmentId: 0 });
         setPolygons([]);
         setCompletedZonePreview([]);
         distanceRef.current = 0;
         setDistanceState(0);
-        lastPointRef.current = null;
         zonePreviewLastAtRef.current = 0;
         timeSecRef.current = 0;
         setTimeSec(0);
+        debugTracking("session_started", { runSessionId: currentRunIdRef.current, mode: selectedMode });
 
         if (timerRef.current) {
           clearInterval(timerRef.current);
@@ -860,7 +963,12 @@ const MapScreen = ({ navigation }) => {
             latitude: pos.coords.latitude,
             longitude: pos.coords.longitude,
             accuracy: pos.coords.accuracy,
+            speed: pos.coords.speed,
+            heading: pos.coords.heading,
+            altitude: pos.coords.altitude,
             timestamp: pos.timestamp,
+            source: "initial",
+            runSessionId: currentRunIdRef.current,
           });
         }
 
@@ -870,7 +978,7 @@ const MapScreen = ({ navigation }) => {
         debug("startRun catch", e);
       }
     },
-    [handleLocationUpdate, running, startBackgroundLocationService, startLocationWatcher]
+    [handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startLocationWatcher]
   );
 
   const pauseRun = useCallback(() => {
@@ -894,6 +1002,10 @@ const MapScreen = ({ navigation }) => {
     try {
       setPaused(false);
       runningRef.current = true;
+      forceNextSegmentBreakRef.current = true;
+      pendingSuspiciousPointRef.current = null;
+      lastSmoothedLocationRef.current = null;
+      debugTracking("resume_segment_break_armed", { runSessionId: currentRunIdRef.current });
 
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -910,14 +1022,17 @@ const MapScreen = ({ navigation }) => {
       try {
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest, timeout: 7000 });
         if (pos?.coords) {
-        const point = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          timestamp: pos.timestamp || Date.now(),
-        };
-          setLocation({ latitude: point.latitude, longitude: point.longitude });
-          lastPointRef.current = point;
+          const point = normalizeLocation({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            speed: pos.coords.speed,
+            heading: pos.coords.heading,
+            altitude: pos.coords.altitude,
+            timestamp: pos.timestamp || Date.now(),
+            source: "resume",
+          });
+          if (point) setLocation(point);
         }
       } catch (e) {
         debug("resumeRun getCurrentPosition failed", e);
@@ -936,6 +1051,8 @@ const MapScreen = ({ navigation }) => {
         routeFadeAnim.setValue(1);
         Animated.timing(routeFadeAnim, { toValue: 0, duration: 350, useNativeDriver: true }).start(() => {
           setRouteState([]);
+          setDisplayRouteState([]);
+          setDisplayRouteSegments([]);
           resolve();
         });
       } catch {
@@ -947,9 +1064,7 @@ const MapScreen = ({ navigation }) => {
   const resetRunVisuals = useCallback(() => {
     distanceRef.current = 0;
     setDistanceState(0);
-    lastPointRef.current = null;
-    setRouteState([]);
-    routeStateRef.current = [];
+    resetTrackingPipeline({ segmentId: 0 });
     setReplayPathState([]);
     setPolygons([]);
     setCompletedZonePreview([]);
@@ -958,7 +1073,8 @@ const MapScreen = ({ navigation }) => {
     modeRef.current = null;
     setMode(null);
     setPaused(false);
-  }, []);
+    currentRunIdRef.current = null;
+  }, [resetTrackingPipeline]);
 
   const stopRun = useCallback(
     async (opts = {}) => {
@@ -977,16 +1093,16 @@ const MapScreen = ({ navigation }) => {
           timerRef.current = null;
         }
 
-        const bufferedPath = appendLivePointToPath(routeStateRef.current.concat(routeBufferRef.current || []), location);
         flushRouteBufferToState();
 
-        const sanitizedPath = sanitizePath(bufferedPath);
+        const sanitizedPath = sanitizePath(savedPathRef.current);
         const fallbackPoint = location || DEFAULT_COORD;
         const rawPath = sanitizedPath.length > 0 ? sanitizedPath : sanitizePath([fallbackPoint]);
         const path = rawPath.length > 1 ? buildFinalRoutePath(rawPath) : rawPath;
         const routeDistance = calculateRouteDistance(path);
         const totalDistance = routeDistance > 0 ? routeDistance : distanceRef.current;
         const totalDuration = timeSecRef.current || timeSec;
+        const stoppedRunSessionId = currentRunIdRef.current;
 
         const runData = {
           path,
@@ -1058,6 +1174,11 @@ const MapScreen = ({ navigation }) => {
 
         setCurrentRunData(runData);
         setShowRunModal(true);
+        debugTracking("session_stopped", {
+          runSessionId: stoppedRunSessionId,
+          savedPoints: path.length,
+          distance: totalDistance,
+        });
       } catch (e) {
         debug("stopRun catch", e);
       }
@@ -1076,8 +1197,7 @@ const MapScreen = ({ navigation }) => {
         runningRef.current = false;
         setRunning(false);
         setPaused(false);
-        setRouteState([]);
-        routeStateRef.current = [];
+        resetTrackingPipeline({ segmentId: 0 });
         setReplayPathState([]);
         setMode(null);
 
@@ -1094,8 +1214,7 @@ const MapScreen = ({ navigation }) => {
             replayIntervalRef.current = null;
             setReplaying(false);
             setReplayPathState([]);
-            setRouteState([]);
-            routeStateRef.current = [];
+            resetTrackingPipeline({ segmentId: 0 });
             return;
           }
           const p = path[idx++];
@@ -1109,7 +1228,7 @@ const MapScreen = ({ navigation }) => {
         debug("startReplay catch", e);
       }
     },
-    [stopBackgroundLocationService, stopWatcherAndPolling]
+    [resetTrackingPipeline, stopBackgroundLocationService, stopWatcherAndPolling]
   );
 
   const stopReplay = useCallback(() => {
@@ -1118,8 +1237,7 @@ const MapScreen = ({ navigation }) => {
       replayIntervalRef.current = null;
       setReplaying(false);
       setReplayPathState([]);
-      setRouteState([]);
-      routeStateRef.current = [];
+      resetTrackingPipeline({ segmentId: 0 });
     } catch (e) {
       debug("stopReplay catch", e);
     }
@@ -1136,48 +1254,10 @@ const MapScreen = ({ navigation }) => {
   }, [navigation]);
   const openStartModal = useCallback(() => setSelectModeVisible(true), []);
 
-  /* Capture/share + exports */
-  const shareCapturedView = useCallback(async (targetRef, filenamePrefix, dialogTitle) => {
-    try {
-      const target = targetRef?.current;
-      if (!target) {
-        Alert.alert("Compartilhar", "Preview ainda nao esta pronto.");
-        return;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 120));
-
-      let uri = null;
-      try {
-        uri = typeof target.capture === "function" ? await target.capture() : null;
-      } catch (captureErr) {
-        debug("ViewShot direct capture failed, trying captureRef", captureErr);
-      }
-
-      if (!uri) {
-        uri = await captureRef(target, SHARE_CAPTURE_OPTIONS);
-      }
-
-      if (!uri) throw new Error("capture returned empty uri");
-
-      const dest = FileSystem.cacheDirectory + `${filenamePrefix}_${Date.now()}.png`;
-      await FileSystem.copyAsync({ from: uri, to: dest });
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(dest, { dialogTitle, mimeType: "image/png" });
-      } else {
-        Alert.alert("Compartilhar", "Compartilhamento nao disponivel neste dispositivo.");
-      }
-    } catch (e) {
-      debug("shareCapturedView catch", e);
-      console.warn("shareCapturedView failed", e);
-      Alert.alert("Erro", "Nao foi possivel gerar a imagem para compartilhar.");
-    }
-  }, []);
-
   const goToSavedRunDetail = useCallback(() => {
     if (!lastSavedRun) return;
     setShowSavedModal(false);
+    setSavedShareVisible(false);
     setCompletedZonePreview([]);
     setShowRunModal(false);
     setShowRunsModal(false);
@@ -1188,6 +1268,7 @@ const MapScreen = ({ navigation }) => {
   const replaySavedRun = useCallback(() => {
     if (!lastSavedRun) return;
     setShowSavedModal(false);
+    setSavedShareVisible(false);
     setCompletedZonePreview([]);
     setShowRunModal(false);
     setShowRunsModal(false);
@@ -1196,25 +1277,126 @@ const MapScreen = ({ navigation }) => {
     setTimeout(() => startReplay(lastSavedRun), 220);
   }, [lastSavedRun, navigation, startReplay]);
 
-  const shareSavedRunFullImage = useCallback(() => {
-    if (!lastSavedRun) return;
-    shareCapturedView(savedFullShareRef, `wayper_run_full_${lastSavedRun.id || Date.now()}`, "Compartilhar imagem da corrida");
-  }, [lastSavedRun, shareCapturedView]);
+  const getSavedShareContext = useCallback(() => {
+    const path = sanitizePath(lastSavedRun?.path || []);
+    const zoneCoords = sanitizePath(lastSavedRun?.zoneCoords || lastSavedRun?.zone?.coords || []);
+    const isZone = lastSavedRun?.mode === "zones" || Number(lastSavedRun?.area || 0) > 0 || zoneCoords.length >= 3;
 
-  const shareSavedRunRouteImage = useCallback(() => {
-    if (!lastSavedRun) return;
-    shareCapturedView(savedRouteShareRef, `wayper_run_trace_${lastSavedRun.id || Date.now()}`, "Compartilhar tracado da corrida");
-  }, [lastSavedRun, shareCapturedView]);
+    return {
+      runId: lastSavedRun?.id,
+      path,
+      zoneCoords,
+      isZone,
+      distanceKm: (Number(lastSavedRun?.distance) || 0) / 1000,
+      durationSeconds: Number(lastSavedRun?.duration) || 0,
+    };
+  }, [lastSavedRun]);
 
-  const saveSavedRunFullImage = useCallback(() => {
-    if (!lastSavedRun) return;
-    saveCapturedView(savedFullShareRef, `wayper_mapa_${lastSavedRun.id || Date.now()}`);
-  }, [lastSavedRun, saveCapturedView]);
+  const captureSavedFullImageWithFallback = useCallback(async (context, filename) => {
+    try {
+      return await captureRunShareImage(savedFullShareRef, {
+        filename,
+        width: RUN_SHARE_CARD_SIZE.card.width,
+        height: RUN_SHARE_CARD_SIZE.card.height,
+      });
+    } catch (cardError) {
+      logShareError("saved-card-capture-fallback", cardError, context);
+      return generateTracePngFromPath(context.path, {
+        ref: savedRouteShareRef,
+        zoneCoords: context.zoneCoords,
+        isZone: context.isZone,
+        filename: `${filename}-fallback-trace`,
+        width: RUN_SHARE_CARD_SIZE.trace.width,
+        height: RUN_SHARE_CARD_SIZE.trace.height,
+      });
+    }
+  }, [resetTrackingPipeline]);
 
-  const saveSavedRunRouteImage = useCallback(() => {
-    if (!lastSavedRun) return;
-    saveCapturedView(savedRouteShareRef, `wayper_png_${lastSavedRun.id || Date.now()}`);
-  }, [lastSavedRun, saveCapturedView]);
+  const shareSavedRunFullImage = useCallback(async () => {
+    if (!lastSavedRun || shareLoading) return;
+    const context = getSavedShareContext();
+
+    try {
+      setShareLoading("share-image");
+      const uri = await captureSavedFullImageWithFallback(context, `wayper-run-full-${context.runId || Date.now()}`);
+      await logShareDiagnostics("saved-share-image", { ...context, generatedUri: uri });
+      await shareImageFile(uri, { dialogTitle: "Compartilhar corrida Wayper" });
+    } catch (error) {
+      logShareError("saved-share-image", error, context);
+      showRunShareFailure("Nao foi possivel gerar a imagem para compartilhar. Tente novamente.", error);
+    } finally {
+      setShareLoading(null);
+    }
+  }, [captureSavedFullImageWithFallback, getSavedShareContext, lastSavedRun, shareLoading]);
+
+  const shareSavedRunRouteImage = useCallback(async () => {
+    if (!lastSavedRun || shareLoading) return;
+    const context = getSavedShareContext();
+
+    try {
+      setShareLoading("share-trace");
+      assertTraceHasEnoughPoints(context);
+      const uri = await generateTracePngFromPath(context.path, {
+        ref: savedRouteShareRef,
+        zoneCoords: context.zoneCoords,
+        isZone: context.isZone,
+        filename: `wayper-run-trace-${context.runId || Date.now()}`,
+        width: RUN_SHARE_CARD_SIZE.trace.width,
+        height: RUN_SHARE_CARD_SIZE.trace.height,
+      });
+      await logShareDiagnostics("saved-share-trace", { ...context, generatedUri: uri });
+      await shareImageFile(uri, { dialogTitle: "Compartilhar tracado Wayper" });
+    } catch (error) {
+      logShareError("saved-share-trace", error, context);
+      showRunShareFailure("Nao foi possivel gerar o PNG do tracado. Tente novamente.", error);
+    } finally {
+      setShareLoading(null);
+    }
+  }, [getSavedShareContext, lastSavedRun, shareLoading]);
+
+  const saveSavedRunFullImage = useCallback(async () => {
+    if (!lastSavedRun || shareLoading) return;
+    const context = getSavedShareContext();
+
+    try {
+      setShareLoading("download-image");
+      const uri = await captureSavedFullImageWithFallback(context, `wayper-mapa-${context.runId || Date.now()}`);
+      await logShareDiagnostics("saved-download-image", { ...context, generatedUri: uri });
+      await saveImageToMediaLibrary(uri, "Wayper");
+      Alert.alert("Imagem salva", "A imagem foi salva na galeria do celular.");
+    } catch (error) {
+      logShareError("saved-download-image", error, context);
+      showRunShareFailure("Nao foi possivel salvar a imagem. Tente novamente.", error);
+    } finally {
+      setShareLoading(null);
+    }
+  }, [captureSavedFullImageWithFallback, getSavedShareContext, lastSavedRun, shareLoading]);
+
+  const saveSavedRunRouteImage = useCallback(async () => {
+    if (!lastSavedRun || shareLoading) return;
+    const context = getSavedShareContext();
+
+    try {
+      setShareLoading("download-trace");
+      assertTraceHasEnoughPoints(context);
+      const uri = await generateTracePngFromPath(context.path, {
+        ref: savedRouteShareRef,
+        zoneCoords: context.zoneCoords,
+        isZone: context.isZone,
+        filename: `wayper-png-${context.runId || Date.now()}`,
+        width: RUN_SHARE_CARD_SIZE.trace.width,
+        height: RUN_SHARE_CARD_SIZE.trace.height,
+      });
+      await logShareDiagnostics("saved-download-trace", { ...context, generatedUri: uri });
+      await saveImageToMediaLibrary(uri, "Wayper");
+      Alert.alert("PNG salvo", "O tracado foi salvo na galeria do celular.");
+    } catch (error) {
+      logShareError("saved-download-trace", error, context);
+      showRunShareFailure("Nao foi possivel salvar o PNG do tracado. Tente novamente.", error);
+    } finally {
+      setShareLoading(null);
+    }
+  }, [getSavedShareContext, lastSavedRun, shareLoading]);
 
   /* ============= RENDER GUARD (corrigido) ============= */
   // Não travar a UI apenas por falta de location. Se permissões negadas, mostrar mensagem/fallback.
@@ -1275,8 +1457,10 @@ const MapScreen = ({ navigation }) => {
   const activeZonePreview = showZones && running && mode === "zones" && Array.isArray(polygons) ? polygons : [];
   const finishedZonePreview = showZones && (showRunModal || showSavedModal) && Array.isArray(completedZonePreview) ? completedZonePreview : [];
   const visibleMapZones = finishedZonePreview.length > 0 ? finishedZonePreview : activeZonePreview;
-  const liveRouteBase = running && !paused ? routeState.concat(sanitizePath(routeBufferRef.current || [])) : routeState;
-  const liveRoutePath = running && !paused ? appendLivePointToPath(liveRouteBase, safeLocation) : routeState;
+  const liveRoutePath = running || paused ? displayRouteState : routeState;
+  const liveRouteSegments = running || paused ? displayRouteSegments : splitPathIntoSegments(liveRoutePath);
+  const shouldFollowMap = running && !paused && !replaying && mapFollowEnabled;
+  const shouldShowRecenterMap = running && !paused && !replaying && !mapFollowEnabled;
   if (!location) {
     return (
       <View style={styles.loading}>
@@ -1312,6 +1496,7 @@ const MapScreen = ({ navigation }) => {
   const savedRunDate = formatSavedDate(lastSavedRun?.date);
   const savedZoneArea = `${Math.round(Number(lastSavedRun?.area) || 0)} m2`;
   const savedRunCenter = savedZoneCoords[0] || savedRunPath[0] || safeLocation || DEFAULT_COORD;
+  const isShareBusy = shareLoading !== null;
 
   return (
     <View style={styles.container}>
@@ -1320,14 +1505,21 @@ const MapScreen = ({ navigation }) => {
           style={styles.map}
           location={safeLocation}
           centerCoordinate={replaying ? replayCenter : safeLocation}
+          autoCenterOnCoordinate={!running || replaying}
           routePath={liveRoutePath}
+          routeSegments={liveRouteSegments}
           replayPath={replayPathState}
           zones={visibleMapZones}
           showZones={visibleMapZones.length > 0}
           showUserLocation={!replaying}
-          followUserLocation={running && !paused}
+          followUserLocation={shouldFollowMap}
           initialZoom={15}
-          followZoomLevel={17}
+          followZoomLevel={FOLLOW_MAP_ZOOM}
+          followAnimationDuration={FOLLOW_ANIMATION_DURATION}
+          recenterAnimationDuration={RECENTER_ANIMATION_DURATION}
+          minCameraMoveIntervalMs={MIN_CAMERA_MOVE_INTERVAL_MS}
+          recenterSignal={mapRecenterSignal}
+          onUserInteraction={handleMapUserInteraction}
           fitToContent={false}
         />
       </View>
@@ -1343,6 +1535,13 @@ const MapScreen = ({ navigation }) => {
         colors={["rgba(3,7,11,0.42)", "rgba(3,7,11,0)"]}
         style={styles.mapTopVignette}
       />
+
+      {shouldShowRecenterMap && (
+        <TouchableOpacity activeOpacity={0.9} style={styles.recenterMapButton} onPress={recenterMapOnUser}>
+          <View pointerEvents="none" style={styles.recenterMapGlow} />
+          <Ionicons name="locate" size={24} color={WayperTheme.colors.primary} />
+        </TouchableOpacity>
+      )}
 
       {(running || replaying) && (
         <View style={[styles.runPanel, paused && styles.runPanelPaused]}>
@@ -1497,6 +1696,7 @@ const MapScreen = ({ navigation }) => {
         transparent={true}
         onRequestClose={() => {
           setShowSavedModal(false);
+          setSavedShareVisible(false);
           setCompletedZonePreview([]);
         }}
       >
@@ -1551,6 +1751,7 @@ const MapScreen = ({ navigation }) => {
               <Text style={styles.savedSecondaryText}>Reproduzir corrida</Text>
             </TouchableOpacity>
 
+            {false ? (
             <View style={styles.savedShareBlock}>
               <View style={styles.savedShareHeader}>
                 <View>
@@ -1567,7 +1768,7 @@ const MapScreen = ({ navigation }) => {
                 removeClippedSubviews={false}
                 contentContainerStyle={styles.shareCarousel}
               >
-                <ViewShot ref={savedFullShareRef} options={SHARE_CAPTURE_OPTIONS} collapsable={false} style={[styles.shareCard, styles.shareFullCard]}>
+                <View collapsable={false} style={[styles.shareCard, styles.shareFullCard]}>
                   <View style={styles.shareExportHeader}>
                     <View>
                       <Text style={styles.shareExportEyebrow}>Wayper finalizado</Text>
@@ -1622,9 +1823,9 @@ const MapScreen = ({ navigation }) => {
                     <ShareMiniMetric label="Pace" value={savedRunPace} />
                     <ShareMiniMetric label="Km" value={savedRunDistance} />
                   </View>
-                </ViewShot>
+                </View>
 
-                <ViewShot ref={savedRouteShareRef} options={SHARE_CAPTURE_OPTIONS} collapsable={false} style={[styles.shareCard, styles.shareTraceCard]}>
+                <View collapsable={false} style={[styles.shareCard, styles.shareTraceCard]}>
                   <Text style={styles.traceTitle}>{savedTraceCardTitle}</Text>
                   <View style={styles.traceSvgWrap}>
                     <Svg width="100%" height="100%" viewBox="0 0 320 210">
@@ -1658,36 +1859,69 @@ const MapScreen = ({ navigation }) => {
                     <ShareMiniMetric label="Pace" value={savedRunPace} />
                     <ShareMiniMetric label="Km" value={savedRunDistance} />
                   </View>
-                </ViewShot>
+                </View>
               </ScrollView>
 
               <View style={styles.shareActionRow}>
-                <TouchableOpacity activeOpacity={0.88} style={styles.shareActionButton} onPress={shareSavedRunFullImage}>
+                <TouchableOpacity
+                  activeOpacity={0.88}
+                  disabled={isShareBusy}
+                  style={[styles.shareActionButton, isShareBusy && styles.shareButtonDisabled]}
+                  onPress={shareSavedRunFullImage}
+                >
                   <Ionicons name="image-outline" size={19} color={WayperTheme.colors.textInverse} />
-                  <Text style={styles.shareActionText}>Imagem</Text>
+                  <Text style={styles.shareActionText}>{shareLoading === "share-image" ? "Gerando..." : "Imagem"}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity activeOpacity={0.88} style={[styles.shareActionButton, styles.shareActionButtonSecondary]} onPress={shareSavedRunRouteImage}>
+                <TouchableOpacity
+                  activeOpacity={0.88}
+                  disabled={isShareBusy}
+                  style={[styles.shareActionButton, styles.shareActionButtonSecondary, isShareBusy && styles.shareButtonDisabled]}
+                  onPress={shareSavedRunRouteImage}
+                >
                   <Ionicons name="git-branch-outline" size={19} color={WayperTheme.colors.primary} />
-                  <Text style={[styles.shareActionText, styles.shareActionTextSecondary]}>{savedRunIsZone ? "Zona PNG" : "Tracado PNG"}</Text>
+                  <Text style={[styles.shareActionText, styles.shareActionTextSecondary]}>
+                    {shareLoading === "share-trace" ? "Gerando..." : savedRunIsZone ? "Zona PNG" : "Traçado PNG"}
+                  </Text>
                 </TouchableOpacity>
               </View>
               <View style={styles.shareDownloadRow}>
-                <TouchableOpacity activeOpacity={0.86} style={styles.shareDownloadButton} onPress={saveSavedRunFullImage}>
+                <TouchableOpacity
+                  activeOpacity={0.86}
+                  disabled={isShareBusy}
+                  style={[styles.shareDownloadButton, isShareBusy && styles.shareButtonDisabled]}
+                  onPress={saveSavedRunFullImage}
+                >
                   <Ionicons name="download-outline" size={18} color={WayperTheme.colors.primary} />
-                  <Text style={styles.shareDownloadText}>Baixar mapa</Text>
+                  <Text style={styles.shareDownloadText}>{shareLoading === "download-image" ? "Salvando..." : "Download"}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity activeOpacity={0.86} style={styles.shareDownloadButton} onPress={saveSavedRunRouteImage}>
+                <TouchableOpacity
+                  activeOpacity={0.86}
+                  disabled={isShareBusy}
+                  style={[styles.shareDownloadButton, isShareBusy && styles.shareButtonDisabled]}
+                  onPress={saveSavedRunRouteImage}
+                >
                   <Ionicons name="download-outline" size={18} color={WayperTheme.colors.primary} />
-                  <Text style={styles.shareDownloadText}>Baixar PNG</Text>
+                  <Text style={styles.shareDownloadText}>{shareLoading === "download-trace" ? "Salvando..." : "Download"}</Text>
                 </TouchableOpacity>
               </View>
             </View>
+            ) : (
+              <TouchableOpacity
+                activeOpacity={0.88}
+                style={styles.savedSecondaryAction}
+                onPress={() => setSavedShareVisible(true)}
+              >
+                <Ionicons name="share-social-outline" size={22} color={WayperTheme.colors.primary} />
+                <Text style={styles.savedSecondaryText}>{savedShareTitle}</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               activeOpacity={0.82}
               style={styles.savedCloseAction}
               onPress={() => {
                 setShowSavedModal(false);
+                setSavedShareVisible(false);
                 setCompletedZonePreview([]);
               }}
             >
@@ -1697,6 +1931,23 @@ const MapScreen = ({ navigation }) => {
           </View>
         </View>
       </Modal>
+
+      <RunShareModal
+        visible={savedShareVisible}
+        onClose={() => setSavedShareVisible(false)}
+        run={lastSavedRun}
+        path={savedRunPath}
+        zoneCoords={savedZoneCoords}
+        isZone={savedRunIsZone}
+        title={savedFullCardTitle}
+        subtitle={savedRunName}
+        distance={savedRunDistance}
+        duration={savedRunDuration}
+        pace={savedRunPace}
+        date={savedRunDate}
+        area={savedZoneArea}
+        publicLink={lastSavedRun?.publicLink || lastSavedRun?.publicUrl || lastSavedRun?.shareUrl || lastSavedRun?.url}
+      />
 
       {/* RunSummaryModal */}
       <RunSummaryModal
@@ -1832,6 +2083,39 @@ const MapScreen = ({ navigation }) => {
         </View>
       </Modal>
 
+      {lastSavedRun ? (
+        <View pointerEvents="none" style={styles.offscreenShareCards}>
+          <RunShareCard
+            ref={savedFullShareRef}
+            mode="card"
+            path={savedRunPath}
+            zoneCoords={savedZoneCoords}
+            isZone={savedRunIsZone}
+            title={savedFullCardTitle}
+            subtitle={savedRunName}
+            distance={savedRunDistance}
+            duration={savedRunDuration}
+            pace={savedRunPace}
+            date={savedRunDate}
+            area={savedZoneArea}
+          />
+          <RunShareCard
+            ref={savedRouteShareRef}
+            mode="trace"
+            path={savedRunPath}
+            zoneCoords={savedZoneCoords}
+            isZone={savedRunIsZone}
+            title={savedTraceCardTitle}
+            subtitle={savedRunName}
+            distance={savedRunDistance}
+            duration={savedRunDuration}
+            pace={savedRunPace}
+            date={savedRunDate}
+            area={savedZoneArea}
+          />
+        </View>
+      ) : null}
+
       {counting && (
         <View style={styles.countdownOverlay}>
           <LinearGradient
@@ -1893,6 +2177,29 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     height: 120,
+  },
+  recenterMapButton: {
+    position: "absolute",
+    right: 22,
+    bottom: 132,
+    width: 58,
+    height: 58,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(8, 16, 24, 0.9)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    overflow: "hidden",
+    ...WayperTheme.shadows.card,
+  },
+  recenterMapGlow: {
+    position: "absolute",
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    opacity: 0.82,
   },
 
   runPanel: {
@@ -2684,6 +2991,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
   },
+  shareButtonDisabled: {
+    opacity: 0.58,
+  },
   savedCloseAction: {
     minHeight: 50,
     marginTop: 12,
@@ -2698,6 +3008,16 @@ const styles = StyleSheet.create({
     color: WayperTheme.colors.text,
     fontSize: 15,
     fontWeight: "900",
+  },
+  offscreenShareCards: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: 1200,
+    height: 2600,
+    opacity: 1,
+    zIndex: -10,
+    overflow: "visible",
   },
 
   countdownOverlay: {

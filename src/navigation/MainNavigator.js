@@ -15,6 +15,7 @@ import { signOut } from "firebase/auth";
 
 // SCREENS
 import MapScreen from "../screens/MapScreen";
+import HomeScreen from "../screens/HomeScreen";
 import RankingScreen from "../screens/RankingScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 
@@ -222,7 +223,7 @@ export default function MainNavigator() {
   // ===========================
   return (
     <Drawer.Navigator
-      initialRouteName="Mapa"
+      initialRouteName="Inicio"
       screenOptions={({ navigation }) => ({
         headerShown: true,
         headerStyle: { backgroundColor: WayperTheme.colors.background, height: 102 },
@@ -254,6 +255,7 @@ export default function MainNavigator() {
         <CustomDrawer {...props} user={userData} onSignOut={handleLogout} />
       )}
     >
+      <Drawer.Screen name="Inicio" component={HomeScreen} options={{ title: "Início", headerShown: false }} />
       <Drawer.Screen name="Mapa" component={MapScreen} options={{ title: "Mapa" }} />
       <Drawer.Screen name="Corridas" component={RunsStack} options={{ title: "Corridas" }} />
       <Drawer.Screen name="Dashboard" component={DashboardScreen} options={{ title: "Dashboard" }} />

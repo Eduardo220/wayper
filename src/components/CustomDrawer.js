@@ -18,6 +18,7 @@ import { WayperTheme } from "../theme/wayperTheme";
 const BRAND_LOGO = require("../../assets/logo.png");
 
 const DRAWER_ICONS = {
+  Inicio: "home-outline",
   Mapa: "map-outline",
   Corridas: "walk-outline",
   Dashboard: "analytics-outline",
@@ -269,13 +270,13 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
   },
   navItemActive: {
-    backgroundColor: WayperTheme.colors.primarySoft,
-    borderColor: WayperTheme.colors.primaryBorder,
+    backgroundColor: WayperTheme.colors.primary,
+    borderColor: WayperTheme.colors.primaryLight,
     shadowColor: WayperTheme.colors.primary,
-    shadowOpacity: 0.16,
-    shadowRadius: 14,
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
     shadowOffset: { width: 0, height: 0 },
-    elevation: 6,
+    elevation: 8,
   },
   navIcon: {
     width: 38,
@@ -287,7 +288,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   navIconActive: {
-    backgroundColor: WayperTheme.colors.primary,
+    backgroundColor: "rgba(3, 16, 9, 0.16)",
   },
   navLabel: {
     flex: 1,
@@ -296,15 +297,15 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   navLabelActive: {
-    color: WayperTheme.colors.primary,
+    color: WayperTheme.colors.textInverse,
   },
   navActiveDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: WayperTheme.colors.primary,
-    shadowColor: WayperTheme.colors.primary,
-    shadowOpacity: 0.8,
+    backgroundColor: WayperTheme.colors.textInverse,
+    shadowColor: WayperTheme.colors.textInverse,
+    shadowOpacity: 0.5,
     shadowRadius: 8,
   },
 

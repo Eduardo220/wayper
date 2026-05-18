@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { collection, query, orderBy, limit, startAfter, getDocs } from "firebase/firestore";
 import { db } from "../../firebaseConfig";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { colors } from "../../theme/colors";
 

@@ -15,6 +15,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import sync from "../../utils/sync";
 import { WPCard, WPScreen } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
+import { calculatePaceSecondsPerKm, formatPaceFromSeconds } from "../../utils/pace";
 
 const MS_IN_DAY = 24 * 60 * 60 * 1000;
 const MS_IN_WEEK = 7 * MS_IN_DAY;
@@ -45,15 +46,12 @@ const formatDuration = (seconds = 0) => {
 const paceSeconds = (run) => {
   const distance = safeNumber(run?.distance);
   const duration = safeNumber(run?.duration);
-  if (distance <= 0 || duration <= 0) return Infinity;
-  return duration / (distance / 1000);
+  return calculatePaceSecondsPerKm(duration, distance / 1000) ?? Infinity;
 };
 
 const formatPace = (seconds) => {
-  if (!Number.isFinite(seconds) || seconds <= 0) return "--:--/km";
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
-  return `${m}:${String(s).padStart(2, "0")}/km`;
+  const formatted = formatPaceFromSeconds(seconds);
+  return formatted === "--:--" ? formatted : `${formatted}/km`;
 };
 
 const formatShortDate = (value) => {
@@ -178,13 +176,11 @@ export default function DashboardScreen() {
       .slice(0, 6);
 
     const bestPace = [...cleanRuns]
-      .filter((run) => run.distance > 0 && run.duration > 0)
+      .filter((run) => Number.isFinite(paceSeconds(run)))
       .sort((a, b) => paceSeconds(a) - paceSeconds(b))
       .slice(0, 6);
 
-    const avgPace = totalMeters > 0 && totalDuration > 0
-      ? totalDuration / (totalMeters / 1000)
-      : Infinity;
+    const avgPace = calculatePaceSecondsPerKm(totalDuration, totalMeters / 1000) ?? Infinity;
 
     const weekMap = new Map();
     cleanRuns.forEach((run) => {
@@ -325,7 +321,7 @@ export default function DashboardScreen() {
             title="Melhor pace"
             subtitle="Menor tempo por quilometro"
             icon="flash-outline"
-            rightLabel={stats.bestPace.length ? formatPace(paceSeconds(stats.bestPace[0])) : "--"}
+            rightLabel={stats.bestPace.length ? formatPace(paceSeconds(stats.bestPace[0])) : "--:--"}
           >
             {stats.bestPace.length ? (
               stats.bestPace.map((run, index) => {

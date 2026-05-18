@@ -8,13 +8,15 @@ import {
   StyleSheet,
   ScrollView,
   Alert,
-  Platform,
 } from "react-native";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import WayperMapLibre from "../../components/Map/WayperMapLibre";
 import { WPButton, WPCard, WPMetricCard } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
+import { saveTempImageAsync } from "../../utils/fileSystemLegacy";
+import { copyTextToClipboard } from "../../utils/runShareImage";
+import { sharePngFile } from "../../utils/shareImage";
 
 let captureRef = null;
 try {
@@ -23,15 +25,6 @@ try {
   captureRef = require("react-native-view-shot").captureRef;
 } catch {
   captureRef = null;
-}
-
-/* try to use expo-clipboard if available, else fallback to navigator.clipboard or react-native Clipboard */
-let ExpoClipboard = null;
-try {
-  // eslint-disable-next-line global-require
-  ExpoClipboard = require("expo-clipboard");
-} catch {
-  ExpoClipboard = null;
 }
 
 const WAYPER_GREEN = WayperTheme.colors.primary;
@@ -126,7 +119,7 @@ function ZoneDetailScreen({ route }) {
       const name = sanitizeFilename(zone.id || `zona_${Date.now()}`);
       const filename = `wayper_zone_${name}.geojson`;
       const path = `${FileSystem.cacheDirectory}${filename}`;
-      await FileSystem.writeAsStringAsync(path, JSON.stringify(geojson), { encoding: FileSystem.EncodingUTF8 });
+      await FileSystem.writeAsStringAsync(path, JSON.stringify(geojson), { encoding: FileSystem.EncodingType.UTF8 });
 
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path, { mimeType: "application/geo+json", dialogTitle: "Exportar Zona (GeoJSON)" });
@@ -148,23 +141,17 @@ function ZoneDetailScreen({ route }) {
       }
       const coordsText = coords.map((p) => `${p.latitude},${p.longitude}`).join("\n");
 
-      // prefer expo-clipboard when available
-      if (ExpoClipboard && typeof ExpoClipboard.setStringAsync === "function") {
-        await ExpoClipboard.setStringAsync(coordsText);
+      try {
+        await copyTextToClipboard(coordsText);
         Alert.alert("Copiado", "Coordenadas copiadas para a área de transferência.");
         return;
-      }
-
-      // browser
-      if (Platform.OS === "web" && typeof navigator?.clipboard?.writeText === "function") {
-        await navigator.clipboard.writeText(coordsText);
-        Alert.alert("Copiado", "Coordenadas copiadas para a área de transferência.");
-        return;
+      } catch (copyError) {
+        debug("clipboard unavailable, using share fallback", copyError);
       }
 
       // fallback: try to use Sharing as last resort (save file then share)
       const path = `${FileSystem.cacheDirectory}wayper_zone_coords_${sanitizeFilename(zone.id || String(Date.now()))}.txt`;
-      await FileSystem.writeAsStringAsync(path, coordsText, { encoding: FileSystem.EncodingUTF8 });
+      await FileSystem.writeAsStringAsync(path, coordsText, { encoding: FileSystem.EncodingType.UTF8 });
 
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path, { dialogTitle: "Coordenadas da zona" });
@@ -188,17 +175,25 @@ function ZoneDetailScreen({ route }) {
         Alert.alert("Funcionalidade indisponível", "Instale react-native-view-shot para habilitar captura de imagem.");
         return;
       }
-      const uri = await captureRef(viewRef, { format: "png", quality: 0.9, result: "tmpfile" });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { dialogTitle: "Compartilhar imagem da zona" });
-      } else {
-        Alert.alert("Imagem pronta", uri);
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      const uri = await captureRef(viewRef.current, { format: "png", quality: 1, result: "tmpfile" });
+      const fileUri = await saveTempImageAsync(uri, `wayper-zone-${zone.id || Date.now()}.png`);
+      const result = await sharePngFile(fileUri, {
+        dialogTitle: "Compartilhar imagem da zona",
+        visual: "zone",
+        method: "captureRef/tmpfile",
+      });
+
+      if (!result.ok) {
+        Alert.alert("Erro", result.message || "Nao foi possivel compartilhar a imagem. Tente novamente.");
       }
     } catch (e) {
-      debug("shareZoneImage failed", e);
-      Alert.alert("Erro", "Falha ao capturar imagem. Instale react-native-view-shot para habilitar.");
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.error("[Wayper Share] zone image failed:", e);
+      }
+      Alert.alert("Erro", "Nao foi possivel compartilhar a imagem. Tente novamente.");
     }
-  }, [viewRef]);
+  }, [zone]);
 
   /* -------------------- UI -------------------- */
   return (

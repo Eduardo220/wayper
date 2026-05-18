@@ -15,8 +15,6 @@ import {
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import * as FileSystem from "expo-file-system";
-import * as Sharing from "expo-sharing";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import ViewShot from "react-native-view-shot";
@@ -31,6 +29,9 @@ import {
   loadProfile,
   saveProfile,
 } from "../services/profile/profileService";
+import { saveTempImageAsync } from "../utils/fileSystemLegacy";
+import { formatPaceFromSeconds } from "../utils/pace";
+import { sharePngFile } from "../utils/shareImage";
 
 const DEFAULT_AVATAR = "https://i.pravatar.cc/300?u=wayper_default_profile";
 const WAYPER_GREEN = WayperTheme.colors.primary;
@@ -94,11 +95,8 @@ const formatDuration = (seconds = 0) => {
 };
 
 const formatPace = (secondsPerKm) => {
-  const seconds = safeNumber(secondsPerKm, Infinity);
-  if (!Number.isFinite(seconds) || seconds <= 0) return "--:--/km";
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
-  return `${m}:${String(s).padStart(2, "0")}/km`;
+  const formatted = formatPaceFromSeconds(secondsPerKm);
+  return formatted === "--:--" ? formatted : `${formatted}/km`;
 };
 
 export default function ProfileScreen() {
@@ -355,19 +353,20 @@ export default function ProfileScreen() {
       }
 
       const uri = await target.capture();
-      const dest = `${FileSystem.cacheDirectory}wayper_profile_${Date.now()}.png`;
-      await FileSystem.copyAsync({ from: uri, to: dest });
+      const fileUri = await saveTempImageAsync(uri, `wayper_profile_${Date.now()}.png`);
+      const result = await sharePngFile(fileUri, {
+        dialogTitle: "Compartilhar perfil Wayper",
+        visual: "profile",
+        method: "view-shot",
+      });
 
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(dest, {
-          dialogTitle: "Compartilhar perfil Wayper",
-          mimeType: "image/png",
-        });
-      } else {
+      if (!result.ok) {
         await Share.share({ title: "Meu Perfil Wayper", message: summary });
       }
     } catch (error) {
-      console.warn("[Profile] share failed", error);
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.warn("[Profile] share failed", error);
+      }
       try {
         await Share.share({ title: "Meu Perfil Wayper", message: summary });
       } catch {

@@ -1,4 +1,4 @@
-import React, { memo, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import {
   Map,
@@ -358,13 +358,15 @@ export function buildFeatureCollection(features = []) {
 }
 
 export function buildLineStringFeature(path = [], properties = {}) {
-  const visualPath = beautifyRoutePath(path, {
-    toleranceM: properties?.kind === "replay" ? 3 : 3.4,
-    minPointDistanceM: properties?.kind === "replay" ? 1.2 : 1.4,
-    spikeToleranceM: properties?.kind === "replay" ? 8 : 7,
-    maxPoints: 1200,
-    preserveTurns: true,
-  });
+  const visualPath = properties?.preserveGeometry
+    ? (Array.isArray(path) ? path : [])
+    : beautifyRoutePath(path, {
+        toleranceM: properties?.kind === "replay" ? 3 : 1.2,
+        minPointDistanceM: properties?.kind === "replay" ? 1.2 : 0.8,
+        spikeToleranceM: properties?.kind === "replay" ? 8 : 5,
+        maxPoints: 1200,
+        preserveTurns: true,
+      });
   const coordinates = visualPath.map(toLngLat).filter(Boolean);
   if (coordinates.length < 2) return null;
 
@@ -376,6 +378,20 @@ export function buildLineStringFeature(path = [], properties = {}) {
       coordinates,
     },
   };
+}
+
+function buildLineStringFeaturesFromSegments(segments = [], baseProperties = {}) {
+  if (!Array.isArray(segments) || segments.length === 0) return [];
+
+  return segments
+    .map((segment, index) =>
+      buildLineStringFeature(segment, {
+        ...baseProperties,
+        segmentIndex: index,
+        preserveGeometry: true,
+      })
+    )
+    .filter(Boolean);
 }
 
 export function buildPointFeature(coord, properties = {}) {
@@ -488,20 +504,40 @@ function pickInitialCenter({ centerCoordinate, location, routePath, replayPath, 
   return toLngLat(WAYPER_FALLBACK_COORD);
 }
 
+function pickLastSegmentPoint(segments = [], fallbackPath = []) {
+  if (Array.isArray(segments)) {
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      const segment = segments[i];
+      if (Array.isArray(segment) && segment.length > 0) {
+        return segment[segment.length - 1];
+      }
+    }
+  }
+
+  return Array.isArray(fallbackPath) ? fallbackPath[fallbackPath.length - 1] : null;
+}
+
 function WayperMapLibre({
   style,
   location,
   routePath = [],
+  routeSegments = [],
   replayPath = [],
   zones = [],
   showZones = true,
   showUserLocation = true,
   followUserLocation = false,
   centerCoordinate,
+  autoCenterOnCoordinate = false,
   initialZoom = 14,
   followZoomLevel = 16,
+  followAnimationDuration = 450,
+  recenterAnimationDuration = 700,
+  minCameraMoveIntervalMs = 900,
+  recenterSignal = 0,
   fitToContent = false,
   interactive = true,
+  onUserInteraction,
   routeColor = WAYPER_GREEN,
   replayColor = "#fdcb6e",
   mapStyle = WAYPER_DARK_MAP_STYLE,
@@ -509,14 +545,27 @@ function WayperMapLibre({
 }) {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const cameraRef = useRef(null);
+  const lastCameraMoveAtRef = useRef(0);
+  const lastRecenterSignalRef = useRef(recenterSignal);
+  const programmaticMoveUntilRef = useRef(0);
 
   const routeCollection = useMemo(
-    () => buildFeatureCollection([buildLineStringFeature(routePath, { kind: "route" })]),
-    [routePath]
+    () => {
+      const segmentedFeatures = buildLineStringFeaturesFromSegments(routeSegments, { kind: "route" });
+      if (segmentedFeatures.length > 0) {
+        return buildFeatureCollection(segmentedFeatures);
+      }
+
+      return buildFeatureCollection([
+        buildLineStringFeature(routePath, { kind: "route", preserveGeometry: true }),
+      ]);
+    },
+    [routePath, routeSegments]
   );
   const routeHeadCollection = useMemo(
-    () => buildFeatureCollection([buildPointFeature(Array.isArray(routePath) ? routePath[routePath.length - 1] : null, { kind: "route-head" })]),
-    [routePath]
+    () => buildFeatureCollection([buildPointFeature(pickLastSegmentPoint(routeSegments, routePath), { kind: "route-head" })]),
+    [routePath, routeSegments]
   );
   const replayCollection = useMemo(
     () => buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay" })]),
@@ -545,10 +594,97 @@ function WayperMapLibre({
     () => pickInitialCenter({ centerCoordinate, location, routePath, replayPath, zones }),
     [centerCoordinate, location, routePath, replayPath, zones]
   );
+  const cameraCenter = useMemo(
+    () => toLngLat(centerCoordinate) || toLngLat(location) || initialCenter,
+    [centerCoordinate, location, initialCenter]
+  );
   const bounds = useMemo(
     () => (fitToContent ? buildBounds([zonesCollection, replayCollection, routeCollection]) : null),
     [fitToContent, zonesCollection, replayCollection, routeCollection]
   );
+
+  const moveCameraTo = useCallback((center, zoom, duration) => {
+    if (!center || !cameraRef.current?.setStop) return;
+
+    const now = Date.now();
+    programmaticMoveUntilRef.current = now + duration + 250;
+
+    try {
+      const movement = cameraRef.current.setStop({
+        center,
+        zoom,
+        duration,
+        easing: "ease",
+      });
+
+      if (movement?.catch) {
+        movement.catch(() => {});
+      }
+    } catch {
+      // A camera pode ainda nao estar pronta no primeiro render; o proximo update corrige.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!followUserLocation || bounds || !cameraCenter) return;
+
+    const now = Date.now();
+    const isForcedRecenter = recenterSignal !== lastRecenterSignalRef.current;
+    const tooSoon = now - lastCameraMoveAtRef.current < minCameraMoveIntervalMs;
+
+    if (!isForcedRecenter && tooSoon) return;
+
+    lastRecenterSignalRef.current = recenterSignal;
+    lastCameraMoveAtRef.current = now;
+    moveCameraTo(
+      cameraCenter,
+      followZoomLevel,
+      isForcedRecenter ? recenterAnimationDuration : followAnimationDuration
+    );
+  }, [
+    bounds,
+    cameraCenter,
+    followAnimationDuration,
+    followUserLocation,
+    followZoomLevel,
+    minCameraMoveIntervalMs,
+    moveCameraTo,
+    recenterAnimationDuration,
+    recenterSignal,
+  ]);
+
+  useEffect(() => {
+    if (!autoCenterOnCoordinate || followUserLocation || bounds || !cameraCenter) return;
+
+    moveCameraTo(cameraCenter, initialZoom, followAnimationDuration);
+  }, [
+    autoCenterOnCoordinate,
+    bounds,
+    cameraCenter,
+    followAnimationDuration,
+    followUserLocation,
+    initialZoom,
+    moveCameraTo,
+  ]);
+
+  const handleRegionWillChange = useCallback(
+    (event) => {
+      if (!interactive || !followUserLocation || !onUserInteraction) return;
+
+      const isUserInteraction = event?.nativeEvent?.userInteraction === true;
+      const isProgrammaticMove = Date.now() < programmaticMoveUntilRef.current;
+
+      if (isUserInteraction && !isProgrammaticMove) {
+        onUserInteraction();
+      }
+    },
+    [followUserLocation, interactive, onUserInteraction]
+  );
+
+  const handleMapPress = useCallback(() => {
+    if (!interactive || !followUserLocation || !onUserInteraction) return;
+    onUserInteraction();
+  }, [followUserLocation, interactive, onUserInteraction]);
 
   if (hasError) {
     return (
@@ -581,14 +717,15 @@ function WayperMapLibre({
           setIsLoading(false);
           setHasError(true);
         }}
+        onRegionWillChange={handleRegionWillChange}
+        onPress={handleMapPress}
       >
         <Camera
+          ref={cameraRef}
           initialViewState={bounds ? { bounds, padding: contentPadding } : { center: initialCenter, zoom: initialZoom }}
           bounds={bounds || undefined}
-          center={!bounds ? initialCenter : undefined}
-          zoom={followUserLocation ? followZoomLevel : !bounds ? initialZoom : undefined}
           padding={bounds ? contentPadding : undefined}
-          duration={450}
+          duration={bounds ? 450 : undefined}
         />
 
         {hasZones && (

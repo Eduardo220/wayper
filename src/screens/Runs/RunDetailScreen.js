@@ -2,9 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Alert, Animated, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import * as FileSystem from "expo-file-system";
-import * as Sharing from "expo-sharing";
-import ViewShot, { captureRef } from "react-native-view-shot";
 import Svg, {
   Circle as SvgCircle,
   Defs,
@@ -17,23 +14,46 @@ import Svg, {
   Stop,
 } from "react-native-svg";
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../../components/Map/WayperMapLibre";
+import RunShareModal from "../../components/Runs/RunShareModal";
+import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../../components/Runs/RunShareCard";
 import { WPButton } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
 import sync from "../../utils/sync";
 import { beautifyRoutePath } from "../../utils/routeDrawing";
+import {
+  assertTraceHasEnoughPoints,
+  captureRunShareImage,
+  generateTracePngFromPath,
+  getShareUnavailableMessage,
+  logShareDiagnostics,
+  logShareError,
+  saveImageToMediaLibrary,
+  shareImageFile,
+  showShareError,
+} from "../../utils/share/runShareExport";
+import {
+  calculatePaceSecondsPerKm,
+  formatPaceFromSeconds,
+  getFormattedPace,
+  MIN_DISTANCE_FOR_PACE_KM,
+} from "../../utils/pace";
 
 const MIN_BAR_HEIGHT = 22;
 const CHART_BASE_HEIGHT = 118;
-const SHARE_CAPTURE_OPTIONS = {
-  format: "png",
-  quality: 1,
-  result: "tmpfile",
-  handleGLSurfaceViewOnAndroid: true,
-};
 
 const debug = (...args) => {
   const enabled = false;
   if (enabled) console.log("[RunDetail]", ...args);
+};
+
+const showRunShareFailure = (message, error) => {
+  const userMessage = getShareUnavailableMessage(error, message);
+  if (error?.code === "TRACE_POINTS_INSUFFICIENT") {
+    Alert.alert("Tracado indisponivel", userMessage);
+    return;
+  }
+
+  showShareError(userMessage, error);
 };
 
 const safeNum = (value, fallback = 0) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
@@ -87,11 +107,8 @@ function formatDuration(seconds = 0) {
 }
 
 function formatPace(secondsPerKm = 0) {
-  const total = Math.max(0, Math.round(safeNum(secondsPerKm)));
-  if (!total) return "--/km";
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, "0")}/km`;
+  const formatted = formatPaceFromSeconds(secondsPerKm);
+  return formatted === "--:--" ? formatted : `${formatted}/km`;
 }
 
 function formatDate(date) {
@@ -205,15 +222,16 @@ function computeSplits(path = [], totalDuration = 0) {
     kmIndex += 1;
   }
 
-  if (totalMeters - lastKmMeters > 10) {
+  if (totalMeters - lastKmMeters >= MIN_DISTANCE_FOR_PACE_KM * 1000) {
     const partialMeters = totalMeters - lastKmMeters;
     const partialTime = totalTime - lastKmTime;
+    const partialPace = calculatePaceSecondsPerKm(partialTime, partialMeters / 1000) || 0;
     splits.push({
       km: +((lastKmMeters / 1000) + (partialMeters / 1000)).toFixed(2),
       time: Math.round(partialTime),
-      paceSec: partialTime,
+      paceSec: partialPace,
     });
-    pacePerKm.push(Math.round(partialTime));
+    if (partialPace > 0) pacePerKm.push(partialPace);
   }
 
   return { splits, pacePerKm, avgSpeedKmh, maxSpeedKmh, totalMeters, totalTime };
@@ -227,6 +245,7 @@ function RunDetailScreenInner({ route }) {
   const anim = useRef(new Animated.Value(0)).current;
   const [userAvgPace, setUserAvgPace] = useState(null);
   const [shareVisible, setShareVisible] = useState(false);
+  const [shareLoading, setShareLoading] = useState(null);
 
   const path = useMemo(() => sanitizePath(run?.path || []), [run]);
   const zoneCoords = useMemo(() => sanitizePath(run?.zoneCoords || run?.zone?.coords || []), [run]);
@@ -242,8 +261,8 @@ function RunDetailScreenInner({ route }) {
   const totalMeters = stats.totalMeters > 0 ? stats.totalMeters : safeNum(run?.distance);
   const totalTime = stats.totalTime > 0 ? stats.totalTime : safeNum(run?.duration);
   const totalKm = (totalMeters / 1000).toFixed(2);
-  const paceSec = totalMeters > 0 ? totalTime / (totalMeters / 1000) : 0;
-  const paceDisplay = formatPace(paceSec);
+  const paceSec = calculatePaceSecondsPerKm(totalTime, totalMeters / 1000) || 0;
+  const paceDisplay = getFormattedPace(totalTime, totalMeters / 1000, { suffix: "/km" });
   const avgSpeedDisplay = (safeNum(stats.avgSpeedKmh) || safeNum(run?.avgSpeed)).toFixed(1);
   const maxSpeedDisplay = safeNum(stats.maxSpeedKmh).toFixed(1);
   const runTitle = run?.name || "Corrida";
@@ -256,6 +275,17 @@ function RunDetailScreenInner({ route }) {
   const shareTracePoints = useMemo(
     () => buildShareSvgPoints(hasZoneShape ? zoneCoords : path, { smooth: !hasZoneShape }),
     [hasZoneShape, path, zoneCoords]
+  );
+  const shareContext = useMemo(
+    () => ({
+      runId: run?.id,
+      path,
+      zoneCoords,
+      isZone: isZoneRun,
+      distanceKm: totalMeters / 1000,
+      durationSeconds: totalTime,
+    }),
+    [isZoneRun, path, run?.id, totalMeters, totalTime, zoneCoords]
   );
 
   useEffect(() => {
@@ -271,7 +301,7 @@ function RunDetailScreenInner({ route }) {
         const localRuns = await sync.loadLocalRuns();
         if (!mounted) return;
         const comparable = (Array.isArray(localRuns) ? localRuns : []).filter(
-          (item) => item.id !== run.id && safeNum(item.distance) > 0 && safeNum(item.duration) > 0
+          (item) => item.id !== run.id && safeNum(item.distance) >= MIN_DISTANCE_FOR_PACE_KM * 1000 && safeNum(item.duration) > 0
         );
         const total = comparable.reduce(
           (acc, item) => {
@@ -281,7 +311,7 @@ function RunDetailScreenInner({ route }) {
           },
           { seconds: 0, km: 0 }
         );
-        setUserAvgPace(total.km > 0 ? total.seconds / total.km : null);
+        setUserAvgPace(calculatePaceSecondsPerKm(total.seconds, total.km));
       } catch (error) {
         debug("loadAveragePace", error);
       }
@@ -305,103 +335,95 @@ function RunDetailScreenInner({ route }) {
     };
   }, [paceSec, userAvgPace]);
 
-  const captureShareView = useCallback(async (targetRef, filenamePrefix, dialogTitle) => {
+  const shareFullImage = useCallback(async () => {
+    if (shareLoading) return;
+
     try {
-      const target = targetRef?.current;
-      if (!target) {
-        Alert.alert("Compartilhar", "Preview ainda nao esta pronto.");
-        return;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 120));
-
-      let uri = null;
-      try {
-        uri = typeof target.capture === "function" ? await target.capture() : null;
-      } catch (captureError) {
-        debug("direct share capture failed", captureError);
-      }
-
-      if (!uri) {
-        uri = await captureRef(target, SHARE_CAPTURE_OPTIONS);
-      }
-
-      if (!uri) throw new Error("capture returned empty uri");
-
-      const filePath = `${FileSystem.cacheDirectory}${filenamePrefix}_${Date.now()}.png`;
-      await FileSystem.copyAsync({ from: uri, to: filePath });
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(filePath, { mimeType: "image/png", dialogTitle });
-      } else {
-        Alert.alert("Imagem pronta", filePath);
-      }
+      setShareLoading("share-image");
+      const uri = await captureRunShareImage(shareFullRef, {
+        filename: `wayper-mapa-${run?.id || Date.now()}`,
+        width: RUN_SHARE_CARD_SIZE.card.width,
+        height: RUN_SHARE_CARD_SIZE.card.height,
+      });
+      await logShareDiagnostics("detail-share-image", { ...shareContext, generatedUri: uri });
+      await shareImageFile(uri, { dialogTitle: "Compartilhar corrida Wayper" });
     } catch (error) {
-      debug("captureShareView", error);
-      Alert.alert("Erro", "Nao foi possivel compartilhar a imagem.");
+      logShareError("detail-share-image", error, shareContext);
+      showRunShareFailure("Nao foi possivel gerar a imagem para compartilhar. Tente novamente.", error);
+    } finally {
+      setShareLoading(null);
     }
-  }, []);
+  }, [run?.id, shareContext, shareLoading]);
 
-  const saveShareView = useCallback(async (targetRef, filenamePrefix) => {
+  const shareTraceImage = useCallback(async () => {
+    if (shareLoading) return;
+
     try {
-      const target = targetRef?.current;
-      if (!target) {
-        Alert.alert("Baixar imagem", "Preview ainda nao esta pronto.");
-        return;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 120));
-
-      let uri = null;
-      try {
-        uri = typeof target.capture === "function" ? await target.capture() : null;
-      } catch (captureError) {
-        debug("direct save capture failed", captureError);
-      }
-
-      if (!uri) {
-        uri = await captureRef(target, SHARE_CAPTURE_OPTIONS);
-      }
-
-      if (!uri) throw new Error("capture returned empty uri");
-
-      const filename = `${filenamePrefix}_${Date.now()}.png`;
-      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-
-      if (FileSystem.StorageAccessFramework?.requestDirectoryPermissionsAsync) {
-        const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
-        if (permission.granted) {
-          const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(permission.directoryUri, filename, "image/png");
-          await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
-          Alert.alert("Imagem salva", "O PNG foi salvo na pasta selecionada.");
-          return;
-        }
-      }
-
-      const filePath = FileSystem.documentDirectory + filename;
-      await FileSystem.copyAsync({ from: uri, to: filePath });
-      Alert.alert("Imagem salva", `Arquivo salvo em: ${filePath}`);
+      setShareLoading("share-trace");
+      assertTraceHasEnoughPoints(shareContext);
+      const uri = await generateTracePngFromPath(path, {
+        ref: shareTraceRef,
+        zoneCoords,
+        isZone: isZoneRun,
+        filename: `wayper-png-${run?.id || Date.now()}`,
+        width: RUN_SHARE_CARD_SIZE.trace.width,
+        height: RUN_SHARE_CARD_SIZE.trace.height,
+      });
+      await logShareDiagnostics("detail-share-trace", { ...shareContext, generatedUri: uri });
+      await shareImageFile(uri, { dialogTitle: "Compartilhar tracado Wayper" });
     } catch (error) {
-      debug("saveShareView", error);
-      Alert.alert("Erro", "Nao foi possivel salvar a imagem.");
+      logShareError("detail-share-trace", error, shareContext);
+      showRunShareFailure("Nao foi possivel gerar o PNG do tracado. Tente novamente.", error);
+    } finally {
+      setShareLoading(null);
     }
-  }, []);
+  }, [isZoneRun, path, run?.id, shareContext, shareLoading, zoneCoords]);
 
-  const shareFullImage = useCallback(() => {
-    captureShareView(shareFullRef, `wayper_mapa_${run?.id || Date.now()}`, "Compartilhar imagem da corrida");
-  }, [captureShareView, run]);
+  const saveFullImage = useCallback(async () => {
+    if (shareLoading) return;
 
-  const shareTraceImage = useCallback(() => {
-    captureShareView(shareTraceRef, `wayper_png_${run?.id || Date.now()}`, "Compartilhar tracado da corrida");
-  }, [captureShareView, run]);
+    try {
+      setShareLoading("download-image");
+      const uri = await captureRunShareImage(shareFullRef, {
+        filename: `wayper-mapa-${run?.id || Date.now()}`,
+        width: RUN_SHARE_CARD_SIZE.card.width,
+        height: RUN_SHARE_CARD_SIZE.card.height,
+      });
+      await logShareDiagnostics("detail-download-image", { ...shareContext, generatedUri: uri });
+      await saveImageToMediaLibrary(uri, "Wayper");
+      Alert.alert("Imagem salva", "A imagem foi salva na galeria do celular.");
+    } catch (error) {
+      logShareError("detail-download-image", error, shareContext);
+      showRunShareFailure("Nao foi possivel salvar a imagem. Tente novamente.", error);
+    } finally {
+      setShareLoading(null);
+    }
+  }, [run?.id, shareContext, shareLoading]);
 
-  const saveFullImage = useCallback(() => {
-    saveShareView(shareFullRef, `wayper_mapa_${run?.id || Date.now()}`);
-  }, [run, saveShareView]);
+  const saveTraceImage = useCallback(async () => {
+    if (shareLoading) return;
 
-  const saveTraceImage = useCallback(() => {
-    saveShareView(shareTraceRef, `wayper_png_${run?.id || Date.now()}`);
-  }, [run, saveShareView]);
+    try {
+      setShareLoading("download-trace");
+      assertTraceHasEnoughPoints(shareContext);
+      const uri = await generateTracePngFromPath(path, {
+        ref: shareTraceRef,
+        zoneCoords,
+        isZone: isZoneRun,
+        filename: `wayper-png-${run?.id || Date.now()}`,
+        width: RUN_SHARE_CARD_SIZE.trace.width,
+        height: RUN_SHARE_CARD_SIZE.trace.height,
+      });
+      await logShareDiagnostics("detail-download-trace", { ...shareContext, generatedUri: uri });
+      await saveImageToMediaLibrary(uri, "Wayper");
+      Alert.alert("PNG salvo", "O tracado foi salvo na galeria do celular.");
+    } catch (error) {
+      logShareError("detail-download-trace", error, shareContext);
+      showRunShareFailure("Nao foi possivel salvar o PNG do tracado. Tente novamente.", error);
+    } finally {
+      setShareLoading(null);
+    }
+  }, [isZoneRun, path, run?.id, shareContext, shareLoading, zoneCoords]);
 
   const animStyle = useMemo(
     () => ({
@@ -522,7 +544,7 @@ function RunDetailScreenInner({ route }) {
                 <View style={styles.splitRow} key={`split-${index}`}>
                   <Text style={styles.splitKm}>{split.km} km</Text>
                   <Text style={styles.splitTime}>{formatDuration(split.time)}</Text>
-                  <Text style={styles.splitPace}>{formatPace(split.time)}</Text>
+                  <Text style={styles.splitPace}>{formatPace(split.paceSec)}</Text>
                 </View>
               ))
             )}
@@ -560,145 +582,22 @@ function RunDetailScreenInner({ route }) {
         </View>
       </Animated.View>
     </ScrollView>
-    <Modal
+    <RunShareModal
       visible={shareVisible}
-      animationType="slide"
-      transparent
-      onRequestClose={() => setShareVisible(false)}
-    >
-      <View style={styles.shareOverlay}>
-        <View style={styles.shareSheet}>
-          <View style={styles.shareHandle} />
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.shareSheetContent}
-            nestedScrollEnabled
-          >
-            <View style={styles.shareHeader}>
-              <View>
-                <Text style={styles.shareEyebrow}>Wayper share</Text>
-                <Text style={styles.shareTitle}>Compartilhar corrida</Text>
-                <Text style={styles.shareHint}>Escolha o visual para enviar ou baixar.</Text>
-              </View>
-              <TouchableOpacity activeOpacity={0.82} style={styles.shareCloseIcon} onPress={() => setShareVisible(false)}>
-                <Ionicons name="close" size={22} color={WayperTheme.colors.text} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              removeClippedSubviews={false}
-              contentContainerStyle={styles.shareCarousel}
-            >
-              <ViewShot ref={shareFullRef} options={SHARE_CAPTURE_OPTIONS} collapsable={false} style={[styles.shareCard, styles.shareFullCard]}>
-                <View style={styles.shareExportHeader}>
-                  <View>
-                    <Text style={styles.shareExportEyebrow}>Wayper finalizado</Text>
-                    <Text style={styles.shareExportTitle}>{shareCardTitle}</Text>
-                  </View>
-                  <View style={styles.shareMiniLogo}>
-                    <Ionicons name="flash" size={16} color={WayperTheme.colors.textInverse} />
-                  </View>
-                </View>
-                <View style={styles.shareMapArtwork}>
-                  <Svg width="100%" height="100%" viewBox="0 0 320 210">
-                    <Defs>
-                      <SvgLinearGradient id="detailShareRouteGlow" x1="0" y1="0" x2="1" y2="1">
-                        <Stop offset="0" stopColor={WayperTheme.colors.primaryLight} stopOpacity="1" />
-                        <Stop offset="1" stopColor={WayperTheme.colors.primary} stopOpacity="1" />
-                      </SvgLinearGradient>
-                    </Defs>
-                    <SvgRect x="0" y="0" width="320" height="210" fill="#03070B" />
-                    <SvgPath d="M0 54 L74 16 L144 60 L226 24 L320 82 L320 0 L0 0 Z" fill="#0B141D" opacity="0.9" />
-                    <SvgPath d="M0 178 L72 132 L134 168 L206 121 L320 162 L320 210 L0 210 Z" fill="#081018" opacity="0.95" />
-                    <SvgLine x1="-18" y1="70" x2="338" y2="116" stroke="#263542" strokeWidth="13" opacity="0.75" />
-                    <SvgLine x1="-18" y1="70" x2="338" y2="116" stroke="#6F7A86" strokeWidth="3" opacity="0.34" />
-                    <SvgLine x1="42" y1="230" x2="282" y2="-20" stroke="#263542" strokeWidth="10" opacity="0.58" />
-                    <SvgLine x1="42" y1="230" x2="282" y2="-20" stroke="#6F7A86" strokeWidth="2" opacity="0.28" />
-                    <SvgLine x1="0" y1="140" x2="320" y2="42" stroke="#13232E" strokeWidth="4" opacity="0.55" />
-                    {hasZoneShape && shareTracePoints ? (
-                      <>
-                        <SvgPolygon points={shareTracePoints} fill={WayperTheme.colors.primarySoft} stroke={WayperTheme.colors.primaryGlow} strokeWidth="18" strokeLinejoin="round" opacity="0.46" />
-                        <SvgPolygon points={shareTracePoints} fill="rgba(0, 230, 118, 0.30)" stroke="url(#detailShareRouteGlow)" strokeWidth="7" strokeLinejoin="round" />
-                      </>
-                    ) : shareTracePoints ? (
-                      <>
-                        <SvgPolyline points={shareTracePoints} fill="none" stroke={WayperTheme.colors.primaryGlow} strokeWidth="17" strokeLinecap="round" strokeLinejoin="round" opacity="0.36" />
-                        <SvgPolyline points={shareTracePoints} fill="none" stroke="url(#detailShareRouteGlow)" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-                      </>
-                    ) : (
-                      <SvgCircle cx="160" cy="105" r="22" fill={WayperTheme.colors.primary} opacity="0.9" />
-                    )}
-                  </Svg>
-                </View>
-                <Text style={styles.shareCardName} numberOfLines={1}>{runTitle}</Text>
-                <View style={styles.shareMetricGrid}>
-                  <ShareMiniMetric label="Tempo" value={durationDisplay} />
-                  <ShareMiniMetric label="Pace" value={paceDisplay} />
-                  <ShareMiniMetric label={isZoneRun ? "Area" : "Km"} value={isZoneRun ? areaDisplay : distanceDisplay} />
-                </View>
-              </ViewShot>
-
-              <ViewShot ref={shareTraceRef} options={SHARE_CAPTURE_OPTIONS} collapsable={false} style={[styles.shareCard, styles.shareTraceCard]}>
-                <Text style={styles.traceTitle}>{shareTraceTitle}</Text>
-                <View style={styles.traceSvgWrap}>
-                  <Svg width="100%" height="100%" viewBox="0 0 320 210">
-                    <Defs>
-                      <SvgLinearGradient id="detailTraceGlow" x1="0" y1="0" x2="1" y2="1">
-                        <Stop offset="0" stopColor={WayperTheme.colors.primaryLight} stopOpacity="1" />
-                        <Stop offset="1" stopColor={WayperTheme.colors.primary} stopOpacity="1" />
-                      </SvgLinearGradient>
-                    </Defs>
-                    {hasZoneShape && shareTracePoints ? (
-                      <>
-                        <SvgPolygon points={shareTracePoints} fill={WayperTheme.colors.primarySoft} stroke={WayperTheme.colors.primaryGlow} strokeWidth="18" strokeLinejoin="round" opacity="0.5" />
-                        <SvgPolygon points={shareTracePoints} fill="rgba(0, 230, 118, 0.24)" stroke="url(#detailTraceGlow)" strokeWidth="7" strokeLinejoin="round" />
-                      </>
-                    ) : shareTracePoints ? (
-                      <>
-                        <SvgPolyline points={shareTracePoints} fill="none" stroke={WayperTheme.colors.primaryGlow} strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" opacity="0.32" />
-                        <SvgPolyline points={shareTracePoints} fill="none" stroke="url(#detailTraceGlow)" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-                      </>
-                    ) : (
-                      <SvgCircle cx="160" cy="105" r="20" fill={WayperTheme.colors.primary} opacity="0.9" />
-                    )}
-                  </Svg>
-                </View>
-                <View style={styles.shareMetricGrid}>
-                  <ShareMiniMetric label="Tempo" value={durationDisplay} />
-                  <ShareMiniMetric label="Pace" value={paceDisplay} />
-                  <ShareMiniMetric label={isZoneRun ? "Area" : "Km"} value={isZoneRun ? areaDisplay : distanceDisplay} />
-                </View>
-              </ViewShot>
-            </ScrollView>
-
-            <View style={styles.shareActionRow}>
-              <TouchableOpacity activeOpacity={0.88} style={styles.shareActionButton} onPress={shareFullImage}>
-                <Ionicons name="image-outline" size={19} color={WayperTheme.colors.textInverse} />
-                <Text style={styles.shareActionText}>Imagem</Text>
-              </TouchableOpacity>
-              <TouchableOpacity activeOpacity={0.88} style={[styles.shareActionButton, styles.shareActionButtonSecondary]} onPress={shareTraceImage}>
-                <Ionicons name="git-branch-outline" size={19} color={WayperTheme.colors.primary} />
-                <Text style={[styles.shareActionText, styles.shareActionTextSecondary]}>{isZoneRun ? "Zona PNG" : "Tracado PNG"}</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.shareDownloadRow}>
-              <TouchableOpacity activeOpacity={0.86} style={styles.shareDownloadButton} onPress={saveFullImage}>
-                <Ionicons name="download-outline" size={18} color={WayperTheme.colors.primary} />
-                <Text style={styles.shareDownloadText}>Baixar mapa</Text>
-              </TouchableOpacity>
-              <TouchableOpacity activeOpacity={0.86} style={styles.shareDownloadButton} onPress={saveTraceImage}>
-                <Ionicons name="download-outline" size={18} color={WayperTheme.colors.primary} />
-                <Text style={styles.shareDownloadText}>Baixar PNG</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
+      onClose={() => setShareVisible(false)}
+      run={run}
+      path={path}
+      zoneCoords={zoneCoords}
+      isZone={isZoneRun}
+      title={shareCardTitle}
+      subtitle={runTitle}
+      distance={distanceDisplay}
+      duration={durationDisplay}
+      pace={paceDisplay}
+      date={formatDate(run.date)}
+      area={areaDisplay}
+      publicLink={run?.publicLink || run?.publicUrl || run?.shareUrl || run?.url}
+    />
     </>
   );
 }
@@ -1254,5 +1153,18 @@ const styles = StyleSheet.create({
     color: WayperTheme.colors.text,
     fontSize: 13,
     fontWeight: "900",
+  },
+  shareButtonDisabled: {
+    opacity: 0.58,
+  },
+  offscreenShareCards: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: 1200,
+    height: 2600,
+    opacity: 1,
+    zIndex: -10,
+    overflow: "visible",
   },
 });

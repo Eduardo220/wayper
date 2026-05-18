@@ -4,20 +4,20 @@ export const WayperTheme = {
   name: "Wayper NeoPulse Dark",
 
   colors: {
-    background: "#03070B",
-    backgroundAlt: "#050A10",
+    background: "#03080B",
+    backgroundAlt: "#050B0E",
 
-    surface: "#081018",
-    surfaceElevated: "#0B141D",
+    surface: "#071014",
+    surfaceElevated: "#0B151A",
     surfaceSoft: "#101B25",
     surfaceMuted: "#141F2A",
 
     primary: "#00E676",
     primaryDark: "#00B85F",
     primaryLight: "#5CFFAA",
-    primarySoft: "rgba(0, 230, 118, 0.14)",
+    primarySoft: "rgba(0, 230, 118, 0.12)",
     primaryGlow: "rgba(0, 230, 118, 0.45)",
-    primaryBorder: "rgba(0, 230, 118, 0.38)",
+    primaryBorder: "rgba(0, 230, 118, 0.18)",
 
     cyan: "#38D9FF",
     cyanSoft: "rgba(56, 217, 255, 0.14)",
@@ -30,13 +30,13 @@ export const WayperTheme = {
 
     warning: "#FFCC33",
 
-    text: "#F4F7FA",
-    textMuted: "#A8B0BA",
-    textSubtle: "#6F7A86",
+    text: "#F4F7F5",
+    textMuted: "#AAB4B0",
+    textSubtle: "#68736F",
     textInverse: "#031009",
 
-    border: "rgba(255, 255, 255, 0.08)",
-    borderStrong: "rgba(255, 255, 255, 0.14)",
+    border: "rgba(0, 230, 118, 0.18)",
+    borderStrong: "rgba(0, 230, 118, 0.45)",
 
     blackGlass: "rgba(3, 7, 11, 0.72)",
     surfaceGlass: "rgba(11, 20, 29, 0.82)",

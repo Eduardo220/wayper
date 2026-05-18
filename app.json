@@ -22,6 +22,10 @@
         "NSLocationWhenInUseUsageDescription": "O Wayper utiliza sua localização para registrar corridas e áreas conquistadas.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Sua localização em tempo real é essencial para registrar seu trajeto.",
         "NSLocationAlwaysUsageDescription": "O Wayper precisa da sua localização para registrar seu percurso durante as corridas.",
+        "NSPhotoLibraryUsageDescription": "O Wayper precisa acessar a galeria para salvar imagens das suas corridas.",
+        "NSPhotoLibraryAddUsageDescription": "O Wayper precisa salvar imagens das suas corridas na galeria.",
+        "UIFileSharingEnabled": true,
+        "LSSupportsOpeningDocumentsInPlace": true,
         "UIBackgroundModes": ["location", "fetch"]
       }
     },
@@ -37,6 +41,9 @@
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
         "WAKE_LOCK",
         "INTERNET",
         "VIBRATE"
@@ -62,6 +69,16 @@
           "isAndroidForegroundServiceEnabled": true
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "O Wayper precisa acessar a galeria para salvar imagens das suas corridas.",
+          "savePhotosPermission": "O Wayper precisa salvar imagens das suas corridas na galeria.",
+          "isAccessMediaLocationEnabled": false,
+          "granularPermissions": ["photo"]
+        }
+      ],
+      "expo-file-system",
       "expo-task-manager"
     ],
 
