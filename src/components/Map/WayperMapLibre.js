@@ -8,6 +8,10 @@ import {
 } from "@maplibre/maplibre-react-native";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { beautifyRoutePath } from "../../utils/routeDrawing";
+import {
+  leaderCellsToFeatureCollection,
+  territoriesToFeatureCollection,
+} from "../../services/territory/territoryMapService.js";
 
 export const OPENFREEMAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 export const WAYPER_GREEN = WayperTheme.map.routeColor;
@@ -458,6 +462,14 @@ function collectLngLats(collections = []) {
           coordinates.push(...ring);
         }
       }
+
+      if (geometry.type === "MultiPolygon") {
+        for (const polygon of geometry.coordinates || []) {
+          for (const ring of polygon || []) {
+            coordinates.push(...ring);
+          }
+        }
+      }
     }
   }
 
@@ -524,7 +536,13 @@ function WayperMapLibre({
   routeSegments = [],
   replayPath = [],
   zones = [],
+  territories = [],
+  leaderCells = [],
+  selectedTerritory = null,
+  currentUserId = null,
   showZones = true,
+  showTerritories = true,
+  showLeaderAreas = true,
   showUserLocation = true,
   followUserLocation = false,
   centerCoordinate,
@@ -542,6 +560,8 @@ function WayperMapLibre({
   replayColor = "#fdcb6e",
   mapStyle = WAYPER_DARK_MAP_STYLE,
   contentPadding = { top: 80, right: 80, bottom: 220, left: 80 },
+  onTerritoryPress,
+  onLeaderCellPress,
 }) {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -583,6 +603,14 @@ function WayperMapLibre({
     () => buildFeatureCollection(showZones ? buildZoneFeatures(zones) : []),
     [showZones, zones]
   );
+  const territoriesCollection = useMemo(
+    () => (showTerritories ? territoriesToFeatureCollection(territories, currentUserId) : buildFeatureCollection()),
+    [currentUserId, showTerritories, territories]
+  );
+  const leaderCellsCollection = useMemo(
+    () => (showLeaderAreas ? leaderCellsToFeatureCollection(leaderCells, currentUserId) : buildFeatureCollection()),
+    [currentUserId, leaderCells, showLeaderAreas]
+  );
 
   const hasRoute = routeCollection.features.length > 0;
   const hasRouteHead = routeHeadCollection.features.length > 0 && !showUserLocation;
@@ -590,6 +618,9 @@ function WayperMapLibre({
   const hasReplayHead = replayHeadCollection.features.length > 0;
   const hasUserLocation = userLocationCollection.features.length > 0;
   const hasZones = zonesCollection.features.length > 0;
+  const hasTerritories = territoriesCollection.features.length > 0;
+  const hasLeaderCells = leaderCellsCollection.features.length > 0;
+  const selectedTerritoryId = selectedTerritory?.id || selectedTerritory?.properties?.id || null;
   const initialCenter = useMemo(
     () => pickInitialCenter({ centerCoordinate, location, routePath, replayPath, zones }),
     [centerCoordinate, location, routePath, replayPath, zones]
@@ -599,8 +630,8 @@ function WayperMapLibre({
     [centerCoordinate, location, initialCenter]
   );
   const bounds = useMemo(
-    () => (fitToContent ? buildBounds([zonesCollection, replayCollection, routeCollection]) : null),
-    [fitToContent, zonesCollection, replayCollection, routeCollection]
+    () => (fitToContent ? buildBounds([leaderCellsCollection, territoriesCollection, zonesCollection, replayCollection, routeCollection]) : null),
+    [fitToContent, leaderCellsCollection, territoriesCollection, zonesCollection, replayCollection, routeCollection]
   );
 
   const moveCameraTo = useCallback((center, zoom, duration) => {
@@ -686,6 +717,39 @@ function WayperMapLibre({
     onUserInteraction();
   }, [followUserLocation, interactive, onUserInteraction]);
 
+  const extractPressedFeatureProperties = useCallback((event) => {
+    const feature =
+      event?.features?.[0] ||
+      event?.nativeEvent?.features?.[0] ||
+      event?.nativeEvent?.payload?.features?.[0] ||
+      event?.feature ||
+      null;
+
+    return (
+      feature?.properties ||
+      event?.properties ||
+      event?.nativeEvent?.properties ||
+      event?.nativeEvent?.payload?.properties ||
+      null
+    );
+  }, []);
+
+  const handleTerritoryPress = useCallback(
+    (event) => {
+      const properties = extractPressedFeatureProperties(event);
+      if (properties && onTerritoryPress) onTerritoryPress(properties);
+    },
+    [extractPressedFeatureProperties, onTerritoryPress]
+  );
+
+  const handleLeaderCellPress = useCallback(
+    (event) => {
+      const properties = extractPressedFeatureProperties(event);
+      if (properties && onLeaderCellPress) onLeaderCellPress(properties);
+    },
+    [extractPressedFeatureProperties, onLeaderCellPress]
+  );
+
   if (hasError) {
     return (
       <View style={[styles.fallback, style]}>
@@ -727,6 +791,118 @@ function WayperMapLibre({
           padding={bounds ? contentPadding : undefined}
           duration={bounds ? 450 : undefined}
         />
+
+        {hasLeaderCells && (
+          <ShapeSource
+            id="wayper-leader-cells-source"
+            data={leaderCellsCollection}
+            onPress={handleLeaderCellPress}
+          >
+            <Layer
+              id="wayper-leader-cells-fill"
+              type="fill"
+              source="wayper-leader-cells-source"
+              paint={{
+                "fill-color": ["get", "color"],
+                "fill-opacity": ["case", ["==", ["get", "isMine"], true], 0.16, 0.1],
+              }}
+            />
+            <Layer
+              id="wayper-leader-cells-border"
+              type="line"
+              source="wayper-leader-cells-source"
+              layout={{
+                "line-cap": "round",
+                "line-join": "round",
+              }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-opacity": ["case", ["==", ["get", "isMine"], true], 0.5, 0.28],
+                "line-width": ["case", ["==", ["get", "isMine"], true], 2.4, 1.4],
+                "line-dasharray": [1.4, 1.2],
+              }}
+            />
+          </ShapeSource>
+        )}
+
+        {hasTerritories && (
+          <ShapeSource
+            id="wayper-territories-source"
+            data={territoriesCollection}
+            onPress={handleTerritoryPress}
+          >
+            <Layer
+              id="wayper-territories-glow"
+              type="line"
+              source="wayper-territories-source"
+              layout={{
+                "line-cap": "round",
+                "line-join": "round",
+              }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-blur": 4,
+                "line-opacity": ["case", ["==", ["get", "isMine"], true], 0.38, 0.18],
+                "line-width": ["case", ["==", ["get", "id"], selectedTerritoryId || ""], 12, 8],
+              }}
+            />
+            <Layer
+              id="wayper-territories-leader-glow"
+              type="line"
+              source="wayper-territories-source"
+              filter={["==", ["get", "isLeaderTerritory"], true]}
+              layout={{
+                "line-cap": "round",
+                "line-join": "round",
+              }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-blur": 2.5,
+                "line-opacity": 0.42,
+                "line-width": 7,
+              }}
+            />
+            <Layer
+              id="wayper-territories-fill"
+              type="fill"
+              source="wayper-territories-source"
+              paint={{
+                "fill-color": ["get", "color"],
+                "fill-opacity": [
+                  "case",
+                  ["==", ["get", "id"], selectedTerritoryId || ""],
+                  0.34,
+                  ["==", ["get", "isMine"], true],
+                  0.24,
+                  0.16,
+                ],
+              }}
+            />
+            <Layer
+              id="wayper-territories-border"
+              type="line"
+              source="wayper-territories-source"
+              layout={{
+                "line-cap": "round",
+                "line-join": "round",
+              }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-opacity": ["case", ["==", ["get", "isMine"], true], 0.88, 0.66],
+                "line-width": [
+                  "case",
+                  ["==", ["get", "id"], selectedTerritoryId || ""],
+                  4.4,
+                  ["==", ["get", "isLeaderTerritory"], true],
+                  3.4,
+                  ["==", ["get", "isMine"], true],
+                  3,
+                  2,
+                ],
+              }}
+            />
+          </ShapeSource>
+        )}
 
         {hasZones && (
           <ShapeSource id="wayper-zones-source" data={zonesCollection}>

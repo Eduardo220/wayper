@@ -78,3 +78,11 @@ export {
 export {
   applyTerritoryCaptureStats,
 } from "./territoryStatsService.js";
+export {
+  WAYPER_CURRENT_USER_COLOR,
+  buildTerritoryMapProps,
+  getOwnerColor,
+  leaderCellsToFeatureCollection,
+  normalizeTerritoryForMap,
+  territoriesToFeatureCollection,
+} from "./territoryMapService.js";
