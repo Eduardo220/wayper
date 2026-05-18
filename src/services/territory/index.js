@@ -54,3 +54,10 @@ export {
   saveTerritorySyncMeta,
   updateTerritoryRemote,
 } from "./territoryStorageService.js";
+export {
+  createTerritoryEvent,
+  generateTerritoryEventMessage,
+} from "./territoryEventsService.js";
+export {
+  processRunTerritoryCapture,
+} from "./territoryCaptureService.js";
