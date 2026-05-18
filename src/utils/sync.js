@@ -22,6 +22,17 @@ import {
 import { db, auth } from "../firebaseConfig";
 import zones from "./zones";
 import { notifyActivitySubscribers } from "../services/notifications/notificationService";
+import {
+  loadLocalTerritories as loadStoredLocalTerritories,
+  loadLocalTerritoryEvents as loadStoredLocalTerritoryEvents,
+  markTerritoryDeletedRemote,
+  saveLocalTerritories as saveStoredLocalTerritories,
+  saveLocalTerritory as saveStoredLocalTerritory,
+  saveLocalTerritoryEvent as saveStoredLocalTerritoryEvent,
+  saveLocalTerritoryEvents as saveStoredLocalTerritoryEvents,
+  saveTerritoryEventRemote,
+  saveTerritoryRemote,
+} from "../services/territory/territoryStorageService.js";
 
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundFetch from "expo-background-fetch";
@@ -46,15 +57,21 @@ const AUTO_SYNC_INTERVAL_MS = 60 * 1000;
 let isSyncingRuns = false;
 let isSyncingZones = false;
 let isSyncingMedals = false;
+let isSyncingTerritories = false;
+let isSyncingTerritoryEvents = false;
 
 let debounceRunsTimer = null;
 let debounceZonesTimer = null;
 let debounceMedalsTimer = null;
+let debounceTerritoriesTimer = null;
+let debounceTerritoryEventsTimer = null;
 let autoSyncTimer = null;
 
 const RETRY_META_RUNS = "wayper:retry:runs";
 const RETRY_META_ZONES = "wayper:retry:zones";
 const RETRY_META_MEDALS = "wayper:retry:medals";
+const RETRY_META_TERRITORIES = "wayper:retry:territories";
+const RETRY_META_TERRITORY_EVENTS = "wayper:retry:territory_events";
 
 // ----------------- Small utilities -----------------
 const safeParse = (s) => {
@@ -856,14 +873,198 @@ export async function getAllMedals() {
   }
 }
 
+// ----------------- Territory local wrappers -----------------
+export async function loadLocalTerritories() {
+  return loadStoredLocalTerritories();
+}
+
+export async function saveLocalTerritory(territory = {}) {
+  const saved = await saveStoredLocalTerritory(territory);
+  scheduleTerritoriesSync();
+  return saved;
+}
+
+export async function loadLocalTerritoryEvents() {
+  return loadStoredLocalTerritoryEvents();
+}
+
+export async function saveLocalTerritoryEvent(event = {}) {
+  const saved = await saveStoredLocalTerritoryEvent(event);
+  scheduleTerritoryEventsSync();
+  return saved;
+}
+
+// ----------------- Territory sync wrappers -----------------
+export async function syncTerritoriesToFirestore() {
+  if (isSyncingTerritories) return;
+  isSyncingTerritories = true;
+  try {
+    const local = await loadStoredLocalTerritories();
+    if (!Array.isArray(local) || local.length === 0) {
+      isSyncingTerritories = false;
+      return;
+    }
+
+    const next = [...local];
+    let changed = false;
+
+    for (let index = 0; index < next.length; index += 1) {
+      const territory = next[index];
+      if (!territory?.id || !territory.pendingSync) continue;
+
+      const result =
+        territory.status === "deleted" || territory.deleted
+          ? await markTerritoryDeletedRemote(territory.id, territory)
+          : await saveTerritoryRemote(territory);
+
+      if (result?.ok) {
+        next[index] = {
+          ...territory,
+          ...(result.territory || {}),
+          pendingSync: false,
+          synced: true,
+          syncConflict: false,
+        };
+        changed = true;
+      } else if (result?.reason === "sync_conflict") {
+        next[index] = {
+          ...territory,
+          syncConflict: true,
+          pendingSync: true,
+          remoteVersion: result.remote?.version ?? result.territory?.remoteVersion ?? territory.remoteVersion,
+        };
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await saveStoredLocalTerritories(next, {
+        replace: true,
+        preserveTimestamps: true,
+        preserveVersion: true,
+      });
+    }
+
+    await _setRetryMeta(RETRY_META_TERRITORIES, { attempts: 0, nextAt: 0 });
+  } catch (err) {
+    logError(err, { fn: "syncTerritoriesToFirestore" });
+    const meta = (await _getRetryMeta(RETRY_META_TERRITORIES)) || { attempts: 0 };
+    const attempts = (meta.attempts || 0) + 1;
+    const backoff = Math.min(2 ** attempts * 1000, MAX_BACKOFF_MS);
+    await _setRetryMeta(RETRY_META_TERRITORIES, {
+      attempts,
+      nextAt: Date.now() + backoff,
+    });
+    setTimeout(() => {
+      syncTerritoriesToFirestore().catch((e) =>
+        logError(e, { fn: "syncTerritoriesToFirestore.retry" })
+      );
+    }, backoff);
+  } finally {
+    isSyncingTerritories = false;
+  }
+}
+
+export async function syncTerritoryEventsToFirestore() {
+  if (isSyncingTerritoryEvents) return;
+  isSyncingTerritoryEvents = true;
+  try {
+    const local = await loadStoredLocalTerritoryEvents();
+    if (!Array.isArray(local) || local.length === 0) {
+      isSyncingTerritoryEvents = false;
+      return;
+    }
+
+    const next = [...local];
+    let changed = false;
+
+    for (let index = 0; index < next.length; index += 1) {
+      const event = next[index];
+      if (!event?.id || !event.pendingSync) continue;
+
+      const result = await saveTerritoryEventRemote(event);
+      if (result?.ok) {
+        next[index] = {
+          ...event,
+          ...(result.event || {}),
+          pendingSync: false,
+          synced: true,
+          syncConflict: false,
+        };
+        changed = true;
+      } else if (result?.reason === "sync_conflict") {
+        next[index] = {
+          ...event,
+          syncConflict: true,
+          pendingSync: true,
+          remoteVersion: result.remote?.version ?? result.event?.remoteVersion ?? event.remoteVersion,
+        };
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await saveStoredLocalTerritoryEvents(next, {
+        replace: true,
+        preserveTimestamps: true,
+        preserveVersion: true,
+      });
+    }
+
+    await _setRetryMeta(RETRY_META_TERRITORY_EVENTS, { attempts: 0, nextAt: 0 });
+  } catch (err) {
+    logError(err, { fn: "syncTerritoryEventsToFirestore" });
+    const meta = (await _getRetryMeta(RETRY_META_TERRITORY_EVENTS)) || { attempts: 0 };
+    const attempts = (meta.attempts || 0) + 1;
+    const backoff = Math.min(2 ** attempts * 1000, MAX_BACKOFF_MS);
+    await _setRetryMeta(RETRY_META_TERRITORY_EVENTS, {
+      attempts,
+      nextAt: Date.now() + backoff,
+    });
+    setTimeout(() => {
+      syncTerritoryEventsToFirestore().catch((e) =>
+        logError(e, { fn: "syncTerritoryEventsToFirestore.retry" })
+      );
+    }, backoff);
+  } finally {
+    isSyncingTerritoryEvents = false;
+  }
+}
+
+export function scheduleTerritoriesSync(delay = SYNC_DEBOUNCE_MS) {
+  if (debounceTerritoriesTimer) clearTimeout(debounceTerritoriesTimer);
+  debounceTerritoriesTimer = setTimeout(() => {
+    syncTerritoriesToFirestore().catch((e) =>
+      logError(e, { fn: "scheduleTerritoriesSync.inner" })
+    );
+  }, delay);
+}
+
+export function scheduleTerritoryEventsSync(delay = SYNC_DEBOUNCE_MS) {
+  if (debounceTerritoryEventsTimer) clearTimeout(debounceTerritoryEventsTimer);
+  debounceTerritoryEventsTimer = setTimeout(() => {
+    syncTerritoryEventsToFirestore().catch((e) =>
+      logError(e, { fn: "scheduleTerritoryEventsSync.inner" })
+    );
+  }, delay);
+}
+
 // ----------------- Sync All convenience -----------------
 export async function syncAll() {
   // guard to avoid parallel runs
-  if (isSyncingRuns || isSyncingZones || isSyncingMedals) return;
+  if (
+    isSyncingRuns ||
+    isSyncingZones ||
+    isSyncingMedals ||
+    isSyncingTerritories ||
+    isSyncingTerritoryEvents
+  ) return;
   await Promise.all([
     syncRunsToFirestore(),
     syncZonesToFirestore(),
     syncMedalsToFirestore(),
+    syncTerritoriesToFirestore(),
+    syncTerritoryEventsToFirestore(),
   ]);
 }
 
@@ -1001,6 +1202,15 @@ export default {
   syncMedalsToFirestore,
   scheduleMedalsSync,
   getAllMedals,
+  // territories
+  loadLocalTerritories,
+  saveLocalTerritory,
+  loadLocalTerritoryEvents,
+  saveLocalTerritoryEvent,
+  syncTerritoriesToFirestore,
+  syncTerritoryEventsToFirestore,
+  scheduleTerritoriesSync,
+  scheduleTerritoryEventsSync,
   // background]
   registerBackgroundSyncTask,
   unregisterBackgroundSyncTask,

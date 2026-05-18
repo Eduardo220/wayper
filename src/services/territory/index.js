@@ -20,4 +20,37 @@ export {
   sanitizePathForTerritory,
   unionGeometries,
 } from "./territoryGeometryService.js";
-
+export {
+  DEFAULT_TERRITORY_CELL_PRECISION,
+  getCellCenter,
+  getCellIdForLocation,
+  getCellIdsForBbox,
+  getCellIdsForGeometry,
+  getCellPolygon,
+} from "./territoryCellService.js";
+export {
+  TERRITORIES_STORAGE_KEY,
+  TERRITORY_EVENTS_STORAGE_KEY,
+  TERRITORY_SYNC_META_STORAGE_KEY,
+  fetchActiveTerritoriesNear,
+  fetchTerritoriesByBbox,
+  fetchTerritoriesByCellIds,
+  fetchTerritoryById,
+  loadLocalTerritories,
+  loadLocalTerritoryEvents,
+  loadTerritorySyncMeta,
+  markTerritoryDeletedRemote,
+  normalizeTerritoryEventForRemote,
+  normalizeTerritoryEventPayload,
+  normalizeTerritoryForRemote,
+  normalizeTerritoryPayload,
+  removeLocalTerritory,
+  saveLocalTerritories,
+  saveLocalTerritory,
+  saveLocalTerritoryEvent,
+  saveLocalTerritoryEvents,
+  saveTerritoryEventRemote,
+  saveTerritoryRemote,
+  saveTerritorySyncMeta,
+  updateTerritoryRemote,
+} from "./territoryStorageService.js";
