@@ -894,6 +894,11 @@ export async function saveLocalTerritoryEvent(event = {}) {
   return saved;
 }
 
+export async function migrateLegacyZonesToTerritories(options = {}) {
+  const migration = await import("../services/territory/territoryMigrationService.js");
+  return migration.migrateLegacyZonesToTerritories(options);
+}
+
 // ----------------- Territory sync wrappers -----------------
 export async function syncTerritoriesToFirestore() {
   if (isSyncingTerritories) return;
@@ -1207,6 +1212,7 @@ export default {
   saveLocalTerritory,
   loadLocalTerritoryEvents,
   saveLocalTerritoryEvent,
+  migrateLegacyZonesToTerritories,
   syncTerritoriesToFirestore,
   syncTerritoryEventsToFirestore,
   scheduleTerritoriesSync,

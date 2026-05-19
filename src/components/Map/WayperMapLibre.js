@@ -608,6 +608,8 @@ function WayperMapLibre({
   showZones = true,
   showTerritories = true,
   showLeaderAreas = true,
+  maxTerritories = 240,
+  maxLeaderCells = 180,
   showUserLocation = true,
   followUserLocation = false,
   centerCoordinate,
@@ -670,12 +672,20 @@ function WayperMapLibre({
     [showZones, zones]
   );
   const territoriesCollection = useMemo(
-    () => (showTerritories ? territoriesToFeatureCollection(territories, currentUserId) : buildFeatureCollection()),
-    [currentUserId, showTerritories, territories]
+    () => {
+      if (!showTerritories) return buildFeatureCollection();
+      const limited = (Array.isArray(territories) ? territories : []).slice(0, maxTerritories);
+      return territoriesToFeatureCollection(limited, currentUserId);
+    },
+    [currentUserId, maxTerritories, showTerritories, territories]
   );
   const leaderCellsCollection = useMemo(
-    () => (showLeaderAreas ? leaderCellsToFeatureCollection(leaderCells, currentUserId) : buildFeatureCollection()),
-    [currentUserId, leaderCells, showLeaderAreas]
+    () => {
+      if (!showLeaderAreas) return buildFeatureCollection();
+      const limited = (Array.isArray(leaderCells) ? leaderCells : []).slice(0, maxLeaderCells);
+      return leaderCellsToFeatureCollection(limited, currentUserId);
+    },
+    [currentUserId, leaderCells, maxLeaderCells, showLeaderAreas]
   );
 
   const hasRoute = routeCollection.features.length > 0;

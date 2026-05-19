@@ -17,6 +17,11 @@ export const TERRITORY_CAPTURE_FAILURE = {
   area_too_small: "area_too_small",
   area_too_large: "area_too_large",
   bad_gps: "bad_gps",
+  bad_accuracy: "bad_accuracy",
+  duration_too_short: "duration_too_short",
+  distance_too_short: "distance_too_short",
+  gps_jump: "gps_jump",
+  impossible_speed: "impossible_speed",
   not_enough_points: "not_enough_points",
   suspicious_activity: "suspicious_activity",
   turf_error: "turf_error",
@@ -32,4 +37,3 @@ export const TERRITORY_EVENT_TYPE = {
   lost_lead: "lost_lead",
   regained_lead: "regained_lead",
 };
-

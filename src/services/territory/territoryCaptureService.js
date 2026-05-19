@@ -19,6 +19,7 @@ import {
 import { recalculateLeaderboardsForCells } from "./territoryLeaderboardService.js";
 import { applyTerritoryCaptureStats } from "./territoryStatsService.js";
 import { createTerritoryEvent } from "./territoryEventsService.js";
+import { validateRunForTerritoryCapture } from "./territoryAntiFraudService.js";
 import {
   TERRITORY_CAPTURE_FAILURE,
   TERRITORY_EVENT_TYPE,
@@ -211,6 +212,24 @@ export async function processRunTerritoryCapture({
   }
 
   try {
+    const antiFraud = validateRunForTerritoryCapture(path, {
+      distanceMeters,
+      durationSeconds,
+    });
+    if (!antiFraud.ok) {
+      return {
+        ok: false,
+        reason: antiFraud.reason,
+        details: antiFraud.details,
+        suspiciousScore: antiFraud.suspiciousScore,
+        runContext: {
+          ...runContext,
+          suspicious: true,
+          territoryCaptureBlockedReason: antiFraud.reason,
+        },
+      };
+    }
+
     const capture = buildCaptureGeometryFromPath(path);
     if (!capture.ok) {
       return {

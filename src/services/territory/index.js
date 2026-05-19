@@ -6,6 +6,22 @@ export {
   TERRITORY_STATUS,
 } from "./territoryTypes.js";
 export {
+  TERRITORY_ANTI_FRAUD_CONFIG,
+  validateRunForTerritoryCapture,
+} from "./territoryAntiFraudService.js";
+export {
+  canViewRun,
+  canViewTerritory,
+  canViewTerritoryEvent,
+  sanitizeRunForViewer,
+  sanitizeTerritoryForViewer,
+  sanitizeEventForViewer,
+} from "./territoryPrivacyService.js";
+export {
+  buildTerritoryFromLegacyZone,
+  migrateLegacyZonesToTerritories,
+} from "./territoryMigrationService.js";
+export {
   buildCaptureGeometryFromPath,
   calculateDistanceMeters,
   calculateGeometryAreaM2,

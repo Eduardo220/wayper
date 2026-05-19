@@ -10,6 +10,10 @@ import { auth, db } from "../../firebaseConfig.js";
 import { loadLocalTerritoryEvents } from "./territoryStorageService.js";
 import { generateTerritoryEventMessage } from "./territoryEventsService.js";
 import { TERRITORY_EVENT_TYPE } from "./territoryTypes.js";
+import {
+  canViewTerritoryEvent,
+  sanitizeEventForViewer,
+} from "./territoryPrivacyService.js";
 
 const TERRITORY_EVENTS_COLLECTION = "territory_events";
 const DEFAULT_LIMIT = 80;
@@ -205,19 +209,17 @@ export function filterTerritoryEventsByPrivacy(events = [], currentUserId = null
   const uid = currentUserId ? String(currentUserId) : null;
   const friends = new Set((Array.isArray(friendsList) ? friendsList : []).map(String));
 
-  return (Array.isArray(events) ? events : []).filter((event) => {
-    const ownerId = String(event.actorId || event.userId || event.ownerId || "");
-    const visibility = event.visibility || "followers";
-    const isOwner = uid && ownerId === uid;
-
-    if (visibility === "private") return Boolean(isOwner);
-    if (visibility === "public") return true;
-    if (visibility === "followers") {
-      // TODO: conectar followers/seguidores quando a relacao social estiver pronta.
-      return Boolean(isOwner || (ownerId && friends.has(ownerId)));
-    }
-    return Boolean(isOwner || visibility === "public");
-  });
+  return (Array.isArray(events) ? events : [])
+    .map((event) => {
+      const ownerId = String(event?.actorId || event?.userId || event?.ownerId || "");
+      const relationship = {
+        // TODO: conectar followers/seguidores quando a relacao social estiver pronta.
+        isFriend: Boolean(ownerId && friends.has(ownerId)),
+      };
+      if (!canViewTerritoryEvent({ event, viewerId: uid, relationship })) return null;
+      return sanitizeEventForViewer(event, { id: uid, relationship });
+    })
+    .filter(Boolean);
 }
 
 export async function loadLocalTerritoryFeed(options = {}) {

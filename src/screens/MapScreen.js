@@ -70,6 +70,7 @@ import xpService from "../services/xp/xpService";
 import { updateProfileStats, updateTerritoryProfileStats } from "../services/profile/profileService";
 import {
   fetchActiveTerritoriesNear,
+  getCellCenter,
   getCellIdForLocation,
   getCellIdsForBbox,
   getLeaderCellsForViewport,
@@ -330,6 +331,17 @@ const mergeLeaderCellsForMap = (existing = [], updates = []) => {
   return Array.from(map.values());
 };
 
+const listIdentitySignature = (items = []) =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => [
+      item?.id || item?.cellId || "",
+      item?.updatedAt || item?.capturedAt || "",
+      item?.version || "",
+      item?.status || "",
+      Math.round(Number(item?.areaM2 ?? item?.leaderAreaM2 ?? 0)),
+    ].join(":"))
+    .join("|");
+
 const getCurrentWayperUser = () => {
   const user = auth.currentUser;
   const emailName = user?.email ? user.email.split("@")[0] : null;
@@ -374,6 +386,10 @@ const buildCaptureResultMessage = (result) => {
     const reason = result.reason || "erro";
     if (reason === "not_closed_loop") return "Corrida salva. O trajeto nao fechou um loop para capturar territorio.";
     if (reason === "not_enough_points") return "Corrida salva. Foram necessarios mais pontos para capturar territorio.";
+    if (reason === "duration_too_short") return "Corrida salva. A captura foi bloqueada porque a atividade foi curta demais.";
+    if (reason === "distance_too_short") return "Corrida salva. A captura foi bloqueada porque a distancia foi curta demais.";
+    if (reason === "bad_accuracy" || reason === "bad_gps") return "Corrida salva. A captura foi bloqueada por baixa qualidade de GPS.";
+    if (reason === "impossible_speed" || reason === "gps_jump" || reason === "suspicious_activity") return "Corrida salva. A captura foi bloqueada por sinais inconsistentes no trajeto.";
     if (reason === "area_too_small") return "Corrida salva. A area ficou pequena demais para virar territorio.";
     if (reason === "area_too_large") return "Corrida salva. A area ficou grande demais para captura segura.";
     return "Corrida salva. A captura territorial nao foi aplicada desta vez.";
@@ -395,7 +411,7 @@ const getPrimaryTerritoryCellId = (territory) => {
 };
 
 /* ================= Component ================= */
-const MapScreen = ({ navigation }) => {
+const MapScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -418,6 +434,7 @@ const MapScreen = ({ navigation }) => {
   const [selectedTerritoryLeaderboard, setSelectedTerritoryLeaderboard] = useState(null);
   const [captureResult, setCaptureResult] = useState(null);
   const [territoryLoading, setTerritoryLoading] = useState(false);
+  const [mapFocusCenter, setMapFocusCenter] = useState(null);
 
   const [routeState, setRouteState] = useState([]);
   const [displayRouteState, setDisplayRouteState] = useState([]);
@@ -471,6 +488,7 @@ const MapScreen = ({ navigation }) => {
   const lastTerritoryFetchRef = useRef(null);
   const initialTerritoryLoadRef = useRef(false);
   const selectedTerritoryRequestRef = useRef(null);
+  const lastRouteFocusRef = useRef(null);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
@@ -546,6 +564,7 @@ const MapScreen = ({ navigation }) => {
   }, [paused, replaying, running]);
 
   const recenterMapOnUser = useCallback(() => {
+    setMapFocusCenter(null);
     setMapFollowEnabled(true);
     setMapRecenterSignal((value) => value + 1);
   }, []);
@@ -564,7 +583,10 @@ const MapScreen = ({ navigation }) => {
         if (includeCache) {
           const cached = await loadLocalTerritories();
           if (mountedRef.current && Array.isArray(cached)) {
-            setTerritories(mergeTerritoriesForMap([], cached, viewportBbox));
+            setTerritories((prev) => {
+              const next = mergeTerritoriesForMap([], cached, viewportBbox);
+              return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
+            });
           }
         }
 
@@ -582,8 +604,14 @@ const MapScreen = ({ navigation }) => {
 
         if (!mountedRef.current) return;
 
-        setTerritories((prev) => mergeTerritoriesForMap(prev, remoteTerritories, viewportBbox));
-        setLeaderCells(Array.isArray(viewportLeaderCells) ? viewportLeaderCells : []);
+        setTerritories((prev) => {
+          const next = mergeTerritoriesForMap(prev, remoteTerritories, viewportBbox);
+          return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
+        });
+        setLeaderCells((prev) => {
+          const next = Array.isArray(viewportLeaderCells) ? viewportLeaderCells : [];
+          return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
+        });
       } catch (error) {
         lastTerritoryFetchRef.current = null;
         console.warn("[Wayper] territory viewport load failed", error);
@@ -665,6 +693,40 @@ const MapScreen = ({ navigation }) => {
     },
     [navigation, replaying, running]
   );
+
+  useEffect(() => {
+    const params = route?.params || {};
+    const focusTerritoryId = params.focusTerritoryId ? String(params.focusTerritoryId) : null;
+    const focusCellId = params.focusCellId ? String(params.focusCellId) : null;
+    const focusUserId = params.focusUserId ? String(params.focusUserId) : null;
+    const focusKey = [focusTerritoryId, focusCellId, focusUserId].filter(Boolean).join("|");
+
+    if (!focusKey || lastRouteFocusRef.current === focusKey) return;
+
+    const focusedTerritory = territories.find((territory) => {
+      if (focusTerritoryId && String(territory.id) === focusTerritoryId) return true;
+      if (focusUserId && String(territory.ownerId || territory.userId) === focusUserId) return true;
+      if (focusCellId && Array.isArray(territory.cellIds) && territory.cellIds.map(String).includes(focusCellId)) return true;
+      return false;
+    });
+
+    if (focusedTerritory) {
+      lastRouteFocusRef.current = focusKey;
+      setMapFocusCenter(focusedTerritory.center || focusedTerritory.coordsPreview?.[0] || null);
+      setMapFollowEnabled(false);
+      handleTerritoryPress(focusedTerritory);
+      return;
+    }
+
+    if (focusCellId) {
+      const center = getCellCenter(focusCellId);
+      if (center) {
+        lastRouteFocusRef.current = focusKey;
+        setMapFocusCenter(center);
+        setMapFollowEnabled(false);
+      }
+    }
+  }, [handleTerritoryPress, route?.params, territories]);
 
   const closeSelectedTerritory = useCallback(() => {
     selectedTerritoryRequestRef.current = null;
@@ -1468,6 +1530,11 @@ const MapScreen = ({ navigation }) => {
             } else {
               runData.area = 0;
               runData.territoryCaptureFailedReason = result?.reason || "capture_failed";
+              if (result?.runContext?.suspicious || result?.details?.suspicious) {
+                runData.suspicious = true;
+                runData.territoryCaptureBlockedReason = result?.reason || "suspicious_activity";
+                runData.suspiciousScore = result?.suspiciousScore || 0;
+              }
             }
           } catch (e) {
             debug("territory capture failed unexpectedly; using legacy zone fallback", e);
@@ -1854,7 +1921,7 @@ const MapScreen = ({ navigation }) => {
         <WayperMapLibre
           style={styles.map}
           location={safeLocation}
-          centerCoordinate={replaying ? replayCenter : safeLocation}
+          centerCoordinate={replaying ? replayCenter : (mapFocusCenter || safeLocation)}
           autoCenterOnCoordinate={!running || replaying}
           routePath={liveRoutePath}
           routeSegments={liveRouteSegments}
