@@ -1045,9 +1045,9 @@ function WayperMapLibre({
               }}
               paint={{
                 "line-color": routeColor,
-                "line-blur": 3,
-                "line-width": 13,
-                "line-opacity": 0.32,
+                "line-blur": 3.5,
+                "line-width": 17,
+                "line-opacity": 0.28,
               }}
             />
             <Layer
@@ -1070,7 +1070,7 @@ function WayperMapLibre({
                   1,
                   "#ecfff6",
                 ],
-                "line-width": 6,
+                "line-width": 7.5,
                 "line-opacity": 1,
               }}
             />

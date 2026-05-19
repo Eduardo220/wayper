@@ -12,7 +12,7 @@ import Svg, {
   Stop,
 } from "react-native-svg";
 import { WayperTheme } from "../../theme/wayperTheme";
-import { beautifyRoutePath } from "../../utils/routeDrawing";
+import { buildSummaryRenderPath } from "../../services/tracking";
 
 export const RUN_SHARE_CARD_SIZE = {
   card: { width: 1080, height: 1350 },
@@ -68,15 +68,7 @@ const buildSvgPoints = (coords = [], { width, height, padding = 72, smooth = fal
   const clean = normalizeCoords(coords);
   if (clean.length === 0) return { points: "", hasShape: false };
 
-  const source = smooth && clean.length > 2
-    ? beautifyRoutePath(clean, {
-        toleranceM: 4.2,
-        minPointDistanceM: 1.5,
-        spikeToleranceM: 8,
-        maxPoints: 900,
-        preserveTurns: true,
-      })
-    : clean;
+  const source = smooth && clean.length > 2 ? buildSummaryRenderPath(clean) : clean;
 
   const points = closed ? closePolygon(source) : source;
   if (points.length < (closed ? 4 : 2)) {

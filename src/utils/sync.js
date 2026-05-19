@@ -135,7 +135,24 @@ function sanitizeCoordsArray(coords = []) {
 
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
       const timestamp = p.timestamp ?? p.time ?? p.t ?? null;
-      return { latitude, longitude, timestamp: timestamp == null ? null : timestamp };
+      const point = { latitude, longitude, timestamp: timestamp == null ? null : timestamp };
+      [
+        "accuracy",
+        "altitude",
+        "altitudeAccuracy",
+        "speed",
+        "heading",
+        "source",
+        "segmentId",
+        "distanceFromPreviousMeters",
+        "timeFromPreviousMs",
+        "calculatedSpeedMps",
+        "bearingFromPrevious",
+        "qualityScore",
+      ].forEach((key) => {
+        if (p[key] !== undefined && p[key] !== null) point[key] = p[key];
+      });
+      return point;
     })
     .filter(Boolean);
 }
@@ -169,12 +186,24 @@ export async function saveLocalRun(run = {}) {
   try {
     const existing = await loadLocalRuns();
     const now = new Date().toISOString();
+    const trustedPath = sanitizeCoordsArray(run.trustedPath || run.path || run.coords || []);
+    const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || trustedPath);
     const normalized = {
       id: run.id || uid(),
-      path: sanitizeCoordsArray(run.path || run.coords || []),
+      path: trustedPath,
+      trustedPath,
+      rawPath: sanitizeCoordsArray(run.rawPath || []),
+      liveRenderPath: sanitizeCoordsArray(run.liveRenderPath || []),
+      renderPath,
+      displayPath: sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath),
+      pathQuality: run.pathQuality || null,
+      lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
+      smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
       distance: Number(run.distance ?? 0),
       duration: Number(run.duration ?? 0),
       avgSpeed: Number(run.avgSpeed ?? 0),
+      maxSpeed: Number(run.maxSpeed ?? 0),
+      avgPace: Number(run.avgPace ?? 0),
       date: run.date || now,
       synced: !!run.synced || false,
       name: run.name || `${run.mode === "zones" ? "Captura por zonas" : "Corrida"} ${new Date(now).toLocaleString()}`,
@@ -567,22 +596,28 @@ export async function syncRunsToFirestore() {
     let opsInBatch = 0;
 
     for (const run of unsynced) {
-      const path = (run.path || [])
-        .map((p) => ({
-          latitude: Number(p.latitude),
-          longitude: Number(p.longitude),
-          timestamp: p.timestamp ?? null,
-        }))
-        .slice(0, 5000);
+      const path = sanitizeCoordsArray(run.trustedPath || run.path || []).slice(0, ROUTE_CAP);
+      const rawPath = sanitizeCoordsArray(run.rawPath || []).slice(0, ROUTE_CAP);
+      const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || path).slice(0, ROUTE_CAP);
+      const displayPath = sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath).slice(0, ROUTE_CAP);
 
       const uid = auth?.currentUser?.uid || "offline";
       const payload = {
         id: run.id,
         userId: uid,
         path,
+        trustedPath: path,
+        rawPath,
+        renderPath,
+        displayPath,
+        pathQuality: run.pathQuality || null,
+        lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
+        smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
         distance: Number(run.distance || 0),
         duration: Number(run.duration || 0),
         avgSpeed: Number(run.avgSpeed || 0),
+        maxSpeed: Number(run.maxSpeed || 0),
+        avgPace: Number(run.avgPace || 0),
         area: Number(run.area || 0),
         mode: run.mode || "free",
         zoneId: run.zoneId || null,

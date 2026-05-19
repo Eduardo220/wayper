@@ -24,9 +24,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage"; // optiona
    =========================== */
 const DEFAULTS = {
   timeInterval: 1000, // ms
-  distanceInterval: 1, // meters
-  accuracy: Location.Accuracy.BestForNavigation,
-  minAccuracy: 120, // meters — ignore readings worse than this by default
+  distanceInterval: 2.5, // meters
+  accuracy: Location.Accuracy.BestForNavigation || Location.Accuracy.Highest || Location.Accuracy.High,
+  minAccuracy: 50, // meters - override legacy tolerance for premium run tracking
   debounceMillis: 500, // minimal time between emitted points
   smoothingWindow: 3, // number of points to smooth (simple moving average)
   maxSpikeDistance: 1000, // meters - ignore absurd jumps
@@ -361,15 +361,31 @@ export async function watchPosition(onChange, userOpts = {}) {
     try {
       if (subscription) return;
       debug("startNativeWatcher", opts);
-      subscription = await Location.watchPositionAsync(
-        {
-          accuracy: opts.accuracy,
-          timeInterval: opts.timeInterval,
-          distanceInterval: opts.distanceInterval,
-          mayShowUserSettingsDialog: true,
-        },
-        (loc) => emitIfValid(loc)
-      );
+      const accuracyCandidates = [
+        opts.accuracy,
+        Location.Accuracy.BestForNavigation,
+        Location.Accuracy.Highest,
+        Location.Accuracy.High,
+      ].filter((value, index, arr) => value != null && arr.indexOf(value) === index);
+      let lastError = null;
+      for (const accuracy of accuracyCandidates) {
+        try {
+          subscription = await Location.watchPositionAsync(
+            {
+              accuracy,
+              timeInterval: opts.timeInterval,
+              distanceInterval: opts.distanceInterval,
+              mayShowUserSettingsDialog: true,
+            },
+            (loc) => emitIfValid(loc)
+          );
+          break;
+        } catch (watchError) {
+          lastError = watchError;
+          subscription = null;
+        }
+      }
+      if (!subscription && lastError) throw lastError;
       debug("native watcher started");
     } catch (err) {
       debug("startNativeWatcher failed", err);

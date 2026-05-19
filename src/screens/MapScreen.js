@@ -40,15 +40,11 @@ import { auth } from "../firebaseConfig";
 import formatTime from "../utils/formatTime";
 import {
   TRACKING_CONFIG,
-  calculateDistanceMeters,
   debugTracking,
   limitPathForRendering,
   normalizeLocation,
-  removePathOutliers,
   sanitizeRunPath,
-  shouldAppendLocationPoint,
   smoothDisplayPath,
-  smoothLocationPoint,
   splitPathIntoSegments,
 } from "../utils/tracking";
 import zones from "../utils/zones";
@@ -69,6 +65,11 @@ import { getFormattedPace } from "../utils/pace";
 import xpService from "../services/xp/xpService";
 import { updateProfileStats, updateTerritoryProfileStats } from "../services/profile/profileService";
 import {
+  buildSummaryRenderPath,
+  createTrackingSession,
+  getRenderablePathForRun,
+} from "../services/tracking";
+import {
   fetchActiveTerritoriesNear,
   getCellCenter,
   getCellIdForLocation,
@@ -83,7 +84,7 @@ import {
 const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
 const FLUSH_INTERVAL_MS = 300;
 const WATCH_TIME_INTERVAL_MS = 1000;
-const WATCH_DISTANCE_INTERVAL = 3;
+const WATCH_DISTANCE_INTERVAL = 2.5;
 const INITIAL_REGION_DELTA = 0.001;
 const COUNTDOWN_DEFAULT = 3;
 const WAYPER_GREEN = WayperTheme.colors.primary;
@@ -122,6 +123,7 @@ try {
           speed: loc.coords.speed,
           heading: loc.coords.heading,
           altitude: loc.coords.altitude,
+          altitudeAccuracy: loc.coords.altitudeAccuracy,
           timestamp: loc.timestamp,
           source: "background",
         });
@@ -471,6 +473,8 @@ const MapScreen = ({ navigation, route }) => {
   const savedPathRef = useRef([]);
   const displayPathRef = useRef([]);
   const displaySegmentsRef = useRef([]);
+  const trackingSessionRef = useRef(createTrackingSession({ mode: "run" }));
+  const lastTrackingFinishRef = useRef(null);
   const lastAcceptedLocationRef = useRef(null);
   const lastSmoothedLocationRef = useRef(null);
   const pendingSuspiciousPointRef = useRef(null);
@@ -855,6 +859,11 @@ const MapScreen = ({ navigation, route }) => {
   }, []);
 
   const resetTrackingPipeline = useCallback((options = {}) => {
+    trackingSessionRef.current = createTrackingSession({
+      mode: "run",
+      startedAt: Date.now(),
+    });
+    lastTrackingFinishRef.current = null;
     rawPathRef.current = [];
     savedPathRef.current = [];
     displayPathRef.current = [];
@@ -872,12 +881,6 @@ const MapScreen = ({ navigation, route }) => {
     setDisplayRouteState([]);
     setDisplayRouteSegments([]);
     debugTracking("path_reset", { segmentId: currentSegmentIdRef.current });
-  }, []);
-
-  const buildFinalRoutePath = useCallback((path = []) => {
-    const clean = removePathOutliers(sanitizePath(path), TRACKING_CONFIG);
-    if (clean.length <= ROUTE_CAP) return clean;
-    return limitPathForRendering(clean, ROUTE_CAP);
   }, []);
 
   const updateActiveZonePreview = useCallback((path = []) => {
@@ -922,20 +925,28 @@ const MapScreen = ({ navigation, route }) => {
 
   const flushRouteBufferToState = useCallback(() => {
     try {
-      const buf = routeBufferRef.current;
-      if (!buf || buf.length === 0) return;
+      const trackingState = trackingSessionRef.current?.getState?.();
+      const sessionTrusted = sanitizePath(trackingState?.trustedPath || []);
+      if (sessionTrusted.length === 0 && (!routeBufferRef.current || routeBufferRef.current.length === 0)) return;
 
-      const savedSnapshot = sanitizePath(savedPathRef.current);
+      const savedSnapshot = sessionTrusted.length > 0 ? sessionTrusted : sanitizePath(savedPathRef.current);
       const displaySnapshot = limitPathForRendering(
-        smoothDisplayPath(savedSnapshot, { config: TRACKING_CONFIG }),
+        sanitizePath(trackingState?.liveRenderPath || []).length > 1
+          ? sanitizePath(trackingState.liveRenderPath)
+          : smoothDisplayPath(savedSnapshot, { config: TRACKING_CONFIG }),
         TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
       );
       const segmentSnapshot = splitPathIntoSegments(displaySnapshot);
 
       routeStateRef.current = savedSnapshot;
+      savedPathRef.current = savedSnapshot;
       displayPathRef.current = displaySnapshot;
       displaySegmentsRef.current = segmentSnapshot;
       routeBufferRef.current = [];
+      rawPathRef.current = sanitizePath(trackingState?.rawPath || rawPathRef.current);
+      distanceRef.current = Number(trackingState?.stats?.distanceMeters ?? distanceRef.current) || 0;
+      lastAcceptedLocationRef.current = savedSnapshot[savedSnapshot.length - 1] || null;
+      lastSmoothedLocationRef.current = displaySnapshot[displaySnapshot.length - 1] || null;
 
       setRouteState(limitPathForRendering(savedSnapshot, ROUTE_CAP));
       setDisplayRouteState(displaySnapshot);
@@ -946,72 +957,6 @@ const MapScreen = ({ navigation, route }) => {
       debug("flush catch", e);
     }
   }, [updateActiveZonePreview]);
-
-  const appendAcceptedLocation = useCallback((point, verdict = {}) => {
-    const previous = lastAcceptedLocationRef.current;
-    const segmentBreak = Boolean(verdict.segmentBreak || forceNextSegmentBreakRef.current || !previous);
-    const segmentId = segmentBreak && previous
-      ? currentSegmentIdRef.current + 1
-      : currentSegmentIdRef.current;
-
-    currentSegmentIdRef.current = segmentId;
-    forceNextSegmentBreakRef.current = false;
-
-    const savedPoint = {
-      ...point,
-      source: "gps",
-      segmentId,
-    };
-
-    const sameSegment = previous && previous.segmentId === savedPoint.segmentId;
-    const distanceM = sameSegment
-      ? (verdict.distanceM ?? calculateDistanceMeters(previous, savedPoint))
-      : 0;
-
-    if (sameSegment && Number.isFinite(distanceM) && distanceM > 0) {
-      distanceRef.current += distanceM;
-    }
-
-    savedPathRef.current.push(savedPoint);
-    routeStateRef.current = savedPathRef.current;
-    routeBufferRef.current.push(savedPoint);
-    lastAcceptedLocationRef.current = savedPoint;
-    lastPointRef.current = savedPoint;
-    pendingSuspiciousPointRef.current = null;
-
-    const smoothed = smoothLocationPoint(
-      segmentBreak ? null : lastSmoothedLocationRef.current,
-      savedPoint,
-      {
-        config: TRACKING_CONFIG,
-        segmentBreak,
-        speedKmh: verdict.speedKmh,
-      }
-    );
-    const displayPoint = {
-      ...(smoothed || savedPoint),
-      segmentId,
-      source: "smoothed",
-    };
-
-    lastSmoothedLocationRef.current = displayPoint;
-    displayPathRef.current.push(displayPoint);
-    displayPathRef.current = limitPathForRendering(displayPathRef.current, TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS);
-    displaySegmentsRef.current = splitPathIntoSegments(displayPathRef.current);
-
-    setLocation(displayPoint);
-    setDistanceState(distanceRef.current);
-
-    debugTracking("accept", {
-      reason: verdict.reason,
-      distanceM,
-      speedKmh: verdict.speedKmh,
-      accuracy: savedPoint.accuracy,
-      segmentId,
-      segmentBreak,
-      pathLength: savedPathRef.current.length,
-    });
-  }, []);
 
   /* ===== Core location update ===== */
   const handleLocationUpdate = useCallback(
@@ -1043,57 +988,62 @@ const MapScreen = ({ navigation, route }) => {
           return;
         }
 
-        rawPathRef.current.push(point);
+        const result = trackingSessionRef.current.processLocationPoint(
+          {
+            ...locObj,
+            source: locObj.source === "background" || locObj.source === "foreground"
+              ? "expo-location"
+              : locObj.source,
+          },
+          { segmentBreak: forceNextSegmentBreakRef.current }
+        );
 
-        const pending = pendingSuspiciousPointRef.current;
-        if (pending && lastAcceptedLocationRef.current) {
-          const confirmDistance = calculateDistanceMeters(pending, point);
-          const pendingAgeMs = point.timestamp - pending.timestamp;
-          const confirmRadius = Math.max(
-            35,
-            Number(pending.accuracy || 0) + Number(point.accuracy || 0)
-          );
+        rawPathRef.current = result.rawPath || rawPathRef.current;
 
-          if (pendingAgeMs >= 0 && pendingAgeMs <= 12000 && confirmDistance <= confirmRadius) {
-            appendAcceptedLocation(pending, {
-              reason: "confirmed_new_segment",
-              distanceM: 0,
-              speedKmh: 0,
-              segmentBreak: true,
-            });
-            debugTracking("pending_confirmed", { confirmDistance, pendingAgeMs });
-          } else if (pendingAgeMs > 12000 || confirmDistance > confirmRadius * 2) {
-            pendingSuspiciousPointRef.current = null;
-            debugTracking("pending_discarded", { confirmDistance, pendingAgeMs });
-          }
-        }
-
-        const verdict = shouldAppendLocationPoint(savedPathRef.current, point, {
-          config: TRACKING_CONFIG,
-          now: Date.now(),
-          allowMissingAccuracy: false,
-          forceSegmentBreak: forceNextSegmentBreakRef.current,
-        });
-
-        if (!verdict.accepted) {
-          if (verdict.pending) {
-            pendingSuspiciousPointRef.current = point;
-          }
-          debugTracking(`reject:${verdict.reason}`, {
-            distanceM: verdict.distanceM,
-            dtMs: verdict.dtMs,
-            speedKmh: verdict.speedKmh,
+        if (!result.accepted) {
+          debugTracking(`reject:${result.reason}`, {
             accuracy: point.accuracy,
+            rawPoints: result.pathQuality?.rawPoints,
+            acceptedPoints: result.pathQuality?.acceptedPoints,
           });
           return;
         }
 
-        appendAcceptedLocation(point, verdict);
+        const trustedPath = sanitizePath(result.trustedPath || []);
+        const livePath = limitPathForRendering(
+          sanitizePath(result.liveRenderPath || trustedPath),
+          TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
+        );
+
+        savedPathRef.current = trustedPath;
+        routeStateRef.current = trustedPath;
+        displayPathRef.current = livePath;
+        displaySegmentsRef.current = splitPathIntoSegments(livePath);
+        routeBufferRef.current = result.point ? [result.point] : [];
+        lastAcceptedLocationRef.current = trustedPath[trustedPath.length - 1] || null;
+        lastPointRef.current = lastAcceptedLocationRef.current;
+        lastSmoothedLocationRef.current = result.currentPosition || livePath[livePath.length - 1] || null;
+        pendingSuspiciousPointRef.current = null;
+        distanceRef.current = Number(result.stats?.distanceMeters || 0);
+        currentSegmentIdRef.current = Number(lastAcceptedLocationRef.current?.segmentId || currentSegmentIdRef.current || 0);
+        forceNextSegmentBreakRef.current = false;
+
+        if (result.currentPositionChanged && result.currentPosition) {
+          setLocation(result.currentPosition);
+        }
+
+        if (result.pathChanged) {
+          setRouteState(limitPathForRendering(trustedPath, ROUTE_CAP));
+          setDisplayRouteState(livePath);
+          setDisplayRouteSegments(displaySegmentsRef.current);
+          setDistanceState(distanceRef.current);
+          updateActiveZonePreview(trustedPath);
+        }
       } catch (e) {
         debug("handleLocationUpdate", e);
       }
     },
-    [appendAcceptedLocation]
+    [updateActiveZonePreview]
   );
 
   useEffect(() => {
@@ -1115,7 +1065,7 @@ const MapScreen = ({ navigation, route }) => {
   }, []);
 
   const getBackgroundLocationOptions = useCallback((notificationBody) => ({
-    accuracy: Location.Accuracy.BestForNavigation,
+    accuracy: Location.Accuracy.BestForNavigation || Location.Accuracy.Highest || Location.Accuracy.High,
     timeInterval: WATCH_TIME_INTERVAL_MS,
     distanceInterval: WATCH_DISTANCE_INTERVAL,
     deferredUpdatesInterval: WATCH_TIME_INTERVAL_MS,
@@ -1206,28 +1156,48 @@ const MapScreen = ({ navigation, route }) => {
     const runSessionId = currentRunIdRef.current;
 
     try {
-      const sub = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: WATCH_TIME_INTERVAL_MS,
-          distanceInterval: WATCH_DISTANCE_INTERVAL,
-          mayShowUserSettingsDialog: true,
-        },
-        (loc) => {
-          if (!loc?.coords) return;
-          handleLocationUpdate({
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-            accuracy: loc.coords.accuracy,
-            speed: loc.coords.speed,
-            heading: loc.coords.heading,
-            altitude: loc.coords.altitude,
-            timestamp: loc.timestamp,
-            source: "foreground",
-            runSessionId,
-          });
+      const accuracyCandidates = [
+        Location.Accuracy.BestForNavigation,
+        Location.Accuracy.Highest,
+        Location.Accuracy.High,
+      ].filter((value) => value != null);
+      let sub = null;
+      let lastWatchError = null;
+
+      for (const accuracy of accuracyCandidates) {
+        try {
+          sub = await Location.watchPositionAsync(
+            {
+              accuracy,
+              timeInterval: WATCH_TIME_INTERVAL_MS,
+              distanceInterval: WATCH_DISTANCE_INTERVAL,
+              mayShowUserSettingsDialog: true,
+            },
+            (loc) => {
+              if (!loc?.coords) return;
+              handleLocationUpdate({
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+                accuracy: loc.coords.accuracy,
+                speed: loc.coords.speed,
+                heading: loc.coords.heading,
+                altitude: loc.coords.altitude,
+                altitudeAccuracy: loc.coords.altitudeAccuracy,
+                timestamp: loc.timestamp,
+                source: "expo-location",
+                runSessionId,
+              });
+            }
+          );
+          debugTracking("watcher_accuracy_selected", { accuracy });
+          break;
+        } catch (watchError) {
+          lastWatchError = watchError;
+          debug("watchPositionAsync accuracy fallback", watchError);
         }
-      );
+      }
+
+      if (!sub) throw lastWatchError || new Error("watchPositionAsync unavailable");
       watcherRef.current = sub;
       debugTracking("watcher_started", { runSessionId, distanceInterval: WATCH_DISTANCE_INTERVAL, timeInterval: WATCH_TIME_INTERVAL_MS });
     } catch (e) {
@@ -1243,8 +1213,9 @@ const MapScreen = ({ navigation, route }) => {
               speed: p.coords.speed,
               heading: p.coords.heading,
               altitude: p.coords.altitude,
+              altitudeAccuracy: p.coords.altitudeAccuracy,
               timestamp: p.timestamp,
-              source: "polling",
+              source: "fallback",
               runSessionId,
             });
           }
@@ -1342,8 +1313,9 @@ const MapScreen = ({ navigation, route }) => {
             speed: pos.coords.speed,
             heading: pos.coords.heading,
             altitude: pos.coords.altitude,
+            altitudeAccuracy: pos.coords.altitudeAccuracy,
             timestamp: pos.timestamp,
-            source: "initial",
+            source: "expo-location",
             runSessionId: currentRunIdRef.current,
           });
         }
@@ -1405,8 +1377,9 @@ const MapScreen = ({ navigation, route }) => {
             speed: pos.coords.speed,
             heading: pos.coords.heading,
             altitude: pos.coords.altitude,
+            altitudeAccuracy: pos.coords.altitudeAccuracy,
             timestamp: pos.timestamp || Date.now(),
-            source: "resume",
+            source: "expo-location",
           });
           if (point) setLocation(point);
         }
@@ -1471,23 +1444,46 @@ const MapScreen = ({ navigation, route }) => {
 
         flushRouteBufferToState();
 
-        const sanitizedPath = sanitizePath(savedPathRef.current);
+        const totalDuration = timeSecRef.current || timeSec;
+        const trackingFinish = trackingSessionRef.current?.finishTrackingSession?.({
+          durationMs: totalDuration * 1000,
+        });
+        lastTrackingFinishRef.current = trackingFinish || null;
+
+        const sanitizedPath = sanitizePath(trackingFinish?.trustedPath || savedPathRef.current);
         const fallbackPoint = location || DEFAULT_COORD;
         const rawPath = sanitizedPath.length > 0 ? sanitizedPath : sanitizePath([fallbackPoint]);
-        const path = rawPath.length > 1 ? buildFinalRoutePath(rawPath) : rawPath;
-        const routeDistance = calculateRouteDistance(path);
+        const path = rawPath;
+        const summaryRenderPath = sanitizePath(
+          trackingFinish?.summaryRenderPath ||
+          trackingFinish?.renderPath ||
+          (path.length > 1 ? buildSummaryRenderPath(path) : path)
+        );
+        const routeDistance = Number(trackingFinish?.distanceMeters || 0) || calculateRouteDistance(path);
         const totalDistance = routeDistance > 0 ? routeDistance : distanceRef.current;
-        const totalDuration = timeSecRef.current || timeSec;
         const stoppedRunSessionId = currentRunIdRef.current;
         const runId = stoppedRunSessionId || uid();
         const finishedAt = new Date().toISOString();
+        const avgSpeedKmh = totalDistance && totalDuration
+          ? Number(((totalDistance / 1000) / (totalDuration / 3600)).toFixed(2))
+          : 0;
+        const maxSpeedKmh = Number(((trackingFinish?.maxSpeedMps || 0) * 3.6).toFixed(2)) || 0;
 
         const runData = {
           id: runId,
           path,
+          trustedPath: path,
+          rawPath: sanitizePath(trackingFinish?.rawPath || rawPath),
+          liveRenderPath: sanitizePath(trackingFinish?.liveRenderPath || displayPathRef.current || []),
+          renderPath: summaryRenderPath,
+          displayPath: summaryRenderPath,
+          pathQuality: trackingFinish?.pathQuality || null,
+          lowConfidenceSegments: trackingFinish?.lowConfidenceSegments || [],
+          smoothingVersion: trackingFinish?.smoothingVersion || "wayper_tracking_v1",
           distance: totalDistance,
           duration: totalDuration,
-          avgSpeed: totalDistance && totalDuration ? Number(((totalDistance / 1000) / (totalDuration / 3600)).toFixed(2)) : 0,
+          avgSpeed: avgSpeedKmh,
+          maxSpeed: maxSpeedKmh,
           date: finishedAt,
           mode: mode || "free",
           area: 0,
@@ -1589,14 +1585,15 @@ const MapScreen = ({ navigation, route }) => {
         debug("stopRun catch", e);
       }
     },
-    [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopWatcherAndPolling, flushRouteBufferToState, buildFinalRoutePath, mode]
+    [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopWatcherAndPolling, flushRouteBufferToState, mode]
   );
 
   /* ============ Replay (mantive) ============ */
   const startReplay = useCallback(
     (runEntry) => {
       try {
-        if (!runEntry || !Array.isArray(runEntry.path) || runEntry.path.length === 0) return;
+        const replaySourcePath = sanitizePath(getRenderablePathForRun(runEntry || {}));
+        if (!runEntry || replaySourcePath.length === 0) return;
         stopWatcherAndPolling();
         stopBackgroundLocationService();
         setReplaying(true);
@@ -1612,7 +1609,7 @@ const MapScreen = ({ navigation, route }) => {
           replayIntervalRef.current = null;
         }
 
-        const path = sanitizePath(runEntry.path);
+        const path = replaySourcePath;
         let idx = 0;
         replayIntervalRef.current = setInterval(() => {
           if (!path || idx >= path.length) {
@@ -1695,7 +1692,7 @@ const MapScreen = ({ navigation, route }) => {
   }, [lastSavedRun, navigation, startReplay]);
 
   const getSavedShareContext = useCallback(() => {
-    const path = sanitizePath(lastSavedRun?.path || []);
+    const path = sanitizePath(getRenderablePathForRun(lastSavedRun || {}));
     const zoneCoords = sanitizePath(lastSavedRun?.zoneCoords || lastSavedRun?.zone?.coords || []);
     const isZone = lastSavedRun?.mode === "zones" || Number(lastSavedRun?.area || 0) > 0 || zoneCoords.length >= 3;
 
@@ -1895,7 +1892,7 @@ const MapScreen = ({ navigation, route }) => {
     inputRange: [0, 1],
     outputRange: [0.16, 0.34],
   });
-  const savedRunPath = sanitizePath(lastSavedRun?.path || []);
+  const savedRunPath = sanitizePath(getRenderablePathForRun(lastSavedRun || {}));
   const savedRoutePoints = buildRouteSvgPoints(savedRunPath);
   const savedZoneCoords = sanitizePath(lastSavedRun?.zoneCoords || lastSavedRun?.zone?.coords || []);
   const savedRunIsZone = lastSavedRun?.mode === "zones" || Number(lastSavedRun?.area || 0) > 0 || savedZoneCoords.length >= 3;
@@ -2398,8 +2395,26 @@ const MapScreen = ({ navigation, route }) => {
         onClose={() => setShowRunModal(false)}
         onSave={async (payload) => {
           try {
-            payload.path = payload.path || payload.coords || currentRunData?.path || [];
-            const normalized = { ...payload, path: sanitizePath(payload.path) };
+            const trustedPath = sanitizePath(payload.trustedPath || payload.path || payload.coords || currentRunData?.trustedPath || currentRunData?.path || []);
+            const renderPath = sanitizePath(
+              payload.renderPath ||
+              payload.displayPath ||
+              currentRunData?.renderPath ||
+              currentRunData?.displayPath ||
+              (trustedPath.length > 1 ? buildSummaryRenderPath(trustedPath) : trustedPath)
+            );
+            const normalized = {
+              ...payload,
+              path: trustedPath,
+              trustedPath,
+              rawPath: sanitizePath(payload.rawPath || currentRunData?.rawPath || []),
+              liveRenderPath: sanitizePath(payload.liveRenderPath || currentRunData?.liveRenderPath || []),
+              renderPath,
+              displayPath: renderPath,
+              pathQuality: payload.pathQuality || currentRunData?.pathQuality || null,
+              lowConfidenceSegments: payload.lowConfidenceSegments || currentRunData?.lowConfidenceSegments || [],
+              smoothingVersion: payload.smoothingVersion || currentRunData?.smoothingVersion || "wayper_tracking_v1",
+            };
 
             const saved = await sync.saveLocalRun?.(normalized);
             sync.scheduleRunsSync?.();

@@ -38,6 +38,7 @@ import {
   getFormattedPace,
   MIN_DISTANCE_FOR_PACE_KM,
 } from "../../utils/pace";
+import { getRenderablePathForRun } from "../../services/tracking";
 
 const MIN_BAR_HEIGHT = 22;
 const CHART_BASE_HEIGHT = 118;
@@ -275,15 +276,19 @@ function RunDetailScreenInner({ route, navigation }) {
     });
   }, [currentRun, navigation, readOnly]);
 
-  const path = useMemo(() => sanitizePath(run?.path || []), [run]);
+  const path = useMemo(() => sanitizePath(run?.trustedPath || run?.path || []), [run]);
+  const mapPath = useMemo(() => {
+    const renderPath = sanitizePath(getRenderablePathForRun(run || {}));
+    return renderPath.length > 1 ? renderPath : path;
+  }, [path, run]);
   const zoneCoords = useMemo(() => sanitizePath(run?.zoneCoords || run?.zone?.coords || []), [run]);
   const isZoneRun = run?.mode === "zones" || safeNum(run?.area) > 0 || zoneCoords.length >= 3;
   const hasZoneShape = isZoneRun && zoneCoords.length >= 3;
   const midPoint = useMemo(() => {
     if (hasZoneShape) return zoneCoords[0] || WAYPER_FALLBACK_COORD;
-    if (path.length === 0) return WAYPER_FALLBACK_COORD;
-    return path[Math.floor(path.length / 2)] || path[0] || WAYPER_FALLBACK_COORD;
-  }, [hasZoneShape, path, zoneCoords]);
+    if (mapPath.length === 0) return WAYPER_FALLBACK_COORD;
+    return mapPath[Math.floor(mapPath.length / 2)] || mapPath[0] || WAYPER_FALLBACK_COORD;
+  }, [hasZoneShape, mapPath, zoneCoords]);
 
   const stats = useMemo(() => computeSplits(path, run?.duration || 0), [path, run]);
   const totalMeters = stats.totalMeters > 0 ? stats.totalMeters : safeNum(run?.distance);
@@ -301,19 +306,19 @@ function RunDetailScreenInner({ route, navigation }) {
   const shareCardTitle = isZoneRun ? "Wayper Zone" : "Wayper Run";
   const shareTraceTitle = isZoneRun ? "Wayper Zone" : "Wayper Trace";
   const shareTracePoints = useMemo(
-    () => buildShareSvgPoints(hasZoneShape ? zoneCoords : path, { smooth: !hasZoneShape }),
-    [hasZoneShape, path, zoneCoords]
+    () => buildShareSvgPoints(hasZoneShape ? zoneCoords : mapPath, { smooth: false }),
+    [hasZoneShape, mapPath, zoneCoords]
   );
   const shareContext = useMemo(
     () => ({
       runId: run?.id,
-      path,
+      path: hasZoneShape ? zoneCoords : mapPath,
       zoneCoords,
       isZone: isZoneRun,
       distanceKm: totalMeters / 1000,
       durationSeconds: totalTime,
     }),
-    [isZoneRun, path, run?.id, totalMeters, totalTime, zoneCoords]
+    [hasZoneShape, isZoneRun, mapPath, run?.id, totalMeters, totalTime, zoneCoords]
   );
 
   const handleEditSave = useCallback(
@@ -452,7 +457,7 @@ function RunDetailScreenInner({ route, navigation }) {
     try {
       setShareLoading("share-trace");
       assertTraceHasEnoughPoints(shareContext);
-      const uri = await generateTracePngFromPath(path, {
+      const uri = await generateTracePngFromPath(hasZoneShape ? zoneCoords : mapPath, {
         ref: shareTraceRef,
         zoneCoords,
         isZone: isZoneRun,
@@ -468,7 +473,7 @@ function RunDetailScreenInner({ route, navigation }) {
     } finally {
       setShareLoading(null);
     }
-  }, [isZoneRun, path, run?.id, shareContext, shareLoading, zoneCoords]);
+  }, [hasZoneShape, isZoneRun, mapPath, run?.id, shareContext, shareLoading, zoneCoords]);
 
   const saveFullImage = useCallback(async () => {
     if (shareLoading) return;
@@ -497,7 +502,7 @@ function RunDetailScreenInner({ route, navigation }) {
     try {
       setShareLoading("download-trace");
       assertTraceHasEnoughPoints(shareContext);
-      const uri = await generateTracePngFromPath(path, {
+      const uri = await generateTracePngFromPath(hasZoneShape ? zoneCoords : mapPath, {
         ref: shareTraceRef,
         zoneCoords,
         isZone: isZoneRun,
@@ -514,7 +519,7 @@ function RunDetailScreenInner({ route, navigation }) {
     } finally {
       setShareLoading(null);
     }
-  }, [isZoneRun, path, run?.id, shareContext, shareLoading, zoneCoords]);
+  }, [hasZoneShape, isZoneRun, mapPath, run?.id, shareContext, shareLoading, zoneCoords]);
 
   const animStyle = useMemo(
     () => ({
@@ -540,13 +545,13 @@ function RunDetailScreenInner({ route, navigation }) {
           <View style={styles.heroMap}>
             <WayperMapLibre
               style={styles.map}
-              routePath={hasZoneShape ? [] : path}
+              routePath={hasZoneShape ? [] : mapPath}
               zones={hasZoneShape ? [{ coords: zoneCoords, area: run?.area }] : []}
               showZones={hasZoneShape}
               centerCoordinate={midPoint}
               showUserLocation={false}
               interactive={false}
-              fitToContent={hasZoneShape || path.length > 1}
+              fitToContent={hasZoneShape || mapPath.length > 1}
               contentPadding={{ top: 58, right: 48, bottom: 62, left: 48 }}
             />
             <LinearGradient
@@ -679,7 +684,7 @@ function RunDetailScreenInner({ route, navigation }) {
       visible={shareVisible}
       onClose={() => setShareVisible(false)}
       run={run}
-      path={path}
+      path={hasZoneShape ? [] : mapPath}
       zoneCoords={zoneCoords}
       isZone={isZoneRun}
       title={shareCardTitle}
