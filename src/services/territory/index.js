@@ -86,3 +86,14 @@ export {
   normalizeTerritoryForMap,
   territoriesToFeatureCollection,
 } from "./territoryMapService.js";
+export {
+  buildTerritoryMapParams,
+  fetchTerritoryFeed,
+  filterCompetitiveFeedItems,
+  filterTerritoryEventsByPrivacy,
+  loadLocalTerritoryFeed,
+  mergeRunsZonesAndTerritoryEvents,
+  normalizeRunForFeed,
+  normalizeTerritoryEventForFeed,
+  normalizeZoneForFeed,
+} from "./territoryFeedService.js";
