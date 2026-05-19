@@ -63,6 +63,12 @@ import {
 } from "../utils/share/runShareExport";
 import { getFormattedPace } from "../utils/pace";
 import { getRunDisplayTitle } from "../utils/runDisplayTitle";
+import { isRunOwnedByCurrentUser } from "../utils/runOwnership";
+import {
+  buildRunReplayTimeline,
+  getReplayIndexForElapsed,
+  getReplayRunStats,
+} from "../utils/runReplay";
 import xpService from "../services/xp/xpService";
 import { updateProfileStats, updateTerritoryProfileStats } from "../services/profile/profileService";
 import {
@@ -95,6 +101,10 @@ const ZONE_PREVIEW_INTERVAL_MS = 1400;
 const BACKGROUND_LOCATION_TASK = "WAYPER_ACTIVE_RUN_LOCATION";
 const FOLLOW_MAP_ZOOM = 17.2;
 const FOLLOW_ANIMATION_DURATION = 450;
+const REPLAY_FOLLOW_ZOOM = 18.1;
+const REPLAY_CAMERA_ANIMATION_DURATION = 240;
+const REPLAY_CAMERA_MOVE_INTERVAL_MS = 180;
+const REPLAY_SPEED_OPTIONS = [1, 2, 3, 4, 5];
 const RECENTER_ANIMATION_DURATION = 700;
 const MIN_CAMERA_MOVE_INTERVAL_MS = 900;
 const TERRITORY_VIEWPORT_DEBOUNCE_MS = 950;
@@ -103,6 +113,24 @@ const TERRITORY_FETCH_LIMIT = 180;
 const TERRITORY_MAX_VIEWPORT_CELLS = 140;
 
 let backgroundLocationUpdateHandler = null;
+
+const requestReplayAnimationFrame = (callback) => {
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    return globalThis.requestAnimationFrame(callback);
+  }
+
+  return setTimeout(() => callback(Date.now()), 16);
+};
+
+const cancelReplayAnimationFrame = (handle) => {
+  if (handle == null) return;
+  if (typeof globalThis.cancelAnimationFrame === "function") {
+    globalThis.cancelAnimationFrame(handle);
+    return;
+  }
+
+  clearTimeout(handle);
+};
 
 try {
   if (TaskManager && !TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK)) {
@@ -440,6 +468,7 @@ const MapScreen = ({ navigation, route }) => {
   const [displayRouteState, setDisplayRouteState] = useState([]);
   const [displayRouteSegments, setDisplayRouteSegments] = useState([]);
   const [replayPathState, setReplayPathState] = useState([]);
+  const [replaySpeed, setReplaySpeed] = useState(1);
   const [distanceState, setDistanceState] = useState(0);
   const [timeSec, setTimeSec] = useState(0);
   const [runsList, setRunsList] = useState([]);
@@ -463,6 +492,15 @@ const MapScreen = ({ navigation, route }) => {
   const timeSecRef = useRef(0);
   const lastNotificationBodyRef = useRef("");
   const replayIntervalRef = useRef(null);
+  const replayFrameRef = useRef(null);
+  const replayPathRef = useRef([]);
+  const replayTimelineRef = useRef([]);
+  const replayLastFrameAtRef = useRef(null);
+  const replayElapsedRef = useRef(0);
+  const replaySpeedRef = useRef(1);
+  const replayRunRef = useRef(null);
+  const replayReturnRef = useRef(null);
+  const lastReplayRequestRef = useRef(null);
   const appStateRef = useRef(AppState.currentState);
   const mountedRef = useRef(true);
 
@@ -821,6 +859,14 @@ const MapScreen = ({ navigation, route }) => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
+      }
+      if (replayIntervalRef.current) {
+        clearInterval(replayIntervalRef.current);
+        replayIntervalRef.current = null;
+      }
+      if (replayFrameRef.current != null) {
+        cancelReplayAnimationFrame(replayFrameRef.current);
+        replayFrameRef.current = null;
       }
       try {
         if (appStateSub?.remove) appStateSub.remove();
@@ -1586,63 +1632,252 @@ const MapScreen = ({ navigation, route }) => {
     [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopWatcherAndPolling, flushRouteBufferToState, mode]
   );
 
-  /* ============ Replay (mantive) ============ */
-  const startReplay = useCallback(
-    (runEntry) => {
+  /* ============ Replay ============ */
+  const clearReplayPlayback = useCallback(() => {
+    if (replayIntervalRef.current) {
+      clearInterval(replayIntervalRef.current);
+      replayIntervalRef.current = null;
+    }
+    if (replayFrameRef.current != null) {
+      cancelReplayAnimationFrame(replayFrameRef.current);
+      replayFrameRef.current = null;
+    }
+    replayLastFrameAtRef.current = null;
+  }, []);
+
+  const returnAfterReplay = useCallback((returnTarget) => {
+    if (!returnTarget) return;
+
+    if (returnTarget.type === "run-detail" && returnTarget.run) {
+      navigation?.navigate("Corridas", {
+        screen: "RunDetail",
+        params: { run: returnTarget.run },
+      });
+      return;
+    }
+
+    if (returnTarget.type === "previous" && navigation?.canGoBack?.()) {
+      navigation.goBack();
+    }
+  }, [navigation]);
+
+  const finishReplay = useCallback(
+    ({ shouldReturn = true } = {}) => {
       try {
-        const replaySourcePath = sanitizePath(getRenderablePathForRun(runEntry || {}));
-        if (!runEntry || replaySourcePath.length === 0) return;
+        const returnTarget = replayReturnRef.current;
+
+        clearReplayPlayback();
+        replayPathRef.current = [];
+        replayTimelineRef.current = [];
+        replayElapsedRef.current = 0;
+        replayRunRef.current = null;
+        replayReturnRef.current = null;
+        replaySpeedRef.current = 1;
+        setReplaySpeed(1);
+        setReplaying(false);
+        setReplayPathState([]);
+        resetTrackingPipeline({ segmentId: 0 });
+        setMapFollowEnabled(true);
+
+        if (shouldReturn) returnAfterReplay(returnTarget);
+      } catch (e) {
+        debug("finishReplay catch", e);
+      }
+    },
+    [clearReplayPlayback, resetTrackingPipeline, returnAfterReplay]
+  );
+
+  const advanceReplayFrame = useCallback(
+    (frameTime) => {
+      const timeline = replayTimelineRef.current;
+      const path = replayPathRef.current;
+
+      if (!Array.isArray(timeline) || timeline.length < 2 || !Array.isArray(path) || path.length < 2) {
+        finishReplay();
+        return;
+      }
+
+      const now = Number(frameTime) || Date.now();
+      const previousFrameAt = replayLastFrameAtRef.current ?? now;
+      const deltaSeconds = Math.max(0, Math.min(0.35, (now - previousFrameAt) / 1000));
+      replayLastFrameAtRef.current = now;
+      replayElapsedRef.current += deltaSeconds * replaySpeedRef.current;
+
+      const lastPoint = timeline[timeline.length - 1];
+      const totalReplaySeconds = Math.max(0.001, Number(lastPoint?.cumulativeTime) || 0.001);
+      const nextIndex = Math.max(0, getReplayIndexForElapsed(timeline, replayElapsedRef.current));
+      const visibleIndex = Math.min(nextIndex, path.length - 1);
+      const currentPoint = timeline[visibleIndex];
+
+      setReplayPathState((previous) => {
+        const nextLength = visibleIndex + 1;
+        if (
+          previous.length === nextLength &&
+          previous[previous.length - 1]?.latitude === path[visibleIndex]?.latitude &&
+          previous[previous.length - 1]?.longitude === path[visibleIndex]?.longitude
+        ) {
+          return previous;
+        }
+        return path.slice(0, nextLength);
+      });
+
+      const currentSeconds = Math.round(Number(currentPoint?.cumulativeTime) || replayElapsedRef.current);
+      const currentMeters = Number(currentPoint?.cumulativeMeters) || 0;
+      timeSecRef.current = currentSeconds;
+      distanceRef.current = currentMeters;
+      setTimeSec(currentSeconds);
+      setDistanceState(currentMeters);
+
+      if (replayElapsedRef.current >= totalReplaySeconds || visibleIndex >= path.length - 1) {
+        setReplayPathState(path);
+        const stats = getReplayRunStats(replayRunRef.current || {}, timeline);
+        timeSecRef.current = Math.round(stats.durationSeconds);
+        distanceRef.current = stats.distanceMeters;
+        setTimeSec(Math.round(stats.durationSeconds));
+        setDistanceState(stats.distanceMeters);
+        finishReplay();
+        return;
+      }
+
+      replayFrameRef.current = requestReplayAnimationFrame(advanceReplayFrame);
+    },
+    [finishReplay]
+  );
+
+  const setReplayPlaybackSpeed = useCallback((nextSpeed) => {
+    const normalizedSpeed = Math.max(1, Math.min(5, Number(nextSpeed) || 1));
+    replaySpeedRef.current = normalizedSpeed;
+    setReplaySpeed(normalizedSpeed);
+  }, []);
+
+  const startReplay = useCallback(
+    (runEntry, options = {}) => {
+      try {
+        if (!runEntry) return;
+
+        if (runningRef.current || running) {
+          Alert.alert("Replay indisponivel", "Finalize a corrida atual antes de reproduzir outra corrida.");
+          if (options.returnTo) returnAfterReplay(options.returnTo);
+          return;
+        }
+
+        const isZoneReplay =
+          runEntry?.mode === "zones" ||
+          Number(runEntry?.area || runEntry?.areaM2 || 0) > 0 ||
+          (Array.isArray(runEntry?.zoneCoords) && runEntry.zoneCoords.length >= 3) ||
+          (Array.isArray(runEntry?.zone?.coords) && runEntry.zone.coords.length >= 3);
+
+        if (isZoneReplay) {
+          Alert.alert("Replay indisponivel", "O replay esta disponivel apenas para corrida livre.");
+          if (options.returnTo) returnAfterReplay(options.returnTo);
+          return;
+        }
+
+        if (
+          runEntry?.readOnly ||
+          options.readOnly ||
+          !isRunOwnedByCurrentUser(runEntry, currentUserId, { allowLegacyLocal: options.allowLegacyLocal === true })
+        ) {
+          Alert.alert("Replay bloqueado", "Voce so pode reproduzir corridas do seu proprio historico.");
+          if (options.returnTo) returnAfterReplay(options.returnTo);
+          return;
+        }
+
+        const replayData = buildRunReplayTimeline(runEntry);
+        if (!replayData.path || replayData.path.length < 2 || !replayData.timeline || replayData.timeline.length < 2) {
+          Alert.alert("Replay indisponivel", "Esta corrida nao possui pontos suficientes para reproducao.");
+          if (options.returnTo) returnAfterReplay(options.returnTo);
+          return;
+        }
+
         stopWatcherAndPolling();
         stopBackgroundLocationService();
+        clearReplayPlayback();
+
+        const stats = getReplayRunStats(runEntry, replayData.timeline);
+        const initialPoint = replayData.timeline[0];
+
+        replayRunRef.current = runEntry;
+        replayReturnRef.current = options.returnTo || null;
+        replayPathRef.current = replayData.path;
+        replayTimelineRef.current = replayData.timeline;
+        replayElapsedRef.current = 0;
+        replayLastFrameAtRef.current = null;
+        replaySpeedRef.current = 1;
+
+        setReplaySpeed(1);
         setReplaying(true);
         runningRef.current = false;
         setRunning(false);
         setPaused(false);
-        resetTrackingPipeline({ segmentId: 0 });
-        setReplayPathState([]);
         setMode(null);
+        modeRef.current = null;
+        setCaptureResult(null);
+        closeSelectedTerritory();
+        setMapFocusCenter(null);
+        setMapFollowEnabled(true);
+        resetTrackingPipeline({ segmentId: 0 });
+        setRouteState([]);
+        setDisplayRouteState([]);
+        setDisplayRouteSegments([]);
+        setReplayPathState([replayData.path[0]]);
+        timeSecRef.current = 0;
+        distanceRef.current = 0;
+        setTimeSec(stats.durationSeconds > 0 ? 0 : Math.round(initialPoint?.cumulativeTime || 0));
+        setDistanceState(0);
 
-        if (replayIntervalRef.current) {
-          clearInterval(replayIntervalRef.current);
-          replayIntervalRef.current = null;
-        }
-
-        const path = replaySourcePath;
-        let idx = 0;
-        replayIntervalRef.current = setInterval(() => {
-          if (!path || idx >= path.length) {
-            clearInterval(replayIntervalRef.current);
-            replayIntervalRef.current = null;
-            setReplaying(false);
-            setReplayPathState([]);
-            resetTrackingPipeline({ segmentId: 0 });
-            return;
-          }
-          const p = path[idx++];
-          setReplayPathState((prev) => {
-            const merged = prev.concat(p);
-            return merged.length > ROUTE_CAP ? merged.slice(merged.length - ROUTE_CAP) : merged;
-          });
-
-        }, 250);
+        replayFrameRef.current = requestReplayAnimationFrame(advanceReplayFrame);
       } catch (e) {
         debug("startReplay catch", e);
       }
     },
-    [resetTrackingPipeline, stopBackgroundLocationService, stopWatcherAndPolling]
+    [
+      advanceReplayFrame,
+      clearReplayPlayback,
+      closeSelectedTerritory,
+      currentUserId,
+      resetTrackingPipeline,
+      returnAfterReplay,
+      running,
+      stopBackgroundLocationService,
+      stopWatcherAndPolling,
+    ]
   );
 
   const stopReplay = useCallback(() => {
-    try {
-      if (replayIntervalRef.current) clearInterval(replayIntervalRef.current);
-      replayIntervalRef.current = null;
-      setReplaying(false);
-      setReplayPathState([]);
-      resetTrackingPipeline({ segmentId: 0 });
-    } catch (e) {
-      debug("stopReplay catch", e);
-    }
-  }, []);
+    finishReplay();
+  }, [finishReplay]);
+
+  useEffect(() => {
+    const replayRun = route?.params?.replayRun;
+    if (!replayRun) return;
+    if (!location) return;
+
+    const replayRequestId =
+      route?.params?.replayRequestId ||
+      `${replayRun?.id || replayRun?.date || "run"}:${replayRun?.updatedAt || replayRun?.createdAt || ""}`;
+
+    if (lastReplayRequestRef.current === replayRequestId) return;
+    lastReplayRequestRef.current = replayRequestId;
+
+    setShowSavedModal(false);
+    setSavedShareVisible(false);
+    setCompletedZonePreview([]);
+    setShowRunModal(false);
+    setShowRunsModal(false);
+    startReplay(replayRun, {
+      returnTo: route?.params?.replayReturnTo || { type: "previous" },
+      readOnly: !!(route?.params?.readOnly || replayRun?.readOnly),
+      allowLegacyLocal: route?.params?.replayAllowLegacyLocal === true,
+    });
+
+    navigation?.setParams?.({
+      replayRun: undefined,
+      replayReturnTo: undefined,
+      replayRequestId: undefined,
+      replayAllowLegacyLocal: undefined,
+    });
+  }, [location, navigation, route?.params, startReplay]);
 
   /* ============ UI helpers ============ */
   const closeRunsModal = useCallback(() => {
@@ -1686,7 +1921,7 @@ const MapScreen = ({ navigation, route }) => {
     setShowRunsModal(false);
     navigation?.closeDrawer?.();
     navigation?.navigate("Mapa");
-    setTimeout(() => startReplay(lastSavedRun), 220);
+    setTimeout(() => startReplay(lastSavedRun, { allowLegacyLocal: true }), 220);
   }, [lastSavedRun, navigation, startReplay]);
 
   const getSavedShareContext = useCallback(() => {
@@ -1869,12 +2104,14 @@ const MapScreen = ({ navigation, route }) => {
   // Se chegou aqui, garantimos que o app não ficará preso. Use location fallback se necessário.
   const safeLocation = location || DEFAULT_COORD;
   const replayCenter = Array.isArray(replayPathState) && replayPathState.length > 0 ? replayPathState[replayPathState.length - 1] : null;
+  const mapLocation = replaying && replayCenter ? replayCenter : safeLocation;
   const activeZonePreview = showZones && running && mode === "zones" && Array.isArray(polygons) ? polygons : [];
   const finishedZonePreview = showZones && (showRunModal || showSavedModal) && Array.isArray(completedZonePreview) ? completedZonePreview : [];
   const visibleMapZones = finishedZonePreview.length > 0 ? finishedZonePreview : activeZonePreview;
   const liveRoutePath = running || paused ? displayRouteState : routeState;
   const liveRouteSegments = running || paused ? displayRouteSegments : splitPathIntoSegments(liveRoutePath);
   const shouldFollowMap = running && !paused && !replaying && mapFollowEnabled;
+  const shouldFollowReplay = replaying;
   const shouldShowRecenterMap = running && !paused && !replaying && !mapFollowEnabled;
   if (!location) {
     return (
@@ -1924,9 +2161,9 @@ const MapScreen = ({ navigation, route }) => {
       <View style={{ flex: 1 }}>
         <WayperMapLibre
           style={styles.map}
-          location={safeLocation}
+          location={mapLocation}
           centerCoordinate={replaying ? replayCenter : (mapFocusCenter || safeLocation)}
-          autoCenterOnCoordinate={!running || replaying}
+          autoCenterOnCoordinate={!running && !replaying}
           routePath={liveRoutePath}
           routeSegments={liveRouteSegments}
           replayPath={replayPathState}
@@ -1939,12 +2176,12 @@ const MapScreen = ({ navigation, route }) => {
           showTerritories
           showLeaderAreas
           showUserLocation={!replaying}
-          followUserLocation={shouldFollowMap}
-          initialZoom={15}
-          followZoomLevel={FOLLOW_MAP_ZOOM}
-          followAnimationDuration={FOLLOW_ANIMATION_DURATION}
+          followUserLocation={shouldFollowMap || shouldFollowReplay}
+          initialZoom={replaying ? REPLAY_FOLLOW_ZOOM : 15}
+          followZoomLevel={replaying ? REPLAY_FOLLOW_ZOOM : FOLLOW_MAP_ZOOM}
+          followAnimationDuration={replaying ? REPLAY_CAMERA_ANIMATION_DURATION : FOLLOW_ANIMATION_DURATION}
           recenterAnimationDuration={RECENTER_ANIMATION_DURATION}
-          minCameraMoveIntervalMs={MIN_CAMERA_MOVE_INTERVAL_MS}
+          minCameraMoveIntervalMs={replaying ? REPLAY_CAMERA_MOVE_INTERVAL_MS : MIN_CAMERA_MOVE_INTERVAL_MS}
           recenterSignal={mapRecenterSignal}
           onUserInteraction={handleMapUserInteraction}
           onTerritoryPress={handleTerritoryPress}
@@ -2090,9 +2327,25 @@ const MapScreen = ({ navigation, route }) => {
         </View>
       )}
       {replaying && (
-        <View style={styles.bottomButtons}>
+        <View style={styles.replayDock}>
+          <View pointerEvents="none" style={styles.runActionDockGlow} />
+          <View style={styles.replaySpeedRow}>
+            {REPLAY_SPEED_OPTIONS.map((speed) => {
+              const selected = replaySpeed === speed;
+              return (
+                <TouchableOpacity
+                  key={`replay-speed-${speed}`}
+                  activeOpacity={0.88}
+                  style={[styles.replaySpeedButton, selected && styles.replaySpeedButtonActive]}
+                  onPress={() => setReplayPlaybackSpeed(speed)}
+                >
+                  <Text style={[styles.replaySpeedText, selected && styles.replaySpeedTextActive]}>{speed}x</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           <WPButton
-            title="Parar Reprodução"
+            title="Parar reproducao"
             variant="danger"
             icon={<Ionicons name="stop-circle-outline" size={20} color={WayperTheme.colors.text} />}
             onPress={stopReplay}
@@ -2919,6 +3172,48 @@ const styles = StyleSheet.create({
   },
 
   bottomButtons: { position: "absolute", bottom: 28, left: 22, right: 22, alignItems: "stretch" },
+  replayDock: {
+    position: "absolute",
+    bottom: 28,
+    left: 22,
+    right: 22,
+    borderRadius: WayperTheme.radius.xxl,
+    padding: 10,
+    backgroundColor: "rgba(8, 16, 24, 0.9)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    gap: 10,
+    overflow: "hidden",
+    ...WayperTheme.shadows.card,
+  },
+  replaySpeedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  replaySpeedButton: {
+    flex: 1,
+    height: 40,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+  },
+  replaySpeedButtonActive: {
+    backgroundColor: WayperTheme.colors.primary,
+    borderColor: WayperTheme.colors.primaryLight,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  replaySpeedText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  replaySpeedTextActive: {
+    color: WayperTheme.colors.textInverse,
+  },
   bottomAction: { width: "100%" },
   runActionDock: {
     position: "absolute",

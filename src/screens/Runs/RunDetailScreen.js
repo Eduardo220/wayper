@@ -19,6 +19,7 @@ import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../../components/Runs/RunShar
 import RunSummaryModal from "../../components/Runs/RunSummaryModal";
 import { WPButton } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
+import { auth } from "../../firebaseConfig";
 import sync from "../../utils/sync";
 import { beautifyRoutePath } from "../../utils/routeDrawing";
 import {
@@ -39,6 +40,8 @@ import {
   MIN_DISTANCE_FOR_PACE_KM,
 } from "../../utils/pace";
 import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
+import { isRunOwnedByCurrentUser } from "../../utils/runOwnership";
+import { normalizeRunPath } from "../../utils/runPath";
 import { getRenderablePathForRun } from "../../services/tracking";
 
 const MIN_BAR_HEIGHT = 22;
@@ -277,7 +280,7 @@ function RunDetailScreenInner({ route, navigation }) {
     });
   }, [currentRun, navigation, readOnly]);
 
-  const path = useMemo(() => sanitizePath(run?.trustedPath || run?.path || []), [run]);
+  const path = useMemo(() => normalizeRunPath(run), [run]);
   const mapPath = useMemo(() => {
     const renderPath = sanitizePath(getRenderablePathForRun(run || {}));
     return renderPath.length > 1 ? renderPath : path;
@@ -331,6 +334,32 @@ function RunDetailScreenInner({ route, navigation }) {
     }),
     [hasZoneShape, isZoneRun, run?.id, shareRoutePath, totalMeters, totalTime, zoneCoords]
   );
+  const currentUserId = auth.currentUser?.uid || "offline";
+  const canReplayRun = useMemo(
+    () =>
+      !readOnly &&
+      !isZoneRun &&
+      path.length > 1 &&
+      isRunOwnedByCurrentUser(run, currentUserId, { allowLegacyLocal: !readOnly }),
+    [currentUserId, isZoneRun, path.length, readOnly, run]
+  );
+
+  const handleReplayRun = useCallback(() => {
+    if (!canReplayRun || !run) {
+      Alert.alert("Replay indisponivel", "O replay esta disponivel apenas para corridas livres do seu historico.");
+      return;
+    }
+
+    const params = {
+      replayRun: run,
+      replayReturnTo: { type: "run-detail", run },
+      replayRequestId: `${run.id || run.date || "run"}:${Date.now()}`,
+      replayAllowLegacyLocal: !readOnly,
+    };
+    const parent = navigation.getParent?.();
+    if (parent) parent.navigate("Mapa", params);
+    else navigation.navigate("Mapa", params);
+  }, [canReplayRun, navigation, readOnly, run]);
 
   const handleEditSave = useCallback(
     async (payload) => {
@@ -684,10 +713,18 @@ function RunDetailScreenInner({ route, navigation }) {
 
           {!readOnly ? (
             <View style={styles.actions}>
+              {canReplayRun ? (
+                <WPButton
+                  title="Reproduzir corrida"
+                  icon={<Ionicons name="play-circle-outline" size={21} color={WayperTheme.colors.textInverse} />}
+                  onPress={handleReplayRun}
+                />
+              ) : null}
               <WPButton
                 title="Compartilhar corrida"
                 icon={<Ionicons name="image-outline" size={21} color={WayperTheme.colors.textInverse} />}
                 onPress={() => setShareVisible(true)}
+                style={canReplayRun ? styles.actionGap : undefined}
               />
             </View>
           ) : null}

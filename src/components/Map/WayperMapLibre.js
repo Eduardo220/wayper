@@ -717,7 +717,7 @@ function WayperMapLibre({
     return { start, end };
   }, [routeEndCoordinate, routePath, routeSegments, routeStartCoordinate, showRouteEndpoints]);
   const replayCollection = useMemo(
-    () => buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay" })]),
+    () => buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay", preserveGeometry: true })]),
     [replayPath]
   );
   const replayHeadCollection = useMemo(
