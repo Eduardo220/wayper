@@ -11,8 +11,8 @@ import Svg, {
   Rect,
   Stop,
 } from "react-native-svg";
+import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../Map/WayperMapLibre";
 import { WayperTheme } from "../../theme/wayperTheme";
-import { buildSummaryRenderPath } from "../../services/tracking";
 
 export const RUN_SHARE_CARD_SIZE = {
   card: { width: 1080, height: 1350 },
@@ -22,6 +22,7 @@ export const RUN_SHARE_CARD_SIZE = {
 const CARD_VIEWBOX = { width: 1080, height: 760 };
 const TRACE_VIEWBOX = { width: 900, height: 620 };
 const WAYPER_LOGO = require("../../../assets/logo.png");
+const MAX_MERCATOR_LATITUDE = 85.05112878;
 
 const safeNumber = (value, fallback = NaN) => {
   const number = Number(value);
@@ -64,13 +65,20 @@ const closePolygon = (coords = []) => {
   return coords.concat(first);
 };
 
-const buildSvgPoints = (coords = [], { width, height, padding = 72, smooth = false, closed = false } = {}) => {
+const projectCoord = (point) => {
+  const latitude = Math.max(-MAX_MERCATOR_LATITUDE, Math.min(MAX_MERCATOR_LATITUDE, point.latitude));
+  const latRad = (latitude * Math.PI) / 180;
+  return {
+    x: point.longitude,
+    y: Math.log(Math.tan(Math.PI / 4 + latRad / 2)),
+  };
+};
+
+const buildSvgPoints = (coords = [], { width, height, padding = 72, closed = false } = {}) => {
   const clean = normalizeCoords(coords);
   if (clean.length === 0) return { points: "", hasShape: false };
 
-  const source = smooth && clean.length > 2 ? buildSummaryRenderPath(clean) : clean;
-
-  const points = closed ? closePolygon(source) : source;
+  const points = closed ? closePolygon(clean) : clean;
   if (points.length < (closed ? 4 : 2)) {
     const only = points[0];
     return {
@@ -80,12 +88,7 @@ const buildSvgPoints = (coords = [], { width, height, padding = 72, smooth = fal
     };
   }
 
-  const avgLat = points.reduce((sum, point) => sum + point.latitude, 0) / points.length;
-  const lngScale = Math.max(0.2, Math.cos((avgLat * Math.PI) / 180));
-  const projected = points.map((point) => ({
-    x: point.longitude * lngScale,
-    y: point.latitude,
-  }));
+  const projected = points.map(projectCoord);
 
   const xs = projected.map((point) => point.x);
   const ys = projected.map((point) => point.y);
@@ -132,7 +135,6 @@ function Artwork({ mode, coords, isZone }) {
         width: viewBox.width,
         height: viewBox.height,
         padding: mode === "trace" ? 120 : 110,
-        smooth: !isZone,
         closed: isZone,
       }),
     [coords, isZone, mode, viewBox.height, viewBox.width]
@@ -180,19 +182,46 @@ function Artwork({ mode, coords, isZone }) {
   );
 }
 
+function getArtworkCenter(coords = []) {
+  if (!Array.isArray(coords) || coords.length === 0) return WAYPER_FALLBACK_COORD;
+  return coords[Math.floor(coords.length / 2)] || coords[0] || WAYPER_FALLBACK_COORD;
+}
+
+function MapArtwork({ coords = [], isZone = false, area = "0 m2", mapStyle }) {
+  const zones = isZone && coords.length >= 3 ? [{ coords, area }] : [];
+
+  return (
+    <WayperMapLibre
+      style={styles.mapArtwork}
+      routePath={isZone ? [] : coords}
+      zones={zones}
+      showZones={isZone}
+      showUserLocation={false}
+      showTerritories={false}
+      showLeaderAreas={false}
+      interactive={false}
+      fitToContent={coords.length > 1}
+      centerCoordinate={getArtworkCenter(coords)}
+      contentPadding={{ top: 82, right: 78, bottom: 82, left: 78 }}
+      mapStyle={mapStyle}
+    />
+  );
+}
+
 const RunShareCard = forwardRef(function RunShareCard(
   {
     mode = "card",
     path = [],
     zoneCoords = [],
     isZone = false,
-    title = "Wayper Run",
+    title = "Corrida Wayper",
     subtitle,
     distance = "0.00 km",
     duration = "0:00",
     pace = "--",
     date = "",
     area = "0 m2",
+    mapStyle,
     style,
   },
   ref
@@ -202,16 +231,18 @@ const RunShareCard = forwardRef(function RunShareCard(
   const zoneShape = normalizeCoords(zoneCoords);
   const useZoneShape = Boolean(isZone && (zoneShape.length >= 3 || routeCoords.length >= 3));
   const artworkCoords = useZoneShape ? (zoneShape.length >= 3 ? zoneShape : routeCoords) : routeCoords;
-  const displayTitle = title || (useZoneShape ? "Wayper Zone" : "Wayper Run");
-  const displaySubtitle = subtitle || (useZoneShape ? "Corrida por zonas" : "Corrida livre");
+  const displayTitle = title || "Corrida Wayper";
+  const displaySubtitle = subtitle && subtitle !== displayTitle
+    ? subtitle
+    : (useZoneShape ? "Corrida por zonas" : "Corrida livre");
 
   if (mode === "trace") {
     return (
       <View ref={ref} collapsable={false} style={[styles.root, styles.traceRoot, { width: size.width, height: size.height }, style]}>
         <View style={styles.traceHeader}>
-          <View>
+          <View style={styles.traceTitleColumn}>
             <Text style={styles.traceEyebrow}>Wayper Trace</Text>
-            <Text style={styles.traceTitle}>{useZoneShape ? "Zona PNG" : "Traçado PNG"}</Text>
+            <Text style={styles.traceTitle} numberOfLines={2}>{displayTitle}</Text>
           </View>
           <View style={styles.traceBadge}>
             <Image source={WAYPER_LOGO} style={styles.shareLogoImage} resizeMode="contain" />
@@ -234,9 +265,11 @@ const RunShareCard = forwardRef(function RunShareCard(
   return (
     <View ref={ref} collapsable={false} style={[styles.root, styles.cardRoot, { width: size.width, height: size.height }, style]}>
       <View style={styles.cardHeader}>
-        <View>
+        <View style={styles.cardTitleColumn}>
           <Text style={styles.cardEyebrow}>Wayper finalizado</Text>
-          <Text style={styles.cardTitle}>{displayTitle}</Text>
+          <Text style={styles.cardTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.62}>
+            {displayTitle}
+          </Text>
           <Text style={styles.cardSubtitle}>{displaySubtitle}</Text>
         </View>
         <View style={styles.logoMark}>
@@ -244,8 +277,8 @@ const RunShareCard = forwardRef(function RunShareCard(
         </View>
       </View>
 
-      <View style={styles.cardArtwork}>
-        <Artwork mode="card" coords={artworkCoords} isZone={useZoneShape} />
+      <View collapsable={false} style={styles.cardArtwork}>
+        <MapArtwork coords={artworkCoords} isZone={useZoneShape} area={area} mapStyle={mapStyle} />
       </View>
 
       <View style={styles.cardInfo}>
@@ -292,6 +325,10 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textTransform: "uppercase",
   },
+  cardTitleColumn: {
+    flex: 1,
+    paddingRight: 34,
+  },
   cardTitle: {
     color: WayperTheme.colors.text,
     fontSize: 74,
@@ -322,6 +359,9 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: WayperTheme.colors.primaryBorder,
     backgroundColor: WayperTheme.colors.surface,
+  },
+  mapArtwork: {
+    flex: 1,
   },
   cardInfo: {
     marginTop: 44,
@@ -397,6 +437,10 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: "900",
     textTransform: "uppercase",
+  },
+  traceTitleColumn: {
+    flex: 1,
+    paddingRight: 28,
   },
   traceTitle: {
     color: WayperTheme.colors.text,

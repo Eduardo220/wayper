@@ -38,6 +38,7 @@ import {
   getFormattedPace,
   MIN_DISTANCE_FOR_PACE_KM,
 } from "../../utils/pace";
+import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
 import { getRenderablePathForRun } from "../../services/tracking";
 
 const MIN_BAR_HEIGHT = 22;
@@ -298,27 +299,37 @@ function RunDetailScreenInner({ route, navigation }) {
   const paceDisplay = getFormattedPace(totalTime, totalMeters / 1000, { suffix: "/km" });
   const avgSpeedDisplay = (safeNum(stats.avgSpeedKmh) || safeNum(run?.avgSpeed)).toFixed(1);
   const maxSpeedDisplay = safeNum(stats.maxSpeedKmh).toFixed(1);
-  const runTitle = run?.name || "Corrida";
+  const runTitle = getRunDisplayTitle(run);
   const effort = run?.effort ?? "--";
   const distanceDisplay = `${totalKm} km`;
   const durationDisplay = formatDuration(totalTime);
   const areaDisplay = `${Math.round(safeNum(run?.area))} m2`;
-  const shareCardTitle = isZoneRun ? "Wayper Zone" : "Wayper Run";
+  const shareCardTitle = runTitle;
   const shareTraceTitle = isZoneRun ? "Wayper Zone" : "Wayper Trace";
+  const routeEndpointPath = useMemo(
+    () => (path.length > 1 ? path : mapPath),
+    [mapPath, path]
+  );
+  const routeStartPoint = !isZoneRun ? routeEndpointPath[0] : null;
+  const routeEndPoint = !isZoneRun ? routeEndpointPath[routeEndpointPath.length - 1] : null;
+  const shareRoutePath = useMemo(
+    () => (hasZoneShape ? [] : routeEndpointPath),
+    [hasZoneShape, routeEndpointPath]
+  );
   const shareTracePoints = useMemo(
-    () => buildShareSvgPoints(hasZoneShape ? zoneCoords : mapPath, { smooth: false }),
-    [hasZoneShape, mapPath, zoneCoords]
+    () => buildShareSvgPoints(hasZoneShape ? zoneCoords : shareRoutePath, { smooth: false }),
+    [hasZoneShape, shareRoutePath, zoneCoords]
   );
   const shareContext = useMemo(
     () => ({
       runId: run?.id,
-      path: hasZoneShape ? zoneCoords : mapPath,
+      path: hasZoneShape ? zoneCoords : shareRoutePath,
       zoneCoords,
       isZone: isZoneRun,
       distanceKm: totalMeters / 1000,
       durationSeconds: totalTime,
     }),
-    [hasZoneShape, isZoneRun, mapPath, run?.id, totalMeters, totalTime, zoneCoords]
+    [hasZoneShape, isZoneRun, run?.id, shareRoutePath, totalMeters, totalTime, zoneCoords]
   );
 
   const handleEditSave = useCallback(
@@ -457,7 +468,7 @@ function RunDetailScreenInner({ route, navigation }) {
     try {
       setShareLoading("share-trace");
       assertTraceHasEnoughPoints(shareContext);
-      const uri = await generateTracePngFromPath(hasZoneShape ? zoneCoords : mapPath, {
+      const uri = await generateTracePngFromPath(hasZoneShape ? zoneCoords : shareRoutePath, {
         ref: shareTraceRef,
         zoneCoords,
         isZone: isZoneRun,
@@ -473,7 +484,7 @@ function RunDetailScreenInner({ route, navigation }) {
     } finally {
       setShareLoading(null);
     }
-  }, [hasZoneShape, isZoneRun, mapPath, run?.id, shareContext, shareLoading, zoneCoords]);
+  }, [hasZoneShape, isZoneRun, run?.id, shareContext, shareLoading, shareRoutePath, zoneCoords]);
 
   const saveFullImage = useCallback(async () => {
     if (shareLoading) return;
@@ -502,7 +513,7 @@ function RunDetailScreenInner({ route, navigation }) {
     try {
       setShareLoading("download-trace");
       assertTraceHasEnoughPoints(shareContext);
-      const uri = await generateTracePngFromPath(hasZoneShape ? zoneCoords : mapPath, {
+      const uri = await generateTracePngFromPath(hasZoneShape ? zoneCoords : shareRoutePath, {
         ref: shareTraceRef,
         zoneCoords,
         isZone: isZoneRun,
@@ -519,7 +530,7 @@ function RunDetailScreenInner({ route, navigation }) {
     } finally {
       setShareLoading(null);
     }
-  }, [hasZoneShape, isZoneRun, mapPath, run?.id, shareContext, shareLoading, zoneCoords]);
+  }, [hasZoneShape, isZoneRun, run?.id, shareContext, shareLoading, shareRoutePath, zoneCoords]);
 
   const animStyle = useMemo(
     () => ({
@@ -552,6 +563,9 @@ function RunDetailScreenInner({ route, navigation }) {
               showUserLocation={false}
               interactive={false}
               fitToContent={hasZoneShape || mapPath.length > 1}
+              showRouteEndpoints={!isZoneRun}
+              routeStartCoordinate={routeStartPoint}
+              routeEndCoordinate={routeEndPoint}
               contentPadding={{ top: 58, right: 48, bottom: 62, left: 48 }}
             />
             <LinearGradient
@@ -684,7 +698,7 @@ function RunDetailScreenInner({ route, navigation }) {
       visible={shareVisible}
       onClose={() => setShareVisible(false)}
       run={run}
-      path={hasZoneShape ? [] : mapPath}
+      path={shareRoutePath}
       zoneCoords={zoneCoords}
       isZone={isZoneRun}
       title={shareCardTitle}

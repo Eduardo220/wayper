@@ -49,7 +49,7 @@ import {
 } from "../utils/tracking";
 import zones from "../utils/zones";
 import sync from "../utils/sync";
-import { beautifyRoutePath, calculateRouteDistance, finalizeRoutePath } from "../utils/routeDrawing";
+import { calculateRouteDistance, finalizeRoutePath } from "../utils/routeDrawing";
 import {
   assertTraceHasEnoughPoints,
   captureRunShareImage,
@@ -62,6 +62,7 @@ import {
   showShareError,
 } from "../utils/share/runShareExport";
 import { getFormattedPace } from "../utils/pace";
+import { getRunDisplayTitle } from "../utils/runDisplayTitle";
 import xpService from "../services/xp/xpService";
 import { updateProfileStats, updateTerritoryProfileStats } from "../services/profile/profileService";
 import {
@@ -152,6 +153,7 @@ const showRunShareFailure = (message, error) => {
 const uid = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
 const sanitizePath = (arr = []) => sanitizeRunPath(arr);
+const MAX_MERCATOR_LATITUDE = 85.05112878;
 
 const formatSavedDuration = (seconds = 0) => {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
@@ -177,30 +179,43 @@ const formatSavedDate = (date) => {
 };
 
 const buildRouteSvgPoints = (path = [], width = 320, height = 210, padding = 28) => {
-  const points = beautifyRoutePath(sanitizePath(path), {
-    toleranceM: 3.5,
-    minPointDistanceM: 1.4,
-    spikeToleranceM: 7,
-    maxPoints: 700,
-    preserveTurns: true,
-  });
+  const points = sanitizePath(path);
   if (points.length < 2) return "";
 
-  const lats = points.map((p) => p.latitude);
-  const lngs = points.map((p) => p.longitude);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-  const latRange = Math.max(maxLat - minLat, 0.000001);
-  const lngRange = Math.max(maxLng - minLng, 0.000001);
+  return buildShareSvgPointString(points, width, height, padding);
+};
+
+const projectSharePoint = (point) => {
+  const latitude = Math.max(-MAX_MERCATOR_LATITUDE, Math.min(MAX_MERCATOR_LATITUDE, point.latitude));
+  const latRad = (latitude * Math.PI) / 180;
+  return {
+    x: point.longitude,
+    y: Math.log(Math.tan(Math.PI / 4 + latRad / 2)),
+  };
+};
+
+const buildShareSvgPointString = (points = [], width = 320, height = 210, padding = 28) => {
+  const projected = points.map(projectSharePoint);
+  const xs = projected.map((p) => p.x);
+  const ys = projected.map((p) => p.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const rangeX = Math.max(maxX - minX, 0.000001);
+  const rangeY = Math.max(maxY - minY, 0.000001);
   const drawWidth = width - padding * 2;
   const drawHeight = height - padding * 2;
+  const scale = Math.min(drawWidth / rangeX, drawHeight / rangeY);
+  const shapeWidth = rangeX * scale;
+  const shapeHeight = rangeY * scale;
+  const offsetX = (width - shapeWidth) / 2;
+  const offsetY = (height - shapeHeight) / 2;
 
-  return points
+  return projected
     .map((p) => {
-      const x = padding + ((p.longitude - minLng) / lngRange) * drawWidth;
-      const y = padding + (1 - (p.latitude - minLat) / latRange) * drawHeight;
+      const x = offsetX + (p.x - minX) * scale;
+      const y = offsetY + (1 - (p.y - minY) / rangeY) * shapeHeight;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
@@ -210,24 +225,7 @@ const buildPolygonSvgPoints = (coords = [], width = 320, height = 210, padding =
   const points = sanitizePath(coords);
   if (points.length < 3) return "";
 
-  const lats = points.map((p) => p.latitude);
-  const lngs = points.map((p) => p.longitude);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-  const latRange = Math.max(maxLat - minLat, 0.000001);
-  const lngRange = Math.max(maxLng - minLng, 0.000001);
-  const drawWidth = width - padding * 2;
-  const drawHeight = height - padding * 2;
-
-  return points
-    .map((p) => {
-      const x = padding + ((p.longitude - minLng) / lngRange) * drawWidth;
-      const y = padding + (1 - (p.latitude - minLat) / latRange) * drawHeight;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+  return buildShareSvgPointString(points, width, height, padding);
 };
 
 const DEFAULT_COORD = WAYPER_FALLBACK_COORD;
@@ -1692,7 +1690,9 @@ const MapScreen = ({ navigation, route }) => {
   }, [lastSavedRun, navigation, startReplay]);
 
   const getSavedShareContext = useCallback(() => {
-    const path = sanitizePath(getRenderablePathForRun(lastSavedRun || {}));
+    const renderPath = sanitizePath(getRenderablePathForRun(lastSavedRun || {}));
+    const originalPath = sanitizePath(lastSavedRun?.trustedPath || lastSavedRun?.path || renderPath);
+    const path = originalPath.length > 1 ? originalPath : renderPath;
     const zoneCoords = sanitizePath(lastSavedRun?.zoneCoords || lastSavedRun?.zone?.coords || []);
     const isZone = lastSavedRun?.mode === "zones" || Number(lastSavedRun?.area || 0) > 0 || zoneCoords.length >= 3;
 
@@ -1712,6 +1712,7 @@ const MapScreen = ({ navigation, route }) => {
         filename,
         width: RUN_SHARE_CARD_SIZE.card.width,
         height: RUN_SHARE_CARD_SIZE.card.height,
+        waitMs: 1400,
       });
     } catch (cardError) {
       logShareError("saved-card-capture-fallback", cardError, context);
@@ -1893,17 +1894,23 @@ const MapScreen = ({ navigation, route }) => {
     outputRange: [0.16, 0.34],
   });
   const savedRunPath = sanitizePath(getRenderablePathForRun(lastSavedRun || {}));
-  const savedRoutePoints = buildRouteSvgPoints(savedRunPath);
+  const savedOriginalPath = sanitizePath(lastSavedRun?.trustedPath || lastSavedRun?.path || savedRunPath);
+  const savedSharePath = savedOriginalPath.length > 1 ? savedOriginalPath : savedRunPath;
+  const savedRoutePoints = buildRouteSvgPoints(savedSharePath);
   const savedZoneCoords = sanitizePath(lastSavedRun?.zoneCoords || lastSavedRun?.zone?.coords || []);
   const savedRunIsZone = lastSavedRun?.mode === "zones" || Number(lastSavedRun?.area || 0) > 0 || savedZoneCoords.length >= 3;
   const savedZonePoints = buildPolygonSvgPoints(savedZoneCoords);
   const savedTracePoints = savedRunIsZone && savedZonePoints ? savedZonePoints : savedRoutePoints;
   const savedShareZones = savedRunIsZone && savedZoneCoords.length >= 3 ? [{ coords: savedZoneCoords, area: lastSavedRun?.area }] : [];
+  const savedRunDisplayTitle = getRunDisplayTitle(lastSavedRun);
   const savedRunName = lastSavedRun?.name || (savedRunIsZone ? "Captura por zonas salva" : "Corrida salva");
+  const savedShareSubtitle = savedRunName && savedRunName !== savedRunDisplayTitle
+    ? savedRunName
+    : (savedRunIsZone ? "Corrida por zonas" : "Corrida livre");
   const savedRunTitle = savedRunIsZone ? "Corrida por zonas salva" : "Corrida salva";
   const savedShareTitle = savedRunIsZone ? "Compartilhar zonas" : "Compartilhar corrida";
-  const savedFullCardTitle = savedRunIsZone ? "Wayper Zone" : "Wayper Run";
-  const savedTraceCardTitle = savedRunIsZone ? "Wayper Zone" : "Wayper Trace";
+  const savedFullCardTitle = savedRunDisplayTitle;
+  const savedTraceCardTitle = savedRunDisplayTitle;
   const savedRunDistance = `${((Number(lastSavedRun?.distance) || 0) / 1000).toFixed(2)} km`;
   const savedRunDuration = formatSavedDuration(lastSavedRun?.duration);
   const savedRunPace = formatSavedPace(lastSavedRun?.duration, lastSavedRun?.distance);
@@ -2365,11 +2372,11 @@ const MapScreen = ({ navigation, route }) => {
         visible={savedShareVisible}
         onClose={() => setSavedShareVisible(false)}
         run={lastSavedRun}
-        path={savedRunPath}
+        path={savedSharePath}
         zoneCoords={savedZoneCoords}
         isZone={savedRunIsZone}
         title={savedFullCardTitle}
-        subtitle={savedRunName}
+        subtitle={savedShareSubtitle}
         distance={savedRunDistance}
         duration={savedRunDuration}
         pace={savedRunPace}
@@ -2568,11 +2575,11 @@ const MapScreen = ({ navigation, route }) => {
           <RunShareCard
             ref={savedFullShareRef}
             mode="card"
-            path={savedRunPath}
+            path={savedSharePath}
             zoneCoords={savedZoneCoords}
             isZone={savedRunIsZone}
             title={savedFullCardTitle}
-            subtitle={savedRunName}
+            subtitle={savedShareSubtitle}
             distance={savedRunDistance}
             duration={savedRunDuration}
             pace={savedRunPace}
@@ -2582,11 +2589,11 @@ const MapScreen = ({ navigation, route }) => {
           <RunShareCard
             ref={savedRouteShareRef}
             mode="trace"
-            path={savedRunPath}
+            path={savedSharePath}
             zoneCoords={savedZoneCoords}
             isZone={savedRunIsZone}
             title={savedTraceCardTitle}
-            subtitle={savedRunName}
+            subtitle={savedShareSubtitle}
             distance={savedRunDistance}
             duration={savedRunDuration}
             pace={savedRunPace}

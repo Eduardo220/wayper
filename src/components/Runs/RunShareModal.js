@@ -21,6 +21,7 @@ import {
   openNativeShare,
   saveImageToGallery,
 } from "../../utils/runShareImage";
+import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
 import RunShareImageTemplate from "./RunShareImageTemplate";
 import RunTracePngTemplate, { RUN_TRACE_PNG_SIZE } from "./RunTracePngTemplate";
 import TransparentPreviewBackground from "./TransparentPreviewBackground";
@@ -163,13 +164,13 @@ function RunShareModal({
   path = [],
   zoneCoords = [],
   isZone = false,
-  title,
   subtitle,
   distance,
   duration,
   pace,
   date,
   area,
+  mapStyle,
 }) {
   const { width } = useWindowDimensions();
   const imageRef = useRef(null);
@@ -190,12 +191,15 @@ function RunShareModal({
     const paceText = typeof pace === "string" ? pace : formatPace(pace ?? run?.avgPaceSecondsPerKm ?? run?.pace);
     const areaText = deriveArea(run, area);
     const dateText = typeof date === "string" ? date : formatDate(date ?? run?.date ?? run?.createdAt);
-    const runTitle = title || (isZone ? "Wayper Zone" : "Wayper Run");
-    const runSubtitle = subtitle || run?.name || run?.title || "Wayper Run";
+    const runTitle = getRunDisplayTitle(run);
+    const runSubtitle = subtitle && subtitle !== runTitle
+      ? subtitle
+      : (isZone ? "Corrida por zonas" : "Corrida livre");
 
     return {
       title: runTitle,
       subtitle: runSubtitle,
+      traceTitle: runTitle,
       distance: distanceText,
       duration: durationText,
       pace: paceText,
@@ -203,7 +207,7 @@ function RunShareModal({
       area: areaText,
       filenameBase: `wayper-run-${run?.id || run?.runId || Date.now()}`,
     };
-  }, [area, date, distance, duration, isZone, pace, run, subtitle, title]);
+  }, [area, date, distance, duration, isZone, pace, run, subtitle]);
 
   const traceAvailability = useMemo(() => {
     const source = getRenderableTraceSource({ path, zoneCoords, isZone });
@@ -236,7 +240,7 @@ function RunShareModal({
   }, [traceAvailability.available]);
 
   const buildImage = useCallback(async () => (
-    generateShareImage(imageRef, `${shareData.filenameBase}-imagem`)
+    generateShareImage(imageRef, `${shareData.filenameBase}-imagem`, { waitMs: 1400 })
   ), [shareData.filenameBase]);
 
   const buildTrace = useCallback(async () => {
@@ -322,6 +326,7 @@ function RunShareModal({
         pace={shareData.pace}
         date={shareData.date}
         area={shareData.area}
+        mapStyle={mapStyle}
       />
     </ScaledTemplate>
   );
@@ -338,7 +343,7 @@ function RunShareModal({
           path={path}
           zoneCoords={zoneCoords}
           isZone={isZone}
-          title={isZone ? "Zona PNG" : "Traçado PNG"}
+          title={shareData.traceTitle}
           distance={shareData.distance}
           duration={shareData.duration}
           pace={shareData.pace}
@@ -465,13 +470,14 @@ function RunShareModal({
             pace={shareData.pace}
             date={shareData.date}
             area={shareData.area}
+            mapStyle={mapStyle}
           />
           <RunTracePngTemplate
             ref={traceRef}
             path={path}
             zoneCoords={zoneCoords}
             isZone={isZone}
-            title={isZone ? "Zona PNG" : "Traçado PNG"}
+            title={shareData.traceTitle}
             distance={shareData.distance}
             duration={shareData.duration}
             pace={shareData.pace}

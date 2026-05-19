@@ -7,13 +7,14 @@ const RunShareImageTemplate = forwardRef(function RunShareImageTemplate(
     path = [],
     zoneCoords = [],
     isZone = false,
-    title = "Wayper Run",
+    title = "Corrida Wayper",
     subtitle = "Corrida",
     distance = "0.00 km",
     duration = "--:--",
     pace = "--:--/km",
     date = "",
     area = "0 m2",
+    mapStyle,
     style,
   },
   ref
@@ -32,6 +33,7 @@ const RunShareImageTemplate = forwardRef(function RunShareImageTemplate(
       pace={pace}
       date={date}
       area={area}
+      mapStyle={mapStyle}
       style={style}
     />
   );

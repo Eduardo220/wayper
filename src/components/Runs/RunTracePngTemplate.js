@@ -81,7 +81,7 @@ const RunTracePngTemplate = forwardRef(function RunTracePngTemplate(
     path = [],
     zoneCoords = [],
     isZone = false,
-    title = "Wayper Trace",
+    title = "Corrida Wayper",
     distance = "0.00 km",
     duration = "--:--",
     pace = "--:--/km",
@@ -107,9 +107,9 @@ const RunTracePngTemplate = forwardRef(function RunTracePngTemplate(
       style={[styles.root, { width: RUN_TRACE_PNG_SIZE.width, height: RUN_TRACE_PNG_SIZE.height }, style]}
     >
       <View style={styles.brandRow}>
-        <View>
+        <View style={styles.titleColumn}>
           <Text style={styles.eyebrow}>Wayper</Text>
-          <Text style={styles.title}>{title || (isZoneShape ? "Zona PNG" : "Traçado PNG")}</Text>
+          <Text style={styles.title} numberOfLines={2}>{title || "Corrida Wayper"}</Text>
         </View>
         <View style={styles.mark}>
           <Image source={WAYPER_LOGO} style={styles.markLogo} resizeMode="contain" />
@@ -198,6 +198,10 @@ const styles = StyleSheet.create({
     fontSize: 34,
     fontWeight: "900",
     textTransform: "uppercase",
+  },
+  titleColumn: {
+    flex: 1,
+    paddingRight: 28,
   },
   title: {
     color: WayperTheme.colors.text,
