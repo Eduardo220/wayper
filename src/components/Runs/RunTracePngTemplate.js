@@ -69,6 +69,47 @@ const buildTracePoints = (coords = [], { closed = false, padding = 64 } = {}) =>
   };
 };
 
+const buildTraceSegmentShapes = (segments = [], { padding = 64 } = {}) => {
+  const cleanSegments = (Array.isArray(segments) ? segments : []).filter((segment) => Array.isArray(segment) && segment.length >= 2);
+  const allPoints = cleanSegments.flat();
+  if (allPoints.length < 2) return [];
+
+  const avgLat = allPoints.reduce((sum, point) => sum + point.latitude, 0) / allPoints.length;
+  const lngScale = Math.max(0.2, Math.cos((avgLat * Math.PI) / 180));
+  const projectedSegments = cleanSegments.map((segment) =>
+    segment.map((point) => ({
+      x: point.longitude * lngScale,
+      y: point.latitude,
+    }))
+  );
+  const projected = projectedSegments.flat();
+  const xs = projected.map((point) => point.x);
+  const ys = projected.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const rangeX = Math.max(maxX - minX, 0.000001);
+  const rangeY = Math.max(maxY - minY, 0.000001);
+  const drawWidth = TRACE_VIEWBOX.width - padding * 2;
+  const drawHeight = TRACE_VIEWBOX.height - padding * 2;
+  const scale = Math.min(drawWidth / rangeX, drawHeight / rangeY);
+  const shapeWidth = rangeX * scale;
+  const shapeHeight = rangeY * scale;
+  const offsetX = (TRACE_VIEWBOX.width - shapeWidth) / 2;
+  const offsetY = (TRACE_VIEWBOX.height - shapeHeight) / 2;
+
+  return projectedSegments.map((segment) =>
+    segment
+      .map((point) => {
+        const x = offsetX + (point.x - minX) * scale;
+        const y = offsetY + (1 - (point.y - minY) / rangeY) * shapeHeight;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ")
+  );
+};
+
 const Metric = ({ label, value }) => (
   <View style={styles.metric}>
     <Text style={styles.metricValue} numberOfLines={1}>{value}</Text>
@@ -79,6 +120,7 @@ const Metric = ({ label, value }) => (
 const RunTracePngTemplate = forwardRef(function RunTracePngTemplate(
   {
     path = [],
+    segments = [],
     zoneCoords = [],
     isZone = false,
     title = "Corrida Wayper",
@@ -91,10 +133,14 @@ const RunTracePngTemplate = forwardRef(function RunTracePngTemplate(
   ref
 ) {
   const source = useMemo(
-    () => getRenderableTraceSource({ path, zoneCoords, isZone }),
-    [isZone, path, zoneCoords]
+    () => getRenderableTraceSource({ path, segments, zoneCoords, isZone }),
+    [isZone, path, segments, zoneCoords]
   );
   const isZoneShape = source.type === "zone";
+  const segmentShapes = useMemo(
+    () => (!isZoneShape ? buildTraceSegmentShapes(source.segments, { padding: 70 }) : []),
+    [isZoneShape, source.segments]
+  );
   const shape = useMemo(
     () => buildTracePoints(source.points, { closed: isZoneShape, padding: isZoneShape ? 86 : 70 }),
     [isZoneShape, source.points]
@@ -126,7 +172,32 @@ const RunTracePngTemplate = forwardRef(function RunTracePngTemplate(
                 <Stop offset="1" stopColor={WayperTheme.colors.cyan} stopOpacity="0.92" />
               </LinearGradient>
             </Defs>
-            {isZoneShape ? (
+            {segmentShapes.length > 0 ? (
+              <>
+                {segmentShapes.map((points, index) => (
+                  <Polyline
+                    key={`trace-glow-${index}`}
+                    points={points}
+                    fill="none"
+                    stroke="rgba(0, 230, 118, 0.34)"
+                    strokeWidth="70"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ))}
+                {segmentShapes.map((points, index) => (
+                  <Polyline
+                    key={`trace-line-${index}`}
+                    points={points}
+                    fill="none"
+                    stroke="url(#wayperTracePngStroke)"
+                    strokeWidth="30"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ))}
+              </>
+            ) : isZoneShape ? (
               <>
                 <Polygon
                   points={shape.points}

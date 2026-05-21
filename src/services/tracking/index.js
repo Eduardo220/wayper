@@ -48,6 +48,7 @@ export {
   buildLiveRenderPath,
   buildSummaryRenderPath,
   getBestRenderPathForRun,
+  getRenderableSegmentsForRun,
   removeDuplicateVisualPoints,
   removeTinyBacktracks,
   simplifyPathByDistance,

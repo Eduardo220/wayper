@@ -36,6 +36,38 @@ export function calculatePathDistanceMeters(path = []) {
   return total;
 }
 
+function normalizeReplaySegments(runOrPath) {
+  if (runOrPath && !Array.isArray(runOrPath) && Array.isArray(runOrPath.segments)) {
+    const segments = runOrPath.segments
+      .map((segment, index) => {
+        const source = segment?.trustedPath || segment?.path || segment?.renderPath || segment?.displayPath || [];
+        return normalizeRunPath(source).map((point) => ({
+          ...point,
+          segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : index,
+        }));
+      })
+      .filter((segment) => segment.length > 0);
+    if (segments.length > 0) return segments;
+  }
+
+  const flat = normalizeRunPath(runOrPath);
+  if (flat.length === 0) return [];
+
+  const segments = [];
+  let current = [];
+  for (const point of flat) {
+    const last = current[current.length - 1];
+    const segmentChanged = last && point.segmentId !== last.segmentId;
+    if (current.length > 0 && segmentChanged) {
+      segments.push(current);
+      current = [];
+    }
+    current.push(point);
+  }
+  if (current.length > 0) segments.push(current);
+  return segments.length > 0 ? segments : [flat];
+}
+
 function normalizeDurationValue(value, { forceMs = false } = {}) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return 0;
@@ -166,16 +198,18 @@ function getTimestampTimeline(points = []) {
 }
 
 export function buildRunReplayTimeline(runOrPath, options = {}) {
-  const path = normalizeRunPath(runOrPath);
+  const segmentPaths = normalizeReplaySegments(runOrPath);
+  const path = segmentPaths.flat();
   if (path.length === 0) {
-    return { path: [], timeline: [], totalMeters: 0, totalDurationSeconds: 0 };
+    return { path: [], segments: [], timeline: [], totalMeters: 0, totalDurationSeconds: 0 };
   }
 
-  const segments = [0];
+  const segmentDistances = [0];
   let totalMeters = 0;
   for (let index = 1; index < path.length; index += 1) {
-    const meters = calculateDistanceMeters(path[index - 1], path[index]);
-    segments[index] = meters;
+    const segmentChanged = path[index].segmentId !== path[index - 1].segmentId;
+    const meters = segmentChanged ? 0 : calculateDistanceMeters(path[index - 1], path[index]);
+    segmentDistances[index] = meters;
     totalMeters += meters;
   }
 
@@ -191,7 +225,7 @@ export function buildRunReplayTimeline(runOrPath, options = {}) {
   let cumulativeMeters = 0;
 
   for (let index = 0; index < path.length; index += 1) {
-    if (index > 0) cumulativeMeters += segments[index] || 0;
+    if (index > 0) cumulativeMeters += segmentDistances[index] || 0;
     const cumulativeTime = timestampTimes
       ? timestampTimes[index]
       : totalMeters > 0
@@ -207,6 +241,7 @@ export function buildRunReplayTimeline(runOrPath, options = {}) {
 
   return {
     path,
+    segments: segmentPaths,
     timeline,
     totalMeters,
     totalDurationSeconds: timeline[timeline.length - 1]?.cumulativeTime || totalDurationSeconds,

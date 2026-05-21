@@ -218,6 +218,32 @@ function sanitizePath(rawPath = []) {
     .filter(Boolean);
 }
 
+function sanitizeRunSegments(segments = []) {
+  return (Array.isArray(segments) ? segments : [])
+    .map((segment, index) => {
+      const segmentId = Number.isFinite(Number(segment?.index ?? segment?.segmentId))
+        ? Number(segment.index ?? segment.segmentId)
+        : index;
+      return {
+        id: String(segment?.id || `segment_${segmentId}`),
+        index: segmentId,
+        startedAt: segment?.startedAt || null,
+        endedAt: segment?.endedAt || null,
+        rawPath: sanitizePath(segment?.rawPath || []).map((point) => ({ ...point, segmentId })),
+        trustedPath: sanitizePath(segment?.trustedPath || []).map((point) => ({ ...point, segmentId })),
+        liveRenderPath: sanitizePath(segment?.liveRenderPath || []).map((point) => ({ ...point, segmentId })),
+        summaryRenderPath: sanitizePath(segment?.summaryRenderPath || []).map((point) => ({ ...point, segmentId })),
+      };
+    })
+    .filter(
+      (segment) =>
+        segment.rawPath.length > 0 ||
+        segment.trustedPath.length > 0 ||
+        segment.liveRenderPath.length > 0 ||
+        segment.summaryRenderPath.length > 0
+    );
+}
+
 function chunkArray(arr, size = 500) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -399,6 +425,7 @@ function normalizeRun(run) {
     path,
     trustedPath: path,
     rawPath: sanitizePath(run.rawPath || []),
+    segments: sanitizeRunSegments(run.segments || []),
     renderPath,
     displayPath: sanitizePath(run.displayPath || run.renderPath || renderPath),
     pathQuality: run.pathQuality || null,
@@ -460,6 +487,7 @@ async function uploadRunToFirestore(run, attempt = 0) {
   // sanitize path
   const path = sanitizePath(run.path);
   const renderPath = sanitizePath(run.renderPath || run.displayPath || path);
+  const segments = sanitizeRunSegments(run.segments || []);
   const MAX_POINTS_INLINE = 800; // keep doc size reasonable
   const chunks = chunkArray(path, MAX_POINTS_INLINE);
 
@@ -472,6 +500,7 @@ async function uploadRunToFirestore(run, attempt = 0) {
         path: chunks[0] || [],
         trustedPath: chunks[0] || [],
         renderPath,
+        segments,
         displayPath: sanitizePath(run.displayPath || run.renderPath || renderPath),
         pathQuality: run.pathQuality || null,
         smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
@@ -495,6 +524,7 @@ async function uploadRunToFirestore(run, attempt = 0) {
         avgSpeed: Number(run.avgSpeed || 0),
         maxSpeed: Number(run.maxSpeed || 0),
         renderPath,
+        segments,
         displayPath: sanitizePath(run.displayPath || run.renderPath || renderPath),
         pathQuality: run.pathQuality || null,
         smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,

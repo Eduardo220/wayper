@@ -157,6 +157,38 @@ function sanitizeCoordsArray(coords = []) {
     .filter(Boolean);
 }
 
+function sanitizeRunSegments(segments = []) {
+  return (Array.isArray(segments) ? segments : [])
+    .map((segment, index) => {
+      const segmentId = Number.isFinite(Number(segment?.index ?? segment?.segmentId))
+        ? Number(segment.index ?? segment.segmentId)
+        : index;
+      const withSegmentId = (path = []) =>
+        sanitizeCoordsArray(path).map((point) => ({
+          ...point,
+          segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : segmentId,
+        }));
+
+      return {
+        id: String(segment?.id || `segment_${segmentId}`),
+        index: segmentId,
+        startedAt: segment?.startedAt || null,
+        endedAt: segment?.endedAt || null,
+        rawPath: withSegmentId(segment?.rawPath || []),
+        trustedPath: withSegmentId(segment?.trustedPath || []),
+        liveRenderPath: withSegmentId(segment?.liveRenderPath || []),
+        summaryRenderPath: withSegmentId(segment?.summaryRenderPath || []),
+      };
+    })
+    .filter(
+      (segment) =>
+        segment.rawPath.length > 0 ||
+        segment.trustedPath.length > 0 ||
+        segment.liveRenderPath.length > 0 ||
+        segment.summaryRenderPath.length > 0
+    );
+}
+
 // Retry meta storage helpers
 async function _getRetryMeta(key) {
   try {
@@ -193,6 +225,7 @@ export async function saveLocalRun(run = {}) {
       path: trustedPath,
       trustedPath,
       rawPath: sanitizeCoordsArray(run.rawPath || []),
+      segments: sanitizeRunSegments(run.segments || []),
       liveRenderPath: sanitizeCoordsArray(run.liveRenderPath || []),
       renderPath,
       displayPath: sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath),
@@ -598,6 +631,7 @@ export async function syncRunsToFirestore() {
     for (const run of unsynced) {
       const path = sanitizeCoordsArray(run.trustedPath || run.path || []).slice(0, ROUTE_CAP);
       const rawPath = sanitizeCoordsArray(run.rawPath || []).slice(0, ROUTE_CAP);
+      const segments = sanitizeRunSegments(run.segments || []);
       const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || path).slice(0, ROUTE_CAP);
       const displayPath = sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath).slice(0, ROUTE_CAP);
 
@@ -608,6 +642,7 @@ export async function syncRunsToFirestore() {
         path,
         trustedPath: path,
         rawPath,
+        segments,
         renderPath,
         displayPath,
         pathQuality: run.pathQuality || null,

@@ -162,6 +162,7 @@ function RunShareModal({
   onClose,
   run,
   path = [],
+  segments = [],
   zoneCoords = [],
   isZone = false,
   subtitle,
@@ -210,14 +211,14 @@ function RunShareModal({
   }, [area, date, distance, duration, isZone, pace, run, subtitle]);
 
   const traceAvailability = useMemo(() => {
-    const source = getRenderableTraceSource({ path, zoneCoords, isZone });
+    const source = getRenderableTraceSource({ path, segments, zoneCoords, isZone });
     const minPoints = source.type === "zone" ? 3 : 2;
     return {
       available: source.points.length >= minPoints,
       points: source.points.length,
       type: source.type,
     };
-  }, [isZone, path, zoneCoords]);
+  }, [isZone, path, segments, zoneCoords]);
 
   const previewWidth = Math.min(width - 44, 350);
   const isBusy = busyAction !== null;
@@ -317,6 +318,7 @@ function RunShareModal({
     >
       <RunShareImageTemplate
         path={path}
+        segments={segments}
         zoneCoords={zoneCoords}
         isZone={isZone}
         title={shareData.title}
@@ -341,6 +343,7 @@ function RunShareModal({
       >
         <RunTracePngTemplate
           path={path}
+          segments={segments}
           zoneCoords={zoneCoords}
           isZone={isZone}
           title={shareData.traceTitle}

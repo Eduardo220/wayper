@@ -648,6 +648,7 @@ function WayperMapLibre({
   routePath = [],
   routeSegments = [],
   replayPath = [],
+  replaySegments = [],
   zones = [],
   territories = [],
   leaderCells = [],
@@ -717,12 +718,16 @@ function WayperMapLibre({
     return { start, end };
   }, [routeEndCoordinate, routePath, routeSegments, routeStartCoordinate, showRouteEndpoints]);
   const replayCollection = useMemo(
-    () => buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay", preserveGeometry: true })]),
-    [replayPath]
+    () => {
+      const segmentedFeatures = buildLineStringFeaturesFromSegments(replaySegments, { kind: "replay" });
+      if (segmentedFeatures.length > 0) return buildFeatureCollection(segmentedFeatures);
+      return buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay", preserveGeometry: true })]);
+    },
+    [replayPath, replaySegments]
   );
   const replayHeadCollection = useMemo(
-    () => buildFeatureCollection([buildPointFeature(Array.isArray(replayPath) ? replayPath[replayPath.length - 1] : null, { kind: "replay-head" })]),
-    [replayPath]
+    () => buildFeatureCollection([buildPointFeature(pickLastSegmentPoint(replaySegments, replayPath), { kind: "replay-head" })]),
+    [replayPath, replaySegments]
   );
   const userLocationCollection = useMemo(
     () => buildFeatureCollection(showUserLocation ? [buildPointFeature(location, { kind: "user-location" })] : []),

@@ -175,27 +175,44 @@ export function normalizeRunPath(path = []) {
     .filter(Boolean);
 }
 
-export function getRenderableTraceSource({ path = [], zoneCoords = [], isZone = false } = {}) {
+function normalizeTraceSegments(segments = []) {
+  return (Array.isArray(segments) ? segments : [])
+    .map((segment) =>
+      normalizeRunPath(
+        Array.isArray(segment)
+          ? segment
+          : segment?.summaryRenderPath || segment?.renderPath || segment?.displayPath || segment?.trustedPath || []
+      )
+    )
+    .filter((segment) => segment.length >= 2);
+}
+
+export function getRenderableTraceSource({ path = [], segments = [], zoneCoords = [], isZone = false } = {}) {
   const normalizedPath = normalizeRunPath(path);
+  const normalizedSegments = normalizeTraceSegments(segments);
   const normalizedZone = normalizeRunPath(zoneCoords);
 
   if (isZone && normalizedZone.length >= 3) {
-    return { points: normalizedZone, type: "zone" };
+    return { points: normalizedZone, segments: [], type: "zone" };
   }
 
   if (isZone && normalizedPath.length >= 3) {
-    return { points: normalizedPath, type: "zone" };
+    return { points: normalizedPath, segments: [], type: "zone" };
+  }
+
+  if (!isZone && normalizedSegments.length > 0) {
+    return { points: normalizedSegments.flat(), segments: normalizedSegments, type: "route" };
   }
 
   if (normalizedPath.length >= 2) {
-    return { points: normalizedPath, type: "route" };
+    return { points: normalizedPath, segments: [], type: "route" };
   }
 
-  return { points: normalizedPath, type: isZone ? "zone" : "route" };
+  return { points: normalizedPath, segments: [], type: isZone ? "zone" : "route" };
 }
 
-export function assertTraceHasEnoughPoints({ path = [], zoneCoords = [], isZone = false } = {}) {
-  const source = getRenderableTraceSource({ path, zoneCoords, isZone });
+export function assertTraceHasEnoughPoints({ path = [], segments = [], zoneCoords = [], isZone = false } = {}) {
+  const source = getRenderableTraceSource({ path, segments, zoneCoords, isZone });
   const minPoints = source.type === "zone" ? 3 : 2;
 
   if (source.points.length < minPoints) {
@@ -212,8 +229,16 @@ export function assertTraceHasEnoughPoints({ path = [], zoneCoords = [], isZone 
 }
 
 export async function generateTracePngFromPath(path = [], options = {}) {
-  const { ref, zoneCoords = [], isZone = false, filename = "wayper-trace", width = 1080, height = 1080 } = options;
-  assertTraceHasEnoughPoints({ path, zoneCoords, isZone });
+  const {
+    ref,
+    segments = [],
+    zoneCoords = [],
+    isZone = false,
+    filename = "wayper-trace",
+    width = 1080,
+    height = 1080,
+  } = options;
+  assertTraceHasEnoughPoints({ path, segments, zoneCoords, isZone });
 
   if (!ref) {
     throw new WayperShareError(

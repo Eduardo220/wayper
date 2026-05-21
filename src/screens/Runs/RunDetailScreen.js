@@ -42,7 +42,7 @@ import {
 import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
 import { isRunOwnedByCurrentUser } from "../../utils/runOwnership";
 import { normalizeRunPath } from "../../utils/runPath";
-import { getRenderablePathForRun } from "../../services/tracking";
+import { getRenderablePathForRun, getRenderableSegmentsForRun } from "../../services/tracking";
 
 const MIN_BAR_HEIGHT = 22;
 const CHART_BASE_HEIGHT = 118;
@@ -281,10 +281,16 @@ function RunDetailScreenInner({ route, navigation }) {
   }, [currentRun, navigation, readOnly]);
 
   const path = useMemo(() => normalizeRunPath(run), [run]);
+  const mapSegments = useMemo(
+    () => getRenderableSegmentsForRun(run || {}).map((segment) => sanitizePath(segment)).filter((segment) => segment.length > 1),
+    [run]
+  );
   const mapPath = useMemo(() => {
     const renderPath = sanitizePath(getRenderablePathForRun(run || {}));
+    const segmentedPath = mapSegments.flat();
+    if (segmentedPath.length > 1) return segmentedPath;
     return renderPath.length > 1 ? renderPath : path;
-  }, [path, run]);
+  }, [mapSegments, path, run]);
   const zoneCoords = useMemo(() => sanitizePath(run?.zoneCoords || run?.zone?.coords || []), [run]);
   const isZoneRun = run?.mode === "zones" || safeNum(run?.area) > 0 || zoneCoords.length >= 3;
   const hasZoneShape = isZoneRun && zoneCoords.length >= 3;
@@ -586,6 +592,7 @@ function RunDetailScreenInner({ route, navigation }) {
             <WayperMapLibre
               style={styles.map}
               routePath={hasZoneShape ? [] : mapPath}
+              routeSegments={hasZoneShape ? [] : mapSegments}
               zones={hasZoneShape ? [{ coords: zoneCoords, area: run?.area }] : []}
               showZones={hasZoneShape}
               centerCoordinate={midPoint}
@@ -736,6 +743,7 @@ function RunDetailScreenInner({ route, navigation }) {
       onClose={() => setShareVisible(false)}
       run={run}
       path={shareRoutePath}
+      segments={hasZoneShape ? [] : mapSegments}
       zoneCoords={zoneCoords}
       isZone={isZoneRun}
       title={shareCardTitle}

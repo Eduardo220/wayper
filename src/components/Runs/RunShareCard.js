@@ -57,6 +57,17 @@ const normalizeCoords = (coords = []) =>
     .map(normalizeCoord)
     .filter(Boolean);
 
+const normalizeSegments = (segments = []) =>
+  (Array.isArray(segments) ? segments : [])
+    .map((segment) =>
+      normalizeCoords(
+        Array.isArray(segment)
+          ? segment
+          : segment?.summaryRenderPath || segment?.renderPath || segment?.displayPath || segment?.trustedPath || []
+      )
+    )
+    .filter((segment) => segment.length >= 2);
+
 const closePolygon = (coords = []) => {
   if (coords.length < 3) return coords;
   const first = coords[0];
@@ -118,6 +129,40 @@ const buildSvgPoints = (coords = [], { width, height, padding = 72, closed = fal
   };
 };
 
+const buildSvgSegmentShapes = (segments = [], { width, height, padding = 72 } = {}) => {
+  const cleanSegments = normalizeSegments(segments);
+  const allPoints = cleanSegments.flat();
+  if (allPoints.length < 2) return [];
+
+  const projectedSegments = cleanSegments.map((segment) => segment.map(projectCoord));
+  const projected = projectedSegments.flat();
+  const xs = projected.map((point) => point.x);
+  const ys = projected.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const rangeX = Math.max(maxX - minX, 0.000001);
+  const rangeY = Math.max(maxY - minY, 0.000001);
+  const drawWidth = width - padding * 2;
+  const drawHeight = height - padding * 2;
+  const scale = Math.min(drawWidth / rangeX, drawHeight / rangeY);
+  const shapeWidth = rangeX * scale;
+  const shapeHeight = rangeY * scale;
+  const offsetX = (width - shapeWidth) / 2;
+  const offsetY = (height - shapeHeight) / 2;
+
+  return projectedSegments.map((segment) =>
+    segment
+      .map((point) => {
+        const x = offsetX + (point.x - minX) * scale;
+        const y = offsetY + (1 - (point.y - minY) / rangeY) * shapeHeight;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ")
+  );
+};
+
 function Metric({ label, value }) {
   return (
     <View style={styles.metric}>
@@ -127,8 +172,19 @@ function Metric({ label, value }) {
   );
 }
 
-function Artwork({ mode, coords, isZone }) {
+function Artwork({ mode, coords, segments = [], isZone }) {
   const viewBox = mode === "trace" ? TRACE_VIEWBOX : CARD_VIEWBOX;
+  const segmentShapes = useMemo(
+    () =>
+      !isZone
+        ? buildSvgSegmentShapes(segments, {
+            width: viewBox.width,
+            height: viewBox.height,
+            padding: mode === "trace" ? 120 : 110,
+          })
+        : [],
+    [isZone, mode, segments, viewBox.height, viewBox.width]
+  );
   const shape = useMemo(
     () =>
       buildSvgPoints(coords, {
@@ -165,7 +221,16 @@ function Artwork({ mode, coords, isZone }) {
       <Line x1={viewBox.width * 0.17} y1={viewBox.height + 80} x2={viewBox.width * 0.78} y2={-80} stroke="#263542" strokeWidth={mode === "trace" ? 30 : 22} opacity="0.40" />
       <Line x1={viewBox.width * 0.17} y1={viewBox.height + 80} x2={viewBox.width * 0.78} y2={-80} stroke="#6F7A86" strokeWidth={mode === "trace" ? 7 : 5} opacity="0.18" />
 
-      {shape.hasShape && isZone ? (
+      {segmentShapes.length > 0 ? (
+        <>
+          {segmentShapes.map((points, index) => (
+            <Polyline key={`segment-glow-${index}`} points={points} fill="none" stroke={`url(#${glowId})`} strokeWidth={mode === "trace" ? 54 : 42} strokeLinecap="round" strokeLinejoin="round" opacity="0.58" />
+          ))}
+          {segmentShapes.map((points, index) => (
+            <Polyline key={`segment-line-${index}`} points={points} fill="none" stroke={`url(#${gradientId})`} strokeWidth={mode === "trace" ? 24 : 17} strokeLinecap="round" strokeLinejoin="round" />
+          ))}
+        </>
+      ) : shape.hasShape && isZone ? (
         <>
           <Polygon points={shape.points} fill="rgba(0, 230, 118, 0.18)" stroke={`url(#${glowId})`} strokeWidth={mode === "trace" ? 54 : 44} strokeLinejoin="round" opacity="0.64" />
           <Polygon points={shape.points} fill="rgba(0, 230, 118, 0.30)" stroke={`url(#${gradientId})`} strokeWidth={mode === "trace" ? 24 : 18} strokeLinejoin="round" />
@@ -187,13 +252,14 @@ function getArtworkCenter(coords = []) {
   return coords[Math.floor(coords.length / 2)] || coords[0] || WAYPER_FALLBACK_COORD;
 }
 
-function MapArtwork({ coords = [], isZone = false, area = "0 m2", mapStyle }) {
+function MapArtwork({ coords = [], segments = [], isZone = false, area = "0 m2", mapStyle }) {
   const zones = isZone && coords.length >= 3 ? [{ coords, area }] : [];
 
   return (
     <WayperMapLibre
       style={styles.mapArtwork}
       routePath={isZone ? [] : coords}
+      routeSegments={isZone ? [] : segments}
       zones={zones}
       showZones={isZone}
       showUserLocation={false}
@@ -212,6 +278,7 @@ const RunShareCard = forwardRef(function RunShareCard(
   {
     mode = "card",
     path = [],
+    segments = [],
     zoneCoords = [],
     isZone = false,
     title = "Corrida Wayper",
@@ -228,6 +295,7 @@ const RunShareCard = forwardRef(function RunShareCard(
 ) {
   const size = RUN_SHARE_CARD_SIZE[mode] || RUN_SHARE_CARD_SIZE.card;
   const routeCoords = normalizeCoords(path);
+  const segmentCoords = normalizeSegments(segments);
   const zoneShape = normalizeCoords(zoneCoords);
   const useZoneShape = Boolean(isZone && (zoneShape.length >= 3 || routeCoords.length >= 3));
   const artworkCoords = useZoneShape ? (zoneShape.length >= 3 ? zoneShape : routeCoords) : routeCoords;
@@ -250,7 +318,7 @@ const RunShareCard = forwardRef(function RunShareCard(
         </View>
 
         <View style={styles.traceArtwork}>
-          <Artwork mode="trace" coords={artworkCoords} isZone={useZoneShape} />
+          <Artwork mode="trace" coords={artworkCoords} segments={segmentCoords} isZone={useZoneShape} />
         </View>
 
         <View style={styles.traceMetrics}>
@@ -278,7 +346,7 @@ const RunShareCard = forwardRef(function RunShareCard(
       </View>
 
       <View collapsable={false} style={styles.cardArtwork}>
-        <MapArtwork coords={artworkCoords} isZone={useZoneShape} area={area} mapStyle={mapStyle} />
+        <MapArtwork coords={artworkCoords} segments={segmentCoords} isZone={useZoneShape} area={area} mapStyle={mapStyle} />
       </View>
 
       <View style={styles.cardInfo}>

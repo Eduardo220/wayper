@@ -5,6 +5,7 @@ import RunShareCard from "./RunShareCard";
 const RunShareImageTemplate = forwardRef(function RunShareImageTemplate(
   {
     path = [],
+    segments = [],
     zoneCoords = [],
     isZone = false,
     title = "Corrida Wayper",
@@ -24,6 +25,7 @@ const RunShareImageTemplate = forwardRef(function RunShareImageTemplate(
       ref={ref}
       mode="card"
       path={path}
+      segments={segments}
       zoneCoords={zoneCoords}
       isZone={isZone}
       title={title}

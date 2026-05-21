@@ -6,6 +6,7 @@ import {
   buildSummaryRenderPath,
   createTrackingSession,
   getRenderablePathForRun,
+  getRenderableSegmentsForRun,
   normalizeLocationPoint,
   shouldAcceptPoint,
 } from "../index.js";
@@ -213,7 +214,84 @@ describe("tracking pipeline", () => {
     expect(finish.rawPath.length).toBeGreaterThan(0);
     expect(finish.trustedPath.length).toBeGreaterThan(1);
     expect(finish.renderPath.length).toBeGreaterThan(1);
+    expect(finish.segments).toHaveLength(1);
     expect(finish.pathQuality.smoothingVersion).toBe("wayper_tracking_v1");
+  });
+
+  test("corrida sem pausas mantem um unico segmento", () => {
+    const { finish } = processPath(makeRunPath(6));
+    const activeSegments = finish.segments.filter((segment) => segment.trustedPath.length > 0);
+    expect(activeSegments).toHaveLength(1);
+    expect(activeSegments[0].trustedPath.length).toBe(finish.trustedPath.length);
+  });
+
+  test("pausa encerra o segmento atual", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    session.processLocationPoint(p(0, 0, 0));
+    session.processLocationPoint(p(2, 0, 6));
+    const paused = session.pause({ endedAt: BASE_TIME + 5000 });
+    expect(paused.segments[0].endedAt).toBe(BASE_TIME + 5000);
+    expect(paused.isPaused).toBe(true);
+  });
+
+  test("resume cria novo segmento sem conectar com o anterior", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    session.processLocationPoint(p(0, 0, 0));
+    session.processLocationPoint(p(2, 0, 6));
+    session.pause({ endedAt: BASE_TIME + 5000 });
+    session.resume({ startedAt: BASE_TIME + 7000 });
+    session.processLocationPoint(p(4, 80, 80, { timestamp: BASE_TIME + 8000 }));
+    session.processLocationPoint(p(5, 86, 80, { timestamp: BASE_TIME + 10000 }));
+    const finish = session.finishTrackingSession({ durationMs: 10000 });
+    const activeSegments = finish.segments.filter((segment) => segment.trustedPath.length > 0);
+    expect(activeSegments).toHaveLength(2);
+    expect(calculatePathDistanceMeters(finish.trustedPath)).toBeGreaterThan(finish.distanceMeters);
+  });
+
+  test("segmentos anteriores permanecem intactos apos resume", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    session.processLocationPoint(p(0, 0, 0));
+    session.processLocationPoint(p(2, 0, 6));
+    session.pause({ endedAt: BASE_TIME + 5000 });
+    const beforeResume = session.getSegments()[0].trustedPath.map((point) => ({ ...point }));
+    session.resume({ startedAt: BASE_TIME + 7000 });
+    session.processLocationPoint(p(4, 80, 80, { timestamp: BASE_TIME + 8000 }));
+    session.processLocationPoint(p(5, 86, 80, { timestamp: BASE_TIME + 10000 }));
+    const afterResume = session.getSegments()[0].trustedPath;
+    expect(afterResume).toEqual(beforeResume);
+  });
+
+  test("trustedPath cresce continuamente durante corrida ativa", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    const lengths = [p(0, 0, 0), p(2, 0, 6), p(4, 0, 12)].map(
+      (point) => session.processLocationPoint(point).trustedPath.length
+    );
+    expect(lengths).toEqual([1, 2, 3]);
+  });
+
+  test("liveRenderPath cresce sem reiniciar automaticamente", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    const lengths = [p(0, 0, 0), p(2, 0, 6), p(4, 0, 12), p(6, 0, 18)].map(
+      (point) => session.processLocationPoint(point).liveRenderPath.length
+    );
+    expect(lengths[0]).toBeGreaterThanOrEqual(1);
+    for (let i = 1; i < lengths.length; i += 1) {
+      expect(lengths[i]).toBeGreaterThanOrEqual(lengths[i - 1]);
+    }
+  });
+
+  test("getRenderableSegmentsForRun preserva segmentos salvos", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    session.processLocationPoint(p(0, 0, 0));
+    session.processLocationPoint(p(2, 0, 6));
+    session.pause({ endedAt: BASE_TIME + 5000 });
+    session.resume({ startedAt: BASE_TIME + 7000 });
+    session.processLocationPoint(p(4, 80, 80, { timestamp: BASE_TIME + 8000 }));
+    session.processLocationPoint(p(5, 86, 80, { timestamp: BASE_TIME + 10000 }));
+    const finish = session.finishTrackingSession({ durationMs: 10000 });
+    const renderSegments = getRenderableSegmentsForRun(finish);
+    expect(renderSegments).toHaveLength(2);
+    expect(renderSegments.every((segment) => segment.length >= 2)).toBe(true);
   });
 
   test("corrida antiga so com path ainda renderiza no detalhe", () => {
@@ -231,6 +309,7 @@ describe("tracking pipeline", () => {
   test("MapScreen nao renderiza rawPath como linha principal", () => {
     const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
     expect(mapScreen).toContain("routePath={liveRoutePath}");
+    expect(mapScreen).toContain("routeSegments={liveRouteSegments}");
     expect(mapScreen).toContain("const liveRoutePath = running || paused ? displayRouteState : routeState");
     expect(mapScreen).not.toContain("routePath={rawPathRef.current}");
   });

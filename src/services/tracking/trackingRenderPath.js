@@ -18,6 +18,13 @@ function clonePoint(point) {
   return { ...point };
 }
 
+function normalizeSegmentPoint(point, segmentIndex) {
+  return {
+    ...point,
+    segmentId: Number.isFinite(Number(point?.segmentId)) ? Number(point.segmentId) : segmentIndex,
+  };
+}
+
 function cacheKey(kind, path = [], presetName = "run") {
   const last = path[path.length - 1] || {};
   return `${kind}:${presetName}:${path.length}:${last.timestamp || ""}:${last.latitude || ""}:${last.longitude || ""}:${TRACKING_SMOOTHING_VERSION}`;
@@ -203,16 +210,82 @@ export function getBestRenderPathForRun(run = {}) {
     if (Array.isArray(candidate) && candidate.filter(isValidCoordinate).length > 1) return candidate;
   }
 
+  const segmentPaths = getRenderableSegmentsForRun(run);
+  if (segmentPaths.length > 0) {
+    return segmentPaths.flat();
+  }
+
   const trusted = Array.isArray(run.trustedPath) && run.trustedPath.length > 1
     ? run.trustedPath
     : run.path;
   return buildSummaryRenderPath(trusted || []);
 }
 
+export function getRenderableSegmentsForRun(run = {}) {
+  const rawSegments = Array.isArray(run?.segments) ? run.segments : [];
+  if (rawSegments.length > 0) {
+    const paths = rawSegments
+      .map((segment, index) => {
+        const segmentIndex = Number.isFinite(Number(segment?.index)) ? Number(segment.index) : index;
+        const candidate =
+          segment?.summaryRenderPath ||
+          segment?.renderPath ||
+          segment?.displayPath ||
+          segment?.liveRenderPath ||
+          segment?.trustedPath ||
+          segment?.path ||
+          [];
+        const clean = (Array.isArray(candidate) ? candidate : [])
+          .filter(isValidCoordinate)
+          .map((point) => normalizeSegmentPoint(point, segmentIndex));
+        if (clean.length > 1) return clean;
+
+        const trusted = (Array.isArray(segment?.trustedPath) ? segment.trustedPath : [])
+          .filter(isValidCoordinate)
+          .map((point) => normalizeSegmentPoint(point, segmentIndex));
+        return trusted.length > 1
+          ? buildSummaryRenderPath(trusted).map((point) => normalizeSegmentPoint(point, segmentIndex))
+          : [];
+      })
+      .filter((path) => path.length > 1);
+    if (paths.length > 0) return paths;
+  }
+
+  const candidate = getBestFlatCandidate(run);
+  const clean = (Array.isArray(candidate) ? candidate : []).filter(isValidCoordinate);
+  if (clean.length < 2) return [];
+
+  const segments = [];
+  let current = [];
+  for (const point of clean) {
+    const last = current[current.length - 1];
+    const segmentChanged = last && point.segmentId !== last.segmentId;
+    if (current.length > 0 && segmentChanged) {
+      if (current.length > 1) segments.push(current);
+      current = [];
+    }
+    current.push(point);
+  }
+  if (current.length > 1) segments.push(current);
+  return segments.length > 0 ? segments : [clean];
+}
+
+function getBestFlatCandidate(run = {}) {
+  const candidates = [
+    run.renderPath,
+    run.displayPath,
+    run.summaryRenderPath,
+    run.trustedPath,
+    run.path,
+  ];
+  return candidates.find((candidate) => Array.isArray(candidate) && candidate.filter(isValidCoordinate).length > 1) || [];
+}
+
 export default {
   buildLiveRenderPath,
   buildSummaryRenderPath,
   getBestRenderPathForRun,
+  getRenderableSegmentsForRun,
   removeDuplicateVisualPoints,
   removeTinyBacktracks,
   simplifyPathByDistance,

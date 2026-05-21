@@ -36,6 +36,30 @@ describe("run replay helpers", () => {
     });
   });
 
+  test("respects saved segments without connecting pause gaps", () => {
+    const replay = buildRunReplayTimeline({
+      segments: [
+        {
+          trustedPath: [
+            { latitude: -23.56, longitude: -46.64, timestamp: 1000 },
+            { latitude: -23.56, longitude: -46.6401, timestamp: 2000 },
+          ],
+        },
+        {
+          trustedPath: [
+            { latitude: -23.57, longitude: -46.65, timestamp: 6000 },
+            { latitude: -23.5701, longitude: -46.65, timestamp: 7000 },
+          ],
+        },
+      ],
+    });
+
+    expect(replay.segments).toHaveLength(2);
+    expect(replay.timeline[2].segmentId).toBe(1);
+    expect(replay.timeline[2].cumulativeMeters).toBeCloseTo(replay.timeline[1].cumulativeMeters, 5);
+    expect(replay.totalMeters).toBeLessThan(40);
+  });
+
   test("requires ownership when an owner id exists but allows legacy local runs", () => {
     expect(isRunOwnedByCurrentUser({ userId: "me" }, "me")).toBe(true);
     expect(isRunOwnedByCurrentUser({ ownerId: "other" }, "me")).toBe(false);

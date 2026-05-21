@@ -75,6 +75,7 @@ import {
   buildSummaryRenderPath,
   createTrackingSession,
   getRenderablePathForRun,
+  getRenderableSegmentsForRun,
 } from "../services/tracking";
 import {
   fetchActiveTerritoriesNear,
@@ -181,6 +182,30 @@ const showRunShareFailure = (message, error) => {
 const uid = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
 const sanitizePath = (arr = []) => sanitizeRunPath(arr);
+const sanitizeSegmentPath = (path = [], segmentId = 0) =>
+  sanitizePath(path).map((point) => ({
+    ...point,
+    segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : segmentId,
+  }));
+const sanitizeSegmentPaths = (segments = []) =>
+  (Array.isArray(segments) ? segments : [])
+    .map((segment, index) => sanitizeSegmentPath(Array.isArray(segment) ? segment : segment?.liveRenderPath || segment?.trustedPath || [], index))
+    .filter((segment) => segment.length >= 2);
+const flattenSegmentPaths = (segments = []) => sanitizeSegmentPaths(segments).flat();
+const sanitizeTrackingSegments = (segments = []) =>
+  (Array.isArray(segments) ? segments : []).map((segment, index) => {
+    const segmentId = Number.isFinite(Number(segment?.index ?? segment?.segmentId)) ? Number(segment.index ?? segment.segmentId) : index;
+    return {
+      id: String(segment?.id || `segment_${segmentId}`),
+      index: segmentId,
+      startedAt: segment?.startedAt || null,
+      endedAt: segment?.endedAt || null,
+      rawPath: sanitizeSegmentPath(segment?.rawPath || [], segmentId),
+      trustedPath: sanitizeSegmentPath(segment?.trustedPath || [], segmentId),
+      liveRenderPath: sanitizeSegmentPath(segment?.liveRenderPath || [], segmentId),
+      summaryRenderPath: sanitizeSegmentPath(segment?.summaryRenderPath || [], segmentId),
+    };
+  });
 const MAX_MERCATOR_LATITUDE = 85.05112878;
 
 const formatSavedDuration = (seconds = 0) => {
@@ -468,6 +493,7 @@ const MapScreen = ({ navigation, route }) => {
   const [displayRouteState, setDisplayRouteState] = useState([]);
   const [displayRouteSegments, setDisplayRouteSegments] = useState([]);
   const [replayPathState, setReplayPathState] = useState([]);
+  const [replaySegmentsState, setReplaySegmentsState] = useState([]);
   const [replaySpeed, setReplaySpeed] = useState(1);
   const [distanceState, setDistanceState] = useState(0);
   const [timeSec, setTimeSec] = useState(0);
@@ -494,6 +520,7 @@ const MapScreen = ({ navigation, route }) => {
   const replayIntervalRef = useRef(null);
   const replayFrameRef = useRef(null);
   const replayPathRef = useRef([]);
+  const replaySegmentsRef = useRef([]);
   const replayTimelineRef = useRef([]);
   const replayLastFrameAtRef = useRef(null);
   const replayElapsedRef = useRef(0);
@@ -972,15 +999,18 @@ const MapScreen = ({ navigation, route }) => {
       const trackingState = trackingSessionRef.current?.getState?.();
       const sessionTrusted = sanitizePath(trackingState?.trustedPath || []);
       if (sessionTrusted.length === 0 && (!routeBufferRef.current || routeBufferRef.current.length === 0)) return;
+      const liveSegments = sanitizeSegmentPaths(trackingState?.liveRenderSegments || []);
 
       const savedSnapshot = sessionTrusted.length > 0 ? sessionTrusted : sanitizePath(savedPathRef.current);
       const displaySnapshot = limitPathForRendering(
-        sanitizePath(trackingState?.liveRenderPath || []).length > 1
-          ? sanitizePath(trackingState.liveRenderPath)
+        liveSegments.length > 0
+          ? flattenSegmentPaths(liveSegments)
+          : sanitizePath(trackingState?.liveRenderPath || []).length > 1
+            ? sanitizePath(trackingState.liveRenderPath)
           : smoothDisplayPath(savedSnapshot, { config: TRACKING_CONFIG }),
         TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
       );
-      const segmentSnapshot = splitPathIntoSegments(displaySnapshot);
+      const segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(displaySnapshot);
 
       routeStateRef.current = savedSnapshot;
       savedPathRef.current = savedSnapshot;
@@ -1054,15 +1084,16 @@ const MapScreen = ({ navigation, route }) => {
         }
 
         const trustedPath = sanitizePath(result.trustedPath || []);
+        const liveSegments = sanitizeSegmentPaths(result.liveRenderSegments || []);
         const livePath = limitPathForRendering(
-          sanitizePath(result.liveRenderPath || trustedPath),
+          liveSegments.length > 0 ? flattenSegmentPaths(liveSegments) : sanitizePath(result.liveRenderPath || trustedPath),
           TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
         );
 
         savedPathRef.current = trustedPath;
         routeStateRef.current = trustedPath;
         displayPathRef.current = livePath;
-        displaySegmentsRef.current = splitPathIntoSegments(livePath);
+        displaySegmentsRef.current = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
         routeBufferRef.current = result.point ? [result.point] : [];
         lastAcceptedLocationRef.current = trustedPath[trustedPath.length - 1] || null;
         lastPointRef.current = lastAcceptedLocationRef.current;
@@ -1321,6 +1352,7 @@ const MapScreen = ({ navigation, route }) => {
         closeSelectedTerritory();
         currentRunIdRef.current = uid();
         resetTrackingPipeline({ segmentId: 0 });
+        trackingSessionRef.current?.start?.({ startedAt: Date.now() });
         setPolygons([]);
         setCompletedZonePreview([]);
         distanceRef.current = 0;
@@ -1379,6 +1411,7 @@ const MapScreen = ({ navigation, route }) => {
     runningRef.current = false;
     setPaused(true);
     flushRouteBufferToState();
+    trackingSessionRef.current?.pause?.({ endedAt: Date.now() });
     stopWatcherAndPolling();
     stopBackgroundLocationService();
 
@@ -1394,6 +1427,7 @@ const MapScreen = ({ navigation, route }) => {
     try {
       setPaused(false);
       runningRef.current = true;
+      trackingSessionRef.current?.resume?.({ startedAt: Date.now() });
       forceNextSegmentBreakRef.current = true;
       pendingSuspiciousPointRef.current = null;
       lastSmoothedLocationRef.current = null;
@@ -1459,6 +1493,7 @@ const MapScreen = ({ navigation, route }) => {
     setDistanceState(0);
     resetTrackingPipeline({ segmentId: 0 });
     setReplayPathState([]);
+    setReplaySegmentsState([]);
     setPolygons([]);
     setCompletedZonePreview([]);
     timeSecRef.current = 0;
@@ -1515,6 +1550,7 @@ const MapScreen = ({ navigation, route }) => {
 
         const runData = {
           id: runId,
+          segments: sanitizeTrackingSegments(trackingFinish?.segments || []),
           path,
           trustedPath: path,
           rawPath: sanitizePath(trackingFinish?.rawPath || rawPath),
@@ -1668,6 +1704,7 @@ const MapScreen = ({ navigation, route }) => {
 
         clearReplayPlayback();
         replayPathRef.current = [];
+        replaySegmentsRef.current = [];
         replayTimelineRef.current = [];
         replayElapsedRef.current = 0;
         replayRunRef.current = null;
@@ -1676,6 +1713,7 @@ const MapScreen = ({ navigation, route }) => {
         setReplaySpeed(1);
         setReplaying(false);
         setReplayPathState([]);
+        setReplaySegmentsState([]);
         resetTrackingPipeline({ segmentId: 0 });
         setMapFollowEnabled(true);
 
@@ -1720,6 +1758,7 @@ const MapScreen = ({ navigation, route }) => {
         }
         return path.slice(0, nextLength);
       });
+      setReplaySegmentsState(splitPathIntoSegments(path.slice(0, visibleIndex + 1)));
 
       const currentSeconds = Math.round(Number(currentPoint?.cumulativeTime) || replayElapsedRef.current);
       const currentMeters = Number(currentPoint?.cumulativeMeters) || 0;
@@ -1730,6 +1769,7 @@ const MapScreen = ({ navigation, route }) => {
 
       if (replayElapsedRef.current >= totalReplaySeconds || visibleIndex >= path.length - 1) {
         setReplayPathState(path);
+        setReplaySegmentsState(splitPathIntoSegments(path));
         const stats = getReplayRunStats(replayRunRef.current || {}, timeline);
         timeSecRef.current = Math.round(stats.durationSeconds);
         distanceRef.current = stats.distanceMeters;
@@ -1800,6 +1840,7 @@ const MapScreen = ({ navigation, route }) => {
         replayRunRef.current = runEntry;
         replayReturnRef.current = options.returnTo || null;
         replayPathRef.current = replayData.path;
+        replaySegmentsRef.current = replayData.segments || splitPathIntoSegments(replayData.path);
         replayTimelineRef.current = replayData.timeline;
         replayElapsedRef.current = 0;
         replayLastFrameAtRef.current = null;
@@ -1821,6 +1862,7 @@ const MapScreen = ({ navigation, route }) => {
         setDisplayRouteState([]);
         setDisplayRouteSegments([]);
         setReplayPathState([replayData.path[0]]);
+        setReplaySegmentsState([]);
         timeSecRef.current = 0;
         distanceRef.current = 0;
         setTimeSec(stats.durationSeconds > 0 ? 0 : Math.round(initialPoint?.cumulativeTime || 0));
@@ -1934,6 +1976,7 @@ const MapScreen = ({ navigation, route }) => {
     return {
       runId: lastSavedRun?.id,
       path,
+      segments: getRenderableSegmentsForRun(lastSavedRun || {}).map((segment, index) => sanitizeSegmentPath(segment, index)),
       zoneCoords,
       isZone,
       distanceKm: (Number(lastSavedRun?.distance) || 0) / 1000,
@@ -1953,6 +1996,7 @@ const MapScreen = ({ navigation, route }) => {
       logShareError("saved-card-capture-fallback", cardError, context);
       return generateTracePngFromPath(context.path, {
         ref: savedRouteShareRef,
+        segments: context.segments,
         zoneCoords: context.zoneCoords,
         isZone: context.isZone,
         filename: `${filename}-fallback-trace`,
@@ -1988,6 +2032,7 @@ const MapScreen = ({ navigation, route }) => {
       assertTraceHasEnoughPoints(context);
       const uri = await generateTracePngFromPath(context.path, {
         ref: savedRouteShareRef,
+        segments: context.segments,
         zoneCoords: context.zoneCoords,
         isZone: context.isZone,
         filename: `wayper-run-trace-${context.runId || Date.now()}`,
@@ -2031,6 +2076,7 @@ const MapScreen = ({ navigation, route }) => {
       assertTraceHasEnoughPoints(context);
       const uri = await generateTracePngFromPath(context.path, {
         ref: savedRouteShareRef,
+        segments: context.segments,
         zoneCoords: context.zoneCoords,
         isZone: context.isZone,
         filename: `wayper-png-${context.runId || Date.now()}`,
@@ -2131,6 +2177,9 @@ const MapScreen = ({ navigation, route }) => {
     outputRange: [0.16, 0.34],
   });
   const savedRunPath = sanitizePath(getRenderablePathForRun(lastSavedRun || {}));
+  const savedRunSegments = getRenderableSegmentsForRun(lastSavedRun || {})
+    .map((segment, index) => sanitizeSegmentPath(segment, index))
+    .filter((segment) => segment.length >= 2);
   const savedOriginalPath = sanitizePath(lastSavedRun?.trustedPath || lastSavedRun?.path || savedRunPath);
   const savedSharePath = savedOriginalPath.length > 1 ? savedOriginalPath : savedRunPath;
   const savedRoutePoints = buildRouteSvgPoints(savedSharePath);
@@ -2167,6 +2216,7 @@ const MapScreen = ({ navigation, route }) => {
           routePath={liveRoutePath}
           routeSegments={liveRouteSegments}
           replayPath={replayPathState}
+          replaySegments={replaySegmentsState}
           zones={visibleMapZones}
           territories={territories}
           leaderCells={leaderCells}
@@ -2665,6 +2715,7 @@ const MapScreen = ({ navigation, route }) => {
             );
             const normalized = {
               ...payload,
+              segments: sanitizeTrackingSegments(payload.segments || currentRunData?.segments || []),
               path: trustedPath,
               trustedPath,
               rawPath: sanitizePath(payload.rawPath || currentRunData?.rawPath || []),
@@ -2829,6 +2880,7 @@ const MapScreen = ({ navigation, route }) => {
             ref={savedFullShareRef}
             mode="card"
             path={savedSharePath}
+            segments={savedRunIsZone ? [] : savedRunSegments}
             zoneCoords={savedZoneCoords}
             isZone={savedRunIsZone}
             title={savedFullCardTitle}
@@ -2843,6 +2895,7 @@ const MapScreen = ({ navigation, route }) => {
             ref={savedRouteShareRef}
             mode="trace"
             path={savedSharePath}
+            segments={savedRunIsZone ? [] : savedRunSegments}
             zoneCoords={savedZoneCoords}
             isZone={savedRunIsZone}
             title={savedTraceCardTitle}
