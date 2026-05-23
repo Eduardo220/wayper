@@ -11,8 +11,8 @@ import Svg, {
   Rect,
   Stop,
 } from "react-native-svg";
+import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../Map/WayperMapLibre";
 import { WayperTheme } from "../../theme/wayperTheme";
-import { beautifyRoutePath } from "../../utils/routeDrawing";
 
 export const RUN_SHARE_CARD_SIZE = {
   card: { width: 1080, height: 1350 },
@@ -22,6 +22,7 @@ export const RUN_SHARE_CARD_SIZE = {
 const CARD_VIEWBOX = { width: 1080, height: 760 };
 const TRACE_VIEWBOX = { width: 900, height: 620 };
 const WAYPER_LOGO = require("../../../assets/logo.png");
+const MAX_MERCATOR_LATITUDE = 85.05112878;
 
 const safeNumber = (value, fallback = NaN) => {
   const number = Number(value);
@@ -56,6 +57,17 @@ const normalizeCoords = (coords = []) =>
     .map(normalizeCoord)
     .filter(Boolean);
 
+const normalizeSegments = (segments = []) =>
+  (Array.isArray(segments) ? segments : [])
+    .map((segment) =>
+      normalizeCoords(
+        Array.isArray(segment)
+          ? segment
+          : segment?.summaryRenderPath || segment?.renderPath || segment?.displayPath || segment?.trustedPath || []
+      )
+    )
+    .filter((segment) => segment.length >= 2);
+
 const closePolygon = (coords = []) => {
   if (coords.length < 3) return coords;
   const first = coords[0];
@@ -64,21 +76,20 @@ const closePolygon = (coords = []) => {
   return coords.concat(first);
 };
 
-const buildSvgPoints = (coords = [], { width, height, padding = 72, smooth = false, closed = false } = {}) => {
+const projectCoord = (point) => {
+  const latitude = Math.max(-MAX_MERCATOR_LATITUDE, Math.min(MAX_MERCATOR_LATITUDE, point.latitude));
+  const latRad = (latitude * Math.PI) / 180;
+  return {
+    x: point.longitude,
+    y: Math.log(Math.tan(Math.PI / 4 + latRad / 2)),
+  };
+};
+
+const buildSvgPoints = (coords = [], { width, height, padding = 72, closed = false } = {}) => {
   const clean = normalizeCoords(coords);
   if (clean.length === 0) return { points: "", hasShape: false };
 
-  const source = smooth && clean.length > 2
-    ? beautifyRoutePath(clean, {
-        toleranceM: 4.2,
-        minPointDistanceM: 1.5,
-        spikeToleranceM: 8,
-        maxPoints: 900,
-        preserveTurns: true,
-      })
-    : clean;
-
-  const points = closed ? closePolygon(source) : source;
+  const points = closed ? closePolygon(clean) : clean;
   if (points.length < (closed ? 4 : 2)) {
     const only = points[0];
     return {
@@ -88,12 +99,7 @@ const buildSvgPoints = (coords = [], { width, height, padding = 72, smooth = fal
     };
   }
 
-  const avgLat = points.reduce((sum, point) => sum + point.latitude, 0) / points.length;
-  const lngScale = Math.max(0.2, Math.cos((avgLat * Math.PI) / 180));
-  const projected = points.map((point) => ({
-    x: point.longitude * lngScale,
-    y: point.latitude,
-  }));
+  const projected = points.map(projectCoord);
 
   const xs = projected.map((point) => point.x);
   const ys = projected.map((point) => point.y);
@@ -123,6 +129,40 @@ const buildSvgPoints = (coords = [], { width, height, padding = 72, smooth = fal
   };
 };
 
+const buildSvgSegmentShapes = (segments = [], { width, height, padding = 72 } = {}) => {
+  const cleanSegments = normalizeSegments(segments);
+  const allPoints = cleanSegments.flat();
+  if (allPoints.length < 2) return [];
+
+  const projectedSegments = cleanSegments.map((segment) => segment.map(projectCoord));
+  const projected = projectedSegments.flat();
+  const xs = projected.map((point) => point.x);
+  const ys = projected.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const rangeX = Math.max(maxX - minX, 0.000001);
+  const rangeY = Math.max(maxY - minY, 0.000001);
+  const drawWidth = width - padding * 2;
+  const drawHeight = height - padding * 2;
+  const scale = Math.min(drawWidth / rangeX, drawHeight / rangeY);
+  const shapeWidth = rangeX * scale;
+  const shapeHeight = rangeY * scale;
+  const offsetX = (width - shapeWidth) / 2;
+  const offsetY = (height - shapeHeight) / 2;
+
+  return projectedSegments.map((segment) =>
+    segment
+      .map((point) => {
+        const x = offsetX + (point.x - minX) * scale;
+        const y = offsetY + (1 - (point.y - minY) / rangeY) * shapeHeight;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ")
+  );
+};
+
 function Metric({ label, value }) {
   return (
     <View style={styles.metric}>
@@ -132,15 +172,25 @@ function Metric({ label, value }) {
   );
 }
 
-function Artwork({ mode, coords, isZone }) {
+function Artwork({ mode, coords, segments = [], isZone }) {
   const viewBox = mode === "trace" ? TRACE_VIEWBOX : CARD_VIEWBOX;
+  const segmentShapes = useMemo(
+    () =>
+      !isZone
+        ? buildSvgSegmentShapes(segments, {
+            width: viewBox.width,
+            height: viewBox.height,
+            padding: mode === "trace" ? 120 : 110,
+          })
+        : [],
+    [isZone, mode, segments, viewBox.height, viewBox.width]
+  );
   const shape = useMemo(
     () =>
       buildSvgPoints(coords, {
         width: viewBox.width,
         height: viewBox.height,
         padding: mode === "trace" ? 120 : 110,
-        smooth: !isZone,
         closed: isZone,
       }),
     [coords, isZone, mode, viewBox.height, viewBox.width]
@@ -171,7 +221,16 @@ function Artwork({ mode, coords, isZone }) {
       <Line x1={viewBox.width * 0.17} y1={viewBox.height + 80} x2={viewBox.width * 0.78} y2={-80} stroke="#263542" strokeWidth={mode === "trace" ? 30 : 22} opacity="0.40" />
       <Line x1={viewBox.width * 0.17} y1={viewBox.height + 80} x2={viewBox.width * 0.78} y2={-80} stroke="#6F7A86" strokeWidth={mode === "trace" ? 7 : 5} opacity="0.18" />
 
-      {shape.hasShape && isZone ? (
+      {segmentShapes.length > 0 ? (
+        <>
+          {segmentShapes.map((points, index) => (
+            <Polyline key={`segment-glow-${index}`} points={points} fill="none" stroke={`url(#${glowId})`} strokeWidth={mode === "trace" ? 54 : 42} strokeLinecap="round" strokeLinejoin="round" opacity="0.58" />
+          ))}
+          {segmentShapes.map((points, index) => (
+            <Polyline key={`segment-line-${index}`} points={points} fill="none" stroke={`url(#${gradientId})`} strokeWidth={mode === "trace" ? 24 : 17} strokeLinecap="round" strokeLinejoin="round" />
+          ))}
+        </>
+      ) : shape.hasShape && isZone ? (
         <>
           <Polygon points={shape.points} fill="rgba(0, 230, 118, 0.18)" stroke={`url(#${glowId})`} strokeWidth={mode === "trace" ? 54 : 44} strokeLinejoin="round" opacity="0.64" />
           <Polygon points={shape.points} fill="rgba(0, 230, 118, 0.30)" stroke={`url(#${gradientId})`} strokeWidth={mode === "trace" ? 24 : 18} strokeLinejoin="round" />
@@ -188,38 +247,70 @@ function Artwork({ mode, coords, isZone }) {
   );
 }
 
+function getArtworkCenter(coords = []) {
+  if (!Array.isArray(coords) || coords.length === 0) return WAYPER_FALLBACK_COORD;
+  return coords[Math.floor(coords.length / 2)] || coords[0] || WAYPER_FALLBACK_COORD;
+}
+
+function MapArtwork({ coords = [], segments = [], isZone = false, area = "0 m2", mapStyle }) {
+  const zones = isZone && coords.length >= 3 ? [{ coords, area }] : [];
+
+  return (
+    <WayperMapLibre
+      style={styles.mapArtwork}
+      routePath={isZone ? [] : coords}
+      routeSegments={isZone ? [] : segments}
+      zones={zones}
+      showZones={isZone}
+      showUserLocation={false}
+      showTerritories={false}
+      showLeaderAreas={false}
+      interactive={false}
+      fitToContent={coords.length > 1}
+      centerCoordinate={getArtworkCenter(coords)}
+      contentPadding={{ top: 82, right: 78, bottom: 82, left: 78 }}
+      mapStyle={mapStyle}
+    />
+  );
+}
+
 const RunShareCard = forwardRef(function RunShareCard(
   {
     mode = "card",
     path = [],
+    segments = [],
     zoneCoords = [],
     isZone = false,
-    title = "Wayper Run",
+    title = "Corrida Wayper",
     subtitle,
     distance = "0.00 km",
     duration = "0:00",
     pace = "--",
     date = "",
     area = "0 m2",
+    mapStyle,
     style,
   },
   ref
 ) {
   const size = RUN_SHARE_CARD_SIZE[mode] || RUN_SHARE_CARD_SIZE.card;
   const routeCoords = normalizeCoords(path);
+  const segmentCoords = normalizeSegments(segments);
   const zoneShape = normalizeCoords(zoneCoords);
   const useZoneShape = Boolean(isZone && (zoneShape.length >= 3 || routeCoords.length >= 3));
   const artworkCoords = useZoneShape ? (zoneShape.length >= 3 ? zoneShape : routeCoords) : routeCoords;
-  const displayTitle = title || (useZoneShape ? "Wayper Zone" : "Wayper Run");
-  const displaySubtitle = subtitle || (useZoneShape ? "Corrida por zonas" : "Corrida livre");
+  const displayTitle = title || "Corrida Wayper";
+  const displaySubtitle = subtitle && subtitle !== displayTitle
+    ? subtitle
+    : (useZoneShape ? "Corrida por zonas" : "Corrida livre");
 
   if (mode === "trace") {
     return (
       <View ref={ref} collapsable={false} style={[styles.root, styles.traceRoot, { width: size.width, height: size.height }, style]}>
         <View style={styles.traceHeader}>
-          <View>
+          <View style={styles.traceTitleColumn}>
             <Text style={styles.traceEyebrow}>Wayper Trace</Text>
-            <Text style={styles.traceTitle}>{useZoneShape ? "Zona PNG" : "Traçado PNG"}</Text>
+            <Text style={styles.traceTitle} numberOfLines={2}>{displayTitle}</Text>
           </View>
           <View style={styles.traceBadge}>
             <Image source={WAYPER_LOGO} style={styles.shareLogoImage} resizeMode="contain" />
@@ -227,7 +318,7 @@ const RunShareCard = forwardRef(function RunShareCard(
         </View>
 
         <View style={styles.traceArtwork}>
-          <Artwork mode="trace" coords={artworkCoords} isZone={useZoneShape} />
+          <Artwork mode="trace" coords={artworkCoords} segments={segmentCoords} isZone={useZoneShape} />
         </View>
 
         <View style={styles.traceMetrics}>
@@ -242,9 +333,11 @@ const RunShareCard = forwardRef(function RunShareCard(
   return (
     <View ref={ref} collapsable={false} style={[styles.root, styles.cardRoot, { width: size.width, height: size.height }, style]}>
       <View style={styles.cardHeader}>
-        <View>
+        <View style={styles.cardTitleColumn}>
           <Text style={styles.cardEyebrow}>Wayper finalizado</Text>
-          <Text style={styles.cardTitle}>{displayTitle}</Text>
+          <Text style={styles.cardTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.62}>
+            {displayTitle}
+          </Text>
           <Text style={styles.cardSubtitle}>{displaySubtitle}</Text>
         </View>
         <View style={styles.logoMark}>
@@ -252,8 +345,8 @@ const RunShareCard = forwardRef(function RunShareCard(
         </View>
       </View>
 
-      <View style={styles.cardArtwork}>
-        <Artwork mode="card" coords={artworkCoords} isZone={useZoneShape} />
+      <View collapsable={false} style={styles.cardArtwork}>
+        <MapArtwork coords={artworkCoords} segments={segmentCoords} isZone={useZoneShape} area={area} mapStyle={mapStyle} />
       </View>
 
       <View style={styles.cardInfo}>
@@ -300,6 +393,10 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textTransform: "uppercase",
   },
+  cardTitleColumn: {
+    flex: 1,
+    paddingRight: 34,
+  },
   cardTitle: {
     color: WayperTheme.colors.text,
     fontSize: 74,
@@ -330,6 +427,9 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: WayperTheme.colors.primaryBorder,
     backgroundColor: WayperTheme.colors.surface,
+  },
+  mapArtwork: {
+    flex: 1,
   },
   cardInfo: {
     marginTop: 44,
@@ -405,6 +505,10 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: "900",
     textTransform: "uppercase",
+  },
+  traceTitleColumn: {
+    flex: 1,
+    paddingRight: 28,
   },
   traceTitle: {
     color: WayperTheme.colors.text,

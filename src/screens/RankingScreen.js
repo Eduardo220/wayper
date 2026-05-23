@@ -16,7 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db } from "../firebaseConfig";
-import { fetchAllRanking, fetchMonthlyRanking } from "../services/ranking";
+import { fetchAllRanking, fetchLocalLeadersRanking, fetchMonthlyRanking } from "../services/ranking";
 import { getMonthlyMedalForRank, getRankingMonthKey } from "../services/ranking/constants";
 import { WayperTheme } from "../theme/wayperTheme";
 
@@ -38,6 +38,9 @@ const makeMockRanking = (city = "Santa Maria", count = 40) =>
       totalRuns: Math.floor(Math.random() * 70),
       level: Math.floor(Math.random() * 40) + 1,
       xp: Math.floor(Math.random() * 25000),
+      totalStolenAreaM2: Math.round(Math.random() * 450000),
+      cellsLedCount: Math.floor(Math.random() * 12),
+      leaderAreaM2: Math.round(Math.random() * 600000),
     };
   });
 
@@ -55,6 +58,15 @@ const formatArea = (m2 = 0) => {
 };
 
 const getMetricValue = (item, mode, period) => {
+  if (mode === "localLeaders") {
+    return safeNumber(item.cellsLedCount);
+  }
+  if (mode === "stolenArea") {
+    return safeNumber(item.totalStolenAreaM2);
+  }
+  if (mode === "cellsLed") {
+    return safeNumber(item.cellsLedCount);
+  }
   if (mode === "distance") {
     return safeNumber(period === "monthly" ? item.monthlyDistance ?? item.distance : item.distance);
   }
@@ -63,10 +75,18 @@ const getMetricValue = (item, mode, period) => {
 
 const getMetricLabel = (item, mode, period) => {
   const value = getMetricValue(item, mode, period);
+  if (mode === "localLeaders" || mode === "cellsLed") return `${Math.round(value)} regioes`;
+  if (mode === "stolenArea") return formatArea(value);
   return mode === "distance" ? formatKm(value) : formatArea(value);
 };
 
-const getMetricTitle = (mode) => (mode === "distance" ? "Km percorridos" : "Area capturada");
+const getMetricTitle = (mode) => {
+  if (mode === "distance") return "Km percorridos";
+  if (mode === "localLeaders") return "Lideres locais";
+  if (mode === "stolenArea") return "Area retomada";
+  if (mode === "cellsLed") return "Regioes lideradas";
+  return "Area capturada";
+};
 
 const getMedalLabel = (rank) => {
   if (rank === 1) return "Campeao";
@@ -107,8 +127,9 @@ function RankItem({ item, mode, period, maxValue, isMe }) {
   const ratio = Math.max(0.06, Math.min(1, value / Math.max(maxValue, 1)));
   const medalLabel = period === "monthly" ? getMedalLabel(item.rank) : null;
   const isLeader = item.rank === 1;
-  const accent = mode === "distance" ? WayperTheme.colors.primary : WayperTheme.colors.cyan;
-  const borderAccent = mode === "distance" ? WayperTheme.colors.primaryBorder : WayperTheme.colors.cyanBorder;
+  const isCyanMode = mode === "area" || mode === "stolenArea";
+  const accent = isCyanMode ? WayperTheme.colors.cyan : WayperTheme.colors.primary;
+  const borderAccent = isCyanMode ? WayperTheme.colors.cyanBorder : WayperTheme.colors.primaryBorder;
 
   return (
     <View style={[styles.rankCard, isLeader && styles.rankCardLeader, isMe && styles.rankCardMe]}>
@@ -147,7 +168,9 @@ function RankItem({ item, mode, period, maxValue, isMe }) {
 
         <View style={styles.rankMetaRow}>
           <Text style={styles.info} numberOfLines={1}>
-            {item.totalRuns || 0} corridas • Nivel {item.level || 1}
+            {mode === "localLeaders"
+              ? `${formatArea(item.leaderAreaM2 || item.area)} dominados`
+              : `${item.totalRuns || 0} corridas - Nivel ${item.level || 1}`}
           </Text>
           {medalLabel ? (
             <View style={[styles.medalPill, { borderColor: borderAccent }]}>
@@ -158,7 +181,7 @@ function RankItem({ item, mode, period, maxValue, isMe }) {
 
         <View style={styles.progressTrack}>
           <LinearGradient
-            colors={mode === "distance"
+            colors={!isCyanMode
               ? [WayperTheme.colors.primaryLight, WayperTheme.colors.primaryDark]
               : [WayperTheme.colors.cyan, WayperTheme.colors.primary]}
             start={{ x: 0, y: 0 }}
@@ -171,7 +194,7 @@ function RankItem({ item, mode, period, maxValue, isMe }) {
   );
 }
 
-export default function RankingScreen({ route }) {
+export default function RankingScreen({ route, navigation }) {
   const injectedCity = route?.params?.city || "Santa Maria";
   const currentUid = auth.currentUser?.uid;
 
@@ -189,7 +212,7 @@ export default function RankingScreen({ route }) {
   const persistMyMonthlyPreview = useCallback(
     async (ranking) => {
       const uid = auth.currentUser?.uid;
-      if (!uid || period !== "monthly") return;
+      if (!uid || period !== "monthly" || !["area", "distance"].includes(mode)) return;
 
       const me = ranking.find((item) => item.id === uid);
       if (!me?.rank) return;
@@ -225,18 +248,25 @@ export default function RankingScreen({ route }) {
           limitTo: 300,
         };
 
-        const remote = period === "monthly"
-          ? await fetchMonthlyRanking(args)
-          : await fetchAllRanking(args);
+        const territoryAggregateMode = mode === "stolenArea" || mode === "cellsLed";
+        const remote = mode === "localLeaders"
+          ? await fetchLocalLeadersRanking({ limitTo: 300 })
+          : period === "monthly" && !territoryAggregateMode
+            ? await fetchMonthlyRanking(args)
+            : await fetchAllRanking(args);
 
-        const source = Array.isArray(remote) && remote.length ? remote : makeMockRanking(city);
+        const source = Array.isArray(remote) && remote.length
+          ? remote
+          : mode === "localLeaders"
+            ? []
+            : makeMockRanking(city);
         const normalized = normalizeRanking(source, mode, period);
         setData(normalized);
         persistMyMonthlyPreview(normalized);
       } catch (error) {
         console.warn("Ranking load error:", error);
-        setData(normalizeRanking(makeMockRanking(city), mode, period));
-        Alert.alert("Ranking", "Usando dados locais de exemplo porque o ranking remoto falhou.");
+        setData(mode === "localLeaders" ? [] : normalizeRanking(makeMockRanking(city), mode, period));
+        Alert.alert("Ranking", mode === "localLeaders" ? "Nao foi possivel carregar lideres locais agora." : "Usando dados locais de exemplo porque o ranking remoto falhou.");
       } finally {
         setLoading(false);
       }
@@ -272,6 +302,16 @@ export default function RankingScreen({ route }) {
       setRefreshing(false);
     }
   }, [loadRanking]);
+
+  const goToMap = useCallback(
+    (item = null) => {
+      navigation?.navigate("Mapa", {
+        focusUserId: item?.id || currentUid || null,
+        focusCellId: item?.bestCellId || route?.params?.focusCellId || route?.params?.cellId || null,
+      });
+    },
+    [currentUid, navigation, route?.params?.cellId, route?.params?.focusCellId]
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -337,6 +377,11 @@ export default function RankingScreen({ route }) {
               <View style={styles.leaderBadge}>
                 <Text style={styles.leaderBadgeText}>#1</Text>
               </View>
+              {mode === "localLeaders" ? (
+                <TouchableOpacity activeOpacity={0.86} style={styles.leaderMapButton} onPress={() => goToMap(leader)}>
+                  <Ionicons name="map-outline" size={17} color={WayperTheme.colors.textInverse} />
+                </TouchableOpacity>
+              ) : null}
             </View>
           ) : null}
         </LinearGradient>
@@ -360,6 +405,21 @@ export default function RankingScreen({ route }) {
             <TouchableOpacity activeOpacity={0.86} onPress={() => setMode("distance")} style={[styles.modeButton, mode === "distance" && styles.modeButtonActive]}>
               <Ionicons name="walk-outline" size={18} color={mode === "distance" ? WayperTheme.colors.textInverse : WayperTheme.colors.primary} />
               <Text style={[styles.modeText, mode === "distance" && styles.modeTextActive]}>Km</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.modeRow}>
+            <TouchableOpacity activeOpacity={0.86} onPress={() => setMode("localLeaders")} style={[styles.modeButton, mode === "localLeaders" && styles.modeButtonActive]}>
+              <Ionicons name="flag-outline" size={18} color={mode === "localLeaders" ? WayperTheme.colors.textInverse : WayperTheme.colors.primary} />
+              <Text style={[styles.modeText, mode === "localLeaders" && styles.modeTextActive]}>Lideres locais</Text>
+            </TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.86} onPress={() => setMode("stolenArea")} style={[styles.modeButton, mode === "stolenArea" && styles.modeButtonActiveCyan]}>
+              <Ionicons name="repeat-outline" size={18} color={mode === "stolenArea" ? WayperTheme.colors.textInverse : WayperTheme.colors.cyan} />
+              <Text style={[styles.modeText, mode === "stolenArea" && styles.modeTextActive]}>Retomada</Text>
+            </TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.86} onPress={() => setMode("cellsLed")} style={[styles.modeButton, mode === "cellsLed" && styles.modeButtonActive]}>
+              <Ionicons name="podium-outline" size={18} color={mode === "cellsLed" ? WayperTheme.colors.textInverse : WayperTheme.colors.primary} />
+              <Text style={[styles.modeText, mode === "cellsLed" && styles.modeTextActive]}>Regioes</Text>
             </TouchableOpacity>
           </View>
 
@@ -388,6 +448,25 @@ export default function RankingScreen({ route }) {
           </View>
         </View>
 
+        {mode === "localLeaders" ? (
+          <View style={styles.localLeaderCard}>
+            <View style={styles.localLeaderIcon}>
+              <Ionicons name="flag" size={22} color={WayperTheme.colors.primary} />
+            </View>
+            <View style={styles.localLeaderBody}>
+              <Text style={styles.localLeaderTitle}>Voce lidera {myRank?.cellsLedCount || 0} regioes</Text>
+              <Text style={styles.localLeaderText}>
+                Area dominada: {formatArea(myRank?.leaderAreaM2 || myRank?.area || 0)}
+                {myRank?.bestCellId ? ` - melhor disputa: ${myRank.bestCellId}` : ""}
+              </Text>
+            </View>
+            <TouchableOpacity activeOpacity={0.86} style={styles.mapButton} onPress={() => goToMap(myRank || leader)}>
+              <Ionicons name="map-outline" size={17} color={WayperTheme.colors.textInverse} />
+              <Text style={styles.mapButtonText}>Mapa</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         {myRank ? (
           <View style={styles.myRankCard}>
             <Ionicons name="person-circle-outline" size={22} color={WayperTheme.colors.primary} />
@@ -402,7 +481,7 @@ export default function RankingScreen({ route }) {
         </View>
       </Animated.View>
     ),
-    [city, fadeAnim, filtered.length, leader, mode, monthLabel, myRank, onRefresh, period, scope, search, slideAnim, subtitle]
+    [city, fadeAnim, filtered.length, goToMap, leader, mode, monthLabel, myRank, onRefresh, period, scope, search, slideAnim, subtitle]
   );
 
   return (
@@ -620,6 +699,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "900",
   },
+  leaderMapButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primary,
+    marginLeft: WayperTheme.spacing.sm,
+  },
   controlsCard: {
     marginTop: WayperTheme.spacing.lg,
     padding: WayperTheme.spacing.lg,
@@ -721,6 +809,58 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: WayperTheme.spacing.lg,
     gap: WayperTheme.spacing.sm,
+  },
+  localLeaderCard: {
+    minHeight: 76,
+    marginTop: WayperTheme.spacing.lg,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    flexDirection: "row",
+    alignItems: "center",
+    padding: WayperTheme.spacing.md,
+    gap: WayperTheme.spacing.md,
+    ...WayperTheme.shadows.card,
+  },
+  localLeaderIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  localLeaderBody: {
+    flex: 1,
+  },
+  localLeaderTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  localLeaderText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  mapButton: {
+    minHeight: 40,
+    paddingHorizontal: WayperTheme.spacing.md,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.xs,
+  },
+  mapButtonText: {
+    color: WayperTheme.colors.textInverse,
+    fontSize: 12,
+    fontWeight: "900",
   },
   myRankText: {
     flex: 1,

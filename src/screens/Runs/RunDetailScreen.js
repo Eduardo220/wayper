@@ -19,6 +19,7 @@ import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../../components/Runs/RunShar
 import RunSummaryModal from "../../components/Runs/RunSummaryModal";
 import { WPButton } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
+import { auth } from "../../firebaseConfig";
 import sync from "../../utils/sync";
 import { beautifyRoutePath } from "../../utils/routeDrawing";
 import {
@@ -38,6 +39,10 @@ import {
   getFormattedPace,
   MIN_DISTANCE_FOR_PACE_KM,
 } from "../../utils/pace";
+import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
+import { isRunOwnedByCurrentUser } from "../../utils/runOwnership";
+import { normalizeRunPath } from "../../utils/runPath";
+import { getRenderablePathForRun, getRenderableSegmentsForRun } from "../../services/tracking";
 
 const MIN_BAR_HEIGHT = 22;
 const CHART_BASE_HEIGHT = 118;
@@ -275,15 +280,25 @@ function RunDetailScreenInner({ route, navigation }) {
     });
   }, [currentRun, navigation, readOnly]);
 
-  const path = useMemo(() => sanitizePath(run?.path || []), [run]);
+  const path = useMemo(() => normalizeRunPath(run), [run]);
+  const mapSegments = useMemo(
+    () => getRenderableSegmentsForRun(run || {}).map((segment) => sanitizePath(segment)).filter((segment) => segment.length > 1),
+    [run]
+  );
+  const mapPath = useMemo(() => {
+    const renderPath = sanitizePath(getRenderablePathForRun(run || {}));
+    const segmentedPath = mapSegments.flat();
+    if (segmentedPath.length > 1) return segmentedPath;
+    return renderPath.length > 1 ? renderPath : path;
+  }, [mapSegments, path, run]);
   const zoneCoords = useMemo(() => sanitizePath(run?.zoneCoords || run?.zone?.coords || []), [run]);
   const isZoneRun = run?.mode === "zones" || safeNum(run?.area) > 0 || zoneCoords.length >= 3;
   const hasZoneShape = isZoneRun && zoneCoords.length >= 3;
   const midPoint = useMemo(() => {
     if (hasZoneShape) return zoneCoords[0] || WAYPER_FALLBACK_COORD;
-    if (path.length === 0) return WAYPER_FALLBACK_COORD;
-    return path[Math.floor(path.length / 2)] || path[0] || WAYPER_FALLBACK_COORD;
-  }, [hasZoneShape, path, zoneCoords]);
+    if (mapPath.length === 0) return WAYPER_FALLBACK_COORD;
+    return mapPath[Math.floor(mapPath.length / 2)] || mapPath[0] || WAYPER_FALLBACK_COORD;
+  }, [hasZoneShape, mapPath, zoneCoords]);
 
   const stats = useMemo(() => computeSplits(path, run?.duration || 0), [path, run]);
   const totalMeters = stats.totalMeters > 0 ? stats.totalMeters : safeNum(run?.distance);
@@ -293,28 +308,64 @@ function RunDetailScreenInner({ route, navigation }) {
   const paceDisplay = getFormattedPace(totalTime, totalMeters / 1000, { suffix: "/km" });
   const avgSpeedDisplay = (safeNum(stats.avgSpeedKmh) || safeNum(run?.avgSpeed)).toFixed(1);
   const maxSpeedDisplay = safeNum(stats.maxSpeedKmh).toFixed(1);
-  const runTitle = run?.name || "Corrida";
+  const runTitle = getRunDisplayTitle(run);
   const effort = run?.effort ?? "--";
   const distanceDisplay = `${totalKm} km`;
   const durationDisplay = formatDuration(totalTime);
   const areaDisplay = `${Math.round(safeNum(run?.area))} m2`;
-  const shareCardTitle = isZoneRun ? "Wayper Zone" : "Wayper Run";
+  const shareCardTitle = runTitle;
   const shareTraceTitle = isZoneRun ? "Wayper Zone" : "Wayper Trace";
+  const routeEndpointPath = useMemo(
+    () => (path.length > 1 ? path : mapPath),
+    [mapPath, path]
+  );
+  const routeStartPoint = !isZoneRun ? routeEndpointPath[0] : null;
+  const routeEndPoint = !isZoneRun ? routeEndpointPath[routeEndpointPath.length - 1] : null;
+  const shareRoutePath = useMemo(
+    () => (hasZoneShape ? [] : routeEndpointPath),
+    [hasZoneShape, routeEndpointPath]
+  );
   const shareTracePoints = useMemo(
-    () => buildShareSvgPoints(hasZoneShape ? zoneCoords : path, { smooth: !hasZoneShape }),
-    [hasZoneShape, path, zoneCoords]
+    () => buildShareSvgPoints(hasZoneShape ? zoneCoords : shareRoutePath, { smooth: false }),
+    [hasZoneShape, shareRoutePath, zoneCoords]
   );
   const shareContext = useMemo(
     () => ({
       runId: run?.id,
-      path,
+      path: hasZoneShape ? zoneCoords : shareRoutePath,
       zoneCoords,
       isZone: isZoneRun,
       distanceKm: totalMeters / 1000,
       durationSeconds: totalTime,
     }),
-    [isZoneRun, path, run?.id, totalMeters, totalTime, zoneCoords]
+    [hasZoneShape, isZoneRun, run?.id, shareRoutePath, totalMeters, totalTime, zoneCoords]
   );
+  const currentUserId = auth.currentUser?.uid || "offline";
+  const canReplayRun = useMemo(
+    () =>
+      !readOnly &&
+      !isZoneRun &&
+      path.length > 1 &&
+      isRunOwnedByCurrentUser(run, currentUserId, { allowLegacyLocal: !readOnly }),
+    [currentUserId, isZoneRun, path.length, readOnly, run]
+  );
+
+  const handleReplayRun = useCallback(() => {
+    if (!canReplayRun || !run) {
+      Alert.alert("Replay indisponivel", "O replay esta disponivel apenas para corridas livres do seu historico.");
+      return;
+    }
+
+    const params = {
+      replayRun: run,
+      replayReturnTo: { type: "run-detail", run },
+      replayRequestId: `${run.id || run.date || "run"}:${Date.now()}`,
+      replayAllowLegacyLocal: !readOnly,
+    };
+    const parent = navigation.getParent?.();
+    if (parent) parent.navigate("Mapa", params);
+    else navigation.navigate("Mapa", params);
+  }, [canReplayRun, navigation, readOnly, run]);
 
   const handleEditSave = useCallback(
     async (payload) => {
@@ -452,7 +503,7 @@ function RunDetailScreenInner({ route, navigation }) {
     try {
       setShareLoading("share-trace");
       assertTraceHasEnoughPoints(shareContext);
-      const uri = await generateTracePngFromPath(path, {
+      const uri = await generateTracePngFromPath(hasZoneShape ? zoneCoords : shareRoutePath, {
         ref: shareTraceRef,
         zoneCoords,
         isZone: isZoneRun,
@@ -468,7 +519,7 @@ function RunDetailScreenInner({ route, navigation }) {
     } finally {
       setShareLoading(null);
     }
-  }, [isZoneRun, path, run?.id, shareContext, shareLoading, zoneCoords]);
+  }, [hasZoneShape, isZoneRun, run?.id, shareContext, shareLoading, shareRoutePath, zoneCoords]);
 
   const saveFullImage = useCallback(async () => {
     if (shareLoading) return;
@@ -497,7 +548,7 @@ function RunDetailScreenInner({ route, navigation }) {
     try {
       setShareLoading("download-trace");
       assertTraceHasEnoughPoints(shareContext);
-      const uri = await generateTracePngFromPath(path, {
+      const uri = await generateTracePngFromPath(hasZoneShape ? zoneCoords : shareRoutePath, {
         ref: shareTraceRef,
         zoneCoords,
         isZone: isZoneRun,
@@ -514,7 +565,7 @@ function RunDetailScreenInner({ route, navigation }) {
     } finally {
       setShareLoading(null);
     }
-  }, [isZoneRun, path, run?.id, shareContext, shareLoading, zoneCoords]);
+  }, [hasZoneShape, isZoneRun, run?.id, shareContext, shareLoading, shareRoutePath, zoneCoords]);
 
   const animStyle = useMemo(
     () => ({
@@ -540,13 +591,17 @@ function RunDetailScreenInner({ route, navigation }) {
           <View style={styles.heroMap}>
             <WayperMapLibre
               style={styles.map}
-              routePath={hasZoneShape ? [] : path}
+              routePath={hasZoneShape ? [] : mapPath}
+              routeSegments={hasZoneShape ? [] : mapSegments}
               zones={hasZoneShape ? [{ coords: zoneCoords, area: run?.area }] : []}
               showZones={hasZoneShape}
               centerCoordinate={midPoint}
               showUserLocation={false}
               interactive={false}
-              fitToContent={hasZoneShape || path.length > 1}
+              fitToContent={hasZoneShape || mapPath.length > 1}
+              showRouteEndpoints={!isZoneRun}
+              routeStartCoordinate={routeStartPoint}
+              routeEndCoordinate={routeEndPoint}
               contentPadding={{ top: 58, right: 48, bottom: 62, left: 48 }}
             />
             <LinearGradient
@@ -665,10 +720,18 @@ function RunDetailScreenInner({ route, navigation }) {
 
           {!readOnly ? (
             <View style={styles.actions}>
+              {canReplayRun ? (
+                <WPButton
+                  title="Reproduzir corrida"
+                  icon={<Ionicons name="play-circle-outline" size={21} color={WayperTheme.colors.textInverse} />}
+                  onPress={handleReplayRun}
+                />
+              ) : null}
               <WPButton
                 title="Compartilhar corrida"
                 icon={<Ionicons name="image-outline" size={21} color={WayperTheme.colors.textInverse} />}
                 onPress={() => setShareVisible(true)}
+                style={canReplayRun ? styles.actionGap : undefined}
               />
             </View>
           ) : null}
@@ -679,7 +742,8 @@ function RunDetailScreenInner({ route, navigation }) {
       visible={shareVisible}
       onClose={() => setShareVisible(false)}
       run={run}
-      path={path}
+      path={shareRoutePath}
+      segments={hasZoneShape ? [] : mapSegments}
       zoneCoords={zoneCoords}
       isZone={isZoneRun}
       title={shareCardTitle}

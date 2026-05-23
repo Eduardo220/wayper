@@ -5,9 +5,14 @@ import {
   Camera,
   GeoJSONSource as ShapeSource,
   Layer,
+  Marker,
 } from "@maplibre/maplibre-react-native";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { beautifyRoutePath } from "../../utils/routeDrawing";
+import {
+  leaderCellsToFeatureCollection,
+  territoriesToFeatureCollection,
+} from "../../services/territory/territoryMapService.js";
 
 export const OPENFREEMAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 export const WAYPER_GREEN = WayperTheme.map.routeColor;
@@ -380,18 +385,31 @@ export function buildLineStringFeature(path = [], properties = {}) {
   };
 }
 
-function buildLineStringFeaturesFromSegments(segments = [], baseProperties = {}) {
-  if (!Array.isArray(segments) || segments.length === 0) return [];
+function buildMultiLineStringFeature(segments = [], properties = {}) {
+  const coordinates = (Array.isArray(segments) ? segments : [])
+    .map((segment) => (Array.isArray(segment) ? segment : []).map(toLngLat).filter(Boolean))
+    .filter((segment) => segment.length >= 2);
 
-  return segments
-    .map((segment, index) =>
-      buildLineStringFeature(segment, {
-        ...baseProperties,
-        segmentIndex: index,
-        preserveGeometry: true,
-      })
-    )
-    .filter(Boolean);
+  if (coordinates.length === 0) return null;
+  if (coordinates.length === 1) {
+    return {
+      type: "Feature",
+      properties,
+      geometry: {
+        type: "LineString",
+        coordinates: coordinates[0],
+      },
+    };
+  }
+
+  return {
+    type: "Feature",
+    properties,
+    geometry: {
+      type: "MultiLineString",
+      coordinates,
+    },
+  };
 }
 
 export function buildPointFeature(coord, properties = {}) {
@@ -458,6 +476,14 @@ function collectLngLats(collections = []) {
           coordinates.push(...ring);
         }
       }
+
+      if (geometry.type === "MultiPolygon") {
+        for (const polygon of geometry.coordinates || []) {
+          for (const ring of polygon || []) {
+            coordinates.push(...ring);
+          }
+        }
+      }
     }
   }
 
@@ -484,6 +510,71 @@ function buildBounds(collections = []) {
   if (west === east && south === north) return null;
 
   return [west, south, east, north];
+}
+
+function bboxFromLngLatPairs(pairs = []) {
+  const points = pairs
+    .map((point) => (Array.isArray(point) ? point : [point?.longitude ?? point?.lng, point?.latitude ?? point?.lat]))
+    .filter((point) => Array.isArray(point) && point.length >= 2)
+    .map(([lng, lat]) => [Number(lng), Number(lat)])
+    .filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat));
+
+  if (points.length === 0) return null;
+
+  const lngs = points.map(([lng]) => lng);
+  const lats = points.map(([, lat]) => lat);
+  return [
+    Math.min(...lngs),
+    Math.min(...lats),
+    Math.max(...lngs),
+    Math.max(...lats),
+  ];
+}
+
+function extractViewportBbox(event) {
+  const payload = event?.nativeEvent || event || {};
+  const properties = payload.properties || payload.payload?.properties || {};
+  const visibleBounds =
+    payload.visibleBounds ||
+    payload.payload?.visibleBounds ||
+    properties.visibleBounds ||
+    properties.bounds ||
+    payload.bounds;
+
+  if (Array.isArray(visibleBounds)) {
+    const flat = visibleBounds.flat(Infinity).map(Number).filter(Number.isFinite);
+    if (flat.length >= 4) {
+      const lngs = [];
+      const lats = [];
+      for (let i = 0; i + 1 < flat.length; i += 2) {
+        lngs.push(flat[i]);
+        lats.push(flat[i + 1]);
+      }
+      return [
+        Math.min(...lngs),
+        Math.min(...lats),
+        Math.max(...lngs),
+        Math.max(...lats),
+      ];
+    }
+  }
+
+  const center =
+    payload.geometry?.coordinates ||
+    payload.payload?.geometry?.coordinates ||
+    properties.center ||
+    payload.center;
+  const centerLngLat = Array.isArray(center)
+    ? center
+    : [center?.longitude ?? center?.lng, center?.latitude ?? center?.lat];
+
+  const centerPoint = bboxFromLngLatPairs([centerLngLat]);
+  if (!centerPoint) return null;
+
+  const delta = 0.018;
+  const lng = (centerPoint[0] + centerPoint[2]) / 2;
+  const lat = (centerPoint[1] + centerPoint[3]) / 2;
+  return [lng - delta, lat - delta, lng + delta, lat + delta];
 }
 
 function pickInitialCenter({ centerCoordinate, location, routePath, replayPath, zones }) {
@@ -517,14 +608,70 @@ function pickLastSegmentPoint(segments = [], fallbackPath = []) {
   return Array.isArray(fallbackPath) ? fallbackPath[fallbackPath.length - 1] : null;
 }
 
+function collectRouteEndpointCandidates(segments = [], fallbackPath = []) {
+  const points = [];
+
+  if (Array.isArray(segments)) {
+    for (const segment of segments) {
+      if (Array.isArray(segment)) {
+        points.push(...segment.filter(isValidCoord));
+      }
+    }
+  }
+
+  if (points.length === 0 && Array.isArray(fallbackPath)) {
+    points.push(...fallbackPath.filter(isValidCoord));
+  }
+
+  return points;
+}
+
+function StartMarker() {
+  return (
+    <View collapsable={false} style={styles.startMarker}>
+      <View style={styles.startMarkerCore}>
+        <Text style={styles.startMarkerText}>INICIO</Text>
+      </View>
+    </View>
+  );
+}
+
+function FinishMarker() {
+  return (
+    <View collapsable={false} style={styles.finishMarker}>
+      <View style={styles.finishFlag}>
+        <View style={styles.finishFlagRow}>
+          <View style={styles.finishFlagDark} />
+          <View style={styles.finishFlagLight} />
+        </View>
+        <View style={styles.finishFlagRow}>
+          <View style={styles.finishFlagLight} />
+          <View style={styles.finishFlagDark} />
+        </View>
+      </View>
+      <View style={styles.finishPole} />
+      <View style={styles.finishMarkerBase} />
+    </View>
+  );
+}
+
 function WayperMapLibre({
   style,
   location,
   routePath = [],
   routeSegments = [],
   replayPath = [],
+  replaySegments = [],
   zones = [],
+  territories = [],
+  leaderCells = [],
+  selectedTerritory = null,
+  currentUserId = null,
   showZones = true,
+  showTerritories = true,
+  showLeaderAreas = true,
+  maxTerritories = 240,
+  maxLeaderCells = 180,
   showUserLocation = true,
   followUserLocation = false,
   centerCoordinate,
@@ -542,6 +689,12 @@ function WayperMapLibre({
   replayColor = "#fdcb6e",
   mapStyle = WAYPER_DARK_MAP_STYLE,
   contentPadding = { top: 80, right: 80, bottom: 220, left: 80 },
+  showRouteEndpoints = false,
+  routeStartCoordinate,
+  routeEndCoordinate,
+  onTerritoryPress,
+  onLeaderCellPress,
+  onViewportChange,
 }) {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -552,9 +705,10 @@ function WayperMapLibre({
 
   const routeCollection = useMemo(
     () => {
-      const segmentedFeatures = buildLineStringFeaturesFromSegments(routeSegments, { kind: "route" });
-      if (segmentedFeatures.length > 0) {
-        return buildFeatureCollection(segmentedFeatures);
+      if (Array.isArray(routeSegments) && routeSegments.length > 0) {
+        return buildFeatureCollection([
+          buildMultiLineStringFeature(routeSegments, { kind: "route", preserveGeometry: true }),
+        ]);
       }
 
       return buildFeatureCollection([
@@ -567,13 +721,30 @@ function WayperMapLibre({
     () => buildFeatureCollection([buildPointFeature(pickLastSegmentPoint(routeSegments, routePath), { kind: "route-head" })]),
     [routePath, routeSegments]
   );
+  const routeEndpoints = useMemo(() => {
+    if (!showRouteEndpoints) return { start: null, end: null };
+
+    const candidates = collectRouteEndpointCandidates(routeSegments, routePath);
+    const start = toLngLat(routeStartCoordinate) || toLngLat(candidates[0]);
+    const end = toLngLat(routeEndCoordinate) || toLngLat(candidates[candidates.length - 1]);
+
+    if (!start || !end) return { start: null, end: null };
+    return { start, end };
+  }, [routeEndCoordinate, routePath, routeSegments, routeStartCoordinate, showRouteEndpoints]);
   const replayCollection = useMemo(
-    () => buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay" })]),
-    [replayPath]
+    () => {
+      if (Array.isArray(replaySegments) && replaySegments.length > 0) {
+        return buildFeatureCollection([
+          buildMultiLineStringFeature(replaySegments, { kind: "replay", preserveGeometry: true }),
+        ]);
+      }
+      return buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay", preserveGeometry: true })]);
+    },
+    [replayPath, replaySegments]
   );
   const replayHeadCollection = useMemo(
-    () => buildFeatureCollection([buildPointFeature(Array.isArray(replayPath) ? replayPath[replayPath.length - 1] : null, { kind: "replay-head" })]),
-    [replayPath]
+    () => buildFeatureCollection([buildPointFeature(pickLastSegmentPoint(replaySegments, replayPath), { kind: "replay-head" })]),
+    [replayPath, replaySegments]
   );
   const userLocationCollection = useMemo(
     () => buildFeatureCollection(showUserLocation ? [buildPointFeature(location, { kind: "user-location" })] : []),
@@ -583,13 +754,33 @@ function WayperMapLibre({
     () => buildFeatureCollection(showZones ? buildZoneFeatures(zones) : []),
     [showZones, zones]
   );
+  const territoriesCollection = useMemo(
+    () => {
+      if (!showTerritories) return buildFeatureCollection();
+      const limited = (Array.isArray(territories) ? territories : []).slice(0, maxTerritories);
+      return territoriesToFeatureCollection(limited, currentUserId);
+    },
+    [currentUserId, maxTerritories, showTerritories, territories]
+  );
+  const leaderCellsCollection = useMemo(
+    () => {
+      if (!showLeaderAreas) return buildFeatureCollection();
+      const limited = (Array.isArray(leaderCells) ? leaderCells : []).slice(0, maxLeaderCells);
+      return leaderCellsToFeatureCollection(limited, currentUserId);
+    },
+    [currentUserId, leaderCells, maxLeaderCells, showLeaderAreas]
+  );
 
   const hasRoute = routeCollection.features.length > 0;
-  const hasRouteHead = routeHeadCollection.features.length > 0 && !showUserLocation;
+  const hasRouteHead = routeHeadCollection.features.length > 0 && !showUserLocation && !showRouteEndpoints;
+  const hasRouteEndpoints = showRouteEndpoints && Boolean(routeEndpoints.start && routeEndpoints.end);
   const hasReplay = replayCollection.features.length > 0;
   const hasReplayHead = replayHeadCollection.features.length > 0;
   const hasUserLocation = userLocationCollection.features.length > 0;
   const hasZones = zonesCollection.features.length > 0;
+  const hasTerritories = territoriesCollection.features.length > 0;
+  const hasLeaderCells = leaderCellsCollection.features.length > 0;
+  const selectedTerritoryId = selectedTerritory?.id || selectedTerritory?.properties?.id || null;
   const initialCenter = useMemo(
     () => pickInitialCenter({ centerCoordinate, location, routePath, replayPath, zones }),
     [centerCoordinate, location, routePath, replayPath, zones]
@@ -599,8 +790,8 @@ function WayperMapLibre({
     [centerCoordinate, location, initialCenter]
   );
   const bounds = useMemo(
-    () => (fitToContent ? buildBounds([zonesCollection, replayCollection, routeCollection]) : null),
-    [fitToContent, zonesCollection, replayCollection, routeCollection]
+    () => (fitToContent ? buildBounds([leaderCellsCollection, territoriesCollection, zonesCollection, replayCollection, routeCollection]) : null),
+    [fitToContent, leaderCellsCollection, territoriesCollection, zonesCollection, replayCollection, routeCollection]
   );
 
   const moveCameraTo = useCallback((center, zoom, duration) => {
@@ -681,10 +872,52 @@ function WayperMapLibre({
     [followUserLocation, interactive, onUserInteraction]
   );
 
+  const handleRegionDidChange = useCallback(
+    (event) => {
+      if (!onViewportChange) return;
+      const bbox = extractViewportBbox(event);
+      if (bbox) onViewportChange({ bbox });
+    },
+    [onViewportChange]
+  );
+
   const handleMapPress = useCallback(() => {
     if (!interactive || !followUserLocation || !onUserInteraction) return;
     onUserInteraction();
   }, [followUserLocation, interactive, onUserInteraction]);
+
+  const extractPressedFeatureProperties = useCallback((event) => {
+    const feature =
+      event?.features?.[0] ||
+      event?.nativeEvent?.features?.[0] ||
+      event?.nativeEvent?.payload?.features?.[0] ||
+      event?.feature ||
+      null;
+
+    return (
+      feature?.properties ||
+      event?.properties ||
+      event?.nativeEvent?.properties ||
+      event?.nativeEvent?.payload?.properties ||
+      null
+    );
+  }, []);
+
+  const handleTerritoryPress = useCallback(
+    (event) => {
+      const properties = extractPressedFeatureProperties(event);
+      if (properties && onTerritoryPress) onTerritoryPress(properties);
+    },
+    [extractPressedFeatureProperties, onTerritoryPress]
+  );
+
+  const handleLeaderCellPress = useCallback(
+    (event) => {
+      const properties = extractPressedFeatureProperties(event);
+      if (properties && onLeaderCellPress) onLeaderCellPress(properties);
+    },
+    [extractPressedFeatureProperties, onLeaderCellPress]
+  );
 
   if (hasError) {
     return (
@@ -718,6 +951,7 @@ function WayperMapLibre({
           setHasError(true);
         }}
         onRegionWillChange={handleRegionWillChange}
+        onRegionDidChange={handleRegionDidChange}
         onPress={handleMapPress}
       >
         <Camera
@@ -727,6 +961,118 @@ function WayperMapLibre({
           padding={bounds ? contentPadding : undefined}
           duration={bounds ? 450 : undefined}
         />
+
+        {hasLeaderCells && (
+          <ShapeSource
+            id="wayper-leader-cells-source"
+            data={leaderCellsCollection}
+            onPress={handleLeaderCellPress}
+          >
+            <Layer
+              id="wayper-leader-cells-fill"
+              type="fill"
+              source="wayper-leader-cells-source"
+              paint={{
+                "fill-color": ["get", "color"],
+                "fill-opacity": ["case", ["==", ["get", "isMine"], true], 0.16, 0.1],
+              }}
+            />
+            <Layer
+              id="wayper-leader-cells-border"
+              type="line"
+              source="wayper-leader-cells-source"
+              layout={{
+                "line-cap": "round",
+                "line-join": "round",
+              }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-opacity": ["case", ["==", ["get", "isMine"], true], 0.5, 0.28],
+                "line-width": ["case", ["==", ["get", "isMine"], true], 2.4, 1.4],
+                "line-dasharray": [1.4, 1.2],
+              }}
+            />
+          </ShapeSource>
+        )}
+
+        {hasTerritories && (
+          <ShapeSource
+            id="wayper-territories-source"
+            data={territoriesCollection}
+            onPress={handleTerritoryPress}
+          >
+            <Layer
+              id="wayper-territories-glow"
+              type="line"
+              source="wayper-territories-source"
+              layout={{
+                "line-cap": "round",
+                "line-join": "round",
+              }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-blur": 4,
+                "line-opacity": ["case", ["==", ["get", "isMine"], true], 0.38, 0.18],
+                "line-width": ["case", ["==", ["get", "id"], selectedTerritoryId || ""], 12, 8],
+              }}
+            />
+            <Layer
+              id="wayper-territories-leader-glow"
+              type="line"
+              source="wayper-territories-source"
+              filter={["==", ["get", "isLeaderTerritory"], true]}
+              layout={{
+                "line-cap": "round",
+                "line-join": "round",
+              }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-blur": 2.5,
+                "line-opacity": 0.42,
+                "line-width": 7,
+              }}
+            />
+            <Layer
+              id="wayper-territories-fill"
+              type="fill"
+              source="wayper-territories-source"
+              paint={{
+                "fill-color": ["get", "color"],
+                "fill-opacity": [
+                  "case",
+                  ["==", ["get", "id"], selectedTerritoryId || ""],
+                  0.34,
+                  ["==", ["get", "isMine"], true],
+                  0.24,
+                  0.16,
+                ],
+              }}
+            />
+            <Layer
+              id="wayper-territories-border"
+              type="line"
+              source="wayper-territories-source"
+              layout={{
+                "line-cap": "round",
+                "line-join": "round",
+              }}
+              paint={{
+                "line-color": ["get", "color"],
+                "line-opacity": ["case", ["==", ["get", "isMine"], true], 0.88, 0.66],
+                "line-width": [
+                  "case",
+                  ["==", ["get", "id"], selectedTerritoryId || ""],
+                  4.4,
+                  ["==", ["get", "isLeaderTerritory"], true],
+                  3.4,
+                  ["==", ["get", "isMine"], true],
+                  3,
+                  2,
+                ],
+              }}
+            />
+          </ShapeSource>
+        )}
 
         {hasZones && (
           <ShapeSource id="wayper-zones-source" data={zonesCollection}>
@@ -783,9 +1129,9 @@ function WayperMapLibre({
               }}
               paint={{
                 "line-color": routeColor,
-                "line-blur": 3,
-                "line-width": 13,
-                "line-opacity": 0.32,
+                "line-blur": 3.5,
+                "line-width": 17,
+                "line-opacity": 0.28,
               }}
             />
             <Layer
@@ -797,18 +1143,8 @@ function WayperMapLibre({
                 "line-join": "round",
               }}
               paint={{
-                "line-gradient": [
-                  "interpolate",
-                  ["linear"],
-                  ["line-progress"],
-                  0,
-                  "rgba(0, 230, 118, 0.38)",
-                  0.78,
-                  routeColor,
-                  1,
-                  "#ecfff6",
-                ],
-                "line-width": 6,
+                "line-color": routeColor,
+                "line-width": 7.5,
                 "line-opacity": 1,
               }}
             />
@@ -845,6 +1181,17 @@ function WayperMapLibre({
           </ShapeSource>
         )}
 
+        {hasRouteEndpoints && (
+          <>
+            <Marker id="wayper-route-start-marker" lngLat={routeEndpoints.start} anchor="center">
+              <StartMarker />
+            </Marker>
+            <Marker id="wayper-route-finish-marker" lngLat={routeEndpoints.end} anchor="bottom">
+              <FinishMarker />
+            </Marker>
+          </>
+        )}
+
         {hasReplay && (
           <ShapeSource id="wayper-replay-source" data={replayCollection} lineMetrics={true}>
             <Layer
@@ -871,17 +1218,7 @@ function WayperMapLibre({
                 "line-join": "round",
               }}
               paint={{
-                "line-gradient": [
-                  "interpolate",
-                  ["linear"],
-                  ["line-progress"],
-                  0,
-                  "rgba(253, 203, 110, 0.3)",
-                  0.8,
-                  replayColor,
-                  1,
-                  "#fff4cf",
-                ],
+                "line-color": replayColor,
                 "line-width": 5,
                 "line-opacity": 0.95,
               }}
@@ -980,5 +1317,76 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
     textAlign: "center",
+  },
+  startMarker: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 230, 118, 0.22)",
+    borderWidth: 2,
+    borderColor: "rgba(236, 255, 246, 0.92)",
+  },
+  startMarkerCore: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WAYPER_GREEN,
+    borderWidth: 2,
+    borderColor: "#031009",
+  },
+  startMarkerText: {
+    color: "#031009",
+    fontSize: 7,
+    fontWeight: "900",
+  },
+  finishMarker: {
+    width: 42,
+    height: 54,
+    alignItems: "center",
+  },
+  finishFlag: {
+    width: 31,
+    height: 23,
+    marginLeft: 13,
+    borderWidth: 2,
+    borderColor: "#031009",
+    backgroundColor: "#ecfff6",
+  },
+  finishFlagRow: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  finishFlagDark: {
+    flex: 1,
+    backgroundColor: "#031009",
+  },
+  finishFlagLight: {
+    flex: 1,
+    backgroundColor: "#ecfff6",
+  },
+  finishPole: {
+    position: "absolute",
+    left: 12,
+    top: 2,
+    width: 5,
+    height: 43,
+    borderRadius: 2.5,
+    backgroundColor: WAYPER_GREEN,
+    borderWidth: 1,
+    borderColor: "#031009",
+  },
+  finishMarkerBase: {
+    position: "absolute",
+    bottom: 0,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: WAYPER_GREEN,
+    borderWidth: 3,
+    borderColor: "#ecfff6",
   },
 });

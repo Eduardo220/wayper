@@ -3,18 +3,28 @@ import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } fr
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../../components/Map/WayperMapLibre";
-import { WPButton, WPCard, WPChip, WPScreen, WPSectionTitle } from "../../components/ui";
+import TerritoryEventCard from "../../components/Territory/TerritoryEventCard";
+import TerritoryFeedFilter from "../../components/Territory/TerritoryFeedFilter";
+import { WPButton, WPCard, WPScreen, WPSectionTitle } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
+import { auth } from "../../firebaseConfig";
+import {
+  buildTerritoryMapParams,
+  fetchTerritoryFeed,
+  filterCompetitiveFeedItems,
+  loadLocalTerritoryFeed,
+  mergeRunsZonesAndTerritoryEvents,
+} from "../../services/territory";
 import sync from "../../utils/sync";
 
 const safeDate = (d) => {
   try {
-    if (!d) return "—";
+    if (!d) return "-";
     const dt = new Date(d);
     if (Number.isNaN(dt.getTime())) return String(d);
     return dt.toLocaleString();
   } catch {
-    return "—";
+    return "-";
   }
 };
 
@@ -30,54 +40,66 @@ const formatDuration = (seconds) => {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 };
 
-const getZoneCoords = (item = {}) => (Array.isArray(item.zoneCoords) ? item.zoneCoords : []);
-const getRawZoneCoords = (item = {}) => (Array.isArray(item.coords) ? item.coords : []);
+const getZoneCoords = (item = {}) => {
+  if (Array.isArray(item.coordsPreview)) return item.coordsPreview;
+  if (Array.isArray(item.zoneCoords)) return item.zoneCoords;
+  if (Array.isArray(item.raw?.zoneCoords)) return item.raw.zoneCoords;
+  if (Array.isArray(item.raw?.coords)) return item.raw.coords;
+  return [];
+};
 
 const isZoneActivityRun = (item = {}) => {
   const zoneCoords = getZoneCoords(item);
-  return item.mode === "zones" || safeNumber(item.area) > 0 || zoneCoords.length >= 3 || !!item.zoneId;
+  return item.__type === "zone" ||
+    item.raw?.mode === "zones" ||
+    safeNumber(item.areaM2 ?? item.area) > 0 ||
+    zoneCoords.length >= 3 ||
+    !!(item.zoneId || item.raw?.zoneId);
 };
 
-const coordSignature = (coords = []) => {
-  if (!Array.isArray(coords) || coords.length < 3) return "";
-  return coords
-    .slice(0, 12)
-    .map((coord) => {
-      const latitude = Number(coord?.latitude);
-      const longitude = Number(coord?.longitude);
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-      return `${latitude.toFixed(5)},${longitude.toFixed(5)}`;
-    })
-    .filter(Boolean)
-    .join("|");
-};
-
-const isSameCaptureWindow = (run = {}, zone = {}) => {
-  const runDate = new Date(run.date || 0).getTime();
-  const zoneDate = new Date(zone.date || 0).getTime();
-  if (!Number.isFinite(runDate) || !Number.isFinite(zoneDate)) return false;
-  const sameArea = Math.round(safeNumber(run.area)) === Math.round(safeNumber(zone.area));
-  return sameArea && Math.abs(runDate - zoneDate) <= 60 * 1000;
-};
+const hasMapParams = (params = {}) => Object.values(params).some(Boolean);
 
 function CorridasScreen({ navigation }) {
   const [runs, setRuns] = useState([]);
   const [zones, setZones] = useState([]);
+  const [territoryEvents, setTerritoryEvents] = useState([]);
   const [filter, setFilter] = useState("all");
   const [refreshing, setRefreshing] = useState(false);
 
   const loadAll = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [rRaw, zRaw] = await Promise.allSettled([sync.loadLocalRuns(), sync.loadLocalZones()]);
+      const currentUserId = auth?.currentUser?.uid ?? null;
+      const [rRaw, zRaw, localEventsRaw, remoteEventsRaw] = await Promise.allSettled([
+        sync.loadLocalRuns(),
+        sync.loadLocalZones(),
+        loadLocalTerritoryFeed({ currentUserId }),
+        fetchTerritoryFeed({ scope: "public", userId: currentUserId, limitTo: 60 }),
+      ]);
+
       const r = rRaw.status === "fulfilled" && Array.isArray(rRaw.value) ? rRaw.value : [];
       const z = zRaw.status === "fulfilled" && Array.isArray(zRaw.value) ? zRaw.value : [];
+      const localEvents = localEventsRaw.status === "fulfilled" && Array.isArray(localEventsRaw.value) ? localEventsRaw.value : [];
+      const remoteEvents = remoteEventsRaw.status === "fulfilled" && Array.isArray(remoteEventsRaw.value) ? remoteEventsRaw.value : [];
+      const eventMap = new Map();
+      [...localEvents, ...remoteEvents].forEach((event) => {
+        if (event?.id) eventMap.set(`${event.__type || event.eventType || "event"}:${event.id}`, event);
+      });
+      const e = Array.from(eventMap.values());
 
       setRuns(r.map((x) => ({ ...x })).filter(Boolean).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)));
       setZones(z.map((x) => ({ ...x })).filter(Boolean).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)));
+      setTerritoryEvents(e);
+
+      if (localEventsRaw.status === "rejected") {
+        console.warn("CorridasScreen local territory feed failed", localEventsRaw.reason);
+      }
+      if (remoteEventsRaw.status === "rejected") {
+        console.warn("CorridasScreen remote territory feed failed", remoteEventsRaw.reason);
+      }
     } catch (e) {
       console.warn("CorridasScreen.loadAll unexpected error", e);
-      Alert.alert("Erro", "Falha ao carregar corridas/zonas.");
+      Alert.alert("Erro", "Falha ao carregar historico competitivo.");
     } finally {
       setRefreshing(false);
     }
@@ -105,55 +127,43 @@ function CorridasScreen({ navigation }) {
   );
 
   const merged = useMemo(() => {
-    const runItems = (runs || []).map((x) => ({ ...x, __type: "run" }));
-    const freeRuns = runItems.filter((item) => !isZoneActivityRun(item));
-    const zoneRuns = runItems.filter((item) => isZoneActivityRun(item));
-
-    const linkedZoneIds = new Set(zoneRuns.map((item) => item.zoneId).filter(Boolean));
-    const linkedZoneSignatures = new Set(zoneRuns.map((item) => coordSignature(getZoneCoords(item))).filter(Boolean));
-
-    const standaloneZones = (zones || [])
-      .map((x) => ({ ...x, __type: "zone" }))
-      .filter((zone) => {
-        if (linkedZoneIds.has(zone.id)) return false;
-
-        const signature = coordSignature(getRawZoneCoords(zone));
-        if (signature && linkedZoneSignatures.has(signature)) return false;
-
-        return !zoneRuns.some((run) => isSameCaptureWindow(run, zone));
-      });
-
-    if (filter === "free") return freeRuns;
-    if (filter === "zones") return [...zoneRuns, ...standaloneZones].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-    return [...freeRuns, ...zoneRuns, ...standaloneZones].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-  }, [runs, zones, filter]);
+    const items = mergeRunsZonesAndTerritoryEvents({ runs, zones, events: territoryEvents });
+    return filterCompetitiveFeedItems(items, filter);
+  }, [runs, zones, territoryEvents, filter]);
 
   const goToRun = useCallback((item) => navigation.navigate("RunDetail", { run: item }), [navigation]);
   const goToZone = useCallback((item) => navigation.navigate("ZoneDetail", { zone: item }), [navigation]);
-  const goToMap = useCallback(() => {
+  const goToMap = useCallback((item = null) => {
+    const params = item ? buildTerritoryMapParams(item) : null;
     const parent = navigation.getParent?.();
-    if (parent) parent.navigate("Mapa");
-    else navigation.navigate("Mapa");
+    const targetParams = params && hasMapParams(params) ? params : undefined;
+
+    if (parent) parent.navigate("Mapa", targetParams);
+    else navigation.navigate("Mapa", targetParams);
   }, [navigation]);
 
   const RenderRun = useCallback(
     ({ item }) => {
-      const path = Array.isArray(item.path) ? item.path : [];
+      const raw = item.raw || item;
+      const path = Array.isArray(item.path) && item.path.length > 0 ? item.path : (Array.isArray(raw.path) ? raw.path : []);
       const zoneCoords = getZoneCoords(item);
       const zoneActivity = isZoneActivityRun(item);
       const center = (zoneActivity && zoneCoords[0]) || path[0] || WAYPER_FALLBACK_COORD;
-      const area = Math.round(safeNumber(item.area));
+      const area = Math.round(safeNumber(item.areaM2 ?? raw.areaM2 ?? raw.area));
+      const distance = item.distance ?? raw.distance ?? raw.totalMeters ?? 0;
+      const duration = item.duration ?? raw.duration ?? 0;
+      const title = item.title || raw.name || (zoneActivity ? "Captura por zonas" : "Corrida");
 
       return (
-        <Pressable onPress={() => goToRun(item)} style={styles.cardPressable}>
+        <Pressable onPress={() => goToRun(raw)} style={styles.cardPressable}>
           <WPCard style={styles.card} accent={zoneActivity ? "cyan" : "green"} glow={path.length > 1 || zoneCoords.length >= 3}>
             <View style={styles.cardHeader}>
               <View style={[styles.runIcon, zoneActivity && styles.zoneIcon]}>
                 <Ionicons name={zoneActivity ? "map-outline" : "walk-outline"} size={21} color={WayperTheme.colors.textInverse} />
               </View>
               <View style={styles.cardTitleWrap}>
-                <Text style={[styles.runTitle, zoneActivity && styles.zoneTitle]}>{item.name || (zoneActivity ? "Captura por zonas" : "Corrida")}</Text>
-                <Text style={styles.date}>{zoneActivity ? `Corrida por zonas - ${safeDate(item.date)}` : safeDate(item.date)}</Text>
+                <Text style={[styles.runTitle, zoneActivity && styles.zoneTitle]}>{title}</Text>
+                <Text style={styles.date}>{zoneActivity ? `Corrida por zonas - ${safeDate(item.date || raw.date)}` : safeDate(item.date || raw.date)}</Text>
               </View>
               <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.textSubtle} />
             </View>
@@ -163,7 +173,7 @@ function CorridasScreen({ navigation }) {
                 <WayperMapLibre
                   style={styles.previewMap}
                   routePath={zoneActivity && zoneCoords.length >= 3 ? [] : path}
-                  zones={zoneActivity && zoneCoords.length >= 3 ? [{ coords: zoneCoords, area: item.area }] : []}
+                  zones={zoneActivity && zoneCoords.length >= 3 ? [{ coords: zoneCoords, area }] : []}
                   showZones={zoneActivity && zoneCoords.length >= 3}
                   centerCoordinate={center}
                   showUserLocation={false}
@@ -175,9 +185,9 @@ function CorridasScreen({ navigation }) {
             ) : null}
 
             <View style={styles.metricRow}>
-              <Metric label="Distância" value={`${formatKm(item.distance || item.totalMeters || 0)} km`} />
-              <Metric label="Tempo" value={formatDuration(item.duration || 0)} />
-              <Metric label="RPE" value={item.effort ?? "—"} />
+              <Metric label="Distancia" value={`${formatKm(distance)} km`} />
+              <Metric label="Tempo" value={formatDuration(duration)} />
+              <Metric label="RPE" value={raw.effort ?? "-"} />
             </View>
 
             {zoneActivity ? (
@@ -188,7 +198,7 @@ function CorridasScreen({ navigation }) {
             ) : null}
 
             <View style={styles.footerRow}>
-              <Text style={styles.tagText}>{zoneActivity ? `${zoneCoords.length || 0} pontos capturados` : item.tags?.slice(0, 2).join(", ") || "Sem tags"}</Text>
+              <Text style={styles.tagText}>{zoneActivity ? `${zoneCoords.length || 0} pontos capturados` : raw.tags?.slice(0, 2).join(", ") || "Sem tags"}</Text>
               <Ionicons name="arrow-forward-circle" size={24} color={zoneActivity ? WayperTheme.colors.cyan : WayperTheme.colors.primary} />
             </View>
           </WPCard>
@@ -200,9 +210,10 @@ function CorridasScreen({ navigation }) {
 
   const RenderZone = useCallback(
     ({ item }) => {
-      const coords = Array.isArray(item.coords) ? item.coords : [];
+      const raw = item.raw || item;
+      const coords = getZoneCoords(item);
       const center = coords[0] || WAYPER_FALLBACK_COORD;
-      const area = Math.round(item.area || 0);
+      const area = Math.round(safeNumber(item.areaM2 ?? raw.areaM2 ?? raw.area));
 
       return (
         <WPCard style={styles.card} accent="cyan">
@@ -211,17 +222,17 @@ function CorridasScreen({ navigation }) {
               <Ionicons name="map-outline" size={21} color={WayperTheme.colors.textInverse} />
             </View>
             <View style={styles.cardTitleWrap}>
-              <Text style={styles.zoneTitle}>Zona • {area} m²</Text>
-              <Text style={styles.date}>{safeDate(item.date)}</Text>
+              <Text style={styles.zoneTitle}>{item.title || `Zona - ${area} m2`}</Text>
+              <Text style={styles.date}>{safeDate(item.date || raw.date)}</Text>
             </View>
-            <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.textSubtle} onPress={() => goToZone(item)} />
+            <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.textSubtle} onPress={() => goToZone(raw)} />
           </View>
 
           {coords.length >= 3 ? (
             <View style={styles.preview}>
               <WayperMapLibre
                 style={styles.previewMap}
-                zones={[{ coords }]}
+                zones={[{ coords, area }]}
                 centerCoordinate={center}
                 showUserLocation={false}
                 interactive={false}
@@ -232,7 +243,7 @@ function CorridasScreen({ navigation }) {
           ) : null}
 
           <View style={styles.metricRow}>
-            <Metric label="Área" value={`${area} m²`} accent="cyan" />
+            <Metric label="Area" value={`${area} m2`} accent="cyan" />
             <Metric label="Pontos" value={coords.length} accent="cyan" />
           </View>
         </WPCard>
@@ -244,10 +255,13 @@ function CorridasScreen({ navigation }) {
   const renderItem = useCallback(
     ({ item }) => {
       if (!item) return null;
+      if (String(item.__type || "").startsWith("territory_")) {
+        return <TerritoryEventCard item={item} onPress={goToMap} onViewMap={goToMap} />;
+      }
       if (item.__type === "run") return <RenderRun item={item} />;
       return <RenderZone item={item} />;
     },
-    [RenderRun, RenderZone]
+    [RenderRun, RenderZone, goToMap]
   );
 
   return (
@@ -260,18 +274,14 @@ function CorridasScreen({ navigation }) {
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={
           <View style={styles.header}>
-            <WPSectionTitle title="Corridas" subtitle="Histórico de rotas, zonas e atividades salvas." />
-            <View style={styles.filterRow}>
-              <WPChip label="Todas" active={filter === "all"} onPress={() => setFilter("all")} />
-              <WPChip label="Corridas" active={filter === "free"} onPress={() => setFilter("free")} />
-              <WPChip label="Zonas" active={filter === "zones"} onPress={() => setFilter("zones")} color="cyan" />
-            </View>
+            <WPSectionTitle title="Corridas" subtitle="Historico competitivo de rotas, capturas e liderancas." />
+            <TerritoryFeedFilter value={filter} onChange={setFilter} />
           </View>
         }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>Nenhuma atividade encontrada.</Text>
-            <WPButton title="Ir para o mapa" compact onPress={goToMap} style={styles.emptyButton} />
+            <WPButton title="Ir para o mapa" compact onPress={() => goToMap()} style={styles.emptyButton} />
           </View>
         }
       />
@@ -299,11 +309,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: WayperTheme.spacing.page,
     paddingTop: WayperTheme.spacing.xl,
     paddingBottom: WayperTheme.spacing.md,
-  },
-  filterRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: WayperTheme.spacing.sm,
   },
   card: {
     marginHorizontal: WayperTheme.spacing.page,

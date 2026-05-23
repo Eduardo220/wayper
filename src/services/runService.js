@@ -209,9 +209,39 @@ function sanitizePath(rawPath = []) {
       const ts = p.timestamp ? Number(p.timestamp) : Date.now();
       const acc = p.accuracy != null ? Number(p.accuracy) : null;
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-      return { latitude: lat, longitude: lon, accuracy: acc, timestamp: ts };
+      const point = { latitude: lat, longitude: lon, accuracy: acc, timestamp: ts };
+      ["altitude", "altitudeAccuracy", "speed", "heading", "source", "segmentId", "qualityScore"].forEach((key) => {
+        if (p[key] !== undefined && p[key] !== null) point[key] = p[key];
+      });
+      return point;
     })
     .filter(Boolean);
+}
+
+function sanitizeRunSegments(segments = []) {
+  return (Array.isArray(segments) ? segments : [])
+    .map((segment, index) => {
+      const segmentId = Number.isFinite(Number(segment?.index ?? segment?.segmentId))
+        ? Number(segment.index ?? segment.segmentId)
+        : index;
+      return {
+        id: String(segment?.id || `segment_${segmentId}`),
+        index: segmentId,
+        startedAt: segment?.startedAt || null,
+        endedAt: segment?.endedAt || null,
+        rawPath: sanitizePath(segment?.rawPath || []).map((point) => ({ ...point, segmentId })),
+        trustedPath: sanitizePath(segment?.trustedPath || []).map((point) => ({ ...point, segmentId })),
+        liveRenderPath: sanitizePath(segment?.liveRenderPath || []).map((point) => ({ ...point, segmentId })),
+        summaryRenderPath: sanitizePath(segment?.summaryRenderPath || []).map((point) => ({ ...point, segmentId })),
+      };
+    })
+    .filter(
+      (segment) =>
+        segment.rawPath.length > 0 ||
+        segment.trustedPath.length > 0 ||
+        segment.liveRenderPath.length > 0 ||
+        segment.summaryRenderPath.length > 0
+    );
 }
 
 function chunkArray(arr, size = 500) {
@@ -385,17 +415,33 @@ export async function startRun(opts = {}) {
 function normalizeRun(run) {
   const id = run.id || makeId();
   const date = run.date || nowIso();
-  const path = Array.isArray(run.path) ? run.path : [];
+  const path = sanitizePath(run.trustedPath || run.path || []);
+  const renderPath = sanitizePath(run.renderPath || run.displayPath || path);
+  const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
+  const rawPath = sanitizePath(run.rawPoints || run.rawPath || []);
   const distance = Number(run.distance || 0);
   const duration = Number(run.duration || 0);
   return {
     id,
     date,
     path,
+    trustedPath: path,
+    rawPath,
+    rawPoints: rawPath,
+    segments,
+    routeSegments: segments,
+    renderPath,
+    displayPath: sanitizePath(run.displayPath || run.renderPath || renderPath),
+    pathQuality: run.pathQuality || null,
+    smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
     distance,
     duration,
+    avgSpeed: Number(run.avgSpeed || 0),
+    maxSpeed: Number(run.maxSpeed || 0),
     meta: run.meta || {},
     createdAt: nowIso(),
+    endedAt: run.endedAt || run.date || nowIso(),
+    status: run.status || "completed",
     synced: false,
   };
 }
@@ -446,6 +492,9 @@ async function uploadRunToFirestore(run, attempt = 0) {
 
   // sanitize path
   const path = sanitizePath(run.path);
+  const renderPath = sanitizePath(run.renderPath || run.displayPath || path);
+  const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
+  const rawPath = sanitizePath(run.rawPoints || run.rawPath || []);
   const MAX_POINTS_INLINE = 800; // keep doc size reasonable
   const chunks = chunkArray(path, MAX_POINTS_INLINE);
 
@@ -456,10 +505,23 @@ async function uploadRunToFirestore(run, attempt = 0) {
         id: run.id,
         date: run.date,
         path: chunks[0] || [],
+        trustedPath: chunks[0] || [],
+        rawPath,
+        rawPoints: rawPath,
+        renderPath,
+        segments,
+        routeSegments: segments,
+        displayPath: sanitizePath(run.displayPath || run.renderPath || renderPath),
+        pathQuality: run.pathQuality || null,
+        smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
         distance: Number(run.distance || 0),
         duration: Number(run.duration || 0),
+        avgSpeed: Number(run.avgSpeed || 0),
+        maxSpeed: Number(run.maxSpeed || 0),
         meta: run.meta || {},
         createdAt: serverTimestamp(),
+        endedAt: run.endedAt || run.date || null,
+        status: run.status || "completed",
       };
       await setDoc(runRef, payload);
     } else {
@@ -471,9 +533,19 @@ async function uploadRunToFirestore(run, attempt = 0) {
         date: run.date,
         distance: Number(run.distance || 0),
         duration: Number(run.duration || 0),
+        avgSpeed: Number(run.avgSpeed || 0),
+        maxSpeed: Number(run.maxSpeed || 0),
+        renderPath,
+        segments,
+        routeSegments: segments,
+        displayPath: sanitizePath(run.displayPath || run.renderPath || renderPath),
+        pathQuality: run.pathQuality || null,
+        smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
         meta: run.meta || {},
         chunkCount: chunks.length,
         createdAt: serverTimestamp(),
+        endedAt: run.endedAt || run.date || null,
+        status: run.status || "completed",
         _chunked: true,
       });
 

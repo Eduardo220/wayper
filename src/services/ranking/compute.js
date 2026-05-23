@@ -1,5 +1,5 @@
 // src/services/ranking/compute.js
-import { RANK_FIELDS } from "./constants";
+import { RANK_FIELDS } from "./constants.js";
 
 const safeNum = (v, fallback = 0) =>
   Number.isFinite(Number(v)) ? Number(v) : fallback;
@@ -38,6 +38,12 @@ export function cleanUser(doc) {
     monthlyPoints: safeNum(doc.monthlyPoints),
     monthlyArea: safeNum(doc.monthlyArea ?? doc.totalArea ?? doc.area),
     monthlyDistance: safeNum(doc.monthlyDistance ?? doc.totalDistance ?? doc.distance),
+    totalStolenAreaM2: safeNum(doc.totalStolenAreaM2),
+    totalLostAreaM2: safeNum(doc.totalLostAreaM2),
+    cellsLedCount: safeNum(doc.cellsLedCount),
+    territoryCapturesCount: safeNum(doc.territoryCapturesCount),
+    territoryStealsCount: safeNum(doc.territoryStealsCount),
+    territoryConqueredCount: safeNum(doc.territoryConqueredCount),
 
     raw: doc,
   };

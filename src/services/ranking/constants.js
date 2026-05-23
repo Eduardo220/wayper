@@ -11,6 +11,9 @@ export const RANK_FIELDS = {
   monthlyPoints: "monthlyPoints",
   monthlyArea: "monthlyArea",
   monthlyDistance: "monthlyDistance",
+  stolenArea: "totalStolenAreaM2",
+  cellsLed: "cellsLedCount",
+  localLeaders: "cellsLedCount",
 };
 
 export const MONTHLY_MEDAL_TIERS = [

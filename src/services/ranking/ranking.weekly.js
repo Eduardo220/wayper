@@ -1,7 +1,7 @@
 // src/services/ranking/ranking.weekly.js
-import { fetchUsers } from "./fetchFirestore";
-import { computeLeaderboard } from "./compute";
-import { DEFAULT_WEIGHTS } from "./compute";
+import { fetchUsers } from "./fetchFirestore.js";
+import { computeLeaderboard } from "./compute.js";
+import { DEFAULT_WEIGHTS } from "./compute.js";
 
 const WEEKLY_WEIGHTS = {
   ...DEFAULT_WEIGHTS,

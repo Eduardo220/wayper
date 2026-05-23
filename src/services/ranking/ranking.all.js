@@ -1,7 +1,7 @@
 // src/services/ranking/ranking.all.js
-import { fetchUsers } from "./fetchFirestore";
-import { computeLeaderboard } from "./compute";
-import { DEFAULT_WEIGHTS } from "./compute";
+import { fetchUsers } from "./fetchFirestore.js";
+import { computeLeaderboard } from "./compute.js";
+import { DEFAULT_WEIGHTS } from "./compute.js";
 
 export async function fetchAllRanking({
   scope = "global",

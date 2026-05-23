@@ -6,6 +6,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { WPBottomSheet, WPChip, WPInput } from "../ui";
 import { WayperTheme } from "../../theme/wayperTheme";
+import { computeTerritoryXP } from "../../services/xp/territoryXp.js";
 
 const TAG_OPTIONS = [
   { label: "Treino Forte", icon: "barbell-outline" },
@@ -16,7 +17,58 @@ const TAG_OPTIONS = [
   { label: "Leve", icon: "leaf-outline" },
 ];
 
-export default function RunSummaryModal({ visible, onClose, onSave, baseRunData = {}, mode = "save" }) {
+const safeNumber = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+const formatArea = (areaM2 = 0) => {
+  const area = Math.max(0, safeNumber(areaM2));
+  if (area >= 1000000) return `${(area / 1000000).toFixed(2)} km2`;
+  return `${Math.round(area).toLocaleString("pt-BR")} m2`;
+};
+
+const normalizeCaptureResult = (captureResult, runData = {}) => {
+  const result = captureResult || runData.captureResult || null;
+  if (!result) return null;
+
+  const affectedUsers = Array.isArray(result.affectedUsers) ? result.affectedUsers : [];
+  const becameLeaderInCells = Array.isArray(result.becameLeaderInCells) ? result.becameLeaderInCells : [];
+  const conqueredTerritories = Array.isArray(result.conqueredTerritories) ? result.conqueredTerritories : [];
+
+  return {
+    ...result,
+    capturedAreaM2: safeNumber(result.capturedAreaM2 ?? runData.area),
+    newAreaM2: safeNumber(result.newAreaM2),
+    stolenAreaM2: safeNumber(result.stolenAreaM2),
+    affectedUsersCount: safeNumber(result.affectedUsersCount, affectedUsers.length),
+    conqueredCount: safeNumber(result.conqueredCount, conqueredTerritories.length),
+    becameLeaderCount: safeNumber(result.becameLeaderCount, becameLeaderInCells.length),
+    affectedUsers,
+    becameLeaderInCells,
+  };
+};
+
+const getFriendlyFailure = (reason) => {
+  if (reason === "not_closed_loop") return "Area nao capturada: trajeto nao fechou um loop valido.";
+  if (reason === "not_enough_points") return "Area nao capturada: faltaram pontos de GPS para formar um territorio.";
+  if (reason === "area_too_small") return "Area nao capturada: o loop ficou pequeno demais.";
+  if (reason === "area_too_large") return "Area nao capturada: a area ficou grande demais para captura segura.";
+  if (reason === "bad_gps") return "Area nao capturada: sinal de GPS insuficiente.";
+  return "Area nao capturada nesta corrida.";
+};
+
+function CaptureMetric({ icon, label, value, accent = WayperTheme.colors.primary }) {
+  return (
+    <View style={styles.captureMetric}>
+      <Ionicons name={icon} size={18} color={accent} />
+      <Text style={styles.captureMetricValue} numberOfLines={1}>{value}</Text>
+      <Text style={styles.captureMetricLabel} numberOfLines={2}>{label}</Text>
+    </View>
+  );
+}
+
+export default function RunSummaryModal({ visible, onClose, onSave, baseRunData = {}, captureResult = null, mode = "save" }) {
   const runData = useMemo(() => baseRunData || {}, [baseRunData]);
   const isZoneRun = runData.mode === "zones" || Number(runData.area || 0) > 0 || !!runData.zoneId;
   const isEditing = mode === "edit";
@@ -54,6 +106,24 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
     }),
     [runData]
   );
+  const competitiveResult = useMemo(
+    () => normalizeCaptureResult(captureResult, runData),
+    [captureResult, runData]
+  );
+  const captureXp = useMemo(
+    () => computeTerritoryXP({
+      capturedAreaM2: competitiveResult?.capturedAreaM2,
+      newAreaM2: competitiveResult?.newAreaM2,
+      stolenAreaM2: competitiveResult?.stolenAreaM2,
+      becameLeaderCount: competitiveResult?.becameLeaderCount,
+      conqueredCount: competitiveResult?.conqueredCount,
+      affectedUsersCount: competitiveResult?.affectedUsersCount,
+    }),
+    [competitiveResult]
+  );
+  const captureNotice = runData.territoryCaptureMessage || competitiveResult?.territoryCaptureMessage || null;
+  const captureFailed = Boolean(runData.territoryCaptureFailedReason || competitiveResult?.ok === false);
+  const stolenTarget = competitiveResult?.affectedUsers?.[0];
 
   async function pickPhoto() {
     try {
@@ -125,6 +195,78 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
             </View>
           </View>
         </View>
+
+        {captureNotice ? (
+          <View style={[styles.captureNotice, captureFailed && styles.captureNoticeWarning]}>
+            <Ionicons
+              name={captureFailed ? "alert-circle-outline" : "trophy-outline"}
+              size={20}
+              color={captureFailed ? WayperTheme.colors.warning : WayperTheme.colors.primary}
+            />
+            <Text style={styles.captureNoticeText}>{captureNotice}</Text>
+          </View>
+        ) : null}
+
+        {competitiveResult?.ok ? (
+          <View style={styles.captureBlock}>
+            <View style={styles.captureBlockHeader}>
+              <View>
+                <Text style={styles.captureEyebrow}>Resultado competitivo</Text>
+                <Text style={styles.captureTitle}>Territorio conquistado</Text>
+              </View>
+              <View style={styles.captureXpPill}>
+                <Ionicons name="flash-outline" size={16} color={WayperTheme.colors.textInverse} />
+                <Text style={styles.captureXpText}>+{captureXp.xp} XP</Text>
+              </View>
+            </View>
+
+            <View style={styles.captureMetricGrid}>
+              <CaptureMetric icon="map-outline" label="Area total" value={formatArea(competitiveResult.capturedAreaM2)} />
+              <CaptureMetric icon="sparkles-outline" label="Area nova" value={formatArea(competitiveResult.newAreaM2)} accent={WayperTheme.colors.cyan} />
+              <CaptureMetric icon="repeat-outline" label="Area retomada" value={formatArea(competitiveResult.stolenAreaM2)} accent={WayperTheme.colors.warning} />
+              <CaptureMetric icon="flag-outline" label="Regioes lideradas" value={String(competitiveResult.becameLeaderCount || 0)} />
+            </View>
+
+            {competitiveResult.stolenAreaM2 > 0 ? (
+              <Text style={styles.captureProgressText}>
+                Retomou {formatArea(competitiveResult.stolenAreaM2)}
+                {stolenTarget?.userName ? ` de ${stolenTarget.userName}` : ""}
+                .
+              </Text>
+            ) : (
+              <Text style={styles.captureProgressText}>
+                Voce capturou {formatArea(competitiveResult.capturedAreaM2)}.
+              </Text>
+            )}
+
+            {competitiveResult.becameLeaderCount > 0 ? (
+              <Text style={styles.captureProgressText}>
+                Virou lider em {competitiveResult.becameLeaderCount} regiao{competitiveResult.becameLeaderCount > 1 ? "es" : ""}.
+              </Text>
+            ) : null}
+
+            {competitiveResult.conqueredCount > 0 ? (
+              <Text style={styles.captureProgressText}>
+                Assumiu {competitiveResult.conqueredCount} territorio{competitiveResult.conqueredCount > 1 ? "s" : ""} por completo.
+              </Text>
+            ) : null}
+          </View>
+        ) : captureFailed ? (
+          <View style={styles.captureBlock}>
+            <View style={styles.captureBlockHeader}>
+              <View>
+                <Text style={styles.captureEyebrow}>Captura territorial</Text>
+                <Text style={styles.captureTitle}>Corrida salva</Text>
+              </View>
+            </View>
+            <Text style={styles.captureProgressText}>
+              {getFriendlyFailure(runData.territoryCaptureFailedReason || competitiveResult?.reason)}
+            </Text>
+            <Text style={styles.captureProgressText}>
+              Tente finalizar proximo do ponto inicial para conquistar territorio.
+            </Text>
+          </View>
+        ) : null}
 
         <WPInput
           label="Nome"
@@ -328,6 +470,102 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: WayperTheme.spacing.md,
     marginTop: WayperTheme.spacing.lg,
+  },
+  captureNotice: {
+    minHeight: 48,
+    borderRadius: WayperTheme.radius.lg,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    paddingHorizontal: WayperTheme.spacing.md,
+    paddingVertical: WayperTheme.spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.sm,
+  },
+  captureNoticeWarning: {
+    borderColor: WayperTheme.colors.warningBorder || WayperTheme.colors.borderStrong,
+    backgroundColor: WayperTheme.colors.warningSoft || WayperTheme.colors.surfaceSoft,
+  },
+  captureNoticeText: {
+    ...WayperTheme.typography.body,
+    flex: 1,
+    color: WayperTheme.colors.text,
+  },
+  captureBlock: {
+    borderRadius: WayperTheme.radius.xl,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    padding: WayperTheme.spacing.lg,
+    gap: WayperTheme.spacing.md,
+  },
+  captureBlockHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: WayperTheme.spacing.md,
+  },
+  captureEyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  captureTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 18,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  captureXpPill: {
+    minHeight: 34,
+    paddingHorizontal: WayperTheme.spacing.md,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.xs,
+  },
+  captureXpText: {
+    color: WayperTheme.colors.textInverse,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  captureMetricGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: WayperTheme.spacing.sm,
+  },
+  captureMetric: {
+    flexGrow: 1,
+    flexBasis: "46%",
+    minHeight: 78,
+    borderRadius: WayperTheme.radius.lg,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    backgroundColor: WayperTheme.colors.surface,
+    padding: WayperTheme.spacing.md,
+    justifyContent: "center",
+  },
+  captureMetricValue: {
+    color: WayperTheme.colors.text,
+    fontSize: 16,
+    fontWeight: "900",
+    marginTop: WayperTheme.spacing.xs,
+  },
+  captureMetricLabel: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 11,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  captureProgressText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "800",
   },
   metricPill: {
     minHeight: 62,

@@ -33,25 +33,23 @@ import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../components/Map/WayperM
 import RunShareModal from "../components/Runs/RunShareModal";
 import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../components/Runs/RunShareCard";
 import RunSummaryModal from "../components/Runs/RunSummaryModal";
+import TerritoryBottomSheet from "../components/Territory/TerritoryBottomSheet";
 import { WPButton } from "../components/ui";
 import { WayperTheme } from "../theme/wayperTheme";
+import { auth } from "../firebaseConfig";
 import formatTime from "../utils/formatTime";
 import {
   TRACKING_CONFIG,
-  calculateDistanceMeters,
   debugTracking,
   limitPathForRendering,
   normalizeLocation,
-  removePathOutliers,
   sanitizeRunPath,
-  shouldAppendLocationPoint,
   smoothDisplayPath,
-  smoothLocationPoint,
   splitPathIntoSegments,
 } from "../utils/tracking";
 import zones from "../utils/zones";
 import sync from "../utils/sync";
-import { beautifyRoutePath, calculateRouteDistance, finalizeRoutePath } from "../utils/routeDrawing";
+import { calculateRouteDistance, finalizeRoutePath } from "../utils/routeDrawing";
 import {
   assertTraceHasEnoughPoints,
   captureRunShareImage,
@@ -64,17 +62,39 @@ import {
   showShareError,
 } from "../utils/share/runShareExport";
 import { getFormattedPace } from "../utils/pace";
+import { getRunDisplayTitle } from "../utils/runDisplayTitle";
+import { isRunOwnedByCurrentUser } from "../utils/runOwnership";
+import {
+  buildRunReplayTimeline,
+  getReplayIndexForElapsed,
+  getReplayRunStats,
+} from "../utils/runReplay";
 import xpService from "../services/xp/xpService";
-import { updateProfileStats } from "../services/profile/profileService";
+import { updateProfileStats, updateTerritoryProfileStats } from "../services/profile/profileService";
+import {
+  buildSummaryRenderPath,
+  createTrackingSession,
+  getRenderablePathForRun,
+  getRenderableSegmentsForRun,
+} from "../services/tracking";
+import {
+  fetchActiveTerritoriesNear,
+  getCellCenter,
+  getCellIdForLocation,
+  getCellIdsForBbox,
+  getLeaderCellsForViewport,
+  getLeaderboardForCell,
+  loadLocalTerritories,
+  processRunTerritoryCapture,
+} from "../services/territory";
 
 /* Tunáveis */
 const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
 const FLUSH_INTERVAL_MS = 300;
 const WATCH_TIME_INTERVAL_MS = 1000;
-const WATCH_DISTANCE_INTERVAL = 3;
+const WATCH_DISTANCE_INTERVAL = 2.5;
 const INITIAL_REGION_DELTA = 0.001;
 const COUNTDOWN_DEFAULT = 3;
-const ZONE_MIN_AREA_M2 = 5;
 const WAYPER_GREEN = WayperTheme.colors.primary;
 const ROUTE_CAP = 8000;
 const MAX_RUNNING_SPEED_MPS = TRACKING_CONFIG.MAX_HUMAN_SPRINT_SPEED_KMH / 3.6;
@@ -82,10 +102,36 @@ const ZONE_PREVIEW_INTERVAL_MS = 1400;
 const BACKGROUND_LOCATION_TASK = "WAYPER_ACTIVE_RUN_LOCATION";
 const FOLLOW_MAP_ZOOM = 17.2;
 const FOLLOW_ANIMATION_DURATION = 450;
+const REPLAY_FOLLOW_ZOOM = 18.1;
+const REPLAY_CAMERA_ANIMATION_DURATION = 240;
+const REPLAY_CAMERA_MOVE_INTERVAL_MS = 180;
+const REPLAY_SPEED_OPTIONS = [1, 2, 3, 4, 5];
 const RECENTER_ANIMATION_DURATION = 700;
 const MIN_CAMERA_MOVE_INTERVAL_MS = 900;
+const TERRITORY_VIEWPORT_DEBOUNCE_MS = 950;
+const TERRITORY_INITIAL_BBOX_DELTA = 0.018;
+const TERRITORY_FETCH_LIMIT = 180;
+const TERRITORY_MAX_VIEWPORT_CELLS = 140;
 
 let backgroundLocationUpdateHandler = null;
+
+const requestReplayAnimationFrame = (callback) => {
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    return globalThis.requestAnimationFrame(callback);
+  }
+
+  return setTimeout(() => callback(Date.now()), 16);
+};
+
+const cancelReplayAnimationFrame = (handle) => {
+  if (handle == null) return;
+  if (typeof globalThis.cancelAnimationFrame === "function") {
+    globalThis.cancelAnimationFrame(handle);
+    return;
+  }
+
+  clearTimeout(handle);
+};
 
 try {
   if (TaskManager && !TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK)) {
@@ -107,6 +153,7 @@ try {
           speed: loc.coords.speed,
           heading: loc.coords.heading,
           altitude: loc.coords.altitude,
+          altitudeAccuracy: loc.coords.altitudeAccuracy,
           timestamp: loc.timestamp,
           source: "background",
         });
@@ -135,6 +182,31 @@ const showRunShareFailure = (message, error) => {
 const uid = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
 const sanitizePath = (arr = []) => sanitizeRunPath(arr);
+const sanitizeSegmentPath = (path = [], segmentId = 0) =>
+  sanitizePath(path).map((point) => ({
+    ...point,
+    segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : segmentId,
+  }));
+const sanitizeSegmentPaths = (segments = []) =>
+  (Array.isArray(segments) ? segments : [])
+    .map((segment, index) => sanitizeSegmentPath(Array.isArray(segment) ? segment : segment?.liveRenderPath || segment?.trustedPath || [], index))
+    .filter((segment) => segment.length >= 2);
+const flattenSegmentPaths = (segments = []) => sanitizeSegmentPaths(segments).flat();
+const sanitizeTrackingSegments = (segments = []) =>
+  (Array.isArray(segments) ? segments : []).map((segment, index) => {
+    const segmentId = Number.isFinite(Number(segment?.index ?? segment?.segmentId)) ? Number(segment.index ?? segment.segmentId) : index;
+    return {
+      id: String(segment?.id || `segment_${segmentId}`),
+      index: segmentId,
+      startedAt: segment?.startedAt || null,
+      endedAt: segment?.endedAt || null,
+      rawPath: sanitizeSegmentPath(segment?.rawPath || [], segmentId),
+      trustedPath: sanitizeSegmentPath(segment?.trustedPath || [], segmentId),
+      liveRenderPath: sanitizeSegmentPath(segment?.liveRenderPath || [], segmentId),
+      summaryRenderPath: sanitizeSegmentPath(segment?.summaryRenderPath || [], segmentId),
+    };
+  });
+const MAX_MERCATOR_LATITUDE = 85.05112878;
 
 const formatSavedDuration = (seconds = 0) => {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
@@ -160,30 +232,43 @@ const formatSavedDate = (date) => {
 };
 
 const buildRouteSvgPoints = (path = [], width = 320, height = 210, padding = 28) => {
-  const points = beautifyRoutePath(sanitizePath(path), {
-    toleranceM: 3.5,
-    minPointDistanceM: 1.4,
-    spikeToleranceM: 7,
-    maxPoints: 700,
-    preserveTurns: true,
-  });
+  const points = sanitizePath(path);
   if (points.length < 2) return "";
 
-  const lats = points.map((p) => p.latitude);
-  const lngs = points.map((p) => p.longitude);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-  const latRange = Math.max(maxLat - minLat, 0.000001);
-  const lngRange = Math.max(maxLng - minLng, 0.000001);
+  return buildShareSvgPointString(points, width, height, padding);
+};
+
+const projectSharePoint = (point) => {
+  const latitude = Math.max(-MAX_MERCATOR_LATITUDE, Math.min(MAX_MERCATOR_LATITUDE, point.latitude));
+  const latRad = (latitude * Math.PI) / 180;
+  return {
+    x: point.longitude,
+    y: Math.log(Math.tan(Math.PI / 4 + latRad / 2)),
+  };
+};
+
+const buildShareSvgPointString = (points = [], width = 320, height = 210, padding = 28) => {
+  const projected = points.map(projectSharePoint);
+  const xs = projected.map((p) => p.x);
+  const ys = projected.map((p) => p.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const rangeX = Math.max(maxX - minX, 0.000001);
+  const rangeY = Math.max(maxY - minY, 0.000001);
   const drawWidth = width - padding * 2;
   const drawHeight = height - padding * 2;
+  const scale = Math.min(drawWidth / rangeX, drawHeight / rangeY);
+  const shapeWidth = rangeX * scale;
+  const shapeHeight = rangeY * scale;
+  const offsetX = (width - shapeWidth) / 2;
+  const offsetY = (height - shapeHeight) / 2;
 
-  return points
+  return projected
     .map((p) => {
-      const x = padding + ((p.longitude - minLng) / lngRange) * drawWidth;
-      const y = padding + (1 - (p.latitude - minLat) / latRange) * drawHeight;
+      const x = offsetX + (p.x - minX) * scale;
+      const y = offsetY + (1 - (p.y - minY) / rangeY) * shapeHeight;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
@@ -193,30 +278,193 @@ const buildPolygonSvgPoints = (coords = [], width = 320, height = 210, padding =
   const points = sanitizePath(coords);
   if (points.length < 3) return "";
 
-  const lats = points.map((p) => p.latitude);
-  const lngs = points.map((p) => p.longitude);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-  const latRange = Math.max(maxLat - minLat, 0.000001);
-  const lngRange = Math.max(maxLng - minLng, 0.000001);
-  const drawWidth = width - padding * 2;
-  const drawHeight = height - padding * 2;
-
-  return points
-    .map((p) => {
-      const x = padding + ((p.longitude - minLng) / lngRange) * drawWidth;
-      const y = padding + (1 - (p.latitude - minLat) / latRange) * drawHeight;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+  return buildShareSvgPointString(points, width, height, padding);
 };
 
 const DEFAULT_COORD = WAYPER_FALLBACK_COORD;
 
+const toFiniteNumber = (value, fallback = null) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+const normalizeTerritoryBbox = (bbox) => {
+  if (!Array.isArray(bbox) || bbox.length < 4) return null;
+  const values = bbox.slice(0, 4).map((value) => toFiniteNumber(value));
+  if (values.some((value) => value == null)) return null;
+  return [
+    Math.min(values[0], values[2]),
+    Math.min(values[1], values[3]),
+    Math.max(values[0], values[2]),
+    Math.max(values[1], values[3]),
+  ];
+};
+
+const buildBboxAroundLocation = (point, delta = TERRITORY_INITIAL_BBOX_DELTA) => {
+  const latitude = toFiniteNumber(point?.latitude ?? point?.lat);
+  const longitude = toFiniteNumber(point?.longitude ?? point?.lng ?? point?.lon);
+  if (latitude == null || longitude == null) return null;
+  return [longitude - delta, latitude - delta, longitude + delta, latitude + delta];
+};
+
+const territoryIntersectsBbox = (territory, bbox) => {
+  const target = normalizeTerritoryBbox(bbox);
+  if (!target) return true;
+  const source = normalizeTerritoryBbox(territory?.bbox);
+  if (!source) return true;
+
+  return !(
+    source[2] < target[0] ||
+    source[0] > target[2] ||
+    source[3] < target[1] ||
+    source[1] > target[3]
+  );
+};
+
+const isActiveTerritory = (territory) => !territory?.status || territory.status === "active";
+
+const sortByTerritoryUpdatedAt = (a, b) => {
+  const aTime = new Date(a?.updatedAt || a?.capturedAt || a?.createdAt || 0).getTime();
+  const bTime = new Date(b?.updatedAt || b?.capturedAt || b?.createdAt || 0).getTime();
+  return bTime - aTime;
+};
+
+const mergeTerritoriesForMap = (existing = [], incoming = [], bbox = null) => {
+  const map = new Map();
+  const add = (territory) => {
+    if (!territory?.id || !isActiveTerritory(territory) || !territoryIntersectsBbox(territory, bbox)) return;
+    map.set(String(territory.id), territory);
+  };
+
+  (Array.isArray(existing) ? existing : []).forEach(add);
+  (Array.isArray(incoming) ? incoming : []).forEach(add);
+  return Array.from(map.values()).sort(sortByTerritoryUpdatedAt);
+};
+
+const applyCaptureResultToTerritoryState = (existing = [], result = {}) => {
+  const removedIds = new Set([
+    ...(result.deletedTerritories || []),
+    ...(result.conqueredTerritories || []),
+    ...(result.mergedTerritories || []),
+  ].map((territory) => String(territory?.id || territory)).filter(Boolean));
+
+  const map = new Map();
+  for (const territory of Array.isArray(existing) ? existing : []) {
+    if (!territory?.id || removedIds.has(String(territory.id)) || !isActiveTerritory(territory)) continue;
+    map.set(String(territory.id), territory);
+  }
+
+  for (const territory of result.updatedTerritories || []) {
+    if (!territory?.id) continue;
+    if (isActiveTerritory(territory)) map.set(String(territory.id), territory);
+    else map.delete(String(territory.id));
+  }
+
+  const captured = result.capturedTerritory;
+  if (captured?.id && isActiveTerritory(captured)) {
+    map.set(String(captured.id), captured);
+  }
+
+  return Array.from(map.values()).sort(sortByTerritoryUpdatedAt);
+};
+
+const mergeLeaderCellsForMap = (existing = [], updates = []) => {
+  const map = new Map();
+  for (const cell of Array.isArray(existing) ? existing : []) {
+    if (cell?.cellId || cell?.id) map.set(String(cell.cellId || cell.id), cell);
+  }
+
+  for (const update of Array.isArray(updates) ? updates : []) {
+    const leaderboard = update?.leaderboard || update;
+    if (leaderboard?.cellId || leaderboard?.id) {
+      map.set(String(leaderboard.cellId || leaderboard.id), leaderboard);
+    }
+  }
+
+  return Array.from(map.values());
+};
+
+const listIdentitySignature = (items = []) =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => [
+      item?.id || item?.cellId || "",
+      item?.updatedAt || item?.capturedAt || "",
+      item?.version || "",
+      item?.status || "",
+      Math.round(Number(item?.areaM2 ?? item?.leaderAreaM2 ?? 0)),
+    ].join(":"))
+    .join("|");
+
+const getCurrentWayperUser = () => {
+  const user = auth.currentUser;
+  const emailName = user?.email ? user.email.split("@")[0] : null;
+  return {
+    id: user?.uid || "offline",
+    name: user?.displayName || emailName || "Atleta Wayper",
+    avatar: user?.photoURL || null,
+  };
+};
+
+const serializeCaptureResult = (result) => {
+  if (!result) return null;
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: result.reason || "capture_failed",
+      details: result.details || null,
+    };
+  }
+
+  return {
+    ok: true,
+    territoryId: result.capturedTerritory?.id || null,
+    capturedAreaM2: Number(result.capturedAreaM2 || 0),
+    newAreaM2: Number(result.newAreaM2 || 0),
+    stolenAreaM2: Number(result.stolenAreaM2 || 0),
+    ownMergedAreaM2: Number(result.ownMergedAreaM2 || 0),
+    conqueredCount: result.conqueredTerritories?.length || 0,
+    splitCount: result.splitTerritories?.length || 0,
+    mergedCount: result.mergedTerritories?.length || 0,
+    affectedUsersCount: result.affectedUsers?.length || 0,
+    becameLeaderInCells: result.becameLeaderInCells || [],
+    lostLeaderInCells: result.lostLeaderInCells || [],
+    cellIds: result.cellIds || [],
+    highlights: result.summary?.highlights || [],
+  };
+};
+
+const buildCaptureResultMessage = (result) => {
+  if (!result) return null;
+  if (!result.ok) {
+    const reason = result.reason || "erro";
+    if (reason === "not_closed_loop") return "Corrida salva. O trajeto nao fechou um loop para capturar territorio.";
+    if (reason === "not_enough_points") return "Corrida salva. Foram necessarios mais pontos para capturar territorio.";
+    if (reason === "duration_too_short") return "Corrida salva. A captura foi bloqueada porque a atividade foi curta demais.";
+    if (reason === "distance_too_short") return "Corrida salva. A captura foi bloqueada porque a distancia foi curta demais.";
+    if (reason === "bad_accuracy" || reason === "bad_gps") return "Corrida salva. A captura foi bloqueada por baixa qualidade de GPS.";
+    if (reason === "impossible_speed" || reason === "gps_jump" || reason === "suspicious_activity") return "Corrida salva. A captura foi bloqueada por sinais inconsistentes no trajeto.";
+    if (reason === "area_too_small") return "Corrida salva. A area ficou pequena demais para virar territorio.";
+    if (reason === "area_too_large") return "Corrida salva. A area ficou grande demais para captura segura.";
+    return "Corrida salva. A captura territorial nao foi aplicada desta vez.";
+  }
+
+  const area = Math.round(Number(result.capturedAreaM2 || 0));
+  const stolen = Math.round(Number(result.stolenAreaM2 || 0));
+  const leaderCells = result.becameLeaderInCells?.length || 0;
+  const extras = [
+    stolen > 0 ? `${stolen} m2 retomados` : null,
+    leaderCells > 0 ? `lideranca em ${leaderCells} celula${leaderCells > 1 ? "s" : ""}` : null,
+  ].filter(Boolean);
+  return `Territorio capturado: ${area} m2${extras.length ? `, ${extras.join(", ")}` : ""}.`;
+};
+
+const getPrimaryTerritoryCellId = (territory) => {
+  if (Array.isArray(territory?.cellIds) && territory.cellIds.length > 0) return territory.cellIds[0];
+  return getCellIdForLocation(territory?.center || territory);
+};
+
 /* ================= Component ================= */
-const MapScreen = ({ navigation }) => {
+const MapScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -233,11 +481,20 @@ const MapScreen = ({ navigation }) => {
 
   const [showRunModal, setShowRunModal] = useState(false);
   const [currentRunData, setCurrentRunData] = useState(null);
+  const [territories, setTerritories] = useState([]);
+  const [leaderCells, setLeaderCells] = useState([]);
+  const [selectedTerritory, setSelectedTerritory] = useState(null);
+  const [selectedTerritoryLeaderboard, setSelectedTerritoryLeaderboard] = useState(null);
+  const [captureResult, setCaptureResult] = useState(null);
+  const [territoryLoading, setTerritoryLoading] = useState(false);
+  const [mapFocusCenter, setMapFocusCenter] = useState(null);
 
   const [routeState, setRouteState] = useState([]);
   const [displayRouteState, setDisplayRouteState] = useState([]);
   const [displayRouteSegments, setDisplayRouteSegments] = useState([]);
   const [replayPathState, setReplayPathState] = useState([]);
+  const [replaySegmentsState, setReplaySegmentsState] = useState([]);
+  const [replaySpeed, setReplaySpeed] = useState(1);
   const [distanceState, setDistanceState] = useState(0);
   const [timeSec, setTimeSec] = useState(0);
   const [runsList, setRunsList] = useState([]);
@@ -261,6 +518,16 @@ const MapScreen = ({ navigation }) => {
   const timeSecRef = useRef(0);
   const lastNotificationBodyRef = useRef("");
   const replayIntervalRef = useRef(null);
+  const replayFrameRef = useRef(null);
+  const replayPathRef = useRef([]);
+  const replaySegmentsRef = useRef([]);
+  const replayTimelineRef = useRef([]);
+  const replayLastFrameAtRef = useRef(null);
+  const replayElapsedRef = useRef(0);
+  const replaySpeedRef = useRef(1);
+  const replayRunRef = useRef(null);
+  const replayReturnRef = useRef(null);
+  const lastReplayRequestRef = useRef(null);
   const appStateRef = useRef(AppState.currentState);
   const mountedRef = useRef(true);
 
@@ -269,6 +536,8 @@ const MapScreen = ({ navigation }) => {
   const savedPathRef = useRef([]);
   const displayPathRef = useRef([]);
   const displaySegmentsRef = useRef([]);
+  const trackingSessionRef = useRef(createTrackingSession({ mode: "run" }));
+  const lastTrackingFinishRef = useRef(null);
   const lastAcceptedLocationRef = useRef(null);
   const lastSmoothedLocationRef = useRef(null);
   const pendingSuspiciousPointRef = useRef(null);
@@ -279,13 +548,21 @@ const MapScreen = ({ navigation }) => {
   const routeStateRef = useRef([]);
   const distanceRef = useRef(0);
   const runningRef = useRef(false);
+  const runStatusRef = useRef("idle");
   const modeRef = useRef(null);
   const zonePreviewLastAtRef = useRef(0);
   const liveTrackingRef = useRef(false);
+  const territoryViewportDebounceRef = useRef(null);
+  const lastTerritoryFetchRef = useRef(null);
+  const initialTerritoryLoadRef = useRef(false);
+  const selectedTerritoryRequestRef = useRef(null);
+  const lastRouteFocusRef = useRef(null);
+  const watcherStartTokenRef = useRef(0);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
   const startPressAnim = useRef(new Animated.Value(1)).current;
+  const currentUserId = auth.currentUser?.uid || "offline";
 
   useEffect(() => {
     modeRef.current = mode;
@@ -356,8 +633,174 @@ const MapScreen = ({ navigation }) => {
   }, [paused, replaying, running]);
 
   const recenterMapOnUser = useCallback(() => {
+    setMapFocusCenter(null);
     setMapFollowEnabled(true);
     setMapRecenterSignal((value) => value + 1);
+  }, []);
+
+  const loadTerritoriesForViewport = useCallback(
+    async ({ bbox, includeCache = false } = {}) => {
+      const viewportBbox = normalizeTerritoryBbox(bbox) || buildBboxAroundLocation(location);
+      if (!viewportBbox) return;
+
+      const fetchKey = viewportBbox.map((value) => value.toFixed(5)).join(":");
+      if (!includeCache && lastTerritoryFetchRef.current === fetchKey) return;
+      lastTerritoryFetchRef.current = fetchKey;
+
+      setTerritoryLoading(true);
+      try {
+        if (includeCache) {
+          const cached = await loadLocalTerritories();
+          if (mountedRef.current && Array.isArray(cached)) {
+            setTerritories((prev) => {
+              const next = mergeTerritoriesForMap([], cached, viewportBbox);
+              return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
+            });
+          }
+        }
+
+        const cellIds = getCellIdsForBbox(viewportBbox).slice(0, TERRITORY_MAX_VIEWPORT_CELLS);
+        if (cellIds.length === 0) return;
+
+        const [remoteTerritories, viewportLeaderCells] = await Promise.all([
+          fetchActiveTerritoriesNear({
+            bbox: viewportBbox,
+            cellIds,
+            limitTo: TERRITORY_FETCH_LIMIT,
+          }),
+          getLeaderCellsForViewport({ bbox: viewportBbox, cellIds }),
+        ]);
+
+        if (!mountedRef.current) return;
+
+        setTerritories((prev) => {
+          const next = mergeTerritoriesForMap(prev, remoteTerritories, viewportBbox);
+          return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
+        });
+        setLeaderCells((prev) => {
+          const next = Array.isArray(viewportLeaderCells) ? viewportLeaderCells : [];
+          return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
+        });
+      } catch (error) {
+        lastTerritoryFetchRef.current = null;
+        console.warn("[Wayper] territory viewport load failed", error);
+      } finally {
+        if (mountedRef.current) setTerritoryLoading(false);
+      }
+    },
+    [location]
+  );
+
+  useEffect(() => {
+    if (!location || initialTerritoryLoadRef.current) return;
+    initialTerritoryLoadRef.current = true;
+    loadTerritoriesForViewport({
+      bbox: buildBboxAroundLocation(location),
+      includeCache: true,
+    });
+  }, [loadTerritoriesForViewport, location]);
+
+  useEffect(() => {
+    return () => {
+      if (territoryViewportDebounceRef.current) {
+        clearTimeout(territoryViewportDebounceRef.current);
+        territoryViewportDebounceRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleTerritoryViewportChange = useCallback(
+    ({ bbox } = {}) => {
+      const viewportBbox = normalizeTerritoryBbox(bbox);
+      if (!viewportBbox) return;
+
+      if (territoryViewportDebounceRef.current) {
+        clearTimeout(territoryViewportDebounceRef.current);
+      }
+
+      territoryViewportDebounceRef.current = setTimeout(() => {
+        loadTerritoriesForViewport({ bbox: viewportBbox, includeCache: false });
+      }, TERRITORY_VIEWPORT_DEBOUNCE_MS);
+    },
+    [loadTerritoriesForViewport]
+  );
+
+  const handleTerritoryPress = useCallback(
+    async (properties = {}) => {
+      if (running || replaying) return;
+      const territoryId = properties?.id ? String(properties.id) : null;
+      const fullTerritory = territoryId
+        ? territories.find((territory) => String(territory.id) === territoryId)
+        : null;
+      const nextTerritory = fullTerritory ? { ...fullTerritory, ...properties } : properties;
+      const requestKey = territoryId || `${Date.now()}`;
+
+      selectedTerritoryRequestRef.current = requestKey;
+      setSelectedTerritory(nextTerritory);
+      setSelectedTerritoryLeaderboard(null);
+
+      const cellId = getPrimaryTerritoryCellId(nextTerritory);
+      if (!cellId) return;
+
+      try {
+        const leaderboard = await getLeaderboardForCell(cellId);
+        if (mountedRef.current && selectedTerritoryRequestRef.current === requestKey) {
+          setSelectedTerritoryLeaderboard(leaderboard);
+        }
+      } catch (error) {
+        console.warn("[Wayper] territory leaderboard load failed", error);
+      }
+    },
+    [replaying, running, territories]
+  );
+
+  const handleLeaderCellPress = useCallback(
+    (properties = {}) => {
+      if (running || replaying) return;
+      const cellId = properties?.cellId || properties?.id || null;
+      navigation?.navigate("Ranking", cellId ? { cellId } : undefined);
+    },
+    [navigation, replaying, running]
+  );
+
+  useEffect(() => {
+    const params = route?.params || {};
+    const focusTerritoryId = params.focusTerritoryId ? String(params.focusTerritoryId) : null;
+    const focusCellId = params.focusCellId ? String(params.focusCellId) : null;
+    const focusUserId = params.focusUserId ? String(params.focusUserId) : null;
+    const focusKey = [focusTerritoryId, focusCellId, focusUserId].filter(Boolean).join("|");
+
+    if (!focusKey || lastRouteFocusRef.current === focusKey) return;
+
+    const focusedTerritory = territories.find((territory) => {
+      if (focusTerritoryId && String(territory.id) === focusTerritoryId) return true;
+      if (focusUserId && String(territory.ownerId || territory.userId) === focusUserId) return true;
+      if (focusCellId && Array.isArray(territory.cellIds) && territory.cellIds.map(String).includes(focusCellId)) return true;
+      return false;
+    });
+
+    if (focusedTerritory) {
+      lastRouteFocusRef.current = focusKey;
+      setMapFocusCenter(focusedTerritory.center || focusedTerritory.coordsPreview?.[0] || null);
+      setMapFollowEnabled(false);
+      handleTerritoryPress(focusedTerritory);
+      return;
+    }
+
+    if (focusCellId) {
+      const center = getCellCenter(focusCellId);
+      if (center) {
+        lastRouteFocusRef.current = focusKey;
+        setMapFocusCenter(center);
+        setMapFollowEnabled(false);
+      }
+    }
+  }, [handleTerritoryPress, route?.params, territories]);
+
+  const closeSelectedTerritory = useCallback(() => {
+    selectedTerritoryRequestRef.current = null;
+    setSelectedTerritory(null);
+    setSelectedTerritoryLeaderboard(null);
   }, []);
 
   /* ===== INIT ===== */
@@ -446,18 +889,28 @@ const MapScreen = ({ navigation }) => {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
+      if (replayIntervalRef.current) {
+        clearInterval(replayIntervalRef.current);
+        replayIntervalRef.current = null;
+      }
+      if (replayFrameRef.current != null) {
+        cancelReplayAnimationFrame(replayFrameRef.current);
+        replayFrameRef.current = null;
+      }
       try {
         if (appStateSub?.remove) appStateSub.remove();
       } catch (e) {
         debug("appState remove fail", e);
       }
       runningRef.current = false;
+      runStatusRef.current = "finished";
     };
   }, []); // só uma vez
 
   /* ===== Helpers ===== */
   const stopWatcherAndPolling = useCallback(() => {
     try {
+      watcherStartTokenRef.current += 1;
       const w = watcherRef.current;
       if (!w) return;
       if (typeof w.remove === "function") {
@@ -481,6 +934,11 @@ const MapScreen = ({ navigation }) => {
   }, []);
 
   const resetTrackingPipeline = useCallback((options = {}) => {
+    trackingSessionRef.current = createTrackingSession({
+      mode: "run",
+      startedAt: Date.now(),
+    });
+    lastTrackingFinishRef.current = null;
     rawPathRef.current = [];
     savedPathRef.current = [];
     displayPathRef.current = [];
@@ -498,12 +956,6 @@ const MapScreen = ({ navigation }) => {
     setDisplayRouteState([]);
     setDisplayRouteSegments([]);
     debugTracking("path_reset", { segmentId: currentSegmentIdRef.current });
-  }, []);
-
-  const buildFinalRoutePath = useCallback((path = []) => {
-    const clean = removePathOutliers(sanitizePath(path), TRACKING_CONFIG);
-    if (clean.length <= ROUTE_CAP) return clean;
-    return limitPathForRendering(clean, ROUTE_CAP);
   }, []);
 
   const updateActiveZonePreview = useCallback((path = []) => {
@@ -548,20 +1000,31 @@ const MapScreen = ({ navigation }) => {
 
   const flushRouteBufferToState = useCallback(() => {
     try {
-      const buf = routeBufferRef.current;
-      if (!buf || buf.length === 0) return;
+      const trackingState = trackingSessionRef.current?.getState?.();
+      const sessionTrusted = sanitizePath(trackingState?.trustedPath || []);
+      if (sessionTrusted.length === 0 && (!routeBufferRef.current || routeBufferRef.current.length === 0)) return;
+      const liveSegments = sanitizeSegmentPaths(trackingState?.liveRenderSegments || []);
 
-      const savedSnapshot = sanitizePath(savedPathRef.current);
+      const savedSnapshot = sessionTrusted.length > 0 ? sessionTrusted : sanitizePath(savedPathRef.current);
       const displaySnapshot = limitPathForRendering(
-        smoothDisplayPath(savedSnapshot, { config: TRACKING_CONFIG }),
+        liveSegments.length > 0
+          ? flattenSegmentPaths(liveSegments)
+          : sanitizePath(trackingState?.liveRenderPath || []).length > 1
+            ? sanitizePath(trackingState.liveRenderPath)
+          : smoothDisplayPath(savedSnapshot, { config: TRACKING_CONFIG }),
         TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
       );
-      const segmentSnapshot = splitPathIntoSegments(displaySnapshot);
+      const segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(displaySnapshot);
 
       routeStateRef.current = savedSnapshot;
+      savedPathRef.current = savedSnapshot;
       displayPathRef.current = displaySnapshot;
       displaySegmentsRef.current = segmentSnapshot;
       routeBufferRef.current = [];
+      rawPathRef.current = sanitizePath(trackingState?.rawPath || rawPathRef.current);
+      distanceRef.current = Number(trackingState?.stats?.distanceMeters ?? distanceRef.current) || 0;
+      lastAcceptedLocationRef.current = savedSnapshot[savedSnapshot.length - 1] || null;
+      lastSmoothedLocationRef.current = displaySnapshot[displaySnapshot.length - 1] || null;
 
       setRouteState(limitPathForRendering(savedSnapshot, ROUTE_CAP));
       setDisplayRouteState(displaySnapshot);
@@ -572,72 +1035,6 @@ const MapScreen = ({ navigation }) => {
       debug("flush catch", e);
     }
   }, [updateActiveZonePreview]);
-
-  const appendAcceptedLocation = useCallback((point, verdict = {}) => {
-    const previous = lastAcceptedLocationRef.current;
-    const segmentBreak = Boolean(verdict.segmentBreak || forceNextSegmentBreakRef.current || !previous);
-    const segmentId = segmentBreak && previous
-      ? currentSegmentIdRef.current + 1
-      : currentSegmentIdRef.current;
-
-    currentSegmentIdRef.current = segmentId;
-    forceNextSegmentBreakRef.current = false;
-
-    const savedPoint = {
-      ...point,
-      source: "gps",
-      segmentId,
-    };
-
-    const sameSegment = previous && previous.segmentId === savedPoint.segmentId;
-    const distanceM = sameSegment
-      ? (verdict.distanceM ?? calculateDistanceMeters(previous, savedPoint))
-      : 0;
-
-    if (sameSegment && Number.isFinite(distanceM) && distanceM > 0) {
-      distanceRef.current += distanceM;
-    }
-
-    savedPathRef.current.push(savedPoint);
-    routeStateRef.current = savedPathRef.current;
-    routeBufferRef.current.push(savedPoint);
-    lastAcceptedLocationRef.current = savedPoint;
-    lastPointRef.current = savedPoint;
-    pendingSuspiciousPointRef.current = null;
-
-    const smoothed = smoothLocationPoint(
-      segmentBreak ? null : lastSmoothedLocationRef.current,
-      savedPoint,
-      {
-        config: TRACKING_CONFIG,
-        segmentBreak,
-        speedKmh: verdict.speedKmh,
-      }
-    );
-    const displayPoint = {
-      ...(smoothed || savedPoint),
-      segmentId,
-      source: "smoothed",
-    };
-
-    lastSmoothedLocationRef.current = displayPoint;
-    displayPathRef.current.push(displayPoint);
-    displayPathRef.current = limitPathForRendering(displayPathRef.current, TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS);
-    displaySegmentsRef.current = splitPathIntoSegments(displayPathRef.current);
-
-    setLocation(displayPoint);
-    setDistanceState(distanceRef.current);
-
-    debugTracking("accept", {
-      reason: verdict.reason,
-      distanceM,
-      speedKmh: verdict.speedKmh,
-      accuracy: savedPoint.accuracy,
-      segmentId,
-      segmentBreak,
-      pathLength: savedPathRef.current.length,
-    });
-  }, []);
 
   /* ===== Core location update ===== */
   const handleLocationUpdate = useCallback(
@@ -662,64 +1059,96 @@ const MapScreen = ({ navigation }) => {
         }
 
         if (!runningRef.current) {
-          setLocation((prev) => {
-            if (prev && prev.latitude === point.latitude && prev.longitude === point.longitude) return prev;
-            return point;
-          });
-          return;
-        }
-
-        rawPathRef.current.push(point);
-
-        const pending = pendingSuspiciousPointRef.current;
-        if (pending && lastAcceptedLocationRef.current) {
-          const confirmDistance = calculateDistanceMeters(pending, point);
-          const pendingAgeMs = point.timestamp - pending.timestamp;
-          const confirmRadius = Math.max(
-            35,
-            Number(pending.accuracy || 0) + Number(point.accuracy || 0)
-          );
-
-          if (pendingAgeMs >= 0 && pendingAgeMs <= 12000 && confirmDistance <= confirmRadius) {
-            appendAcceptedLocation(pending, {
-              reason: "confirmed_new_segment",
-              distanceM: 0,
-              speedKmh: 0,
-              segmentBreak: true,
+          if (runStatusRef.current === "idle") {
+            setLocation((prev) => {
+              if (prev && prev.latitude === point.latitude && prev.longitude === point.longitude) return prev;
+              return point;
             });
-            debugTracking("pending_confirmed", { confirmDistance, pendingAgeMs });
-          } else if (pendingAgeMs > 12000 || confirmDistance > confirmRadius * 2) {
-            pendingSuspiciousPointRef.current = null;
-            debugTracking("pending_discarded", { confirmDistance, pendingAgeMs });
           }
-        }
-
-        const verdict = shouldAppendLocationPoint(savedPathRef.current, point, {
-          config: TRACKING_CONFIG,
-          now: Date.now(),
-          allowMissingAccuracy: false,
-          forceSegmentBreak: forceNextSegmentBreakRef.current,
-        });
-
-        if (!verdict.accepted) {
-          if (verdict.pending) {
-            pendingSuspiciousPointRef.current = point;
-          }
-          debugTracking(`reject:${verdict.reason}`, {
-            distanceM: verdict.distanceM,
-            dtMs: verdict.dtMs,
-            speedKmh: verdict.speedKmh,
-            accuracy: point.accuracy,
+          debugTracking("location_ignored_inactive_run", {
+            status: runStatusRef.current,
+            source: locObj.source,
           });
           return;
         }
 
-        appendAcceptedLocation(point, verdict);
+        if (runStatusRef.current !== "active") {
+          debugTracking("location_ignored_by_status", {
+            status: runStatusRef.current,
+            source: locObj.source,
+          });
+          return;
+        }
+
+        const result = trackingSessionRef.current.processLocationPoint(
+          {
+            ...locObj,
+            source: locObj.source === "background" || locObj.source === "foreground"
+              ? "expo-location"
+              : locObj.source,
+          },
+          { segmentBreak: forceNextSegmentBreakRef.current }
+        );
+
+        rawPathRef.current = result.rawPath || rawPathRef.current;
+
+        if (!result.accepted) {
+          debugTracking(`reject:${result.reason}`, {
+            accuracy: point.accuracy,
+            timestamp: point.timestamp,
+            rawPoints: result.pathQuality?.rawPoints,
+            acceptedPoints: result.pathQuality?.acceptedPoints,
+            segments: result.segments?.length || 0,
+          });
+          return;
+        }
+
+        const trustedPath = sanitizePath(result.trustedPath || []);
+        const liveSegments = sanitizeSegmentPaths(result.liveRenderSegments || []);
+        const livePath = limitPathForRendering(
+          liveSegments.length > 0 ? flattenSegmentPaths(liveSegments) : sanitizePath(result.liveRenderPath || trustedPath),
+          TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
+        );
+
+        savedPathRef.current = trustedPath;
+        routeStateRef.current = trustedPath;
+        displayPathRef.current = livePath;
+        displaySegmentsRef.current = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
+        routeBufferRef.current = result.point ? [result.point] : [];
+        lastAcceptedLocationRef.current = trustedPath[trustedPath.length - 1] || null;
+        lastPointRef.current = lastAcceptedLocationRef.current;
+        lastSmoothedLocationRef.current = result.currentPosition || livePath[livePath.length - 1] || null;
+        pendingSuspiciousPointRef.current = null;
+        distanceRef.current = Number(result.stats?.distanceMeters || 0);
+        currentSegmentIdRef.current = Number(lastAcceptedLocationRef.current?.segmentId || currentSegmentIdRef.current || 0);
+        forceNextSegmentBreakRef.current = false;
+
+        if (result.currentPositionChanged && result.currentPosition) {
+          setLocation(result.currentPosition);
+        }
+
+        if (result.pathChanged) {
+          debugTracking("point_accepted", {
+            accuracy: point.accuracy,
+            rawPoints: result.pathQuality?.rawPoints,
+            acceptedPoints: result.pathQuality?.acceptedPoints,
+            segments: displaySegmentsRef.current.length,
+            segmentPointCounts: displaySegmentsRef.current.map((segment) => segment.length),
+            distanceMeters: distanceRef.current,
+            averageAccuracy: result.pathQuality?.averageAccuracy ?? null,
+            maxAccuracy: result.pathQuality?.maxAccuracy ?? null,
+          });
+          setRouteState(limitPathForRendering(trustedPath, ROUTE_CAP));
+          setDisplayRouteState(livePath);
+          setDisplayRouteSegments(displaySegmentsRef.current);
+          setDistanceState(distanceRef.current);
+          updateActiveZonePreview(trustedPath);
+        }
       } catch (e) {
         debug("handleLocationUpdate", e);
       }
     },
-    [appendAcceptedLocation]
+    [updateActiveZonePreview]
   );
 
   useEffect(() => {
@@ -741,7 +1170,7 @@ const MapScreen = ({ navigation }) => {
   }, []);
 
   const getBackgroundLocationOptions = useCallback((notificationBody) => ({
-    accuracy: Location.Accuracy.BestForNavigation,
+    accuracy: Location.Accuracy.BestForNavigation || Location.Accuracy.Highest || Location.Accuracy.High,
     timeInterval: WATCH_TIME_INTERVAL_MS,
     distanceInterval: WATCH_DISTANCE_INTERVAL,
     deferredUpdatesInterval: WATCH_TIME_INTERVAL_MS,
@@ -830,36 +1259,71 @@ const MapScreen = ({ navigation }) => {
   const startLocationWatcher = useCallback(async () => {
     stopWatcherAndPolling();
     const runSessionId = currentRunIdRef.current;
+    const startToken = watcherStartTokenRef.current + 1;
+    watcherStartTokenRef.current = startToken;
 
     try {
-      const sub = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: WATCH_TIME_INTERVAL_MS,
-          distanceInterval: WATCH_DISTANCE_INTERVAL,
-          mayShowUserSettingsDialog: true,
-        },
-        (loc) => {
-          if (!loc?.coords) return;
-          handleLocationUpdate({
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-            accuracy: loc.coords.accuracy,
-            speed: loc.coords.speed,
-            heading: loc.coords.heading,
-            altitude: loc.coords.altitude,
-            timestamp: loc.timestamp,
-            source: "foreground",
-            runSessionId,
-          });
+      const accuracyCandidates = [
+        Location.Accuracy.BestForNavigation,
+        Location.Accuracy.Highest,
+        Location.Accuracy.High,
+      ].filter((value) => value != null);
+      let sub = null;
+      let lastWatchError = null;
+
+      for (const accuracy of accuracyCandidates) {
+        try {
+          sub = await Location.watchPositionAsync(
+            {
+              accuracy,
+              timeInterval: WATCH_TIME_INTERVAL_MS,
+              distanceInterval: WATCH_DISTANCE_INTERVAL,
+              mayShowUserSettingsDialog: true,
+            },
+            (loc) => {
+              if (!loc?.coords) return;
+              handleLocationUpdate({
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+                accuracy: loc.coords.accuracy,
+                speed: loc.coords.speed,
+                heading: loc.coords.heading,
+                altitude: loc.coords.altitude,
+                altitudeAccuracy: loc.coords.altitudeAccuracy,
+                timestamp: loc.timestamp,
+                source: "expo-location",
+                runSessionId,
+              });
+            }
+          );
+          if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") {
+            try {
+              sub?.remove?.();
+            } catch {}
+            return;
+          }
+          debugTracking("watcher_accuracy_selected", { accuracy });
+          break;
+        } catch (watchError) {
+          lastWatchError = watchError;
+          debug("watchPositionAsync accuracy fallback", watchError);
         }
-      );
+      }
+
+      if (!sub) throw lastWatchError || new Error("watchPositionAsync unavailable");
+      if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") {
+        try {
+          sub?.remove?.();
+        } catch {}
+        return;
+      }
       watcherRef.current = sub;
       debugTracking("watcher_started", { runSessionId, distanceInterval: WATCH_DISTANCE_INTERVAL, timeInterval: WATCH_TIME_INTERVAL_MS });
     } catch (e) {
       debug("watchPositionAsync failed, fallback polling", e);
       const poll = setInterval(async () => {
         try {
+          if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") return;
           const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
           if (p?.coords) {
             handleLocationUpdate({
@@ -869,8 +1333,9 @@ const MapScreen = ({ navigation }) => {
               speed: p.coords.speed,
               heading: p.coords.heading,
               altitude: p.coords.altitude,
+              altitudeAccuracy: p.coords.altitudeAccuracy,
               timestamp: p.timestamp,
-              source: "polling",
+              source: "fallback",
               runSessionId,
             });
           }
@@ -878,6 +1343,10 @@ const MapScreen = ({ navigation }) => {
           debug("polling error", err);
         }
       }, WATCH_TIME_INTERVAL_MS);
+      if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") {
+        clearInterval(poll);
+        return;
+      }
       watcherRef.current = { pollingInterval: poll };
     }
   }, [handleLocationUpdate, stopWatcherAndPolling]);
@@ -927,9 +1396,13 @@ const MapScreen = ({ navigation }) => {
         setMode(selectedMode);
         modeRef.current = selectedMode;
         runningRef.current = true;
+        runStatusRef.current = "active";
         setReplaying(false);
+        setCaptureResult(null);
+        closeSelectedTerritory();
         currentRunIdRef.current = uid();
         resetTrackingPipeline({ segmentId: 0 });
+        trackingSessionRef.current?.start?.({ startedAt: Date.now() });
         setPolygons([]);
         setCompletedZonePreview([]);
         distanceRef.current = 0;
@@ -966,8 +1439,9 @@ const MapScreen = ({ navigation }) => {
             speed: pos.coords.speed,
             heading: pos.coords.heading,
             altitude: pos.coords.altitude,
+            altitudeAccuracy: pos.coords.altitudeAccuracy,
             timestamp: pos.timestamp,
-            source: "initial",
+            source: "expo-location",
             runSessionId: currentRunIdRef.current,
           });
         }
@@ -978,15 +1452,22 @@ const MapScreen = ({ navigation }) => {
         debug("startRun catch", e);
       }
     },
-    [handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startLocationWatcher]
+    [closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startLocationWatcher]
   );
 
   const pauseRun = useCallback(() => {
     if (!running || paused) return;
 
     runningRef.current = false;
+    runStatusRef.current = "paused";
     setPaused(true);
     flushRouteBufferToState();
+    trackingSessionRef.current?.pause?.({ endedAt: Date.now() });
+    debugTracking("session_paused", {
+      runSessionId: currentRunIdRef.current,
+      segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
+      distanceMeters: distanceRef.current,
+    });
     stopWatcherAndPolling();
     stopBackgroundLocationService();
 
@@ -1002,10 +1483,16 @@ const MapScreen = ({ navigation }) => {
     try {
       setPaused(false);
       runningRef.current = true;
+      runStatusRef.current = "active";
+      trackingSessionRef.current?.resume?.({ startedAt: Date.now() });
       forceNextSegmentBreakRef.current = true;
       pendingSuspiciousPointRef.current = null;
       lastSmoothedLocationRef.current = null;
-      debugTracking("resume_segment_break_armed", { runSessionId: currentRunIdRef.current });
+      debugTracking("session_resumed", {
+        runSessionId: currentRunIdRef.current,
+        segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
+        nextSegmentStartsOnFirstAcceptedPoint: true,
+      });
 
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -1029,8 +1516,9 @@ const MapScreen = ({ navigation }) => {
             speed: pos.coords.speed,
             heading: pos.coords.heading,
             altitude: pos.coords.altitude,
+            altitudeAccuracy: pos.coords.altitudeAccuracy,
             timestamp: pos.timestamp || Date.now(),
-            source: "resume",
+            source: "expo-location",
           });
           if (point) setLocation(point);
         }
@@ -1066,6 +1554,7 @@ const MapScreen = ({ navigation }) => {
     setDistanceState(0);
     resetTrackingPipeline({ segmentId: 0 });
     setReplayPathState([]);
+    setReplaySegmentsState([]);
     setPolygons([]);
     setCompletedZonePreview([]);
     timeSecRef.current = 0;
@@ -1074,6 +1563,7 @@ const MapScreen = ({ navigation }) => {
     setMode(null);
     setPaused(false);
     currentRunIdRef.current = null;
+    runStatusRef.current = "idle";
   }, [resetTrackingPipeline]);
 
   const stopRun = useCallback(
@@ -1082,6 +1572,7 @@ const MapScreen = ({ navigation }) => {
         if (!running) return;
 
         runningRef.current = false;
+        runStatusRef.current = "finishing";
         setRunning(false);
         setPaused(false);
 
@@ -1095,21 +1586,56 @@ const MapScreen = ({ navigation }) => {
 
         flushRouteBufferToState();
 
-        const sanitizedPath = sanitizePath(savedPathRef.current);
+        const totalDuration = timeSecRef.current || timeSec;
+        const trackingFinish = trackingSessionRef.current?.finishTrackingSession?.({
+          durationMs: totalDuration * 1000,
+        });
+        lastTrackingFinishRef.current = trackingFinish || null;
+
+        const sanitizedPath = sanitizePath(trackingFinish?.trustedPath || savedPathRef.current);
         const fallbackPoint = location || DEFAULT_COORD;
         const rawPath = sanitizedPath.length > 0 ? sanitizedPath : sanitizePath([fallbackPoint]);
-        const path = rawPath.length > 1 ? buildFinalRoutePath(rawPath) : rawPath;
-        const routeDistance = calculateRouteDistance(path);
+        const path = rawPath;
+        const summaryRenderPath = sanitizePath(
+          trackingFinish?.summaryRenderPath ||
+          trackingFinish?.renderPath ||
+          (path.length > 1 ? buildSummaryRenderPath(path) : path)
+        );
+        const routeDistance = Number(trackingFinish?.distanceMeters || 0) || calculateRouteDistance(path);
         const totalDistance = routeDistance > 0 ? routeDistance : distanceRef.current;
-        const totalDuration = timeSecRef.current || timeSec;
         const stoppedRunSessionId = currentRunIdRef.current;
+        const runId = stoppedRunSessionId || uid();
+        const finishedAt = new Date().toISOString();
+        const avgSpeedKmh = totalDistance && totalDuration
+          ? Number(((totalDistance / 1000) / (totalDuration / 3600)).toFixed(2))
+          : 0;
+        const maxSpeedKmh = Number(((trackingFinish?.maxSpeedMps || 0) * 3.6).toFixed(2)) || 0;
 
         const runData = {
+          id: runId,
+          segments: sanitizeTrackingSegments(trackingFinish?.segments || []),
+          routeSegments: sanitizeTrackingSegments(trackingFinish?.segments || []),
           path,
+          trustedPath: path,
+          rawPath: sanitizePath(trackingFinish?.rawPath || rawPath),
+          rawPoints: sanitizePath(trackingFinish?.rawPath || rawPath),
+          liveRenderPath: sanitizePath(trackingFinish?.liveRenderPath || displayPathRef.current || []),
+          renderPath: summaryRenderPath,
+          displayPath: summaryRenderPath,
+          pathQuality: trackingFinish?.pathQuality || null,
+          lowConfidenceSegments: trackingFinish?.lowConfidenceSegments || [],
+          smoothingVersion: trackingFinish?.smoothingVersion || "wayper_tracking_v1",
           distance: totalDistance,
+          distanceMeters: totalDistance,
           duration: totalDuration,
-          avgSpeed: totalDistance && totalDuration ? Number(((totalDistance / 1000) / (totalDuration / 3600)).toFixed(2)) : 0,
-          date: new Date().toISOString(),
+          durationSeconds: totalDuration,
+          avgSpeed: avgSpeedKmh,
+          maxSpeed: maxSpeedKmh,
+          date: finishedAt,
+          startedAt: trackingSessionRef.current?.state?.startedAt || null,
+          endedAt: finishedAt,
+          pausedDurationSeconds: null,
+          status: "completed",
           mode: mode || "free",
           area: 0,
           zoneId: null,
@@ -1117,51 +1643,78 @@ const MapScreen = ({ navigation }) => {
           zoneCount: 0,
         };
 
-        const canCreateZone = mode === "zones" && path.length >= 6 && totalDistance > 1;
-        if (canCreateZone) {
+        if (mode === "zones") {
           try {
-            const savedZone = await sync.createAndSaveZoneFromPath?.(path, {
-              closeDistanceM: 32,
-              maxCloseDistanceM: 48,
-              requireClosedLoop: true,
-              allowOpenFallback: false,
-              minLoopPoints: 8,
-              simplifyTolerance: 0.000015,
-              smoothIterations: 1,
-              maxPoints: 420,
-              compressMax: 420,
+            const actor = getCurrentWayperUser();
+            const result = await processRunTerritoryCapture({
+              userId: actor.id,
+              userName: actor.name,
+              userAvatar: actor.avatar,
+              runId,
+              path,
+              mode,
+              distanceMeters: totalDistance,
+              durationSeconds: totalDuration,
+              visibility: "followers",
+              createdAt: finishedAt,
             });
-            if (savedZone) {
-              runData.area = Number(savedZone.area || 0);
-              runData.zoneId = savedZone.id || null;
-              runData.zoneCoords = sanitizePath(savedZone.coords || []);
+
+            setCaptureResult(result);
+            runData.captureResult = serializeCaptureResult(result);
+            runData.territoryCaptureMessage = buildCaptureResultMessage(result);
+
+            if (result?.ok) {
+              const captured = result.capturedTerritory || {};
+              runData.area = Number(result.capturedAreaM2 || captured.areaM2 || 0);
+              runData.territoryId = captured.id || null;
+              runData.zoneId = captured.id || null;
+              runData.zoneCoords = sanitizePath(captured.coordsPreview || []);
               runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
+              setTerritories((prev) => applyCaptureResultToTerritoryState(prev, result));
+              if (Array.isArray(result.localLeaderboardUpdates) && result.localLeaderboardUpdates.length > 0) {
+                setLeaderCells((prev) => mergeLeaderCellsForMap(prev, result.localLeaderboardUpdates));
+              }
+            } else {
+              runData.area = 0;
+              runData.territoryCaptureFailedReason = result?.reason || "capture_failed";
+              if (result?.runContext?.suspicious || result?.details?.suspicious) {
+                runData.suspicious = true;
+                runData.territoryCaptureBlockedReason = result?.reason || "suspicious_activity";
+                runData.suspiciousScore = result?.suspiciousScore || 0;
+              }
             }
           } catch (e) {
-            debug("zone creation via sync failed", e);
+            debug("territory capture failed unexpectedly; using legacy zone fallback", e);
             try {
-              const built = zones.buildCapturedZone(path, {
-                closeDistanceM: 32,
-                maxCloseDistanceM: 48,
-                requireClosedLoop: true,
-                minLoopPoints: 8,
-                simplifyTolerance: 0.000015,
-                smoothIterations: 1,
-                maxPoints: 420,
-              });
-              const area = zones.calcArea(built);
-              if (Array.isArray(built) && built.length >= 3 && area >= ZONE_MIN_AREA_M2) {
-                const z = await sync.saveLocalZone?.({ coords: built, area, date: new Date().toISOString() });
-                sync.scheduleZonesSync?.();
-                runData.area = Number(z?.area || area || 0);
-                runData.zoneId = z?.id || null;
-                runData.zoneCoords = sanitizePath(z?.coords || built);
-                runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
+              if (path.length >= 6 && totalDistance > 1) {
+                const savedZone = await sync.createAndSaveZoneFromPath?.(path, {
+                  closeDistanceM: 32,
+                  maxCloseDistanceM: 48,
+                  requireClosedLoop: true,
+                  allowOpenFallback: false,
+                  minLoopPoints: 8,
+                  simplifyTolerance: 0.000015,
+                  smoothIterations: 1,
+                  maxPoints: 420,
+                  compressMax: 420,
+                });
+                if (savedZone) {
+                  runData.area = Number(savedZone.area || 0);
+                  runData.zoneId = savedZone.id || null;
+                  runData.zoneCoords = sanitizePath(savedZone.coords || []);
+                  runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
+                  runData.territoryCaptureFailedReason = "legacy_zone_fallback";
+                  runData.territoryCaptureMessage = "Corrida salva usando o modo legado de zonas.";
+                }
               }
             } catch (fallbackErr) {
               debug("fallback zone save failed", fallbackErr);
+              runData.territoryCaptureFailedReason = "capture_unavailable";
+              runData.territoryCaptureMessage = "Corrida salva. A captura territorial ficou indisponivel neste momento.";
             }
           }
+        } else {
+          setCaptureResult(null);
         }
 
         await fadeOutRoute();
@@ -1177,71 +1730,273 @@ const MapScreen = ({ navigation }) => {
         debugTracking("session_stopped", {
           runSessionId: stoppedRunSessionId,
           savedPoints: path.length,
+          rawPoints: runData.rawPath.length,
+          segmentCount: runData.segments.length,
+          segmentPointCounts: runData.segments.map((segment) => segment.trustedPath.length),
           distance: totalDistance,
+          durationSeconds: totalDuration,
+          averageAccuracy: runData.pathQuality?.averageAccuracy ?? null,
+          maxAccuracy: runData.pathQuality?.maxAccuracy ?? null,
         });
       } catch (e) {
         debug("stopRun catch", e);
       }
     },
-    [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopWatcherAndPolling, flushRouteBufferToState, buildFinalRoutePath, mode]
+    [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopWatcherAndPolling, flushRouteBufferToState, mode]
   );
 
-  /* ============ Replay (mantive) ============ */
-  const startReplay = useCallback(
-    (runEntry) => {
+  /* ============ Replay ============ */
+  const clearReplayPlayback = useCallback(() => {
+    if (replayIntervalRef.current) {
+      clearInterval(replayIntervalRef.current);
+      replayIntervalRef.current = null;
+    }
+    if (replayFrameRef.current != null) {
+      cancelReplayAnimationFrame(replayFrameRef.current);
+      replayFrameRef.current = null;
+    }
+    replayLastFrameAtRef.current = null;
+  }, []);
+
+  const returnAfterReplay = useCallback((returnTarget) => {
+    if (!returnTarget) return;
+
+    if (returnTarget.type === "run-detail" && returnTarget.run) {
+      navigation?.navigate("Corridas", {
+        screen: "RunDetail",
+        params: { run: returnTarget.run },
+      });
+      return;
+    }
+
+    if (returnTarget.type === "previous" && navigation?.canGoBack?.()) {
+      navigation.goBack();
+    }
+  }, [navigation]);
+
+  const finishReplay = useCallback(
+    ({ shouldReturn = true } = {}) => {
       try {
-        if (!runEntry || !Array.isArray(runEntry.path) || runEntry.path.length === 0) return;
+        const returnTarget = replayReturnRef.current;
+
+        clearReplayPlayback();
+        replayPathRef.current = [];
+        replaySegmentsRef.current = [];
+        replayTimelineRef.current = [];
+        replayElapsedRef.current = 0;
+        replayRunRef.current = null;
+        replayReturnRef.current = null;
+        replaySpeedRef.current = 1;
+        setReplaySpeed(1);
+        setReplaying(false);
+        setReplayPathState([]);
+        setReplaySegmentsState([]);
+        resetTrackingPipeline({ segmentId: 0 });
+        setMapFollowEnabled(true);
+
+        if (shouldReturn) returnAfterReplay(returnTarget);
+      } catch (e) {
+        debug("finishReplay catch", e);
+      }
+    },
+    [clearReplayPlayback, resetTrackingPipeline, returnAfterReplay]
+  );
+
+  const advanceReplayFrame = useCallback(
+    (frameTime) => {
+      const timeline = replayTimelineRef.current;
+      const path = replayPathRef.current;
+
+      if (!Array.isArray(timeline) || timeline.length < 2 || !Array.isArray(path) || path.length < 2) {
+        finishReplay();
+        return;
+      }
+
+      const now = Number(frameTime) || Date.now();
+      const previousFrameAt = replayLastFrameAtRef.current ?? now;
+      const deltaSeconds = Math.max(0, Math.min(0.35, (now - previousFrameAt) / 1000));
+      replayLastFrameAtRef.current = now;
+      replayElapsedRef.current += deltaSeconds * replaySpeedRef.current;
+
+      const lastPoint = timeline[timeline.length - 1];
+      const totalReplaySeconds = Math.max(0.001, Number(lastPoint?.cumulativeTime) || 0.001);
+      const nextIndex = Math.max(0, getReplayIndexForElapsed(timeline, replayElapsedRef.current));
+      const visibleIndex = Math.min(nextIndex, path.length - 1);
+      const currentPoint = timeline[visibleIndex];
+
+      setReplayPathState((previous) => {
+        const nextLength = visibleIndex + 1;
+        if (
+          previous.length === nextLength &&
+          previous[previous.length - 1]?.latitude === path[visibleIndex]?.latitude &&
+          previous[previous.length - 1]?.longitude === path[visibleIndex]?.longitude
+        ) {
+          return previous;
+        }
+        return path.slice(0, nextLength);
+      });
+      setReplaySegmentsState(splitPathIntoSegments(path.slice(0, visibleIndex + 1)));
+
+      const currentSeconds = Math.round(Number(currentPoint?.cumulativeTime) || replayElapsedRef.current);
+      const currentMeters = Number(currentPoint?.cumulativeMeters) || 0;
+      timeSecRef.current = currentSeconds;
+      distanceRef.current = currentMeters;
+      setTimeSec(currentSeconds);
+      setDistanceState(currentMeters);
+
+      if (replayElapsedRef.current >= totalReplaySeconds || visibleIndex >= path.length - 1) {
+        setReplayPathState(path);
+        setReplaySegmentsState(splitPathIntoSegments(path));
+        const stats = getReplayRunStats(replayRunRef.current || {}, timeline);
+        timeSecRef.current = Math.round(stats.durationSeconds);
+        distanceRef.current = stats.distanceMeters;
+        setTimeSec(Math.round(stats.durationSeconds));
+        setDistanceState(stats.distanceMeters);
+        finishReplay();
+        return;
+      }
+
+      replayFrameRef.current = requestReplayAnimationFrame(advanceReplayFrame);
+    },
+    [finishReplay]
+  );
+
+  const setReplayPlaybackSpeed = useCallback((nextSpeed) => {
+    const normalizedSpeed = Math.max(1, Math.min(5, Number(nextSpeed) || 1));
+    replaySpeedRef.current = normalizedSpeed;
+    setReplaySpeed(normalizedSpeed);
+  }, []);
+
+  const startReplay = useCallback(
+    (runEntry, options = {}) => {
+      try {
+        if (!runEntry) return;
+
+        if (runningRef.current || running) {
+          Alert.alert("Replay indisponivel", "Finalize a corrida atual antes de reproduzir outra corrida.");
+          if (options.returnTo) returnAfterReplay(options.returnTo);
+          return;
+        }
+
+        const isZoneReplay =
+          runEntry?.mode === "zones" ||
+          Number(runEntry?.area || runEntry?.areaM2 || 0) > 0 ||
+          (Array.isArray(runEntry?.zoneCoords) && runEntry.zoneCoords.length >= 3) ||
+          (Array.isArray(runEntry?.zone?.coords) && runEntry.zone.coords.length >= 3);
+
+        if (isZoneReplay) {
+          Alert.alert("Replay indisponivel", "O replay esta disponivel apenas para corrida livre.");
+          if (options.returnTo) returnAfterReplay(options.returnTo);
+          return;
+        }
+
+        if (
+          runEntry?.readOnly ||
+          options.readOnly ||
+          !isRunOwnedByCurrentUser(runEntry, currentUserId, { allowLegacyLocal: options.allowLegacyLocal === true })
+        ) {
+          Alert.alert("Replay bloqueado", "Voce so pode reproduzir corridas do seu proprio historico.");
+          if (options.returnTo) returnAfterReplay(options.returnTo);
+          return;
+        }
+
+        const replayData = buildRunReplayTimeline(runEntry);
+        if (!replayData.path || replayData.path.length < 2 || !replayData.timeline || replayData.timeline.length < 2) {
+          Alert.alert("Replay indisponivel", "Esta corrida nao possui pontos suficientes para reproducao.");
+          if (options.returnTo) returnAfterReplay(options.returnTo);
+          return;
+        }
+
         stopWatcherAndPolling();
         stopBackgroundLocationService();
+        clearReplayPlayback();
+
+        const stats = getReplayRunStats(runEntry, replayData.timeline);
+        const initialPoint = replayData.timeline[0];
+
+        replayRunRef.current = runEntry;
+        replayReturnRef.current = options.returnTo || null;
+        replayPathRef.current = replayData.path;
+        replaySegmentsRef.current = replayData.segments || splitPathIntoSegments(replayData.path);
+        replayTimelineRef.current = replayData.timeline;
+        replayElapsedRef.current = 0;
+        replayLastFrameAtRef.current = null;
+        replaySpeedRef.current = 1;
+
+        setReplaySpeed(1);
         setReplaying(true);
         runningRef.current = false;
         setRunning(false);
         setPaused(false);
-        resetTrackingPipeline({ segmentId: 0 });
-        setReplayPathState([]);
         setMode(null);
+        modeRef.current = null;
+        setCaptureResult(null);
+        closeSelectedTerritory();
+        setMapFocusCenter(null);
+        setMapFollowEnabled(true);
+        resetTrackingPipeline({ segmentId: 0 });
+        setRouteState([]);
+        setDisplayRouteState([]);
+        setDisplayRouteSegments([]);
+        setReplayPathState([replayData.path[0]]);
+        setReplaySegmentsState([]);
+        timeSecRef.current = 0;
+        distanceRef.current = 0;
+        setTimeSec(stats.durationSeconds > 0 ? 0 : Math.round(initialPoint?.cumulativeTime || 0));
+        setDistanceState(0);
 
-        if (replayIntervalRef.current) {
-          clearInterval(replayIntervalRef.current);
-          replayIntervalRef.current = null;
-        }
-
-        const path = sanitizePath(runEntry.path);
-        let idx = 0;
-        replayIntervalRef.current = setInterval(() => {
-          if (!path || idx >= path.length) {
-            clearInterval(replayIntervalRef.current);
-            replayIntervalRef.current = null;
-            setReplaying(false);
-            setReplayPathState([]);
-            resetTrackingPipeline({ segmentId: 0 });
-            return;
-          }
-          const p = path[idx++];
-          setReplayPathState((prev) => {
-            const merged = prev.concat(p);
-            return merged.length > ROUTE_CAP ? merged.slice(merged.length - ROUTE_CAP) : merged;
-          });
-
-        }, 250);
+        replayFrameRef.current = requestReplayAnimationFrame(advanceReplayFrame);
       } catch (e) {
         debug("startReplay catch", e);
       }
     },
-    [resetTrackingPipeline, stopBackgroundLocationService, stopWatcherAndPolling]
+    [
+      advanceReplayFrame,
+      clearReplayPlayback,
+      closeSelectedTerritory,
+      currentUserId,
+      resetTrackingPipeline,
+      returnAfterReplay,
+      running,
+      stopBackgroundLocationService,
+      stopWatcherAndPolling,
+    ]
   );
 
   const stopReplay = useCallback(() => {
-    try {
-      if (replayIntervalRef.current) clearInterval(replayIntervalRef.current);
-      replayIntervalRef.current = null;
-      setReplaying(false);
-      setReplayPathState([]);
-      resetTrackingPipeline({ segmentId: 0 });
-    } catch (e) {
-      debug("stopReplay catch", e);
-    }
-  }, []);
+    finishReplay();
+  }, [finishReplay]);
+
+  useEffect(() => {
+    const replayRun = route?.params?.replayRun;
+    if (!replayRun) return;
+    if (!location) return;
+
+    const replayRequestId =
+      route?.params?.replayRequestId ||
+      `${replayRun?.id || replayRun?.date || "run"}:${replayRun?.updatedAt || replayRun?.createdAt || ""}`;
+
+    if (lastReplayRequestRef.current === replayRequestId) return;
+    lastReplayRequestRef.current = replayRequestId;
+
+    setShowSavedModal(false);
+    setSavedShareVisible(false);
+    setCompletedZonePreview([]);
+    setShowRunModal(false);
+    setShowRunsModal(false);
+    startReplay(replayRun, {
+      returnTo: route?.params?.replayReturnTo || { type: "previous" },
+      readOnly: !!(route?.params?.readOnly || replayRun?.readOnly),
+      allowLegacyLocal: route?.params?.replayAllowLegacyLocal === true,
+    });
+
+    navigation?.setParams?.({
+      replayRun: undefined,
+      replayReturnTo: undefined,
+      replayRequestId: undefined,
+      replayAllowLegacyLocal: undefined,
+    });
+  }, [location, navigation, route?.params, startReplay]);
 
   /* ============ UI helpers ============ */
   const closeRunsModal = useCallback(() => {
@@ -1253,6 +2008,17 @@ const MapScreen = ({ navigation }) => {
     navigation?.navigate("Corridas", { screen: "RunDetail", params: { run } });
   }, [navigation]);
   const openStartModal = useCallback(() => setSelectModeVisible(true), []);
+
+  const runFromSelectedTerritory = useCallback(() => {
+    closeSelectedTerritory();
+    startWithCountdown("zones");
+  }, [closeSelectedTerritory, startWithCountdown]);
+
+  const openSelectedTerritoryRanking = useCallback(() => {
+    const cellId = getPrimaryTerritoryCellId(selectedTerritory);
+    closeSelectedTerritory();
+    navigation?.navigate("Ranking", cellId ? { cellId } : undefined);
+  }, [closeSelectedTerritory, navigation, selectedTerritory]);
 
   const goToSavedRunDetail = useCallback(() => {
     if (!lastSavedRun) return;
@@ -1274,17 +2040,20 @@ const MapScreen = ({ navigation }) => {
     setShowRunsModal(false);
     navigation?.closeDrawer?.();
     navigation?.navigate("Mapa");
-    setTimeout(() => startReplay(lastSavedRun), 220);
+    setTimeout(() => startReplay(lastSavedRun, { allowLegacyLocal: true }), 220);
   }, [lastSavedRun, navigation, startReplay]);
 
   const getSavedShareContext = useCallback(() => {
-    const path = sanitizePath(lastSavedRun?.path || []);
+    const renderPath = sanitizePath(getRenderablePathForRun(lastSavedRun || {}));
+    const originalPath = sanitizePath(lastSavedRun?.trustedPath || lastSavedRun?.path || renderPath);
+    const path = originalPath.length > 1 ? originalPath : renderPath;
     const zoneCoords = sanitizePath(lastSavedRun?.zoneCoords || lastSavedRun?.zone?.coords || []);
     const isZone = lastSavedRun?.mode === "zones" || Number(lastSavedRun?.area || 0) > 0 || zoneCoords.length >= 3;
 
     return {
       runId: lastSavedRun?.id,
       path,
+      segments: getRenderableSegmentsForRun(lastSavedRun || {}).map((segment, index) => sanitizeSegmentPath(segment, index)),
       zoneCoords,
       isZone,
       distanceKm: (Number(lastSavedRun?.distance) || 0) / 1000,
@@ -1298,11 +2067,13 @@ const MapScreen = ({ navigation }) => {
         filename,
         width: RUN_SHARE_CARD_SIZE.card.width,
         height: RUN_SHARE_CARD_SIZE.card.height,
+        waitMs: 1400,
       });
     } catch (cardError) {
       logShareError("saved-card-capture-fallback", cardError, context);
       return generateTracePngFromPath(context.path, {
         ref: savedRouteShareRef,
+        segments: context.segments,
         zoneCoords: context.zoneCoords,
         isZone: context.isZone,
         filename: `${filename}-fallback-trace`,
@@ -1338,6 +2109,7 @@ const MapScreen = ({ navigation }) => {
       assertTraceHasEnoughPoints(context);
       const uri = await generateTracePngFromPath(context.path, {
         ref: savedRouteShareRef,
+        segments: context.segments,
         zoneCoords: context.zoneCoords,
         isZone: context.isZone,
         filename: `wayper-run-trace-${context.runId || Date.now()}`,
@@ -1381,6 +2153,7 @@ const MapScreen = ({ navigation }) => {
       assertTraceHasEnoughPoints(context);
       const uri = await generateTracePngFromPath(context.path, {
         ref: savedRouteShareRef,
+        segments: context.segments,
         zoneCoords: context.zoneCoords,
         isZone: context.isZone,
         filename: `wayper-png-${context.runId || Date.now()}`,
@@ -1454,12 +2227,14 @@ const MapScreen = ({ navigation }) => {
   // Se chegou aqui, garantimos que o app não ficará preso. Use location fallback se necessário.
   const safeLocation = location || DEFAULT_COORD;
   const replayCenter = Array.isArray(replayPathState) && replayPathState.length > 0 ? replayPathState[replayPathState.length - 1] : null;
+  const mapLocation = replaying && replayCenter ? replayCenter : safeLocation;
   const activeZonePreview = showZones && running && mode === "zones" && Array.isArray(polygons) ? polygons : [];
   const finishedZonePreview = showZones && (showRunModal || showSavedModal) && Array.isArray(completedZonePreview) ? completedZonePreview : [];
   const visibleMapZones = finishedZonePreview.length > 0 ? finishedZonePreview : activeZonePreview;
   const liveRoutePath = running || paused ? displayRouteState : routeState;
   const liveRouteSegments = running || paused ? displayRouteSegments : splitPathIntoSegments(liveRoutePath);
   const shouldFollowMap = running && !paused && !replaying && mapFollowEnabled;
+  const shouldFollowReplay = replaying;
   const shouldShowRecenterMap = running && !paused && !replaying && !mapFollowEnabled;
   if (!location) {
     return (
@@ -1478,18 +2253,27 @@ const MapScreen = ({ navigation }) => {
     inputRange: [0, 1],
     outputRange: [0.16, 0.34],
   });
-  const savedRunPath = sanitizePath(lastSavedRun?.path || []);
-  const savedRoutePoints = buildRouteSvgPoints(savedRunPath);
+  const savedRunPath = sanitizePath(getRenderablePathForRun(lastSavedRun || {}));
+  const savedRunSegments = getRenderableSegmentsForRun(lastSavedRun || {})
+    .map((segment, index) => sanitizeSegmentPath(segment, index))
+    .filter((segment) => segment.length >= 2);
+  const savedOriginalPath = sanitizePath(lastSavedRun?.trustedPath || lastSavedRun?.path || savedRunPath);
+  const savedSharePath = savedOriginalPath.length > 1 ? savedOriginalPath : savedRunPath;
+  const savedRoutePoints = buildRouteSvgPoints(savedSharePath);
   const savedZoneCoords = sanitizePath(lastSavedRun?.zoneCoords || lastSavedRun?.zone?.coords || []);
   const savedRunIsZone = lastSavedRun?.mode === "zones" || Number(lastSavedRun?.area || 0) > 0 || savedZoneCoords.length >= 3;
   const savedZonePoints = buildPolygonSvgPoints(savedZoneCoords);
   const savedTracePoints = savedRunIsZone && savedZonePoints ? savedZonePoints : savedRoutePoints;
   const savedShareZones = savedRunIsZone && savedZoneCoords.length >= 3 ? [{ coords: savedZoneCoords, area: lastSavedRun?.area }] : [];
+  const savedRunDisplayTitle = getRunDisplayTitle(lastSavedRun);
   const savedRunName = lastSavedRun?.name || (savedRunIsZone ? "Captura por zonas salva" : "Corrida salva");
+  const savedShareSubtitle = savedRunName && savedRunName !== savedRunDisplayTitle
+    ? savedRunName
+    : (savedRunIsZone ? "Corrida por zonas" : "Corrida livre");
   const savedRunTitle = savedRunIsZone ? "Corrida por zonas salva" : "Corrida salva";
   const savedShareTitle = savedRunIsZone ? "Compartilhar zonas" : "Compartilhar corrida";
-  const savedFullCardTitle = savedRunIsZone ? "Wayper Zone" : "Wayper Run";
-  const savedTraceCardTitle = savedRunIsZone ? "Wayper Zone" : "Wayper Trace";
+  const savedFullCardTitle = savedRunDisplayTitle;
+  const savedTraceCardTitle = savedRunDisplayTitle;
   const savedRunDistance = `${((Number(lastSavedRun?.distance) || 0) / 1000).toFixed(2)} km`;
   const savedRunDuration = formatSavedDuration(lastSavedRun?.duration);
   const savedRunPace = formatSavedPace(lastSavedRun?.duration, lastSavedRun?.distance);
@@ -1503,23 +2287,33 @@ const MapScreen = ({ navigation }) => {
       <View style={{ flex: 1 }}>
         <WayperMapLibre
           style={styles.map}
-          location={safeLocation}
-          centerCoordinate={replaying ? replayCenter : safeLocation}
-          autoCenterOnCoordinate={!running || replaying}
+          location={mapLocation}
+          centerCoordinate={replaying ? replayCenter : (mapFocusCenter || safeLocation)}
+          autoCenterOnCoordinate={!running && !replaying}
           routePath={liveRoutePath}
           routeSegments={liveRouteSegments}
           replayPath={replayPathState}
+          replaySegments={replaySegmentsState}
           zones={visibleMapZones}
+          territories={territories}
+          leaderCells={leaderCells}
+          selectedTerritory={selectedTerritory}
+          currentUserId={currentUserId}
           showZones={visibleMapZones.length > 0}
+          showTerritories
+          showLeaderAreas
           showUserLocation={!replaying}
-          followUserLocation={shouldFollowMap}
-          initialZoom={15}
-          followZoomLevel={FOLLOW_MAP_ZOOM}
-          followAnimationDuration={FOLLOW_ANIMATION_DURATION}
+          followUserLocation={shouldFollowMap || shouldFollowReplay}
+          initialZoom={replaying ? REPLAY_FOLLOW_ZOOM : 15}
+          followZoomLevel={replaying ? REPLAY_FOLLOW_ZOOM : FOLLOW_MAP_ZOOM}
+          followAnimationDuration={replaying ? REPLAY_CAMERA_ANIMATION_DURATION : FOLLOW_ANIMATION_DURATION}
           recenterAnimationDuration={RECENTER_ANIMATION_DURATION}
-          minCameraMoveIntervalMs={MIN_CAMERA_MOVE_INTERVAL_MS}
+          minCameraMoveIntervalMs={replaying ? REPLAY_CAMERA_MOVE_INTERVAL_MS : MIN_CAMERA_MOVE_INTERVAL_MS}
           recenterSignal={mapRecenterSignal}
           onUserInteraction={handleMapUserInteraction}
+          onTerritoryPress={handleTerritoryPress}
+          onLeaderCellPress={handleLeaderCellPress}
+          onViewportChange={handleTerritoryViewportChange}
           fitToContent={false}
         />
       </View>
@@ -1535,6 +2329,12 @@ const MapScreen = ({ navigation }) => {
         colors={["rgba(3,7,11,0.42)", "rgba(3,7,11,0)"]}
         style={styles.mapTopVignette}
       />
+
+      {territoryLoading && !running && !replaying ? (
+        <View pointerEvents="none" style={styles.territoryLoadingBadge}>
+          <ActivityIndicator size="small" color={WayperTheme.colors.primary} />
+        </View>
+      ) : null}
 
       {shouldShowRecenterMap && (
         <TouchableOpacity activeOpacity={0.9} style={styles.recenterMapButton} onPress={recenterMapOnUser}>
@@ -1654,9 +2454,25 @@ const MapScreen = ({ navigation }) => {
         </View>
       )}
       {replaying && (
-        <View style={styles.bottomButtons}>
+        <View style={styles.replayDock}>
+          <View pointerEvents="none" style={styles.runActionDockGlow} />
+          <View style={styles.replaySpeedRow}>
+            {REPLAY_SPEED_OPTIONS.map((speed) => {
+              const selected = replaySpeed === speed;
+              return (
+                <TouchableOpacity
+                  key={`replay-speed-${speed}`}
+                  activeOpacity={0.88}
+                  style={[styles.replaySpeedButton, selected && styles.replaySpeedButtonActive]}
+                  onPress={() => setReplayPlaybackSpeed(speed)}
+                >
+                  <Text style={[styles.replaySpeedText, selected && styles.replaySpeedTextActive]}>{speed}x</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           <WPButton
-            title="Parar Reprodução"
+            title="Parar reproducao"
             variant="danger"
             icon={<Ionicons name="stop-circle-outline" size={20} color={WayperTheme.colors.text} />}
             onPress={stopReplay}
@@ -1936,11 +2752,11 @@ const MapScreen = ({ navigation }) => {
         visible={savedShareVisible}
         onClose={() => setSavedShareVisible(false)}
         run={lastSavedRun}
-        path={savedRunPath}
+        path={savedSharePath}
         zoneCoords={savedZoneCoords}
         isZone={savedRunIsZone}
         title={savedFullCardTitle}
-        subtitle={savedRunName}
+        subtitle={savedShareSubtitle}
         distance={savedRunDistance}
         duration={savedRunDuration}
         pace={savedRunPace}
@@ -1949,15 +2765,46 @@ const MapScreen = ({ navigation }) => {
         publicLink={lastSavedRun?.publicLink || lastSavedRun?.publicUrl || lastSavedRun?.shareUrl || lastSavedRun?.url}
       />
 
+      <TerritoryBottomSheet
+        territory={showRunModal ? null : selectedTerritory}
+        leaderboard={selectedTerritoryLeaderboard}
+        currentUserId={currentUserId}
+        onClose={closeSelectedTerritory}
+        onRunHere={runFromSelectedTerritory}
+        onOpenRanking={openSelectedTerritoryRanking}
+      />
+
       {/* RunSummaryModal */}
       <RunSummaryModal
         visible={showRunModal}
         baseRunData={currentRunData}
+        captureResult={captureResult}
         onClose={() => setShowRunModal(false)}
         onSave={async (payload) => {
           try {
-            payload.path = payload.path || payload.coords || currentRunData?.path || [];
-            const normalized = { ...payload, path: sanitizePath(payload.path) };
+            const trustedPath = sanitizePath(payload.trustedPath || payload.path || payload.coords || currentRunData?.trustedPath || currentRunData?.path || []);
+            const renderPath = sanitizePath(
+              payload.renderPath ||
+              payload.displayPath ||
+              currentRunData?.renderPath ||
+              currentRunData?.displayPath ||
+              (trustedPath.length > 1 ? buildSummaryRenderPath(trustedPath) : trustedPath)
+            );
+            const normalized = {
+              ...payload,
+              segments: sanitizeTrackingSegments(payload.segments || currentRunData?.segments || []),
+              routeSegments: sanitizeTrackingSegments(payload.routeSegments || payload.segments || currentRunData?.routeSegments || currentRunData?.segments || []),
+              path: trustedPath,
+              trustedPath,
+              rawPath: sanitizePath(payload.rawPoints || payload.rawPath || currentRunData?.rawPoints || currentRunData?.rawPath || []),
+              rawPoints: sanitizePath(payload.rawPoints || payload.rawPath || currentRunData?.rawPoints || currentRunData?.rawPath || []),
+              liveRenderPath: sanitizePath(payload.liveRenderPath || currentRunData?.liveRenderPath || []),
+              renderPath,
+              displayPath: renderPath,
+              pathQuality: payload.pathQuality || currentRunData?.pathQuality || null,
+              lowConfidenceSegments: payload.lowConfidenceSegments || currentRunData?.lowConfidenceSegments || [],
+              smoothingVersion: payload.smoothingVersion || currentRunData?.smoothingVersion || "wayper_tracking_v1",
+            };
 
             const saved = await sync.saveLocalRun?.(normalized);
             sync.scheduleRunsSync?.();
@@ -1980,6 +2827,8 @@ const MapScreen = ({ navigation }) => {
               const durationSec = Number(normalized.duration) || 0;
               const areaM2 = Number(normalized.area) || 0;
               const durationMs = durationSec * 1000;
+              const territoryCapture = normalized.captureResult;
+              const territoryCaptureOk = normalized.mode === "zones" && territoryCapture?.ok === true;
               const result = await xpService.awardRunXP?.({
                 path: normalized.path,
                 distanceMeters,
@@ -1987,7 +2836,18 @@ const MapScreen = ({ navigation }) => {
                 area: 0,
               });
 
-              if (areaM2 > 0) {
+              if (territoryCaptureOk) {
+                await xpService.awardTerritoryXP?.({
+                  capturedAreaM2: territoryCapture.capturedAreaM2 || areaM2,
+                  newAreaM2: territoryCapture.newAreaM2 || 0,
+                  stolenAreaM2: territoryCapture.stolenAreaM2 || 0,
+                  becameLeaderCount: territoryCapture.becameLeaderInCells?.length || 0,
+                  conqueredCount: territoryCapture.conqueredCount || 0,
+                  affectedUsersCount: territoryCapture.affectedUsersCount || 0,
+                  runId: normalized.id || saved?.id,
+                  territoryId: normalized.territoryId || normalized.zoneId || saved?.territoryId || saved?.zoneId,
+                });
+              } else if (areaM2 > 0 && normalized.territoryCaptureFailedReason !== "capture_failed") {
                 await xpService.awardZoneXP?.({
                   id: normalized.zoneId || saved?.zoneId || saved?.id,
                   area: areaM2,
@@ -2005,12 +2865,22 @@ const MapScreen = ({ navigation }) => {
                   isZone: false,
                 });
                 if (Number(payload.area || 0) > 0) {
-                  await updateProfileStats?.({
-                    distance: 0,
-                    duration: 0,
-                    area: payload.area,
-                    isZone: true,
-                  });
+                  if (payload.captureResult?.ok) {
+                    await updateTerritoryProfileStats?.({
+                      capturedAreaM2: payload.captureResult.capturedAreaM2 || payload.area,
+                      stolenAreaM2: payload.captureResult.stolenAreaM2 || 0,
+                      becameLeaderCount: payload.captureResult.becameLeaderInCells?.length || 0,
+                      conqueredCount: payload.captureResult.conqueredCount || 0,
+                      isActor: true,
+                    });
+                  } else {
+                    await updateProfileStats?.({
+                      distance: 0,
+                      duration: 0,
+                      area: payload.area,
+                      isZone: true,
+                    });
+                  }
                 }
               } catch (e) {
                 debug("Fallback updateProfileStats failed", e);
@@ -2088,11 +2958,12 @@ const MapScreen = ({ navigation }) => {
           <RunShareCard
             ref={savedFullShareRef}
             mode="card"
-            path={savedRunPath}
+            path={savedSharePath}
+            segments={savedRunIsZone ? [] : savedRunSegments}
             zoneCoords={savedZoneCoords}
             isZone={savedRunIsZone}
             title={savedFullCardTitle}
-            subtitle={savedRunName}
+            subtitle={savedShareSubtitle}
             distance={savedRunDistance}
             duration={savedRunDuration}
             pace={savedRunPace}
@@ -2102,11 +2973,12 @@ const MapScreen = ({ navigation }) => {
           <RunShareCard
             ref={savedRouteShareRef}
             mode="trace"
-            path={savedRunPath}
+            path={savedSharePath}
+            segments={savedRunIsZone ? [] : savedRunSegments}
             zoneCoords={savedZoneCoords}
             isZone={savedRunIsZone}
             title={savedTraceCardTitle}
-            subtitle={savedRunName}
+            subtitle={savedShareSubtitle}
             distance={savedRunDistance}
             duration={savedRunDuration}
             pace={savedRunPace}
@@ -2177,6 +3049,19 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     height: 120,
+  },
+  territoryLoadingBadge: {
+    position: "absolute",
+    top: 18,
+    right: 18,
+    width: 42,
+    height: 42,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(8, 16, 24, 0.86)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
   },
   recenterMapButton: {
     position: "absolute",
@@ -2419,6 +3304,48 @@ const styles = StyleSheet.create({
   },
 
   bottomButtons: { position: "absolute", bottom: 28, left: 22, right: 22, alignItems: "stretch" },
+  replayDock: {
+    position: "absolute",
+    bottom: 28,
+    left: 22,
+    right: 22,
+    borderRadius: WayperTheme.radius.xxl,
+    padding: 10,
+    backgroundColor: "rgba(8, 16, 24, 0.9)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    gap: 10,
+    overflow: "hidden",
+    ...WayperTheme.shadows.card,
+  },
+  replaySpeedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  replaySpeedButton: {
+    flex: 1,
+    height: 40,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+  },
+  replaySpeedButtonActive: {
+    backgroundColor: WayperTheme.colors.primary,
+    borderColor: WayperTheme.colors.primaryLight,
+    ...WayperTheme.shadows.greenGlow,
+  },
+  replaySpeedText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  replaySpeedTextActive: {
+    color: WayperTheme.colors.textInverse,
+  },
   bottomAction: { width: "100%" },
   runActionDock: {
     position: "absolute",

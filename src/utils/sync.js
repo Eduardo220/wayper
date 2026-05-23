@@ -22,6 +22,17 @@ import {
 import { db, auth } from "../firebaseConfig";
 import zones from "./zones";
 import { notifyActivitySubscribers } from "../services/notifications/notificationService";
+import {
+  loadLocalTerritories as loadStoredLocalTerritories,
+  loadLocalTerritoryEvents as loadStoredLocalTerritoryEvents,
+  markTerritoryDeletedRemote,
+  saveLocalTerritories as saveStoredLocalTerritories,
+  saveLocalTerritory as saveStoredLocalTerritory,
+  saveLocalTerritoryEvent as saveStoredLocalTerritoryEvent,
+  saveLocalTerritoryEvents as saveStoredLocalTerritoryEvents,
+  saveTerritoryEventRemote,
+  saveTerritoryRemote,
+} from "../services/territory/territoryStorageService.js";
 
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundFetch from "expo-background-fetch";
@@ -46,15 +57,21 @@ const AUTO_SYNC_INTERVAL_MS = 60 * 1000;
 let isSyncingRuns = false;
 let isSyncingZones = false;
 let isSyncingMedals = false;
+let isSyncingTerritories = false;
+let isSyncingTerritoryEvents = false;
 
 let debounceRunsTimer = null;
 let debounceZonesTimer = null;
 let debounceMedalsTimer = null;
+let debounceTerritoriesTimer = null;
+let debounceTerritoryEventsTimer = null;
 let autoSyncTimer = null;
 
 const RETRY_META_RUNS = "wayper:retry:runs";
 const RETRY_META_ZONES = "wayper:retry:zones";
 const RETRY_META_MEDALS = "wayper:retry:medals";
+const RETRY_META_TERRITORIES = "wayper:retry:territories";
+const RETRY_META_TERRITORY_EVENTS = "wayper:retry:territory_events";
 
 // ----------------- Small utilities -----------------
 const safeParse = (s) => {
@@ -118,9 +135,58 @@ function sanitizeCoordsArray(coords = []) {
 
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
       const timestamp = p.timestamp ?? p.time ?? p.t ?? null;
-      return { latitude, longitude, timestamp: timestamp == null ? null : timestamp };
+      const point = { latitude, longitude, timestamp: timestamp == null ? null : timestamp };
+      [
+        "accuracy",
+        "altitude",
+        "altitudeAccuracy",
+        "speed",
+        "heading",
+        "source",
+        "segmentId",
+        "distanceFromPreviousMeters",
+        "timeFromPreviousMs",
+        "calculatedSpeedMps",
+        "bearingFromPrevious",
+        "qualityScore",
+      ].forEach((key) => {
+        if (p[key] !== undefined && p[key] !== null) point[key] = p[key];
+      });
+      return point;
     })
     .filter(Boolean);
+}
+
+function sanitizeRunSegments(segments = []) {
+  return (Array.isArray(segments) ? segments : [])
+    .map((segment, index) => {
+      const segmentId = Number.isFinite(Number(segment?.index ?? segment?.segmentId))
+        ? Number(segment.index ?? segment.segmentId)
+        : index;
+      const withSegmentId = (path = []) =>
+        sanitizeCoordsArray(path).map((point) => ({
+          ...point,
+          segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : segmentId,
+        }));
+
+      return {
+        id: String(segment?.id || `segment_${segmentId}`),
+        index: segmentId,
+        startedAt: segment?.startedAt || null,
+        endedAt: segment?.endedAt || null,
+        rawPath: withSegmentId(segment?.rawPath || []),
+        trustedPath: withSegmentId(segment?.trustedPath || []),
+        liveRenderPath: withSegmentId(segment?.liveRenderPath || []),
+        summaryRenderPath: withSegmentId(segment?.summaryRenderPath || []),
+      };
+    })
+    .filter(
+      (segment) =>
+        segment.rawPath.length > 0 ||
+        segment.trustedPath.length > 0 ||
+        segment.liveRenderPath.length > 0 ||
+        segment.summaryRenderPath.length > 0
+    );
 }
 
 // Retry meta storage helpers
@@ -152,13 +218,36 @@ export async function saveLocalRun(run = {}) {
   try {
     const existing = await loadLocalRuns();
     const now = new Date().toISOString();
+    const trustedPath = sanitizeCoordsArray(run.trustedPath || run.path || run.coords || []);
+    const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || trustedPath);
+    const rawPath = sanitizeCoordsArray(run.rawPoints || run.rawPath || []);
+    const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
     const normalized = {
       id: run.id || uid(),
-      path: sanitizeCoordsArray(run.path || run.coords || []),
+      path: trustedPath,
+      trustedPath,
+      rawPath,
+      rawPoints: rawPath,
+      segments,
+      routeSegments: segments,
+      liveRenderPath: sanitizeCoordsArray(run.liveRenderPath || []),
+      renderPath,
+      displayPath: sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath),
+      pathQuality: run.pathQuality || null,
+      lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
+      smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
       distance: Number(run.distance ?? 0),
+      distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
       duration: Number(run.duration ?? 0),
+      durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
       avgSpeed: Number(run.avgSpeed ?? 0),
+      maxSpeed: Number(run.maxSpeed ?? 0),
+      avgPace: Number(run.avgPace ?? 0),
       date: run.date || now,
+      startedAt: run.startedAt || null,
+      endedAt: run.endedAt || run.date || now,
+      pausedDurationSeconds: run.pausedDurationSeconds ?? null,
+      status: run.status || "completed",
       synced: !!run.synced || false,
       name: run.name || `${run.mode === "zones" ? "Captura por zonas" : "Corrida"} ${new Date(now).toLocaleString()}`,
       effort: Number(run.effort ?? 5),
@@ -550,22 +639,34 @@ export async function syncRunsToFirestore() {
     let opsInBatch = 0;
 
     for (const run of unsynced) {
-      const path = (run.path || [])
-        .map((p) => ({
-          latitude: Number(p.latitude),
-          longitude: Number(p.longitude),
-          timestamp: p.timestamp ?? null,
-        }))
-        .slice(0, 5000);
+      const path = sanitizeCoordsArray(run.trustedPath || run.path || []).slice(0, ROUTE_CAP);
+      const rawPath = sanitizeCoordsArray(run.rawPoints || run.rawPath || []).slice(0, ROUTE_CAP);
+      const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
+      const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || path).slice(0, ROUTE_CAP);
+      const displayPath = sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath).slice(0, ROUTE_CAP);
 
       const uid = auth?.currentUser?.uid || "offline";
       const payload = {
         id: run.id,
         userId: uid,
         path,
+        trustedPath: path,
+        rawPath,
+        rawPoints: rawPath,
+        segments,
+        routeSegments: segments,
+        renderPath,
+        displayPath,
+        pathQuality: run.pathQuality || null,
+        lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
+        smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
         distance: Number(run.distance || 0),
+        distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
         duration: Number(run.duration || 0),
+        durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
         avgSpeed: Number(run.avgSpeed || 0),
+        maxSpeed: Number(run.maxSpeed || 0),
+        avgPace: Number(run.avgPace || 0),
         area: Number(run.area || 0),
         mode: run.mode || "free",
         zoneId: run.zoneId || null,
@@ -578,6 +679,10 @@ export async function syncRunsToFirestore() {
         photoUri: run.photoUri || null,
         visibility: run.visibility || "followers",
         date: run.date || new Date().toISOString(),
+        startedAt: run.startedAt || null,
+        endedAt: run.endedAt || run.date || null,
+        pausedDurationSeconds: run.pausedDurationSeconds ?? null,
+        status: run.status || "completed",
         createdAt: Timestamp.now(),
       };
 
@@ -856,14 +961,203 @@ export async function getAllMedals() {
   }
 }
 
+// ----------------- Territory local wrappers -----------------
+export async function loadLocalTerritories() {
+  return loadStoredLocalTerritories();
+}
+
+export async function saveLocalTerritory(territory = {}) {
+  const saved = await saveStoredLocalTerritory(territory);
+  scheduleTerritoriesSync();
+  return saved;
+}
+
+export async function loadLocalTerritoryEvents() {
+  return loadStoredLocalTerritoryEvents();
+}
+
+export async function saveLocalTerritoryEvent(event = {}) {
+  const saved = await saveStoredLocalTerritoryEvent(event);
+  scheduleTerritoryEventsSync();
+  return saved;
+}
+
+export async function migrateLegacyZonesToTerritories(options = {}) {
+  const migration = await import("../services/territory/territoryMigrationService.js");
+  return migration.migrateLegacyZonesToTerritories(options);
+}
+
+// ----------------- Territory sync wrappers -----------------
+export async function syncTerritoriesToFirestore() {
+  if (isSyncingTerritories) return;
+  isSyncingTerritories = true;
+  try {
+    const local = await loadStoredLocalTerritories();
+    if (!Array.isArray(local) || local.length === 0) {
+      isSyncingTerritories = false;
+      return;
+    }
+
+    const next = [...local];
+    let changed = false;
+
+    for (let index = 0; index < next.length; index += 1) {
+      const territory = next[index];
+      if (!territory?.id || !territory.pendingSync) continue;
+
+      const result =
+        territory.status === "deleted" || territory.deleted
+          ? await markTerritoryDeletedRemote(territory.id, territory)
+          : await saveTerritoryRemote(territory);
+
+      if (result?.ok) {
+        next[index] = {
+          ...territory,
+          ...(result.territory || {}),
+          pendingSync: false,
+          synced: true,
+          syncConflict: false,
+        };
+        changed = true;
+      } else if (result?.reason === "sync_conflict") {
+        next[index] = {
+          ...territory,
+          syncConflict: true,
+          pendingSync: true,
+          remoteVersion: result.remote?.version ?? result.territory?.remoteVersion ?? territory.remoteVersion,
+        };
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await saveStoredLocalTerritories(next, {
+        replace: true,
+        preserveTimestamps: true,
+        preserveVersion: true,
+      });
+    }
+
+    await _setRetryMeta(RETRY_META_TERRITORIES, { attempts: 0, nextAt: 0 });
+  } catch (err) {
+    logError(err, { fn: "syncTerritoriesToFirestore" });
+    const meta = (await _getRetryMeta(RETRY_META_TERRITORIES)) || { attempts: 0 };
+    const attempts = (meta.attempts || 0) + 1;
+    const backoff = Math.min(2 ** attempts * 1000, MAX_BACKOFF_MS);
+    await _setRetryMeta(RETRY_META_TERRITORIES, {
+      attempts,
+      nextAt: Date.now() + backoff,
+    });
+    setTimeout(() => {
+      syncTerritoriesToFirestore().catch((e) =>
+        logError(e, { fn: "syncTerritoriesToFirestore.retry" })
+      );
+    }, backoff);
+  } finally {
+    isSyncingTerritories = false;
+  }
+}
+
+export async function syncTerritoryEventsToFirestore() {
+  if (isSyncingTerritoryEvents) return;
+  isSyncingTerritoryEvents = true;
+  try {
+    const local = await loadStoredLocalTerritoryEvents();
+    if (!Array.isArray(local) || local.length === 0) {
+      isSyncingTerritoryEvents = false;
+      return;
+    }
+
+    const next = [...local];
+    let changed = false;
+
+    for (let index = 0; index < next.length; index += 1) {
+      const event = next[index];
+      if (!event?.id || !event.pendingSync) continue;
+
+      const result = await saveTerritoryEventRemote(event);
+      if (result?.ok) {
+        next[index] = {
+          ...event,
+          ...(result.event || {}),
+          pendingSync: false,
+          synced: true,
+          syncConflict: false,
+        };
+        changed = true;
+      } else if (result?.reason === "sync_conflict") {
+        next[index] = {
+          ...event,
+          syncConflict: true,
+          pendingSync: true,
+          remoteVersion: result.remote?.version ?? result.event?.remoteVersion ?? event.remoteVersion,
+        };
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await saveStoredLocalTerritoryEvents(next, {
+        replace: true,
+        preserveTimestamps: true,
+        preserveVersion: true,
+      });
+    }
+
+    await _setRetryMeta(RETRY_META_TERRITORY_EVENTS, { attempts: 0, nextAt: 0 });
+  } catch (err) {
+    logError(err, { fn: "syncTerritoryEventsToFirestore" });
+    const meta = (await _getRetryMeta(RETRY_META_TERRITORY_EVENTS)) || { attempts: 0 };
+    const attempts = (meta.attempts || 0) + 1;
+    const backoff = Math.min(2 ** attempts * 1000, MAX_BACKOFF_MS);
+    await _setRetryMeta(RETRY_META_TERRITORY_EVENTS, {
+      attempts,
+      nextAt: Date.now() + backoff,
+    });
+    setTimeout(() => {
+      syncTerritoryEventsToFirestore().catch((e) =>
+        logError(e, { fn: "syncTerritoryEventsToFirestore.retry" })
+      );
+    }, backoff);
+  } finally {
+    isSyncingTerritoryEvents = false;
+  }
+}
+
+export function scheduleTerritoriesSync(delay = SYNC_DEBOUNCE_MS) {
+  if (debounceTerritoriesTimer) clearTimeout(debounceTerritoriesTimer);
+  debounceTerritoriesTimer = setTimeout(() => {
+    syncTerritoriesToFirestore().catch((e) =>
+      logError(e, { fn: "scheduleTerritoriesSync.inner" })
+    );
+  }, delay);
+}
+
+export function scheduleTerritoryEventsSync(delay = SYNC_DEBOUNCE_MS) {
+  if (debounceTerritoryEventsTimer) clearTimeout(debounceTerritoryEventsTimer);
+  debounceTerritoryEventsTimer = setTimeout(() => {
+    syncTerritoryEventsToFirestore().catch((e) =>
+      logError(e, { fn: "scheduleTerritoryEventsSync.inner" })
+    );
+  }, delay);
+}
+
 // ----------------- Sync All convenience -----------------
 export async function syncAll() {
   // guard to avoid parallel runs
-  if (isSyncingRuns || isSyncingZones || isSyncingMedals) return;
+  if (
+    isSyncingRuns ||
+    isSyncingZones ||
+    isSyncingMedals ||
+    isSyncingTerritories ||
+    isSyncingTerritoryEvents
+  ) return;
   await Promise.all([
     syncRunsToFirestore(),
     syncZonesToFirestore(),
     syncMedalsToFirestore(),
+    syncTerritoriesToFirestore(),
+    syncTerritoryEventsToFirestore(),
   ]);
 }
 
@@ -1001,6 +1295,16 @@ export default {
   syncMedalsToFirestore,
   scheduleMedalsSync,
   getAllMedals,
+  // territories
+  loadLocalTerritories,
+  saveLocalTerritory,
+  loadLocalTerritoryEvents,
+  saveLocalTerritoryEvent,
+  migrateLegacyZonesToTerritories,
+  syncTerritoriesToFirestore,
+  syncTerritoryEventsToFirestore,
+  scheduleTerritoriesSync,
+  scheduleTerritoryEventsSync,
   // background]
   registerBackgroundSyncTask,
   unregisterBackgroundSyncTask,

@@ -1,5 +1,5 @@
 // src/services/ranking/fetchFirestore.js
-import { db } from "../../firebaseConfig";
+import { db } from "../../firebaseConfig.js";
 import {
   collection,
   query,
