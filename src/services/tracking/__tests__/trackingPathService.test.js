@@ -232,6 +232,18 @@ describe("tracking pipeline", () => {
     const paused = session.pause({ endedAt: BASE_TIME + 5000 });
     expect(paused.segments[0].endedAt).toBe(BASE_TIME + 5000);
     expect(paused.isPaused).toBe(true);
+    expect(paused.status).toBe("paused");
+  });
+
+  test("nao adiciona pontos durante paused", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    session.processLocationPoint(p(0, 0, 0));
+    session.processLocationPoint(p(2, 0, 6));
+    session.pause({ endedAt: BASE_TIME + 5000 });
+    const ignored = session.processLocationPoint(p(3, 20, 20));
+    expect(ignored.accepted).toBe(false);
+    expect(ignored.reason).toBe("paused");
+    expect(ignored.trustedPath).toHaveLength(2);
   });
 
   test("resume cria novo segmento sem conectar com o anterior", () => {
@@ -280,6 +292,25 @@ describe("tracking pipeline", () => {
     }
   });
 
+  test("finalizar congela a sessao e ignora callbacks atrasados", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    session.processLocationPoint(p(0, 0, 0));
+    session.processLocationPoint(p(2, 0, 6));
+    const finish = session.finishTrackingSession({ durationMs: 4000 });
+    const late = session.processLocationPoint(p(4, 0, 12));
+    expect(finish.status).toBe("finished");
+    expect(late.accepted).toBe(false);
+    expect(late.reason).toBe("finished");
+    expect(late.trustedPath).toHaveLength(2);
+    expect(late.isRunning).toBe(false);
+  });
+
+  test("payload final expoe aliases rawPoints e routeSegments para persistencia", () => {
+    const { finish } = processPath(makeRunPath(6));
+    expect(finish.rawPoints).toEqual(finish.rawPath);
+    expect(finish.routeSegments).toEqual(finish.segments);
+  });
+
   test("getRenderableSegmentsForRun preserva segmentos salvos", () => {
     const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
     session.processLocationPoint(p(0, 0, 0));
@@ -312,6 +343,12 @@ describe("tracking pipeline", () => {
     expect(mapScreen).toContain("routeSegments={liveRouteSegments}");
     expect(mapScreen).toContain("const liveRoutePath = running || paused ? displayRouteState : routeState");
     expect(mapScreen).not.toContain("routePath={rawPathRef.current}");
+  });
+
+  test("MapLibre usa MultiLineString quando ha pausa real", () => {
+    const mapLibre = fs.readFileSync(path.join(process.cwd(), "src/components/Map/WayperMapLibre.js"), "utf8");
+    expect(mapLibre).toContain("type: \"MultiLineString\"");
+    expect(mapLibre).toContain("buildMultiLineStringFeature(routeSegments");
   });
 
   test("pontos ruins no inicio da corrida nao criam linha deslocada", () => {

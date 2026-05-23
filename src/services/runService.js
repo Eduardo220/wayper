@@ -417,6 +417,8 @@ function normalizeRun(run) {
   const date = run.date || nowIso();
   const path = sanitizePath(run.trustedPath || run.path || []);
   const renderPath = sanitizePath(run.renderPath || run.displayPath || path);
+  const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
+  const rawPath = sanitizePath(run.rawPoints || run.rawPath || []);
   const distance = Number(run.distance || 0);
   const duration = Number(run.duration || 0);
   return {
@@ -424,8 +426,10 @@ function normalizeRun(run) {
     date,
     path,
     trustedPath: path,
-    rawPath: sanitizePath(run.rawPath || []),
-    segments: sanitizeRunSegments(run.segments || []),
+    rawPath,
+    rawPoints: rawPath,
+    segments,
+    routeSegments: segments,
     renderPath,
     displayPath: sanitizePath(run.displayPath || run.renderPath || renderPath),
     pathQuality: run.pathQuality || null,
@@ -436,6 +440,8 @@ function normalizeRun(run) {
     maxSpeed: Number(run.maxSpeed || 0),
     meta: run.meta || {},
     createdAt: nowIso(),
+    endedAt: run.endedAt || run.date || nowIso(),
+    status: run.status || "completed",
     synced: false,
   };
 }
@@ -487,7 +493,8 @@ async function uploadRunToFirestore(run, attempt = 0) {
   // sanitize path
   const path = sanitizePath(run.path);
   const renderPath = sanitizePath(run.renderPath || run.displayPath || path);
-  const segments = sanitizeRunSegments(run.segments || []);
+  const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
+  const rawPath = sanitizePath(run.rawPoints || run.rawPath || []);
   const MAX_POINTS_INLINE = 800; // keep doc size reasonable
   const chunks = chunkArray(path, MAX_POINTS_INLINE);
 
@@ -499,8 +506,11 @@ async function uploadRunToFirestore(run, attempt = 0) {
         date: run.date,
         path: chunks[0] || [],
         trustedPath: chunks[0] || [],
+        rawPath,
+        rawPoints: rawPath,
         renderPath,
         segments,
+        routeSegments: segments,
         displayPath: sanitizePath(run.displayPath || run.renderPath || renderPath),
         pathQuality: run.pathQuality || null,
         smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
@@ -510,6 +520,8 @@ async function uploadRunToFirestore(run, attempt = 0) {
         maxSpeed: Number(run.maxSpeed || 0),
         meta: run.meta || {},
         createdAt: serverTimestamp(),
+        endedAt: run.endedAt || run.date || null,
+        status: run.status || "completed",
       };
       await setDoc(runRef, payload);
     } else {
@@ -525,12 +537,15 @@ async function uploadRunToFirestore(run, attempt = 0) {
         maxSpeed: Number(run.maxSpeed || 0),
         renderPath,
         segments,
+        routeSegments: segments,
         displayPath: sanitizePath(run.displayPath || run.renderPath || renderPath),
         pathQuality: run.pathQuality || null,
         smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
         meta: run.meta || {},
         chunkCount: chunks.length,
         createdAt: serverTimestamp(),
+        endedAt: run.endedAt || run.date || null,
+        status: run.status || "completed",
         _chunked: true,
       });
 

@@ -220,12 +220,16 @@ export async function saveLocalRun(run = {}) {
     const now = new Date().toISOString();
     const trustedPath = sanitizeCoordsArray(run.trustedPath || run.path || run.coords || []);
     const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || trustedPath);
+    const rawPath = sanitizeCoordsArray(run.rawPoints || run.rawPath || []);
+    const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
     const normalized = {
       id: run.id || uid(),
       path: trustedPath,
       trustedPath,
-      rawPath: sanitizeCoordsArray(run.rawPath || []),
-      segments: sanitizeRunSegments(run.segments || []),
+      rawPath,
+      rawPoints: rawPath,
+      segments,
+      routeSegments: segments,
       liveRenderPath: sanitizeCoordsArray(run.liveRenderPath || []),
       renderPath,
       displayPath: sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath),
@@ -233,11 +237,17 @@ export async function saveLocalRun(run = {}) {
       lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
       smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
       distance: Number(run.distance ?? 0),
+      distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
       duration: Number(run.duration ?? 0),
+      durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
       avgSpeed: Number(run.avgSpeed ?? 0),
       maxSpeed: Number(run.maxSpeed ?? 0),
       avgPace: Number(run.avgPace ?? 0),
       date: run.date || now,
+      startedAt: run.startedAt || null,
+      endedAt: run.endedAt || run.date || now,
+      pausedDurationSeconds: run.pausedDurationSeconds ?? null,
+      status: run.status || "completed",
       synced: !!run.synced || false,
       name: run.name || `${run.mode === "zones" ? "Captura por zonas" : "Corrida"} ${new Date(now).toLocaleString()}`,
       effort: Number(run.effort ?? 5),
@@ -630,8 +640,8 @@ export async function syncRunsToFirestore() {
 
     for (const run of unsynced) {
       const path = sanitizeCoordsArray(run.trustedPath || run.path || []).slice(0, ROUTE_CAP);
-      const rawPath = sanitizeCoordsArray(run.rawPath || []).slice(0, ROUTE_CAP);
-      const segments = sanitizeRunSegments(run.segments || []);
+      const rawPath = sanitizeCoordsArray(run.rawPoints || run.rawPath || []).slice(0, ROUTE_CAP);
+      const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
       const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || path).slice(0, ROUTE_CAP);
       const displayPath = sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath).slice(0, ROUTE_CAP);
 
@@ -642,14 +652,18 @@ export async function syncRunsToFirestore() {
         path,
         trustedPath: path,
         rawPath,
+        rawPoints: rawPath,
         segments,
+        routeSegments: segments,
         renderPath,
         displayPath,
         pathQuality: run.pathQuality || null,
         lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
         smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
         distance: Number(run.distance || 0),
+        distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
         duration: Number(run.duration || 0),
+        durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
         avgSpeed: Number(run.avgSpeed || 0),
         maxSpeed: Number(run.maxSpeed || 0),
         avgPace: Number(run.avgPace || 0),
@@ -665,6 +679,10 @@ export async function syncRunsToFirestore() {
         photoUri: run.photoUri || null,
         visibility: run.visibility || "followers",
         date: run.date || new Date().toISOString(),
+        startedAt: run.startedAt || null,
+        endedAt: run.endedAt || run.date || null,
+        pausedDurationSeconds: run.pausedDurationSeconds ?? null,
+        status: run.status || "completed",
         createdAt: Timestamp.now(),
       };
 

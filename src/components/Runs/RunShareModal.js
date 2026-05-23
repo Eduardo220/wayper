@@ -14,23 +14,24 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { WayperTheme } from "../../theme/wayperTheme";
 import {
-  copyPngToClipboard,
   generateShareImage,
   generateTransparentTracePng,
   getRenderableTraceSource,
   openNativeShare,
   saveImageToGallery,
 } from "../../utils/runShareImage";
+import {
+  RUN_EXPORT_TEMPLATE,
+  buildRunExportFilenameBase,
+  getRunExportTemplateConfig,
+} from "../../utils/runExportImage";
 import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
 import RunShareImageTemplate from "./RunShareImageTemplate";
 import RunTracePngTemplate, { RUN_TRACE_PNG_SIZE } from "./RunTracePngTemplate";
 import TransparentPreviewBackground from "./TransparentPreviewBackground";
 import { RUN_SHARE_CARD_SIZE } from "./RunShareCard";
 
-const TEMPLATE = {
-  image: "image",
-  tracePng: "tracePng",
-};
+const TEMPLATE = RUN_EXPORT_TEMPLATE;
 
 const safeNumber = (value, fallback = 0) => {
   const number = Number(value);
@@ -240,14 +241,29 @@ function RunShareModal({
     return false;
   }, [traceAvailability.available]);
 
+  const getExportFilenameBase = useCallback((template) => (
+    buildRunExportFilenameBase({
+      template,
+      run,
+      date: date ?? run?.date ?? run?.endedAt ?? run?.createdAt,
+      fallbackTitle: isZone ? "corrida-zonas" : "corrida-livre",
+    })
+  ), [date, isZone, run]);
+
   const buildImage = useCallback(async () => (
-    generateShareImage(imageRef, `${shareData.filenameBase}-imagem`, { waitMs: 1400 })
-  ), [shareData.filenameBase]);
+    generateShareImage(imageRef, getExportFilenameBase(TEMPLATE.image), { waitMs: 1400 })
+  ), [getExportFilenameBase]);
 
   const buildTrace = useCallback(async () => {
     if (!ensureTraceAvailable()) return null;
-    return generateTransparentTracePng(traceRef, `${shareData.filenameBase}-tracado`);
-  }, [ensureTraceAvailable, shareData.filenameBase]);
+    return generateTransparentTracePng(traceRef, getExportFilenameBase(TEMPLATE.tracePng));
+  }, [ensureTraceAvailable, getExportFilenameBase]);
+
+  const buildSelectedExportImage = useCallback(async () => {
+    const config = getRunExportTemplateConfig(selectedTemplate);
+    if (config.generateKind === "trace") return buildTrace();
+    return buildImage();
+  }, [buildImage, buildTrace, selectedTemplate]);
 
   const runWithBusy = useCallback(async (key, task) => {
     if (busyAction) return;
@@ -309,6 +325,33 @@ function RunShareModal({
       }
     });
   }, [buildTrace, runWithBusy, showActionError]);
+
+  const handleSelectedShare = useCallback(() => {
+    const config = getRunExportTemplateConfig(selectedTemplate);
+    runWithBusy("share-selected", async () => {
+      try {
+        const uri = await buildSelectedExportImage();
+        if (!uri) return;
+        await openNativeShare(uri, { dialogTitle: config.dialogTitle });
+      } catch (error) {
+        showActionError("Nao foi possivel gerar a imagem para compartilhar.", error);
+      }
+    });
+  }, [buildSelectedExportImage, runWithBusy, selectedTemplate, showActionError]);
+
+  const handleSelectedDownload = useCallback(() => {
+    const config = getRunExportTemplateConfig(selectedTemplate);
+    runWithBusy("download-selected", async () => {
+      try {
+        const uri = await buildSelectedExportImage();
+        if (!uri) return;
+        await saveImageToGallery(uri, "Wayper");
+        Alert.alert("Imagem salva", config.successMessage);
+      } catch (error) {
+        showActionError("Nao foi possivel baixar a imagem.", error);
+      }
+    });
+  }, [buildSelectedExportImage, runWithBusy, selectedTemplate, showActionError]);
 
   const imagePreview = (
     <ScaledTemplate
@@ -414,44 +457,23 @@ function RunShareModal({
                 Ações
               </Text>
 
-              {selectedTemplate === TEMPLATE.image ? (
-                <View style={styles.actionsGrid}>
-                  <ActionButton
-                    icon="share-social-outline"
-                    label="Compartilhar imagem"
-                    loading={busyAction === "image-share"}
-                    disabled={isBusy}
-                    primary
-                    wide
-                    onPress={() => handleImageShare("image-share", "Compartilhar imagem Wayper")}
-                  />
-                </View>
-              ) : (
-                <View style={styles.actionsGrid}>
-                  <ActionButton
-                    icon="share-social-outline"
-                    label="Compartilhar"
-                    loading={busyAction === "trace-share"}
-                    disabled={isBusy || !traceAvailability.available}
-                    primary
-                    onPress={() => handleTraceShare("trace-share")}
-                  />
-                  <ActionButton
-                    icon="copy-outline"
-                    label="Copiar"
-                    loading={busyAction === "trace-copy"}
-                    disabled={isBusy || !traceAvailability.available}
-                    onPress={handleTraceCopy}
-                  />
-                  <ActionButton
-                    icon="download-outline"
-                    label="Baixar"
-                    loading={busyAction === "trace-download"}
-                    disabled={isBusy || !traceAvailability.available}
-                    onPress={handleTraceDownload}
-                  />
-                </View>
-              )}
+              <View style={styles.actionsGrid}>
+                <ActionButton
+                  icon="share-social-outline"
+                  label={busyAction === "share-selected" ? "Compartilhando..." : "Compartilhar imagem"}
+                  loading={busyAction === "share-selected"}
+                  disabled={isBusy || (selectedTemplate === TEMPLATE.tracePng && !traceAvailability.available)}
+                  primary
+                  onPress={handleSelectedShare}
+                />
+                <ActionButton
+                  icon="download-outline"
+                  label={busyAction === "download-selected" ? "Baixando..." : "Baixar imagem"}
+                  loading={busyAction === "download-selected"}
+                  disabled={isBusy || (selectedTemplate === TEMPLATE.tracePng && !traceAvailability.available)}
+                  onPress={handleSelectedDownload}
+                />
+              </View>
 
               {selectedTemplate === TEMPLATE.tracePng && !traceAvailability.available ? (
                 <Text style={styles.unavailableText}>Traçado indisponível para esta corrida.</Text>
@@ -464,6 +486,7 @@ function RunShareModal({
           <RunShareImageTemplate
             ref={imageRef}
             path={path}
+            segments={segments}
             zoneCoords={zoneCoords}
             isZone={isZone}
             title={shareData.title}
@@ -478,6 +501,7 @@ function RunShareModal({
           <RunTracePngTemplate
             ref={traceRef}
             path={path}
+            segments={segments}
             zoneCoords={zoneCoords}
             isZone={isZone}
             title={shareData.traceTitle}
@@ -664,8 +688,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   actionButton: {
-    width: "31.8%",
-    minHeight: 96,
+    flex: 1,
+    minWidth: 142,
+    minHeight: 86,
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",

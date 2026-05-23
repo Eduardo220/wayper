@@ -209,10 +209,13 @@ function buildFinishPayload(state, finishOptions = {}) {
   };
 
   return {
+    status: "finished",
     isRunning: state.isRunning,
     isPaused: state.isPaused,
     segments: summarySegments,
+    routeSegments: summarySegments,
     rawPath: clonePath(state.rawPath),
+    rawPoints: clonePath(state.rawPath),
     trustedPath: clonePath(state.trustedPath),
     liveRenderPath: clonePath(state.liveRenderPath),
     summaryRenderPath,
@@ -236,6 +239,7 @@ export function createTrackingSession(options = {}) {
     presetName,
     preset,
     startedAt: options.startedAt || Date.now(),
+    status: options.autoStart === false ? "idle" : "active",
     isRunning: options.autoStart === false ? false : true,
     isPaused: false,
     segments: [],
@@ -257,6 +261,7 @@ export function createTrackingSession(options = {}) {
   function snapshot(extra = {}) {
     updateFlattenedState(state);
     return {
+      status: state.status,
       isRunning: state.isRunning,
       isPaused: state.isPaused,
       segments: state.segments,
@@ -278,8 +283,10 @@ export function createTrackingSession(options = {}) {
   }
 
   function start(startOptions = {}) {
+    if (state.status === "finished") return snapshot();
     state.isRunning = true;
     state.isPaused = false;
+    state.status = "active";
     if (state.segments.length === 0) {
       getCurrentSegment(state, { create: true, startedAt: startOptions.startedAt || Date.now() });
     }
@@ -292,15 +299,18 @@ export function createTrackingSession(options = {}) {
     const current = getCurrentSegment(state, { create: false });
     if (current && !current.endedAt) current.endedAt = endedAt;
     state.isPaused = true;
+    state.status = "paused";
     state.smoothedPosition = null;
     state.previousSpeedMps = 0;
     return snapshot();
   }
 
   function resume(resumeOptions = {}) {
+    if (state.status === "finished") return snapshot();
     const startedAt = resumeOptions.startedAt || Date.now();
     state.isRunning = true;
     state.isPaused = false;
+    state.status = "active";
     const current = getCurrentSegment(state, { create: false });
     if (!current || current.trustedPath.length > 0 || current.rawPath.length > 0 || current.endedAt) {
       beginNewSegment(state, startedAt);
@@ -309,6 +319,20 @@ export function createTrackingSession(options = {}) {
   }
 
   function processLocationPoint(location, processOptions = {}) {
+    if (state.status === "finished") {
+      const rawPoint = normalizeLocationPoint(location);
+      return {
+        accepted: false,
+        reason: "finished",
+        action: TRACKING_FILTER_ACTION.ignore,
+        rawPoint,
+        currentPositionChanged: false,
+        pathChanged: false,
+        shouldMoveCamera: false,
+        ...snapshot(),
+      };
+    }
+
     if (!state.isRunning) start({ startedAt: processOptions.startedAt });
 
     const rawPoint = normalizeLocationPoint(location);
@@ -421,10 +445,12 @@ export function createTrackingSession(options = {}) {
   }
 
   function finish(finishOptions = {}) {
+    if (state.status === "finished") return buildFinishPayload(state, finishOptions);
     const current = getCurrentSegment(state, { create: false });
     if (current && !current.endedAt) current.endedAt = finishOptions.finishedAt || Date.now();
     state.isRunning = false;
     state.isPaused = false;
+    state.status = "finished";
     return buildFinishPayload(state, finishOptions);
   }
 
@@ -439,6 +465,7 @@ export function createTrackingSession(options = {}) {
 
   function reset(nextOptions = {}) {
     state.startedAt = nextOptions.startedAt || Date.now();
+    state.status = nextOptions.autoStart === false ? "idle" : "active";
     state.isRunning = nextOptions.autoStart === false ? false : true;
     state.isPaused = false;
     state.segments = [];

@@ -400,10 +400,8 @@ export function splitPathIntoSegments(path = []) {
   for (const point of clean) {
     const last = current[current.length - 1];
     const segmentChanged = last && point.segmentId !== last.segmentId;
-    const timeGap = last && point.timestamp - last.timestamp > TRACKING_CONFIG.MAX_STALE_LOCATION_AGE_MS;
-    const distanceGap = last && calculateDistanceMeters(last, point) > TRACKING_CONFIG.TELEPORT_DISTANCE_M / 2;
 
-    if (current.length > 0 && (segmentChanged || (timeGap && distanceGap))) {
+    if (current.length > 0 && segmentChanged) {
       if (current.length >= 2) segments.push(current);
       current = [];
     }

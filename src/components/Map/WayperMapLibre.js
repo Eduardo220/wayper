@@ -385,18 +385,31 @@ export function buildLineStringFeature(path = [], properties = {}) {
   };
 }
 
-function buildLineStringFeaturesFromSegments(segments = [], baseProperties = {}) {
-  if (!Array.isArray(segments) || segments.length === 0) return [];
+function buildMultiLineStringFeature(segments = [], properties = {}) {
+  const coordinates = (Array.isArray(segments) ? segments : [])
+    .map((segment) => (Array.isArray(segment) ? segment : []).map(toLngLat).filter(Boolean))
+    .filter((segment) => segment.length >= 2);
 
-  return segments
-    .map((segment, index) =>
-      buildLineStringFeature(segment, {
-        ...baseProperties,
-        segmentIndex: index,
-        preserveGeometry: true,
-      })
-    )
-    .filter(Boolean);
+  if (coordinates.length === 0) return null;
+  if (coordinates.length === 1) {
+    return {
+      type: "Feature",
+      properties,
+      geometry: {
+        type: "LineString",
+        coordinates: coordinates[0],
+      },
+    };
+  }
+
+  return {
+    type: "Feature",
+    properties,
+    geometry: {
+      type: "MultiLineString",
+      coordinates,
+    },
+  };
 }
 
 export function buildPointFeature(coord, properties = {}) {
@@ -692,9 +705,10 @@ function WayperMapLibre({
 
   const routeCollection = useMemo(
     () => {
-      const segmentedFeatures = buildLineStringFeaturesFromSegments(routeSegments, { kind: "route" });
-      if (segmentedFeatures.length > 0) {
-        return buildFeatureCollection(segmentedFeatures);
+      if (Array.isArray(routeSegments) && routeSegments.length > 0) {
+        return buildFeatureCollection([
+          buildMultiLineStringFeature(routeSegments, { kind: "route", preserveGeometry: true }),
+        ]);
       }
 
       return buildFeatureCollection([
@@ -719,8 +733,11 @@ function WayperMapLibre({
   }, [routeEndCoordinate, routePath, routeSegments, routeStartCoordinate, showRouteEndpoints]);
   const replayCollection = useMemo(
     () => {
-      const segmentedFeatures = buildLineStringFeaturesFromSegments(replaySegments, { kind: "replay" });
-      if (segmentedFeatures.length > 0) return buildFeatureCollection(segmentedFeatures);
+      if (Array.isArray(replaySegments) && replaySegments.length > 0) {
+        return buildFeatureCollection([
+          buildMultiLineStringFeature(replaySegments, { kind: "replay", preserveGeometry: true }),
+        ]);
+      }
       return buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay", preserveGeometry: true })]);
     },
     [replayPath, replaySegments]
@@ -1126,17 +1143,7 @@ function WayperMapLibre({
                 "line-join": "round",
               }}
               paint={{
-                "line-gradient": [
-                  "interpolate",
-                  ["linear"],
-                  ["line-progress"],
-                  0,
-                  "rgba(0, 230, 118, 0.38)",
-                  0.78,
-                  routeColor,
-                  1,
-                  "#ecfff6",
-                ],
+                "line-color": routeColor,
                 "line-width": 7.5,
                 "line-opacity": 1,
               }}
@@ -1211,17 +1218,7 @@ function WayperMapLibre({
                 "line-join": "round",
               }}
               paint={{
-                "line-gradient": [
-                  "interpolate",
-                  ["linear"],
-                  ["line-progress"],
-                  0,
-                  "rgba(253, 203, 110, 0.3)",
-                  0.8,
-                  replayColor,
-                  1,
-                  "#fff4cf",
-                ],
+                "line-color": replayColor,
                 "line-width": 5,
                 "line-opacity": 0.95,
               }}

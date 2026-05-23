@@ -548,6 +548,7 @@ const MapScreen = ({ navigation, route }) => {
   const routeStateRef = useRef([]);
   const distanceRef = useRef(0);
   const runningRef = useRef(false);
+  const runStatusRef = useRef("idle");
   const modeRef = useRef(null);
   const zonePreviewLastAtRef = useRef(0);
   const liveTrackingRef = useRef(false);
@@ -556,6 +557,7 @@ const MapScreen = ({ navigation, route }) => {
   const initialTerritoryLoadRef = useRef(false);
   const selectedTerritoryRequestRef = useRef(null);
   const lastRouteFocusRef = useRef(null);
+  const watcherStartTokenRef = useRef(0);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
@@ -901,12 +903,14 @@ const MapScreen = ({ navigation, route }) => {
         debug("appState remove fail", e);
       }
       runningRef.current = false;
+      runStatusRef.current = "finished";
     };
   }, []); // só uma vez
 
   /* ===== Helpers ===== */
   const stopWatcherAndPolling = useCallback(() => {
     try {
+      watcherStartTokenRef.current += 1;
       const w = watcherRef.current;
       if (!w) return;
       if (typeof w.remove === "function") {
@@ -1055,9 +1059,23 @@ const MapScreen = ({ navigation, route }) => {
         }
 
         if (!runningRef.current) {
-          setLocation((prev) => {
-            if (prev && prev.latitude === point.latitude && prev.longitude === point.longitude) return prev;
-            return point;
+          if (runStatusRef.current === "idle") {
+            setLocation((prev) => {
+              if (prev && prev.latitude === point.latitude && prev.longitude === point.longitude) return prev;
+              return point;
+            });
+          }
+          debugTracking("location_ignored_inactive_run", {
+            status: runStatusRef.current,
+            source: locObj.source,
+          });
+          return;
+        }
+
+        if (runStatusRef.current !== "active") {
+          debugTracking("location_ignored_by_status", {
+            status: runStatusRef.current,
+            source: locObj.source,
           });
           return;
         }
@@ -1077,8 +1095,10 @@ const MapScreen = ({ navigation, route }) => {
         if (!result.accepted) {
           debugTracking(`reject:${result.reason}`, {
             accuracy: point.accuracy,
+            timestamp: point.timestamp,
             rawPoints: result.pathQuality?.rawPoints,
             acceptedPoints: result.pathQuality?.acceptedPoints,
+            segments: result.segments?.length || 0,
           });
           return;
         }
@@ -1108,6 +1128,16 @@ const MapScreen = ({ navigation, route }) => {
         }
 
         if (result.pathChanged) {
+          debugTracking("point_accepted", {
+            accuracy: point.accuracy,
+            rawPoints: result.pathQuality?.rawPoints,
+            acceptedPoints: result.pathQuality?.acceptedPoints,
+            segments: displaySegmentsRef.current.length,
+            segmentPointCounts: displaySegmentsRef.current.map((segment) => segment.length),
+            distanceMeters: distanceRef.current,
+            averageAccuracy: result.pathQuality?.averageAccuracy ?? null,
+            maxAccuracy: result.pathQuality?.maxAccuracy ?? null,
+          });
           setRouteState(limitPathForRendering(trustedPath, ROUTE_CAP));
           setDisplayRouteState(livePath);
           setDisplayRouteSegments(displaySegmentsRef.current);
@@ -1229,6 +1259,8 @@ const MapScreen = ({ navigation, route }) => {
   const startLocationWatcher = useCallback(async () => {
     stopWatcherAndPolling();
     const runSessionId = currentRunIdRef.current;
+    const startToken = watcherStartTokenRef.current + 1;
+    watcherStartTokenRef.current = startToken;
 
     try {
       const accuracyCandidates = [
@@ -1264,6 +1296,12 @@ const MapScreen = ({ navigation, route }) => {
               });
             }
           );
+          if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") {
+            try {
+              sub?.remove?.();
+            } catch {}
+            return;
+          }
           debugTracking("watcher_accuracy_selected", { accuracy });
           break;
         } catch (watchError) {
@@ -1273,12 +1311,19 @@ const MapScreen = ({ navigation, route }) => {
       }
 
       if (!sub) throw lastWatchError || new Error("watchPositionAsync unavailable");
+      if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") {
+        try {
+          sub?.remove?.();
+        } catch {}
+        return;
+      }
       watcherRef.current = sub;
       debugTracking("watcher_started", { runSessionId, distanceInterval: WATCH_DISTANCE_INTERVAL, timeInterval: WATCH_TIME_INTERVAL_MS });
     } catch (e) {
       debug("watchPositionAsync failed, fallback polling", e);
       const poll = setInterval(async () => {
         try {
+          if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") return;
           const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
           if (p?.coords) {
             handleLocationUpdate({
@@ -1298,6 +1343,10 @@ const MapScreen = ({ navigation, route }) => {
           debug("polling error", err);
         }
       }, WATCH_TIME_INTERVAL_MS);
+      if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") {
+        clearInterval(poll);
+        return;
+      }
       watcherRef.current = { pollingInterval: poll };
     }
   }, [handleLocationUpdate, stopWatcherAndPolling]);
@@ -1347,6 +1396,7 @@ const MapScreen = ({ navigation, route }) => {
         setMode(selectedMode);
         modeRef.current = selectedMode;
         runningRef.current = true;
+        runStatusRef.current = "active";
         setReplaying(false);
         setCaptureResult(null);
         closeSelectedTerritory();
@@ -1409,9 +1459,15 @@ const MapScreen = ({ navigation, route }) => {
     if (!running || paused) return;
 
     runningRef.current = false;
+    runStatusRef.current = "paused";
     setPaused(true);
     flushRouteBufferToState();
     trackingSessionRef.current?.pause?.({ endedAt: Date.now() });
+    debugTracking("session_paused", {
+      runSessionId: currentRunIdRef.current,
+      segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
+      distanceMeters: distanceRef.current,
+    });
     stopWatcherAndPolling();
     stopBackgroundLocationService();
 
@@ -1427,11 +1483,16 @@ const MapScreen = ({ navigation, route }) => {
     try {
       setPaused(false);
       runningRef.current = true;
+      runStatusRef.current = "active";
       trackingSessionRef.current?.resume?.({ startedAt: Date.now() });
       forceNextSegmentBreakRef.current = true;
       pendingSuspiciousPointRef.current = null;
       lastSmoothedLocationRef.current = null;
-      debugTracking("resume_segment_break_armed", { runSessionId: currentRunIdRef.current });
+      debugTracking("session_resumed", {
+        runSessionId: currentRunIdRef.current,
+        segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
+        nextSegmentStartsOnFirstAcceptedPoint: true,
+      });
 
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -1502,6 +1563,7 @@ const MapScreen = ({ navigation, route }) => {
     setMode(null);
     setPaused(false);
     currentRunIdRef.current = null;
+    runStatusRef.current = "idle";
   }, [resetTrackingPipeline]);
 
   const stopRun = useCallback(
@@ -1510,6 +1572,7 @@ const MapScreen = ({ navigation, route }) => {
         if (!running) return;
 
         runningRef.current = false;
+        runStatusRef.current = "finishing";
         setRunning(false);
         setPaused(false);
 
@@ -1551,9 +1614,11 @@ const MapScreen = ({ navigation, route }) => {
         const runData = {
           id: runId,
           segments: sanitizeTrackingSegments(trackingFinish?.segments || []),
+          routeSegments: sanitizeTrackingSegments(trackingFinish?.segments || []),
           path,
           trustedPath: path,
           rawPath: sanitizePath(trackingFinish?.rawPath || rawPath),
+          rawPoints: sanitizePath(trackingFinish?.rawPath || rawPath),
           liveRenderPath: sanitizePath(trackingFinish?.liveRenderPath || displayPathRef.current || []),
           renderPath: summaryRenderPath,
           displayPath: summaryRenderPath,
@@ -1561,10 +1626,16 @@ const MapScreen = ({ navigation, route }) => {
           lowConfidenceSegments: trackingFinish?.lowConfidenceSegments || [],
           smoothingVersion: trackingFinish?.smoothingVersion || "wayper_tracking_v1",
           distance: totalDistance,
+          distanceMeters: totalDistance,
           duration: totalDuration,
+          durationSeconds: totalDuration,
           avgSpeed: avgSpeedKmh,
           maxSpeed: maxSpeedKmh,
           date: finishedAt,
+          startedAt: trackingSessionRef.current?.state?.startedAt || null,
+          endedAt: finishedAt,
+          pausedDurationSeconds: null,
+          status: "completed",
           mode: mode || "free",
           area: 0,
           zoneId: null,
@@ -1659,7 +1730,13 @@ const MapScreen = ({ navigation, route }) => {
         debugTracking("session_stopped", {
           runSessionId: stoppedRunSessionId,
           savedPoints: path.length,
+          rawPoints: runData.rawPath.length,
+          segmentCount: runData.segments.length,
+          segmentPointCounts: runData.segments.map((segment) => segment.trustedPath.length),
           distance: totalDistance,
+          durationSeconds: totalDuration,
+          averageAccuracy: runData.pathQuality?.averageAccuracy ?? null,
+          maxAccuracy: runData.pathQuality?.maxAccuracy ?? null,
         });
       } catch (e) {
         debug("stopRun catch", e);
@@ -2716,9 +2793,11 @@ const MapScreen = ({ navigation, route }) => {
             const normalized = {
               ...payload,
               segments: sanitizeTrackingSegments(payload.segments || currentRunData?.segments || []),
+              routeSegments: sanitizeTrackingSegments(payload.routeSegments || payload.segments || currentRunData?.routeSegments || currentRunData?.segments || []),
               path: trustedPath,
               trustedPath,
-              rawPath: sanitizePath(payload.rawPath || currentRunData?.rawPath || []),
+              rawPath: sanitizePath(payload.rawPoints || payload.rawPath || currentRunData?.rawPoints || currentRunData?.rawPath || []),
+              rawPoints: sanitizePath(payload.rawPoints || payload.rawPath || currentRunData?.rawPoints || currentRunData?.rawPath || []),
               liveRenderPath: sanitizePath(payload.liveRenderPath || currentRunData?.liveRenderPath || []),
               renderPath,
               displayPath: renderPath,
