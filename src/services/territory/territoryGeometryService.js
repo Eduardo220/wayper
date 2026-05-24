@@ -8,6 +8,7 @@ import {
 const EARTH_RADIUS_M = 6371008.8;
 const DEG_TO_RAD = Math.PI / 180;
 const SUPPORTED_GEOMETRY_TYPES = new Set(["Polygon", "MultiPolygon"]);
+const SUPPORTED_ROUTE_GEOMETRY_TYPES = new Set(["LineString", "MultiLineString"]);
 
 function getConfig(options = {}) {
   return { ...TERRITORY_CONFIG, ...(options || {}) };
@@ -109,6 +110,367 @@ function limitPoints(points, maxPoints) {
   }
 
   return out;
+}
+
+function calculatePathDistanceMeters(path = []) {
+  let total = 0;
+  for (let i = 1; i < path.length; i += 1) {
+    total += calculateDistanceMeters(path[i - 1], path[i]);
+  }
+  return total;
+}
+
+function getPointSegmentIndex(point, fallback = 0) {
+  const value = Number(point?.segmentId ?? point?.segmentIndex ?? point?.segment);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function splitPathBySegment(points = []) {
+  const segments = [];
+  let current = [];
+  let currentSegmentIndex = null;
+
+  for (const point of Array.isArray(points) ? points : []) {
+    const segmentIndex = getPointSegmentIndex(point, currentSegmentIndex ?? 0);
+    if (current.length > 0 && currentSegmentIndex !== segmentIndex) {
+      segments.push(current);
+      current = [];
+    }
+    currentSegmentIndex = segmentIndex;
+    current.push(point);
+  }
+
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
+function sanitizePathSegmentsForTerritory(points = [], options = {}) {
+  const explicitSegments = Array.isArray(options.segments) && options.segments.length > 0
+    ? options.segments
+    : null;
+  const rawSegments = explicitSegments
+    ? explicitSegments.map((segment) => {
+        if (Array.isArray(segment)) return segment;
+        return segment?.trustedPath || segment?.path || segment?.rawPath || [];
+      })
+    : splitPathBySegment(Array.isArray(points) ? points : []);
+
+  const maxRoutePoints = Number(options.maxRoutePoints || options.maxPoints || TERRITORY_CONFIG.maxRoutePoints);
+  const segmentOptions = {
+    ...options,
+    maxPoints: maxRoutePoints,
+  };
+
+  let used = 0;
+  const sanitizedSegments = [];
+
+  for (const rawSegment of rawSegments) {
+    const remaining = maxRoutePoints > 0 ? Math.max(0, maxRoutePoints - used) : Infinity;
+    if (remaining <= 0) break;
+
+    const segment = sanitizePathForTerritory(rawSegment, {
+      ...segmentOptions,
+      maxPoints: Number.isFinite(remaining) ? remaining : segmentOptions.maxPoints,
+    });
+    if (segment.length >= 2) {
+      sanitizedSegments.push(segment);
+      used += segment.length;
+    }
+  }
+
+  if (sanitizedSegments.length === 0 && Array.isArray(points) && points.length > 0) {
+    const fallback = sanitizePathForTerritory(points, segmentOptions);
+    return fallback.length >= 2 ? [fallback] : [];
+  }
+
+  return sanitizedSegments;
+}
+
+function flattenSegments(segments = []) {
+  return (Array.isArray(segments) ? segments : []).flatMap((segment) => segment || []);
+}
+
+function pointToPosition(point) {
+  const normalized = normalizePathPoint(point);
+  return normalized ? [normalized.longitude, normalized.latitude] : null;
+}
+
+function pointsToPositions(points = []) {
+  const coordinates = [];
+  for (const point of Array.isArray(points) ? points : []) {
+    const position = pointToPosition(point);
+    if (!position) continue;
+    if (coordinates.length > 0 && sameCoordinate(coordinates[coordinates.length - 1], position)) continue;
+    coordinates.push(position);
+  }
+  return coordinates;
+}
+
+function normalizeRouteGeometry(geometry) {
+  if (!geometry || !SUPPORTED_ROUTE_GEOMETRY_TYPES.has(geometry.type)) return null;
+
+  if (geometry.type === "LineString") {
+    const coordinates = (Array.isArray(geometry.coordinates) ? geometry.coordinates : [])
+      .map(normalizePosition)
+      .filter(Boolean);
+    return coordinates.length >= 2 ? { type: "LineString", coordinates } : null;
+  }
+
+  const coordinates = (Array.isArray(geometry.coordinates) ? geometry.coordinates : [])
+    .map((line) => (Array.isArray(line) ? line : []).map(normalizePosition).filter(Boolean))
+    .filter((line) => line.length >= 2);
+
+  if (coordinates.length === 0) return null;
+  if (coordinates.length === 1) return { type: "LineString", coordinates: coordinates[0] };
+  return { type: "MultiLineString", coordinates };
+}
+
+function simplifyRouteGeometry(geometry, config) {
+  const normalized = normalizeRouteGeometry(geometry);
+  if (!normalized) return null;
+
+  const feature = createFeature(normalized);
+  const maxPoints = Number(config.maxRouteGeometryPoints || config.maxPoints || TERRITORY_CONFIG.maxRouteGeometryPoints);
+  const currentPointCount = normalized.type === "LineString"
+    ? normalized.coordinates.length
+    : normalized.coordinates.reduce((total, line) => total + line.length, 0);
+
+  if (currentPointCount <= maxPoints || !(config.simplifyTolerance > 0) || typeof turf.simplify !== "function") {
+    return normalized;
+  }
+
+  try {
+    return normalizeRouteGeometry(turf.simplify(feature, {
+      tolerance: config.simplifyTolerance,
+      highQuality: true,
+      mutate: false,
+    })?.geometry) || normalized;
+  } catch {
+    return normalized;
+  }
+}
+
+function buildRouteGeometryFromSegments(segments = [], config = {}) {
+  const lines = (Array.isArray(segments) ? segments : [])
+    .map(pointsToPositions)
+    .filter((line) => line.length >= 2);
+
+  if (lines.length === 0) return null;
+  const geometry = lines.length === 1
+    ? { type: "LineString", coordinates: lines[0] }
+    : { type: "MultiLineString", coordinates: lines };
+
+  return simplifyRouteGeometry(geometry, config);
+}
+
+function planarSegmentIntersection(a, b, c, d) {
+  const x1 = a[0];
+  const y1 = a[1];
+  const x2 = b[0];
+  const y2 = b[1];
+  const x3 = c[0];
+  const y3 = c[1];
+  const x4 = d[0];
+  const y4 = d[1];
+  const denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  if (Math.abs(denominator) < 1e-12) return null;
+
+  const px =
+    ((x1 * y2 - y1 * x2) * (x3 - x4) -
+      (x1 - x2) * (x3 * y4 - y3 * x4)) /
+    denominator;
+  const py =
+    ((x1 * y2 - y1 * x2) * (y3 - y4) -
+      (y1 - y2) * (x3 * y4 - y3 * x4)) /
+    denominator;
+
+  const within = (value, start, end) =>
+    value >= Math.min(start, end) - 1e-10 && value <= Math.max(start, end) + 1e-10;
+
+  if (
+    !within(px, x1, x2) ||
+    !within(py, y1, y2) ||
+    !within(px, x3, x4) ||
+    !within(py, y3, y4)
+  ) {
+    return null;
+  }
+
+  return [px, py];
+}
+
+function signedRingArea(ring = []) {
+  let total = 0;
+  for (let i = 0; i < ring.length - 1; i += 1) {
+    total += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+  }
+  return total / 2;
+}
+
+function closeRing(ring = []) {
+  const clean = [];
+  for (const position of ring) {
+    const normalized = normalizePosition(position);
+    if (!normalized) continue;
+    if (clean.length > 0 && sameCoordinate(clean[clean.length - 1], normalized)) continue;
+    clean.push(normalized);
+  }
+
+  if (clean.length < 3) return null;
+  if (!sameCoordinate(clean[0], clean[clean.length - 1])) clean.push([...clean[0]]);
+
+  const unique = new Set(clean.slice(0, -1).map((coordinate) => coordinate.join(",")));
+  return unique.size >= 3 ? clean : null;
+}
+
+function ringHasSelfIntersection(ring = []) {
+  const coordinates = closeRing(ring);
+  if (!coordinates) return false;
+
+  for (let i = 0; i < coordinates.length - 1; i += 1) {
+    for (let j = i + 1; j < coordinates.length - 1; j += 1) {
+      const adjacent = Math.abs(i - j) <= 1 || (i === 0 && j === coordinates.length - 2);
+      if (adjacent) continue;
+      if (planarSegmentIntersection(coordinates[i], coordinates[i + 1], coordinates[j], coordinates[j + 1])) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function createGeometryCandidatesFromRing(rawRing = [], config = {}) {
+  const ring = closeRing(rawRing);
+  if (!ring) return [];
+
+  const candidates = [];
+
+  try {
+    let feature = turf.polygon([ring]);
+    feature = turf.cleanCoords(feature, { mutate: false });
+
+    const featureList = [];
+    if (!ringHasSelfIntersection(ring)) {
+      featureList.push(feature);
+    } else if (typeof turf.unkinkPolygon === "function") {
+      const unkinked = turf.unkinkPolygon(feature);
+      featureList.push(...(unkinked?.features || []));
+    }
+
+    for (const item of featureList) {
+      const normalized = normalizeGeometry(item?.geometry);
+      if (!normalized) continue;
+
+      const areaM2 = calculateGeometryAreaM2(normalized);
+      if (areaM2 < config.minAreaM2) continue;
+      candidates.push({ geometry: normalized, areaM2 });
+    }
+  } catch {
+    return [];
+  }
+
+  return candidates;
+}
+
+function extractLoopRingsFromSegment(segment = [], config = {}) {
+  const points = Array.isArray(segment) ? segment : [];
+  const coordinates = pointsToPositions(points);
+  if (coordinates.length < config.minLoopPoints) return [];
+
+  const closeDistanceM = Math.min(
+    toFiniteNumber(config.closeDistanceM) ?? TERRITORY_CONFIG.closeDistanceM,
+    toFiniteNumber(config.maxCloseDistanceM) ?? TERRITORY_CONFIG.maxCloseDistanceM
+  );
+  const maxCloseDistanceM = toFiniteNumber(config.maxCloseDistanceM) ?? closeDistanceM;
+  const minLoopPoints = Math.max(4, Number(config.minLoopPoints || TERRITORY_CONFIG.minLoopPoints));
+  const rings = [];
+
+  const maybePushRing = (ring, reason, closeDistanceMValue = 0) => {
+    const closed = closeRing(ring);
+    if (!closed) return;
+    const signature = closed.map((coordinate) => coordinate.map((value) => value.toFixed(7)).join(",")).join("|");
+    if (rings.some((item) => item.signature === signature)) return;
+    rings.push({ ring: closed, reason, closeDistanceM: closeDistanceMValue, signature });
+  };
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  const fullCloseDistanceM = calculateDistanceMeters(first, last);
+  const hasFullClosure = fullCloseDistanceM <= maxCloseDistanceM;
+  if (hasFullClosure) {
+    maybePushRing(coordinates, "start-close", fullCloseDistanceM);
+  }
+
+  if (!hasFullClosure) {
+    for (let end = minLoopPoints - 1; end < points.length; end += 1) {
+      for (let start = 0; start <= end - minLoopPoints + 1; start += 1) {
+        const closeDistance = calculateDistanceMeters(points[start], points[end]);
+        if (closeDistance <= maxCloseDistanceM) {
+          maybePushRing(coordinates.slice(start, end + 1), "near-return", closeDistance);
+        }
+      }
+    }
+  }
+
+  for (let end = 3; end < coordinates.length; end += 1) {
+    const currentA = coordinates[end - 1];
+    const currentB = coordinates[end];
+    for (let start = 0; start < end - 2; start += 1) {
+      if (start === 0 && end === coordinates.length - 1) continue;
+      const previousA = coordinates[start];
+      const previousB = coordinates[start + 1];
+      const intersection = planarSegmentIntersection(previousA, previousB, currentA, currentB);
+      if (!intersection) continue;
+
+      const ring = [intersection, ...coordinates.slice(start + 1, end), intersection];
+      if (ring.length >= minLoopPoints) maybePushRing(ring, "self-intersection", 0);
+    }
+  }
+
+  rings.sort((a, b) => a.closeDistanceM - b.closeDistanceM);
+  return rings.map((item) => item.ring);
+}
+
+function combineLoopGeometries(candidates = [], config = {}) {
+  const geometries = (Array.isArray(candidates) ? candidates : [])
+    .map((candidate) => normalizeGeometry(candidate.geometry || candidate))
+    .filter(Boolean);
+
+  if (geometries.length === 0) return null;
+  if (geometries.length === 1) return geometries[0];
+
+  const union = unionGeometries(geometries);
+  if (union.ok && union.geometry) return union.geometry;
+
+  const polygons = [];
+  for (const geometry of geometries) {
+    if (geometry.type === "Polygon") polygons.push(geometry.coordinates);
+    if (geometry.type === "MultiPolygon") polygons.push(...geometry.coordinates);
+  }
+
+  return normalizeGeometry({ type: "MultiPolygon", coordinates: polygons });
+}
+
+function createInvalidRouteResult({ status = "invalid", reason, details = {}, routeGeometry = null, sanitizedPath = [], sanitizedSegments = [] }) {
+  return {
+    ok: false,
+    status,
+    reason,
+    geometry: null,
+    routeGeometry,
+    areaM2: 0,
+    bbox: null,
+    center: null,
+    coordsPreview: [],
+    sanitizedPath,
+    sanitizedSegments,
+    meta: {
+      ...details,
+      pointCount: sanitizedPath.length,
+      segmentCount: sanitizedSegments.length,
+    },
+  };
 }
 
 function createFeature(geometry) {
@@ -333,95 +695,192 @@ export function isClosedLoop(path, options = {}) {
   };
 }
 
-export function buildCaptureGeometryFromPath(path, options = {}) {
+export function routeToZoneGeometry(points = [], options = {}) {
   const config = getConfig(options);
-  const sanitizedPath = sanitizePathForTerritory(path, config);
+  const sanitizedSegments = sanitizePathSegmentsForTerritory(points, config);
+  const sanitizedPath = flattenSegments(sanitizedSegments);
+  const routeGeometry = buildRouteGeometryFromSegments(sanitizedSegments, config);
+  const distanceM = sanitizedSegments.reduce(
+    (total, segment) => total + calculatePathDistanceMeters(segment),
+    0
+  );
+  const accuracyPoints = sanitizedPath.filter((point) => Number.isFinite(Number(point.accuracy)));
+  const quality = {
+    rawPoints: Array.isArray(points) ? points.length : 0,
+    pointsUsed: sanitizedPath.length,
+    pointsDiscarded: Math.max(0, (Array.isArray(points) ? points.length : 0) - sanitizedPath.length),
+    averageAccuracy: accuracyPoints.length > 0
+      ? accuracyPoints.reduce((total, point) => total + Number(point.accuracy), 0) / accuracyPoints.length
+      : null,
+  };
 
   if (sanitizedPath.length < config.minLoopPoints) {
-    return {
-      ok: false,
+    return createInvalidRouteResult({
       reason: TERRITORY_CAPTURE_FAILURE.not_enough_points,
       details: {
-        pointCount: sanitizedPath.length,
         minLoopPoints: config.minLoopPoints,
+        distanceM,
+        quality,
       },
-    };
-  }
-
-  const closedLoop = isClosedLoop(sanitizedPath, config);
-  if (!closedLoop.closed) {
-    return {
-      ok: false,
-      reason: closedLoop.reason,
-      details: closedLoop,
-    };
+      routeGeometry,
+      sanitizedPath,
+      sanitizedSegments,
+    });
   }
 
   try {
-    const ring = sanitizedPath.map((point) => [point.longitude, point.latitude]);
-    if (!sameCoordinate(ring[0], ring[ring.length - 1])) {
-      ring.push([...ring[0]]);
+    const loopRings = sanitizedSegments.flatMap((segment) => extractLoopRingsFromSegment(segment, config));
+    const geometryCandidates = [];
+
+    for (const ring of loopRings) {
+      geometryCandidates.push(...createGeometryCandidatesFromRing(ring, config));
     }
 
-    let feature = turf.polygon([ring]);
-    feature = turf.cleanCoords(feature, { mutate: false });
-
-    if (typeof turf.rewind === "function") {
-      feature = turf.rewind(feature, { mutate: false });
+    if (geometryCandidates.length === 0) {
+      return createInvalidRouteResult({
+        status: "partial",
+        reason: loopRings.length > 0
+          ? TERRITORY_CAPTURE_FAILURE.area_too_small
+          : TERRITORY_CAPTURE_FAILURE.not_closed_loop,
+        details: {
+          distanceM,
+          quality,
+          closureDetected: loopRings.length > 0,
+          loopCount: loopRings.length,
+        },
+        routeGeometry,
+        sanitizedPath,
+        sanitizedSegments,
+      });
     }
 
-    const prepared = prepareGeometryFeature(feature.geometry, config);
-    if (!prepared || !isGeometryRenderable(prepared.geometry)) {
-      return {
-        ok: false,
+    const geometry = normalizeGeometry(combineLoopGeometries(geometryCandidates, config));
+    if (!geometry || !isGeometryRenderable(geometry)) {
+      return createInvalidRouteResult({
         reason: TERRITORY_CAPTURE_FAILURE.invalid_geometry,
-        details: { pointCount: sanitizedPath.length },
-      };
+        details: {
+          distanceM,
+          quality,
+          candidateCount: geometryCandidates.length,
+        },
+        routeGeometry,
+        sanitizedPath,
+        sanitizedSegments,
+      });
     }
 
-    const geometry = prepared.geometry;
     const areaM2 = calculateGeometryAreaM2(geometry);
-
     if (areaM2 < config.minAreaM2) {
-      return {
-        ok: false,
+      return createInvalidRouteResult({
+        status: "partial",
         reason: TERRITORY_CAPTURE_FAILURE.area_too_small,
-        details: { areaM2, minAreaM2: config.minAreaM2 },
-      };
+        details: { areaM2, minAreaM2: config.minAreaM2, distanceM, quality },
+        routeGeometry,
+        sanitizedPath,
+        sanitizedSegments,
+      });
+    }
+
+    if (distanceM < config.minDistanceM) {
+      return createInvalidRouteResult({
+        status: "partial",
+        reason: TERRITORY_CAPTURE_FAILURE.distance_too_short,
+        details: {
+          distanceM,
+          minDistanceM: config.minDistanceM,
+          areaM2,
+          quality,
+        },
+        routeGeometry,
+        sanitizedPath,
+        sanitizedSegments,
+      });
     }
 
     if (areaM2 > config.maxAreaM2) {
-      return {
-        ok: false,
+      return createInvalidRouteResult({
         reason: TERRITORY_CAPTURE_FAILURE.area_too_large,
-        details: { areaM2, maxAreaM2: config.maxAreaM2 },
-      };
+        details: { areaM2, maxAreaM2: config.maxAreaM2, distanceM, quality },
+        routeGeometry,
+        sanitizedPath,
+        sanitizedSegments,
+      });
     }
+
+    const bbox = calculateGeometryBbox(geometry);
+    const center = calculateGeometryCenter(geometry);
 
     return {
       ok: true,
+      status: "completed",
+      reason: null,
       geometry,
+      routeGeometry,
       areaM2,
-      bbox: calculateGeometryBbox(geometry),
-      center: calculateGeometryCenter(geometry),
+      bbox,
+      center,
       coordsPreview: geometryToPreviewCoords(geometry, config.maxPoints),
-      source: TERRITORY_SOURCE.closed_loop,
+      source: TERRITORY_SOURCE.zone_run,
       sanitizedPath,
+      sanitizedSegments,
       meta: {
         pointCount: sanitizedPath.length,
-        distanceToStartM: closedLoop.distanceToStartM,
+        segmentCount: sanitizedSegments.length,
+        distanceM,
+        distanceToStartM: calculateDistanceMeters(sanitizedPath[0], sanitizedPath[sanitizedPath.length - 1]),
         closeDistanceM: config.closeDistanceM,
+        maxCloseDistanceM: config.maxCloseDistanceM,
+        loopCount: loopRings.length,
+        candidateCount: geometryCandidates.length,
+        closureDetected: true,
+        quality,
+        geometryVersion: "route_to_zone_v2",
       },
     };
   } catch (error) {
-    return {
-      ok: false,
+    return createInvalidRouteResult({
       reason: TERRITORY_CAPTURE_FAILURE.turf_error,
       details: {
         error: error?.message || String(error),
+        distanceM,
+        quality,
       },
+      routeGeometry,
+      sanitizedPath,
+      sanitizedSegments,
+    });
+  }
+}
+
+export function buildCaptureGeometryFromPath(path, options = {}) {
+  const config = getConfig(options);
+  const result = routeToZoneGeometry(path, config);
+  if (!result.ok) return result;
+
+  const prepared = prepareGeometryFeature(result.geometry, config);
+  if (!prepared || !isGeometryRenderable(prepared.geometry)) {
+    return {
+      ...result,
+      ok: false,
+      status: "invalid",
+      reason: TERRITORY_CAPTURE_FAILURE.invalid_geometry,
+      geometry: null,
+      areaM2: 0,
     };
   }
+
+  const geometry = prepared.geometry;
+  const areaM2 = calculateGeometryAreaM2(geometry);
+
+  return {
+    ...result,
+    geometry,
+    areaM2,
+    bbox: calculateGeometryBbox(geometry),
+    center: calculateGeometryCenter(geometry),
+    coordsPreview: geometryToPreviewCoords(geometry, config.maxPoints),
+    source: TERRITORY_SOURCE.closed_loop,
+  };
 }
 
 export function calculateGeometryAreaM2(geometry) {
@@ -592,6 +1051,7 @@ export default {
   sanitizePathForTerritory,
   calculateDistanceMeters,
   isClosedLoop,
+  routeToZoneGeometry,
   buildCaptureGeometryFromPath,
   calculateGeometryAreaM2,
   calculateGeometryBbox,

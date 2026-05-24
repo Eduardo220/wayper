@@ -158,7 +158,7 @@ describe("territoryCaptureService", () => {
       ownerId: "user-1",
       runId: "run-1",
       status: "active",
-      source: "closed_loop",
+      source: "zoneRun",
       version: 1,
     });
     expect(result.newAreaM2).toBeGreaterThan(50);

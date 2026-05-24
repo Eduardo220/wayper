@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { calculateGeometryBbox, calculateGeometryCenter, normalizeGeometry } from "./territoryGeometryService.js";
+import { calculateGeometryAreaM2, calculateGeometryBbox, calculateGeometryCenter, normalizeGeometry } from "./territoryGeometryService.js";
 import { getCellIdsForBbox, getCellIdsForGeometry } from "./territoryCellService.js";
 import {
   TERRITORY_EVENT_TYPE,
@@ -12,6 +12,7 @@ export const TERRITORY_SYNC_META_STORAGE_KEY = "wayper_territory_sync_meta_v1";
 export const TERRITORY_LEADERBOARDS_STORAGE_KEY = "wayper_territory_leaderboards_v1";
 
 const TERRITORIES_COLLECTION = "territories";
+const ZONES_COLLECTION = "zones";
 const TERRITORY_EVENTS_COLLECTION = "territory_events";
 const TERRITORY_LEADERBOARDS_COLLECTION = "territory_leaderboards";
 const FIRESTORE_IN_CHUNK_SIZE = 10;
@@ -178,6 +179,11 @@ export function normalizeTerritoryPayload(territory = {}, options = {}) {
       ? toIsoString(territory.updatedAt || territory.capturedAt || territory.createdAt, capturedAt)
       : now;
 
+  const areaM2 =
+    toFiniteNumber(territory.areaM2 ?? territory.area) ??
+    toFiniteNumber(existing?.areaM2) ??
+    calculateGeometryAreaM2(geometry);
+
   return {
     ...existing,
     ...territory,
@@ -192,7 +198,17 @@ export function normalizeTerritoryPayload(territory = {}, options = {}) {
     updatedAt,
     ownerId: territory.ownerId || territory.userId || existing?.ownerId || null,
     userId: territory.userId || territory.ownerId || existing?.userId || null,
-    areaM2: toFiniteNumber(territory.areaM2 ?? territory.area) ?? toFiniteNumber(existing?.areaM2) ?? 0,
+    areaM2,
+    area: toFiniteNumber(territory.area ?? territory.areaM2) ?? areaM2,
+    color: territory.color || existing?.color || "#00E676",
+    strokeColor: territory.strokeColor || existing?.strokeColor || territory.color || existing?.color || "#00E676",
+    fillOpacity: toFiniteNumber(territory.fillOpacity ?? existing?.fillOpacity) ?? 0.22,
+    routeGeometry: territory.routeGeometry || existing?.routeGeometry || null,
+    rawRouteRef: territory.rawRouteRef || existing?.rawRouteRef || null,
+    source: territory.source || existing?.source || "zoneRun",
+    rankingPeriod: territory.rankingPeriod || existing?.rankingPeriod || "global",
+    visibility: territory.visibility || existing?.visibility || "followers",
+    stats: territory.stats || existing?.stats || null,
     pendingSync: fromRemote
       ? false
       : territory.pendingSync ?? existing?.pendingSync ?? true,
@@ -538,6 +554,54 @@ export async function fetchActiveTerritoriesNear({ bbox, cellIds, limitTo, preci
   });
 }
 
+export async function fetchTerritoriesByOwnerId(ownerId, options = {}) {
+  try {
+    const userId = String(ownerId || "");
+    if (!userId) return [];
+
+    const {
+      db,
+      collection,
+      getDocs,
+      limit,
+      query,
+      where,
+    } = await getFirestoreBindings();
+
+    const constraints = [
+      where("ownerId", "==", userId),
+      where("status", "==", options.status || TERRITORY_STATUS.active),
+    ];
+    const limitTo = Number(options.limitTo || options.limit || 80);
+    if (Number.isFinite(limitTo) && limitTo > 0) constraints.push(limit(limitTo));
+
+    // Firestore may request a composite index for ownerId + status in larger datasets.
+    const snap = await getDocs(query(collection(db, TERRITORIES_COLLECTION), ...constraints));
+    const remote = [];
+    snap?.docs?.forEach((docSnap) => {
+      remote.push(
+        normalizeTerritoryPayload(
+          { id: docSnap.id, ...docSnap.data() },
+          { fromRemote: true, preserveVersion: true }
+        )
+      );
+    });
+
+    const local = options.includeLocal === false
+      ? []
+      : (await loadLocalTerritories()).filter(
+          (territory) =>
+            String(territory.ownerId || territory.userId || "") === userId &&
+            (!options.status || territory.status === options.status)
+        );
+
+    const result = dedupeById([...remote, ...local]);
+    return Number.isFinite(limitTo) && limitTo > 0 ? result.slice(0, limitTo) : result;
+  } catch {
+    return [];
+  }
+}
+
 export async function saveTerritoryRemote(territory = {}) {
   try {
     const { auth, db, doc, getDoc, setDoc } = await getFirestoreBindings();
@@ -570,6 +634,15 @@ export async function saveTerritoryRemote(territory = {}) {
     }
 
     await setDoc(ref, payload, { merge: true });
+    await setDoc(doc(db, ZONES_COLLECTION, payload.id), {
+      ...payload,
+      ownerPhotoURL: payload.ownerPhotoURL || payload.ownerAvatar || null,
+      areaM2: Number(payload.areaM2 || 0),
+      distanceM: Number(payload.distanceM ?? payload.distanceMeters ?? 0),
+      durationSec: Number(payload.durationSec ?? payload.durationSeconds ?? 0),
+      status: payload.status || TERRITORY_STATUS.active,
+      source: payload.source || "zoneRun",
+    }, { merge: true });
     return {
       ok: true,
       territory: { ...payload, pendingSync: false, synced: true, syncConflict: false },
@@ -669,6 +742,10 @@ export async function updateTerritoryRemote(id, patch = {}) {
     });
     if (existing) await updateDoc(ref, payload);
     else await setDoc(ref, payload, { merge: true });
+    await setDoc(doc(db, ZONES_COLLECTION, territoryId), {
+      ...payload,
+      ownerPhotoURL: payload.ownerPhotoURL || payload.ownerAvatar || null,
+    }, { merge: true });
 
     return {
       ok: true,
@@ -716,6 +793,7 @@ export default {
   fetchTerritoriesByCellIds,
   fetchTerritoriesByBbox,
   fetchActiveTerritoriesNear,
+  fetchTerritoriesByOwnerId,
   saveTerritoryRemote,
   saveTerritoryEventRemote,
   saveTerritoryLeaderboardRemote,

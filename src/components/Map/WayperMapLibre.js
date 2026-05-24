@@ -449,11 +449,31 @@ export function buildPolygonFeature(coords = [], properties = {}) {
 function buildZoneFeatures(zones = []) {
   return (Array.isArray(zones) ? zones : [])
     .map((zone, index) => {
+      const geometry = zone?.geometry || zone?.zoneGeometry || null;
+      if (geometry && (geometry.type === "Polygon" || geometry.type === "MultiPolygon")) {
+        return {
+          type: "Feature",
+          properties: {
+            id: zone?.id ?? `zone-${index}`,
+            area: zone?.area ?? zone?.areaM2 ?? null,
+            date: zone?.date ?? zone?.createdAt ?? null,
+            color: zone?.color || WAYPER_GREEN,
+            strokeColor: zone?.strokeColor || zone?.color || WAYPER_GREEN,
+            fillOpacity: Number.isFinite(Number(zone?.fillOpacity)) ? Number(zone.fillOpacity) : 0.24,
+            preview: Boolean(zone?.preview),
+          },
+          geometry,
+        };
+      }
       const coords = Array.isArray(zone?.coords) ? zone.coords : Array.isArray(zone) ? zone : [];
       return buildPolygonFeature(coords, {
         id: zone?.id ?? `zone-${index}`,
         area: zone?.area ?? null,
         date: zone?.date ?? null,
+        color: zone?.color || WAYPER_GREEN,
+        strokeColor: zone?.strokeColor || zone?.color || WAYPER_GREEN,
+        fillOpacity: Number.isFinite(Number(zone?.fillOpacity)) ? Number(zone.fillOpacity) : 0.24,
+        preview: Boolean(zone?.preview),
       });
     })
     .filter(Boolean);
@@ -1085,10 +1105,10 @@ function WayperMapLibre({
                 "line-join": "round",
               }}
               paint={{
-                "line-color": WAYPER_GREEN,
+                "line-color": ["get", "strokeColor"],
                 "line-blur": 5,
-                "line-opacity": 0.34,
-                "line-width": 11,
+                "line-opacity": ["case", ["==", ["get", "preview"], true], 0.24, 0.34],
+                "line-width": ["case", ["==", ["get", "preview"], true], 8, 11],
               }}
             />
             <Layer
@@ -1096,8 +1116,8 @@ function WayperMapLibre({
               type="fill"
               source="wayper-zones-source"
               paint={{
-                "fill-color": WAYPER_GREEN,
-                "fill-opacity": 0.24,
+                "fill-color": ["get", "color"],
+                "fill-opacity": ["case", ["==", ["get", "preview"], true], 0.14, ["get", "fillOpacity"]],
               }}
             />
             <Layer
@@ -1109,9 +1129,9 @@ function WayperMapLibre({
                 "line-join": "round",
               }}
               paint={{
-                "line-color": WAYPER_GREEN,
-                "line-opacity": 0.86,
-                "line-width": 3.5,
+                "line-color": ["get", "strokeColor"],
+                "line-opacity": ["case", ["==", ["get", "preview"], true], 0.64, 0.9],
+                "line-width": ["case", ["==", ["get", "preview"], true], 2.6, 3.5],
               }}
             />
           </ShapeSource>

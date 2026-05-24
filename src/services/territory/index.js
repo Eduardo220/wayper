@@ -33,6 +33,7 @@ export {
   isClosedLoop,
   isGeometryRenderable,
   normalizeGeometry,
+  routeToZoneGeometry,
   sanitizePathForTerritory,
   unionGeometries,
 } from "./territoryGeometryService.js";
@@ -52,6 +53,7 @@ export {
   fetchActiveTerritoriesNear,
   fetchTerritoriesByBbox,
   fetchTerritoriesByCellIds,
+  fetchTerritoriesByOwnerId,
   fetchTerritoryLeaderboardByCellId,
   fetchTerritoryById,
   loadLocalTerritoryLeaderboards,

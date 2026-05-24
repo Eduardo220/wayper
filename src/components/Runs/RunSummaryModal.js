@@ -18,6 +18,15 @@ const TAG_OPTIONS = [
   { label: "Leve", icon: "leaf-outline" },
 ];
 
+const ZONE_COLOR_OPTIONS = [
+  WayperTheme.colors.primary,
+  WayperTheme.colors.cyan,
+  WayperTheme.colors.warning,
+  "#F78FB3",
+  "#A29BFE",
+  "#FF9F43",
+];
+
 const safeNumber = (value, fallback = 0) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -78,6 +87,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState([]);
   const [photoUri, setPhotoUri] = useState(null);
+  const [zoneColor, setZoneColor] = useState(WayperTheme.colors.primary);
   const [saving, setSaving] = useState(false);
   const effortPulse = useRef(new Animated.Value(1)).current;
 
@@ -89,6 +99,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
     setNotes(runData.notes || "");
     setTags(Array.isArray(runData.tags) ? runData.tags : []);
     setPhotoUri(runData.photoUri || null);
+    setZoneColor(runData.color || runData.zoneColor || WayperTheme.colors.primary);
     setSaving(false);
   }, [visible, runData, isZoneRun]);
 
@@ -172,6 +183,10 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
       notes,
       tags,
       photoUri,
+      color: isZoneRun ? zoneColor : runData.color,
+      zoneColor: isZoneRun ? zoneColor : runData.zoneColor,
+      strokeColor: isZoneRun ? zoneColor : runData.strokeColor,
+      fillOpacity: isZoneRun ? 0.24 : runData.fillOpacity,
     };
 
     try {
@@ -277,6 +292,33 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
             <Text style={styles.captureProgressText}>
               Tente finalizar proximo do ponto inicial para conquistar territorio.
             </Text>
+          </View>
+        ) : null}
+
+        {isZoneRun && competitiveResult?.ok ? (
+          <View style={styles.field}>
+            <Text style={styles.label}>Cor da zona</Text>
+            <View style={styles.colorPalette}>
+              {ZONE_COLOR_OPTIONS.map((color) => {
+                const selected = color.toLowerCase() === String(zoneColor).toLowerCase();
+                return (
+                  <TouchableOpacity
+                    key={color}
+                    activeOpacity={0.84}
+                    onPress={() => setZoneColor(color)}
+                    style={[
+                      styles.colorSwatchButton,
+                      selected && styles.colorSwatchButtonActive,
+                      { borderColor: selected ? color : WayperTheme.colors.borderStrong },
+                    ]}
+                  >
+                    <View style={[styles.colorSwatch, { backgroundColor: color }]}>
+                      {selected ? <Ionicons name="checkmark" size={18} color={WayperTheme.colors.textInverse} /> : null}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
         ) : null}
 
@@ -685,6 +727,31 @@ const styles = StyleSheet.create({
   },
   tag: {
     marginBottom: WayperTheme.spacing.xs,
+  },
+  colorPalette: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: WayperTheme.spacing.md,
+    marginTop: WayperTheme.spacing.md,
+  },
+  colorSwatchButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+  },
+  colorSwatchButtonActive: {
+    backgroundColor: WayperTheme.colors.surface,
+  },
+  colorSwatch: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
   },
   notesInput: {
     paddingRight: 46,

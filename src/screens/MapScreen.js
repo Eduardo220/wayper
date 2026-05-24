@@ -48,7 +48,6 @@ import {
   smoothDisplayPath,
   splitPathIntoSegments,
 } from "../utils/tracking";
-import zones from "../utils/zones";
 import sync from "../utils/sync";
 import { calculateRouteDistance, finalizeRoutePath } from "../utils/routeDrawing";
 import {
@@ -72,6 +71,7 @@ import {
 } from "../utils/runReplay";
 import xpService from "../services/xp/xpService";
 import { updateProfileStats, updateTerritoryProfileStats } from "../services/profile/profileService";
+import { fetchAllRanking } from "../services/ranking";
 import {
   buildSummaryRenderPath,
   createTrackingSession,
@@ -80,6 +80,7 @@ import {
 } from "../services/tracking";
 import {
   fetchActiveTerritoriesNear,
+  fetchTerritoriesByOwnerId,
   getCellCenter,
   getCellIdForLocation,
   getCellIdsForBbox,
@@ -87,6 +88,9 @@ import {
   getLeaderboardForCell,
   loadLocalTerritories,
   processRunTerritoryCapture,
+  routeToZoneGeometry,
+  saveLocalTerritory,
+  saveTerritoryRemote,
 } from "../services/territory";
 import {
   checkBackgroundLocationPermission,
@@ -227,6 +231,12 @@ const formatSavedDuration = (seconds = 0) => {
 
 const formatSavedPace = (seconds = 0, meters = 0) =>
   getFormattedPace(seconds, Number(meters) / 1000, { suffix: "/km" });
+
+const formatAreaLabel = (areaM2 = 0) => {
+  const area = Math.max(0, Number(areaM2) || 0);
+  if (area >= 1000000) return `${(area / 1000000).toFixed(2)} km2`;
+  return `${Math.round(area).toLocaleString("pt-BR")} m2`;
+};
 
 const formatSavedDate = (date) => {
   try {
@@ -498,6 +508,11 @@ const MapScreen = ({ navigation, route }) => {
   const [captureResult, setCaptureResult] = useState(null);
   const [territoryLoading, setTerritoryLoading] = useState(false);
   const [mapFocusCenter, setMapFocusCenter] = useState(null);
+  const [zonesPanelVisible, setZonesPanelVisible] = useState(false);
+  const [zonesPanelTab, setZonesPanelTab] = useState("mine");
+  const [zonesRanking, setZonesRanking] = useState([]);
+  const [zonesPanelLoading, setZonesPanelLoading] = useState(false);
+  const [selectedRankingUser, setSelectedRankingUser] = useState(null);
 
   const [routeState, setRouteState] = useState([]);
   const [displayRouteState, setDisplayRouteState] = useState([]);
@@ -813,6 +828,64 @@ const MapScreen = ({ navigation, route }) => {
     setSelectedTerritoryLeaderboard(null);
   }, []);
 
+  const openZonesPanel = useCallback(async (tab = "mine") => {
+    setZonesPanelTab(tab);
+    setZonesPanelVisible(true);
+    setZonesPanelLoading(true);
+    try {
+      const [cached, ranking] = await Promise.all([
+        loadLocalTerritories(),
+        fetchAllRanking({ criterion: "area", limitTo: 50 }),
+      ]);
+      if (!mountedRef.current) return;
+      setTerritories((prev) => mergeTerritoriesForMap(prev, cached, null));
+      setZonesRanking(Array.isArray(ranking) ? ranking : []);
+    } catch (error) {
+      console.warn("[Wayper] zones panel load failed", error);
+    } finally {
+      if (mountedRef.current) setZonesPanelLoading(false);
+    }
+  }, []);
+
+  const focusTerritoryOnMap = useCallback((territory) => {
+    if (!territory) return;
+    setSelectedTerritory(territory);
+    setMapFocusCenter(territory.center || territory.coordsPreview?.[0] || null);
+    setMapFollowEnabled(false);
+    setZonesPanelVisible(false);
+  }, []);
+
+  const loadRankingUserZones = useCallback(async (user) => {
+    const userId = user?.id || user?.userId || user?.ownerId;
+    if (!userId) return;
+    setZonesPanelLoading(true);
+    setSelectedRankingUser(user);
+    try {
+      const userZones = await fetchTerritoriesByOwnerId(userId, {
+        limitTo: 80,
+        status: "active",
+        includeLocal: true,
+      });
+      if (!mountedRef.current) return;
+      setTerritories((prev) =>
+        mergeTerritoriesForMap(prev, userZones.map((territory) => ({
+          ...territory,
+          isLeaderTerritory: true,
+        })), null)
+      );
+      const first = userZones[0];
+      if (first) {
+        setSelectedTerritory(first);
+        setMapFocusCenter(first.center || first.coordsPreview?.[0] || null);
+        setMapFollowEnabled(false);
+      }
+    } catch (error) {
+      console.warn("[Wayper] ranking user zones load failed", error);
+    } finally {
+      if (mountedRef.current) setZonesPanelLoading(false);
+    }
+  }, []);
+
   const refreshForegroundLocation = useCallback(async ({ updatePosition = true } = {}) => {
     const permission = await checkLocationPermission();
     if (!mountedRef.current) return permission;
@@ -1018,19 +1091,28 @@ const MapScreen = ({ navigation, route }) => {
         preserveTurns: true,
       });
 
-      const built = zones.buildCapturedZone(previewPath, {
+      const built = routeToZoneGeometry(previewPath, {
         closeDistanceM: 32,
         maxCloseDistanceM: 48,
-        requireClosedLoop: true,
         minLoopPoints: 8,
+        minDistanceM: 40,
+        minAreaM2: 15,
         simplifyTolerance: 0.000015,
-        smoothIterations: 1,
         maxPoints: 360,
+        maxRouteGeometryPoints: 520,
       });
 
-      if (Array.isArray(built) && built.length >= 3 && zones.isValidPolygon(built)) {
-        const area = zones.calcArea(built);
-        setPolygons([{ coords: built, area, id: "active-zone-preview" }]);
+      if (built?.ok && built.geometry) {
+        setPolygons([{
+          geometry: built.geometry,
+          coords: built.coordsPreview || [],
+          area: built.areaM2,
+          id: "active-zone-preview",
+          color: WayperTheme.colors.primary,
+          strokeColor: WayperTheme.colors.primaryLight,
+          fillOpacity: 0.16,
+          preview: true,
+        }]);
         return;
       }
 
@@ -1750,6 +1832,12 @@ const MapScreen = ({ navigation, route }) => {
               runData.territoryId = captured.id || null;
               runData.zoneId = captured.id || null;
               runData.zoneCoords = sanitizePath(captured.coordsPreview || []);
+              runData.geometry = captured.geometry || null;
+              runData.zoneGeometry = captured.geometry || null;
+              runData.routeGeometry = captured.routeGeometry || null;
+              runData.color = captured.color || WayperTheme.colors.primary;
+              runData.strokeColor = captured.strokeColor || captured.color || WayperTheme.colors.primary;
+              runData.fillOpacity = Number(captured.fillOpacity ?? 0.24);
               runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
               setTerritories((prev) => applyCaptureResultToTerritoryState(prev, result));
               if (Array.isArray(result.localLeaderboardUpdates) && result.localLeaderboardUpdates.length > 0) {
@@ -1802,7 +1890,15 @@ const MapScreen = ({ navigation, route }) => {
         resetRunVisuals();
         setCompletedZonePreview(
           runData.mode === "zones" && runData.zoneCoords.length >= 3
-            ? [{ coords: runData.zoneCoords, area: runData.area, id: runData.zoneId || "completed-zone" }]
+            ? [{
+                coords: runData.zoneCoords,
+                geometry: runData.geometry || null,
+                area: runData.area,
+                id: runData.zoneId || "completed-zone",
+                color: runData.color || WayperTheme.colors.primary,
+                strokeColor: runData.strokeColor || runData.color || WayperTheme.colors.primary,
+                fillOpacity: runData.fillOpacity ?? 0.24,
+              }]
             : []
         );
 
@@ -2317,6 +2413,12 @@ const MapScreen = ({ navigation, route }) => {
   const shouldFollowMap = running && !paused && !replaying && mapFollowEnabled;
   const shouldFollowReplay = replaying;
   const shouldShowRecenterMap = running && !paused && !replaying && !mapFollowEnabled;
+  const myTerritories = (Array.isArray(territories) ? territories : [])
+    .filter((territory) => String(territory.ownerId || territory.userId || "") === String(currentUserId))
+    .slice(0, 80);
+  const otherTerritories = (Array.isArray(territories) ? territories : [])
+    .filter((territory) => String(territory.ownerId || territory.userId || "") !== String(currentUserId))
+    .slice(0, 80);
   if (false && !location) {
     return (
       <View style={styles.loading}>
@@ -2535,6 +2637,10 @@ const MapScreen = ({ navigation, route }) => {
             </Animated.View>
           </Animated.View>
 
+          <TouchableOpacity activeOpacity={0.9} style={styles.viewZonesButton} onPress={() => openZonesPanel("mine")}>
+            <Ionicons name="layers-outline" size={20} color={WayperTheme.colors.primary} />
+            <Text style={styles.viewZonesButtonText}>Ver zonas</Text>
+          </TouchableOpacity>
 
         </View>
       )}
@@ -2609,6 +2715,91 @@ const MapScreen = ({ navigation, route }) => {
             <TouchableOpacity style={styles.closeBtn} onPress={closeRunsModal}>
               <Text style={styles.closeBtnText}>Fechar</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={zonesPanelVisible} animationType="slide" transparent onRequestClose={() => setZonesPanelVisible(false)}>
+        <View style={styles.zonesPanelOverlay}>
+          <View style={styles.zonesPanel}>
+            <View style={styles.zonesPanelHandle} />
+            <View style={styles.zonesPanelHeader}>
+              <View>
+                <Text style={styles.zonesPanelEyebrow}>Territorios</Text>
+                <Text style={styles.zonesPanelTitle}>Ver zonas</Text>
+              </View>
+              <TouchableOpacity activeOpacity={0.82} style={styles.zonesPanelClose} onPress={() => setZonesPanelVisible(false)}>
+                <Ionicons name="close" size={22} color={WayperTheme.colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.zonesTabs}>
+              {[
+                ["mine", "Minhas zonas", "person-outline"],
+                ["all", "Zonas completas", "map-outline"],
+                ["ranking", "Ranking", "podium-outline"],
+              ].map(([key, label, icon]) => {
+                const active = zonesPanelTab === key;
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    activeOpacity={0.86}
+                    style={[styles.zonesTab, active && styles.zonesTabActive]}
+                    onPress={() => setZonesPanelTab(key)}
+                  >
+                    <Ionicons name={icon} size={16} color={active ? WayperTheme.colors.textInverse : WayperTheme.colors.textMuted} />
+                    <Text style={[styles.zonesTabText, active && styles.zonesTabTextActive]} numberOfLines={1}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {zonesPanelLoading ? (
+              <View style={styles.zonesLoading}>
+                <ActivityIndicator color={WayperTheme.colors.primary} />
+              </View>
+            ) : zonesPanelTab === "ranking" ? (
+              <FlatList
+                data={zonesRanking}
+                keyExtractor={(item) => String(item.id || item.userId)}
+                style={styles.zonesList}
+                ListHeaderComponent={selectedRankingUser ? (
+                  <Text style={styles.zonesSummary}>
+                    Selecionado: {selectedRankingUser.name || "Atleta"} - {formatAreaLabel(selectedRankingUser.area || selectedRankingUser.totalArea)}
+                  </Text>
+                ) : null}
+                ListEmptyComponent={<Text style={styles.zonesEmpty}>Ranking vazio por enquanto.</Text>}
+                renderItem={({ item, index }) => (
+                  <TouchableOpacity activeOpacity={0.86} style={styles.zoneRow} onPress={() => loadRankingUserZones(item)}>
+                    <View style={styles.zoneRankBadge}>
+                      <Text style={styles.zoneRankText}>{index + 1}</Text>
+                    </View>
+                    <View style={styles.zoneRowBody}>
+                      <Text style={styles.zoneRowTitle} numberOfLines={1}>{item.name || "Atleta Wayper"}</Text>
+                      <Text style={styles.zoneRowMeta}>{formatAreaLabel(item.area || item.totalArea)} - {item.zones || item.totalZones || 0} zonas</Text>
+                    </View>
+                    <Ionicons name="locate-outline" size={20} color={WayperTheme.colors.primary} />
+                  </TouchableOpacity>
+                )}
+              />
+            ) : (
+              <FlatList
+                data={zonesPanelTab === "mine" ? myTerritories : otherTerritories}
+                keyExtractor={(item) => String(item.id)}
+                style={styles.zonesList}
+                ListEmptyComponent={<Text style={styles.zonesEmpty}>{zonesPanelTab === "mine" ? "Voce ainda nao tem zonas capturadas." : "Nenhuma zona completa carregada nesta area."}</Text>}
+                renderItem={({ item }) => (
+                  <TouchableOpacity activeOpacity={0.86} style={styles.zoneRow} onPress={() => focusTerritoryOnMap(item)}>
+                    <View style={[styles.zoneColorDot, { backgroundColor: item.color || WayperTheme.colors.primary }]} />
+                    <View style={styles.zoneRowBody}>
+                      <Text style={styles.zoneRowTitle} numberOfLines={1}>{item.ownerName || item.name || "Zona capturada"}</Text>
+                      <Text style={styles.zoneRowMeta}>{formatAreaLabel(item.areaM2 || item.area)} - {formatSavedDate(item.capturedAt || item.createdAt)}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color={WayperTheme.colors.textMuted} />
+                  </TouchableOpacity>
+                )}
+              />
+            )}
           </View>
         </View>
       </Modal>
@@ -2913,6 +3104,40 @@ const MapScreen = ({ navigation, route }) => {
               lowConfidenceSegments: payload.lowConfidenceSegments || currentRunData?.lowConfidenceSegments || [],
               smoothingVersion: payload.smoothingVersion || currentRunData?.smoothingVersion || "wayper_tracking_v1",
             };
+
+            if (normalized.mode === "zones" && normalized.zoneId && normalized.color) {
+              const territoryPatch = {
+                ...(territories.find((territory) => String(territory.id) === String(normalized.zoneId)) || {}),
+                id: normalized.zoneId,
+                geometry: normalized.geometry || normalized.zoneGeometry || currentRunData?.geometry || null,
+                routeGeometry: normalized.routeGeometry || currentRunData?.routeGeometry || null,
+                areaM2: Number(normalized.area || currentRunData?.area || 0),
+                color: normalized.color,
+                strokeColor: normalized.strokeColor || normalized.color,
+                fillOpacity: Number(normalized.fillOpacity ?? 0.24),
+                updatedAt: new Date().toISOString(),
+                pendingSync: true,
+                synced: false,
+              };
+              if (territoryPatch.geometry) {
+                setTerritories((prev) =>
+                  (Array.isArray(prev) ? prev : []).map((territory) =>
+                    String(territory.id) === String(normalized.zoneId)
+                      ? { ...territory, ...territoryPatch }
+                      : territory
+                  )
+                );
+                setCompletedZonePreview((prev) =>
+                  (Array.isArray(prev) ? prev : []).map((zone) =>
+                    String(zone.id) === String(normalized.zoneId)
+                      ? { ...zone, color: normalized.color, strokeColor: normalized.strokeColor || normalized.color, fillOpacity: normalized.fillOpacity ?? 0.24 }
+                      : zone
+                  )
+                );
+                await saveLocalTerritory(territoryPatch, { preserveVersion: false });
+                saveTerritoryRemote(territoryPatch).catch(() => {});
+              }
+            }
 
             const saved = await sync.saveLocalRun?.(normalized);
             sync.scheduleRunsSync?.();
@@ -3447,6 +3672,23 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(3,16,9,0.18)",
   },
+  viewZonesButton: {
+    minHeight: 52,
+    marginTop: 12,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.surfaceGlass,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  viewZonesButtonText: {
+    color: WayperTheme.colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+  },
 
   bottomButtons: { position: "absolute", bottom: 28, left: 22, right: 22, alignItems: "stretch" },
   replayDock: {
@@ -3706,6 +3948,154 @@ const styles = StyleSheet.create({
   runStats: { color: WayperTheme.colors.textMuted, fontSize: 13, marginTop: 2 },
   closeBtn: { backgroundColor: WayperTheme.colors.surfaceSoft, paddingVertical: 14, borderRadius: WayperTheme.radius.pill, marginTop: 18, borderWidth: 1, borderColor: WayperTheme.colors.border },
   closeBtnText: { color: WayperTheme.colors.text, fontWeight: "700", textAlign: "center" },
+  zonesPanelOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.62)",
+  },
+  zonesPanel: {
+    width: "100%",
+    maxHeight: "78%",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: "rgba(8, 16, 24, 0.98)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 16,
+  },
+  zonesPanelHandle: {
+    width: 48,
+    height: 5,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.borderStrong,
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+  zonesPanelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  zonesPanelEyebrow: {
+    color: WayperTheme.colors.primary,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  zonesPanelTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 24,
+    fontWeight: "900",
+  },
+  zonesPanelClose: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+  },
+  zonesTabs: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  zonesTab: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: WayperTheme.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 5,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    paddingHorizontal: 8,
+  },
+  zonesTabActive: {
+    backgroundColor: WayperTheme.colors.primary,
+    borderColor: WayperTheme.colors.primaryLight,
+  },
+  zonesTabText: {
+    flexShrink: 1,
+    color: WayperTheme.colors.textMuted,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  zonesTabTextActive: {
+    color: WayperTheme.colors.textInverse,
+  },
+  zonesList: {
+    maxHeight: 430,
+  },
+  zonesLoading: {
+    minHeight: 160,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  zonesEmpty: {
+    color: WayperTheme.colors.textMuted,
+    textAlign: "center",
+    fontWeight: "800",
+    paddingVertical: 36,
+  },
+  zonesSummary: {
+    color: WayperTheme.colors.primary,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  zoneRow: {
+    minHeight: 64,
+    borderRadius: WayperTheme.radius.lg,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    marginBottom: 9,
+    gap: 10,
+  },
+  zoneColorDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.7)",
+  },
+  zoneRankBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primary,
+  },
+  zoneRankText: {
+    color: WayperTheme.colors.textInverse,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  zoneRowBody: {
+    flex: 1,
+  },
+  zoneRowTitle: {
+    color: WayperTheme.colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  zoneRowMeta: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 2,
+  },
   savedOverlay: {
     flex: 1,
     justifyContent: "flex-end",

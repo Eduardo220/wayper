@@ -7,6 +7,7 @@ export const TERRITORY_STATUS = {
 
 export const TERRITORY_SOURCE = {
   closed_loop: "closed_loop",
+  zone_run: "zoneRun",
   path_buffer: "path_buffer",
 };
 
