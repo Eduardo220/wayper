@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { WPBottomSheet, WPChip, WPInput } from "../ui";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { computeTerritoryXP } from "../../services/xp/territoryXp.js";
+import { openAppSettings, requestImageLibraryPermission } from "../../services/permissions";
 
 const TAG_OPTIONS = [
   { label: "Treino Forte", icon: "barbell-outline" },
@@ -127,9 +128,20 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
 
   async function pickPhoto() {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permissão negada", "Permita acesso às fotos para adicionar uma imagem.");
+      const permission = await requestImageLibraryPermission();
+      if (!permission.granted) {
+        if (permission.canAskAgain === false) {
+          Alert.alert(
+            "Permissao de fotos bloqueada",
+            "Para adicionar uma foto, permita acesso as fotos nas configuracoes do app.",
+            [
+              { text: "Agora nao", style: "cancel" },
+              { text: "Abrir configuracoes", onPress: openAppSettings },
+            ]
+          );
+        } else if (!permission.promptedBefore) {
+          Alert.alert("Permissao negada", "Permita acesso as fotos para adicionar uma imagem.");
+        }
         return;
       }
       const res = await ImagePicker.launchImageLibraryAsync({

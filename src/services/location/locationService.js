@@ -17,6 +17,10 @@
 
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage"; // optional use
+import {
+  checkLocationPermission,
+  requestLocationPermission as requestAppLocationPermission,
+} from "../permissions";
 // no other side effects
 
 /* ===========================
@@ -168,11 +172,14 @@ export async function requestLocationPermission({ force = false } = {}) {
       return { granted: true, status: "granted" };
     }
 
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    _cachedPermission = status;
-    const granted = status === "granted";
+    const permission = force
+      ? await requestAppLocationPermission()
+      : await checkLocationPermission();
+    _cachedPermission = permission.status;
+    const granted = permission.granted;
+    const status = permission.status;
     emitPermission({ granted, status });
-    return { granted, status };
+    return { granted, status, canAskAgain: permission.canAskAgain };
   } catch (err) {
     debug("requestLocationPermission error", err);
     return { granted: false, status: "unknown", error: err };
@@ -182,7 +189,7 @@ export async function requestLocationPermission({ force = false } = {}) {
 export async function getPermissionStatus() {
   if (_cachedPermission) return _cachedPermission;
   try {
-    const { status } = await Location.getForegroundPermissionsAsync();
+    const { status } = await checkLocationPermission();
     _cachedPermission = status;
     return status;
   } catch {
@@ -201,8 +208,7 @@ export async function getCurrentPosition(opts = {}) {
     retryBackoffBaseMs = DEFAULTS.retryBackoffBaseMs,
   } = opts;
 
-  // ensure permission
-  const perm = await requestLocationPermission({ force: false });
+  const perm = await checkLocationPermission();
   if (!perm.granted) {
     return { coords: null, raw: null, error: new Error("permission_denied") };
   }
@@ -246,8 +252,8 @@ export async function watchPosition(onChange, userOpts = {}) {
     ...userOpts,
   };
 
-  // permission guard
-  const perm = await requestLocationPermission({ force: false });
+  // permission guard. Do not open the native prompt from a watcher.
+  const perm = await checkLocationPermission();
   if (!perm.granted) {
     debug("watchPosition: permission denied");
     // return a no-op controller

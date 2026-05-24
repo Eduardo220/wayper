@@ -34,6 +34,7 @@ import RunShareModal from "../components/Runs/RunShareModal";
 import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../components/Runs/RunShareCard";
 import RunSummaryModal from "../components/Runs/RunSummaryModal";
 import TerritoryBottomSheet from "../components/Territory/TerritoryBottomSheet";
+import PermissionNotice from "../components/permissions/PermissionNotice";
 import { WPButton } from "../components/ui";
 import { WayperTheme } from "../theme/wayperTheme";
 import { auth } from "../firebaseConfig";
@@ -87,6 +88,13 @@ import {
   loadLocalTerritories,
   processRunTerritoryCapture,
 } from "../services/territory";
+import {
+  checkBackgroundLocationPermission,
+  checkLocationPermission,
+  ensureLocationForRun,
+  openAppSettings,
+  requestBackgroundLocationPermission,
+} from "../services/permissions";
 
 /* Tunáveis */
 const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
@@ -468,6 +476,8 @@ const MapScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [locationPermission, setLocationPermission] = useState(null);
+  const [runPermissionNoticeVisible, setRunPermissionNoticeVisible] = useState(false);
 
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -803,49 +813,77 @@ const MapScreen = ({ navigation, route }) => {
     setSelectedTerritoryLeaderboard(null);
   }, []);
 
+  const refreshForegroundLocation = useCallback(async ({ updatePosition = true } = {}) => {
+    const permission = await checkLocationPermission();
+    if (!mountedRef.current) return permission;
+
+    setLocationPermission(permission);
+    setPermissionDenied(!permission.granted);
+
+    if (!permission.granted) {
+      setLocation((current) => current || DEFAULT_COORD);
+      return permission;
+    }
+
+    if (!updatePosition) return permission;
+
+    try {
+      const pos = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 6000)),
+      ]);
+      if (mountedRef.current && pos?.coords) {
+        setLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+      }
+    } catch (e) {
+      debug("foreground position refresh failed", e);
+      if (mountedRef.current) setLocation((current) => current || DEFAULT_COORD);
+    }
+
+    return permission;
+  }, []);
+
   /* ===== INIT ===== */
   useEffect(() => {
     mountedRef.current = true;
     let flushTimer = null;
     let appStateSub = null;
-    let initTimedOut = false;
 
     (async () => {
       try {
         // timeout safeguard: se a permissão travar por X ms, liberar UI com fallback
-        const initTimeout = setTimeout(() => {
-          initTimedOut = true;
-          debug("init timed out, allowing UI fallback");
-        }, 7000);
+        const initPermission = await refreshForegroundLocation({ updatePosition: true });
 
-        const { status } = await Location.requestForegroundPermissionsAsync();
+        const status = initPermission?.status;
 
-        clearTimeout(initTimeout);
+        // Status was checked without opening the native permission prompt.
 
-        if (initTimedOut && status !== "granted") {
+        if (false && status !== "granted") {
           // se timeout ocorreu e permissão não foi concedida, tratamos como negada
           setPermissionDenied(true);
           setLoading(false);
           return;
         }
 
-        if (status !== "granted") {
+        if (false && status !== "granted") {
           setPermissionDenied(true);
           setLoading(false);
           return;
         }
 
-        setPermissionDenied(false);
+        if (status === "granted") setPermissionDenied(false);
 
         // tentar obter posição inicial com timeout/catch
         let pos = null;
-        try {
+        if (status === "granted") {
+          try {
           pos = await Promise.race([
             Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest }),
             new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 6000)),
           ]);
         } catch (e) {
           debug("initial position failed (non-blocking)", e);
+        }
         }
 
         const initial = pos?.coords
@@ -858,6 +896,9 @@ const MapScreen = ({ navigation, route }) => {
 
         appStateSub = AppState.addEventListener("change", (next) => {
           appStateRef.current = next;
+          if (next === "active" && !runningRef.current) {
+            refreshForegroundLocation({ updatePosition: true });
+          }
         });
 
         flushTimer = setInterval(() => flushRouteBufferToState(), FLUSH_INTERVAL_MS);
@@ -875,6 +916,7 @@ const MapScreen = ({ navigation, route }) => {
         debug("init catch", err);
         // fallback defensivo: permitir UI
         setPermissionDenied(true);
+        setLocation((current) => current || DEFAULT_COORD);
       } finally {
         setLoading(false);
       }
@@ -905,7 +947,7 @@ const MapScreen = ({ navigation, route }) => {
       runningRef.current = false;
       runStatusRef.current = "finished";
     };
-  }, []); // só uma vez
+  }, [refreshForegroundLocation]); // so uma vez
 
   /* ===== Helpers ===== */
   const stopWatcherAndPolling = useCallback(() => {
@@ -1222,23 +1264,28 @@ const MapScreen = ({ navigation, route }) => {
 
   const startBackgroundLocationService = useCallback(async () => {
     try {
-      let foreground = await Location.getForegroundPermissionsAsync();
-      if (foreground.status !== "granted") {
-        foreground = await Location.requestForegroundPermissionsAsync();
-      }
-      if (foreground.status !== "granted") return;
+      const foreground = await checkLocationPermission();
+      if (!foreground.granted) return;
 
       if (Platform.OS === "android") {
-        let background = await Location.getBackgroundPermissionsAsync();
-        if (background.status !== "granted") {
-          background = await Location.requestBackgroundPermissionsAsync();
-        }
+        const currentBackground = await checkBackgroundLocationPermission();
+        const background = currentBackground.granted
+          ? currentBackground
+          : await requestBackgroundLocationPermission();
 
-        if (background.status !== "granted" && !backgroundPermissionWarnedRef.current) {
+        if (!background.granted && !backgroundPermissionWarnedRef.current) {
           backgroundPermissionWarnedRef.current = true;
           Alert.alert(
             "Corrida em segundo plano",
-            "Para continuar registrando com o app minimizado, permita localizacao o tempo todo nas configuracoes do Android."
+            background.canAskAgain
+              ? "Para continuar registrando com o app minimizado, permita localizacao o tempo todo quando solicitado."
+              : "Para continuar registrando com o app minimizado, permita localizacao o tempo todo nas configuracoes do Android.",
+            background.canAskAgain
+              ? undefined
+              : [
+                  { text: "Agora nao", style: "cancel" },
+                  { text: "Abrir configuracoes", onPress: openAppSettings },
+                ]
           );
         }
       }
@@ -1263,6 +1310,14 @@ const MapScreen = ({ navigation, route }) => {
     watcherStartTokenRef.current = startToken;
 
     try {
+      const permission = await checkLocationPermission();
+      if (!permission.granted) {
+        setLocationPermission(permission);
+        setPermissionDenied(true);
+        setRunPermissionNoticeVisible(true);
+        return;
+      }
+
       const accuracyCandidates = [
         Location.Accuracy.BestForNavigation,
         Location.Accuracy.Highest,
@@ -1353,8 +1408,17 @@ const MapScreen = ({ navigation, route }) => {
 
   /* ===== Start / Pause / Stop run ===== */
   const startWithCountdown = useCallback(
-    (selectedMode = "free") => {
+    async (selectedMode = "free") => {
       if (counting || running) return;
+      const permission = await ensureLocationForRun();
+      setLocationPermission(permission);
+      setPermissionDenied(!permission.granted);
+      if (!permission.granted) {
+        setRunPermissionNoticeVisible(true);
+        return;
+      }
+      setRunPermissionNoticeVisible(false);
+      await refreshForegroundLocation({ updatePosition: true });
       setMode(selectedMode);
       setCounting(true);
       setCountdown(COUNTDOWN_DEFAULT);
@@ -1383,13 +1447,22 @@ const MapScreen = ({ navigation, route }) => {
       };
       return cleanup;
     },
-    [counting, running]
+    [counting, refreshForegroundLocation, running]
   );
 
   const startRun = useCallback(
     async (selectedMode = "free") => {
       try {
         if (runningRef.current || running) return;
+
+        const permission = await checkLocationPermission();
+        setLocationPermission(permission);
+        setPermissionDenied(!permission.granted);
+        if (!permission.granted) {
+          setRunPermissionNoticeVisible(true);
+          setCounting(false);
+          return;
+        }
 
         setRunning(true);
         setPaused(false);
@@ -1481,6 +1554,14 @@ const MapScreen = ({ navigation, route }) => {
     if (!running || !paused) return;
 
     try {
+      const permission = await checkLocationPermission();
+      setLocationPermission(permission);
+      setPermissionDenied(!permission.granted);
+      if (!permission.granted) {
+        setRunPermissionNoticeVisible(true);
+        return;
+      }
+
       setPaused(false);
       runningRef.current = true;
       runStatusRef.current = "active";
@@ -2181,7 +2262,7 @@ const MapScreen = ({ navigation, route }) => {
     );
   }
 
-  if (permissionDenied) {
+  if (false && permissionDenied) {
     return (
       <View style={styles.loading}>
         <Text style={{ color: "#fff", fontWeight: "700", marginBottom: 12, textAlign: "center" }}>
@@ -2195,8 +2276,8 @@ const MapScreen = ({ navigation, route }) => {
           onPress={async () => {
             try {
               // Abre as configurações de app para permitir permissão (expo)
-              const { status } = await Location.requestForegroundPermissionsAsync();
-              if (status === "granted") {
+              const permission = await ensureLocationForRun();
+              if (permission.granted) {
                 setPermissionDenied(false);
                 const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
                 setLocation(p?.coords ? { latitude: p.coords.latitude, longitude: p.coords.longitude } : DEFAULT_COORD);
@@ -2236,7 +2317,7 @@ const MapScreen = ({ navigation, route }) => {
   const shouldFollowMap = running && !paused && !replaying && mapFollowEnabled;
   const shouldFollowReplay = replaying;
   const shouldShowRecenterMap = running && !paused && !replaying && !mapFollowEnabled;
-  if (!location) {
+  if (false && !location) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color="#00e676" />
@@ -2384,6 +2465,33 @@ const MapScreen = ({ navigation, route }) => {
       {!running && !replaying && (
         <View style={styles.menuPanel}>
           <View pointerEvents="none" style={styles.menuTopGlow} />
+          {permissionDenied ? (
+            <PermissionNotice
+              compact
+              permissionType="location"
+              required={false}
+              title="Mapa sem sua localização"
+              description="Você pode explorar o mapa, mas precisa permitir localização para iniciar uma corrida real."
+              status={locationPermission?.status}
+              canAskAgain={locationPermission?.canAskAgain !== false}
+              primaryAction={{
+                label: locationPermission?.canAskAgain === false ? "Abrir configurações" : "Ativar localização",
+                onPress: async () => {
+                  if (locationPermission?.canAskAgain === false) {
+                    await openAppSettings();
+                    return;
+                  }
+                  const permission = await ensureLocationForRun();
+                  setLocationPermission(permission);
+                  setPermissionDenied(!permission.granted);
+                  if (permission.granted) {
+                    await refreshForegroundLocation({ updatePosition: true });
+                  }
+                },
+              }}
+              style={styles.mapPermissionNotice}
+            />
+          ) : null}
           <Animated.View
             pointerEvents="none"
             style={[
@@ -2953,6 +3061,40 @@ const MapScreen = ({ navigation, route }) => {
         </View>
       </Modal>
 
+      <Modal visible={runPermissionNoticeVisible} transparent animationType="fade" onRequestClose={() => setRunPermissionNoticeVisible(false)}>
+        <View style={styles.permissionOverlay}>
+          <PermissionNotice
+            permissionType="location"
+            required
+            title="Permissão de localização necessária"
+            description="O Wayper precisa da sua localização para registrar sua rota, calcular distância, ritmo e conquistar zonas no mapa."
+            status={locationPermission?.status}
+            canAskAgain={locationPermission?.canAskAgain !== false}
+            primaryAction={{
+              label: locationPermission?.canAskAgain === false ? "Abrir configurações" : "Permitir localização",
+              onPress: async () => {
+                if (locationPermission?.canAskAgain === false) {
+                  await openAppSettings();
+                  return;
+                }
+                const permission = await ensureLocationForRun();
+                setLocationPermission(permission);
+                setPermissionDenied(!permission.granted);
+                if (permission.granted) {
+                  setRunPermissionNoticeVisible(false);
+                  await refreshForegroundLocation({ updatePosition: true });
+                }
+              },
+            }}
+            secondaryAction={{
+              label: "Voltar",
+              onPress: () => setRunPermissionNoticeVisible(false),
+            }}
+            style={styles.permissionNoticeModal}
+          />
+        </View>
+      </Modal>
+
       {lastSavedRun ? (
         <View pointerEvents="none" style={styles.offscreenShareCards}>
           <RunShareCard
@@ -3240,6 +3382,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.9,
     shadowRadius: 10,
     elevation: 8,
+  },
+  mapPermissionNotice: {
+    marginBottom: WayperTheme.spacing.md,
   },
   startButtonAura: {
     position: "absolute",
@@ -3545,6 +3690,15 @@ const styles = StyleSheet.create({
   cancelBtnText: { color: WayperTheme.colors.text, fontWeight: "900", fontSize: 15 },
 
   modalContainer: { flex: 1, backgroundColor: "rgba(0,0,0,0.66)", justifyContent: "center", padding: 20 },
+  permissionOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    padding: WayperTheme.spacing.xl,
+    backgroundColor: "rgba(0,0,0,0.66)",
+  },
+  permissionNoticeModal: {
+    width: "100%",
+  },
   modalContent: { backgroundColor: WayperTheme.colors.surfaceElevated, borderRadius: WayperTheme.radius.xl, padding: 20, height: "80%", borderWidth: 1, borderColor: WayperTheme.colors.borderStrong },
   modalTitle: { ...WayperTheme.typography.title, marginBottom: 12 },
   runItem: { paddingVertical: 14, borderBottomWidth: 1, borderColor: WayperTheme.colors.border },

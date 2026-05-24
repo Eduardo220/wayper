@@ -40,13 +40,11 @@
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
-        "POST_NOTIFICATIONS",
         "READ_MEDIA_IMAGES",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
         "WAKE_LOCK",
-        "INTERNET",
-        "VIBRATE"
+        "INTERNET"
       ],
 
       "adaptiveIcon": {
@@ -55,7 +53,12 @@
       },
 
       "softwareKeyboardLayoutMode": "pan",
-      "blockedPermissions": []
+      "blockedPermissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.VIBRATE"
+      ]
     },
 
     "plugins": [
@@ -76,6 +79,12 @@
           "savePhotosPermission": "O Wayper precisa salvar imagens das suas corridas na galeria.",
           "isAccessMediaLocationEnabled": false,
           "granularPermissions": ["photo"]
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O Wayper precisa acessar suas fotos somente quando voce escolher uma imagem."
         }
       ],
       "expo-file-system",

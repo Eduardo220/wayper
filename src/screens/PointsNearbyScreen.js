@@ -3,6 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet } from "react-native
 import * as Location from "expo-location";
 import { collection, getDocs, query } from "firebase/firestore";
 import { db } from "../firebaseConfig";
+import { checkLocationPermission } from "../services/permissions";
 
 export default function PointsNearbyScreen({ navigation }) {
   const [checkpoints, setCheckpoints] = useState([]);
@@ -11,8 +12,17 @@ export default function PointsNearbyScreen({ navigation }) {
 
   useEffect(() => {
     (async () => {
-      const loc = await Location.getCurrentPositionAsync({});
-      setLocation(loc.coords);
+      try {
+        const permission = await checkLocationPermission();
+        if (permission.granted) {
+          const loc = await Location.getCurrentPositionAsync({});
+          setLocation(loc.coords);
+        }
+      } catch (error) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[PointsNearby] location unavailable", error?.message || error);
+        }
+      }
 
       const q = query(collection(db, "checkpoints"));
       const snap = await getDocs(q);

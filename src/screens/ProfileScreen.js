@@ -32,6 +32,7 @@ import {
 import { saveTempImageAsync } from "../utils/fileSystemLegacy";
 import { formatPaceFromSeconds } from "../utils/pace";
 import { sharePngFile } from "../utils/shareImage";
+import { openAppSettings, requestImageLibraryPermission } from "../services/permissions";
 
 const DEFAULT_AVATAR = "https://i.pravatar.cc/300?u=wayper_default_profile";
 const WAYPER_GREEN = WayperTheme.colors.primary;
@@ -40,16 +41,6 @@ const SHARE_CAPTURE_OPTIONS = {
   quality: 1,
   result: "tmpfile",
 };
-
-async function requestImageLibraryPermission() {
-  try {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    return status === "granted";
-  } catch (error) {
-    console.warn("[Profile] image permission failed", error);
-    return false;
-  }
-}
 
 async function uploadImageToFirebase(uri, storagePath) {
   if (!uri) throw new Error("missing_image_uri");
@@ -233,9 +224,20 @@ export default function ProfileScreen() {
 
   const pickImage = useCallback(async () => {
     try {
-      const ok = await requestImageLibraryPermission();
-      if (!ok) {
-        Alert.alert("Permissao negada", "Permita acesso as imagens para trocar o avatar.");
+      const permission = await requestImageLibraryPermission();
+      if (!permission.granted) {
+        if (permission.canAskAgain === false) {
+          Alert.alert(
+            "Permissao de fotos bloqueada",
+            "Para trocar o avatar, permita acesso as fotos nas configuracoes do app.",
+            [
+              { text: "Agora nao", style: "cancel" },
+              { text: "Abrir configuracoes", onPress: openAppSettings },
+            ]
+          );
+        } else if (!permission.promptedBefore) {
+          Alert.alert("Permissao negada", "Permita acesso as imagens para trocar o avatar.");
+        }
         return;
       }
 

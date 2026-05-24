@@ -6,6 +6,7 @@ import {
   assertFileReadyAsync,
   saveBase64PngAsync,
 } from "./fileSystemLegacy";
+import { requestMediaPermission } from "../services/permissions";
 
 const isDev = () => typeof __DEV__ !== "undefined" && __DEV__;
 let mediaLibraryModulePromise = null;
@@ -53,25 +54,6 @@ const getMediaLibrary = async () => {
     throw new Error(
       "Modulo nativo expo-media-library indisponivel neste APK. Reinstale o APK atualizado para salvar imagens na galeria."
     );
-  }
-};
-
-const requestMediaPermission = async (MediaLibrary) => {
-  try {
-    let permission = null;
-
-    if (typeof MediaLibrary.getPermissionsAsync === "function") {
-      permission = await MediaLibrary.getPermissionsAsync(false);
-    }
-
-    if (!permission?.granted && typeof MediaLibrary.requestPermissionsAsync === "function") {
-      permission = await MediaLibrary.requestPermissionsAsync(false);
-    }
-
-    return Boolean(permission?.granted || permission?.status === "granted");
-  } catch (error) {
-    logError("media permission check failed", error);
-    return false;
   }
 };
 
@@ -166,7 +148,8 @@ export const savePngToGallery = async (fileUri, albumName = "Wayper") => {
     });
 
     const MediaLibrary = await getMediaLibrary();
-    const hasPermission = await requestMediaPermission(MediaLibrary);
+    const mediaPermission = await requestMediaPermission({ mediaLibrary: MediaLibrary });
+    const hasPermission = mediaPermission.granted;
 
     if (!hasPermission) {
       const folderResult = await saveWithAndroidFolderPicker(info, `${albumName}-run.png`);
@@ -175,7 +158,7 @@ export const savePngToGallery = async (fileUri, albumName = "Wayper") => {
       return {
         ok: false,
         uri: info.uri,
-        message: "Nao foi possivel salvar na galeria. Verifique a permissao de fotos.",
+        message: "Para salvar a imagem da corrida na galeria, o Wayper precisa de acesso à mídia. Você ainda pode compartilhar sem salvar, quando disponível.",
         error: "Media library permission denied.",
       };
     }
