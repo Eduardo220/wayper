@@ -41,15 +41,26 @@ import { auth } from "../firebaseConfig";
 import formatTime from "../utils/formatTime";
 import {
   TRACKING_CONFIG,
+  buildSummaryRenderPath,
+  calculateRouteDistance,
+  createTrackingSession,
   debugTracking,
+  enableNetworkProviderForRun,
+  finalizeRoutePath,
+  getGpsQualityWarning,
+  getRenderablePathForRun,
+  getRenderableSegmentsForRun,
+  getRunBackgroundLocationOptions,
+  getRunWatchPositionOptions,
   limitPathForRendering,
   normalizeLocation,
   sanitizeRunPath,
   smoothDisplayPath,
+  summarizeGpsQuality,
   splitPathIntoSegments,
-} from "../utils/tracking";
+  warmUpGpsForRun,
+} from "../services/runTracking";
 import sync from "../utils/sync";
-import { calculateRouteDistance, finalizeRoutePath } from "../utils/routeDrawing";
 import {
   assertTraceHasEnoughPoints,
   captureRunShareImage,
@@ -72,12 +83,6 @@ import {
 import xpService from "../services/xp/xpService";
 import { updateProfileStats, updateTerritoryProfileStats } from "../services/profile/profileService";
 import { fetchAllRanking } from "../services/ranking";
-import {
-  buildSummaryRenderPath,
-  createTrackingSession,
-  getRenderablePathForRun,
-  getRenderableSegmentsForRun,
-} from "../services/tracking";
 import {
   fetchActiveTerritoriesNear,
   fetchTerritoriesByOwnerId,
@@ -526,6 +531,7 @@ const MapScreen = ({ navigation, route }) => {
   const [polygons, setPolygons] = useState([]);
   const [completedZonePreview, setCompletedZonePreview] = useState([]);
   const [mode, setMode] = useState(null);
+  const [gpsQualityWarning, setGpsQualityWarning] = useState(null);
 
   const [showRunsModal, setShowRunsModal] = useState(false);
   const [showSavedModal, setShowSavedModal] = useState(false);
@@ -1149,11 +1155,18 @@ const MapScreen = ({ navigation, route }) => {
       distanceRef.current = Number(trackingState?.stats?.distanceMeters ?? distanceRef.current) || 0;
       lastAcceptedLocationRef.current = savedSnapshot[savedSnapshot.length - 1] || null;
       lastSmoothedLocationRef.current = displaySnapshot[displaySnapshot.length - 1] || null;
+      const gpsSummary = trackingState?.gpsQualitySummary || summarizeGpsQuality({
+        rawPoints: rawPathRef.current,
+        filteredPoints: savedSnapshot,
+        segments: trackingState?.segments || [],
+        pathQuality: trackingState?.pathQuality,
+      });
 
       setRouteState(limitPathForRendering(savedSnapshot, ROUTE_CAP));
       setDisplayRouteState(displaySnapshot);
       setDisplayRouteSegments(segmentSnapshot);
       setDistanceState(distanceRef.current);
+      setGpsQualityWarning(getGpsQualityWarning(gpsSummary));
       updateActiveZonePreview(savedSnapshot);
     } catch (e) {
       debug("flush catch", e);
@@ -1217,6 +1230,13 @@ const MapScreen = ({ navigation, route }) => {
         rawPathRef.current = result.rawPath || rawPathRef.current;
 
         if (!result.accepted) {
+          if (Number(point.accuracy) > TRACKING_CONFIG.GPS_ACCURACY_ACCEPTABLE_M) {
+            setGpsQualityWarning(
+              Number(point.accuracy) > TRACKING_CONFIG.GPS_ACCURACY_MAX_M
+                ? "GPS instavel. Va para uma area aberta para melhorar a precisao."
+                : "Sinal GPS fraco. A rota pode ficar menos precisa."
+            );
+          }
           debugTracking(`reject:${result.reason}`, {
             accuracy: point.accuracy,
             timestamp: point.timestamp,
@@ -1252,6 +1272,12 @@ const MapScreen = ({ navigation, route }) => {
         }
 
         if (result.pathChanged) {
+          const gpsSummary = result.gpsQualitySummary || summarizeGpsQuality({
+            rawPoints: result.rawPoints || result.rawPath || [],
+            filteredPoints: trustedPath,
+            segments: result.segments || [],
+            pathQuality: result.pathQuality,
+          });
           debugTracking("point_accepted", {
             accuracy: point.accuracy,
             rawPoints: result.pathQuality?.rawPoints,
@@ -1266,6 +1292,7 @@ const MapScreen = ({ navigation, route }) => {
           setDisplayRouteState(livePath);
           setDisplayRouteSegments(displaySegmentsRef.current);
           setDistanceState(distanceRef.current);
+          setGpsQualityWarning(getGpsQualityWarning(gpsSummary));
           updateActiveZonePreview(trustedPath);
         }
       } catch (e) {
@@ -1293,20 +1320,12 @@ const MapScreen = ({ navigation, route }) => {
     return `Tempo ${formatTime(timeSecRef.current)} - ${(distanceRef.current / 1000).toFixed(2)} km`;
   }, []);
 
-  const getBackgroundLocationOptions = useCallback((notificationBody) => ({
-    accuracy: Location.Accuracy.BestForNavigation || Location.Accuracy.Highest || Location.Accuracy.High,
-    timeInterval: WATCH_TIME_INTERVAL_MS,
-    distanceInterval: WATCH_DISTANCE_INTERVAL,
-    deferredUpdatesInterval: WATCH_TIME_INTERVAL_MS,
-    deferredUpdatesDistance: 0,
-    pausesUpdatesAutomatically: false,
-    foregroundService: {
-      notificationTitle: "Wayper - corrida em andamento",
-      notificationBody,
+  const getBackgroundLocationOptions = useCallback(
+    (notificationBody) => getRunBackgroundLocationOptions(Location, notificationBody, {
       notificationColor: WayperTheme.colors.primary,
-      killServiceOnDestroy: false,
-    },
-  }), []);
+    }),
+    []
+  );
 
   const stopBackgroundLocationService = useCallback(async () => {
     try {
@@ -1400,6 +1419,8 @@ const MapScreen = ({ navigation, route }) => {
         return;
       }
 
+      await enableNetworkProviderForRun(Location, Platform);
+
       const accuracyCandidates = [
         Location.Accuracy.BestForNavigation,
         Location.Accuracy.Highest,
@@ -1411,12 +1432,7 @@ const MapScreen = ({ navigation, route }) => {
       for (const accuracy of accuracyCandidates) {
         try {
           sub = await Location.watchPositionAsync(
-            {
-              accuracy,
-              timeInterval: WATCH_TIME_INTERVAL_MS,
-              distanceInterval: WATCH_DISTANCE_INTERVAL,
-              mayShowUserSettingsDialog: true,
-            },
+            getRunWatchPositionOptions(Location, { accuracy }),
             (loc) => {
               if (!loc?.coords) return;
               handleLocationUpdate({
@@ -1501,6 +1517,25 @@ const MapScreen = ({ navigation, route }) => {
       }
       setRunPermissionNoticeVisible(false);
       await refreshForegroundLocation({ updatePosition: true });
+      await enableNetworkProviderForRun(Location, Platform);
+      try {
+        const warmup = await warmUpGpsForRun(Location, { durationMs: 5500 });
+        if (warmup.bestPoint) {
+          setLocation(warmup.bestPoint);
+        }
+        if (!warmup.ok) {
+          setGpsQualityWarning(
+            warmup.poor
+              ? "GPS instavel. Va para uma area aberta para melhorar a precisao."
+              : "Sinal GPS fraco. A rota pode ficar menos precisa."
+          );
+        } else {
+          setGpsQualityWarning(null);
+        }
+      } catch (warmupError) {
+        debug("gps warmup failed", warmupError);
+        setGpsQualityWarning("Sinal GPS fraco. A rota pode ficar menos precisa.");
+      }
       setMode(selectedMode);
       setCounting(true);
       setCountdown(COUNTDOWN_DEFAULT);
@@ -1725,6 +1760,7 @@ const MapScreen = ({ navigation, route }) => {
     modeRef.current = null;
     setMode(null);
     setPaused(false);
+    setGpsQualityWarning(null);
     currentRunIdRef.current = null;
     runStatusRef.current = "idle";
   }, [resetTrackingPipeline]);
@@ -1780,14 +1816,18 @@ const MapScreen = ({ navigation, route }) => {
           routeSegments: sanitizeTrackingSegments(trackingFinish?.segments || []),
           path,
           trustedPath: path,
+          filteredPoints: path,
           rawPath: sanitizePath(trackingFinish?.rawPath || rawPath),
           rawPoints: sanitizePath(trackingFinish?.rawPath || rawPath),
           liveRenderPath: sanitizePath(trackingFinish?.liveRenderPath || displayPathRef.current || []),
           renderPath: summaryRenderPath,
           displayPath: summaryRenderPath,
+          displayPoints: summaryRenderPath,
           pathQuality: trackingFinish?.pathQuality || null,
+          gpsQualitySummary: trackingFinish?.gpsQualitySummary || trackingFinish?.pathQuality || null,
           lowConfidenceSegments: trackingFinish?.lowConfidenceSegments || [],
-          smoothingVersion: trackingFinish?.smoothingVersion || "wayper_tracking_v1",
+          smoothingVersion: trackingFinish?.smoothingVersion || "wayper_tracking_v2",
+          filterVersion: trackingFinish?.filterVersion || trackingFinish?.pathQuality?.filterVersion || "wayper_gps_filter_v2",
           distance: totalDistance,
           distanceMeters: totalDistance,
           duration: totalDuration,
@@ -1815,6 +1855,7 @@ const MapScreen = ({ navigation, route }) => {
               userAvatar: actor.avatar,
               runId,
               path,
+              segments: runData.routeSegments,
               mode,
               distanceMeters: totalDistance,
               durationSeconds: totalDuration,
@@ -2561,6 +2602,12 @@ const MapScreen = ({ navigation, route }) => {
               <Text style={styles.pausedNoticeText}>GPS pausado. Toque em Retomar para continuar.</Text>
             </View>
           )}
+          {running && !paused && gpsQualityWarning ? (
+            <View style={styles.gpsNotice}>
+              <Ionicons name="warning-outline" size={16} color={WayperTheme.colors.warning} />
+              <Text style={styles.gpsNoticeText}>{gpsQualityWarning}</Text>
+            </View>
+          ) : null}
         </View>
       )}
 
@@ -3095,14 +3142,18 @@ const MapScreen = ({ navigation, route }) => {
               routeSegments: sanitizeTrackingSegments(payload.routeSegments || payload.segments || currentRunData?.routeSegments || currentRunData?.segments || []),
               path: trustedPath,
               trustedPath,
+              filteredPoints: trustedPath,
               rawPath: sanitizePath(payload.rawPoints || payload.rawPath || currentRunData?.rawPoints || currentRunData?.rawPath || []),
               rawPoints: sanitizePath(payload.rawPoints || payload.rawPath || currentRunData?.rawPoints || currentRunData?.rawPath || []),
               liveRenderPath: sanitizePath(payload.liveRenderPath || currentRunData?.liveRenderPath || []),
               renderPath,
               displayPath: renderPath,
+              displayPoints: renderPath,
               pathQuality: payload.pathQuality || currentRunData?.pathQuality || null,
+              gpsQualitySummary: payload.gpsQualitySummary || currentRunData?.gpsQualitySummary || payload.pathQuality || currentRunData?.pathQuality || null,
               lowConfidenceSegments: payload.lowConfidenceSegments || currentRunData?.lowConfidenceSegments || [],
-              smoothingVersion: payload.smoothingVersion || currentRunData?.smoothingVersion || "wayper_tracking_v1",
+              smoothingVersion: payload.smoothingVersion || currentRunData?.smoothingVersion || "wayper_tracking_v2",
+              filterVersion: payload.filterVersion || currentRunData?.filterVersion || payload.pathQuality?.filterVersion || "wayper_gps_filter_v2",
             };
 
             if (normalized.mode === "zones" && normalized.zoneId && normalized.color) {
@@ -3573,6 +3624,26 @@ const styles = StyleSheet.create({
   },
   pausedNoticeText: {
     color: WayperTheme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: "800",
+    flexShrink: 1,
+    textAlign: "center",
+  },
+  gpsNotice: {
+    marginTop: 10,
+    minHeight: 38,
+    borderRadius: WayperTheme.radius.pill,
+    paddingHorizontal: 13,
+    backgroundColor: WayperTheme.colors.warningSoft || "rgba(255, 204, 51, 0.1)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.warningBorder || "rgba(255, 204, 51, 0.28)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  gpsNoticeText: {
+    color: WayperTheme.colors.warning,
     fontSize: 12,
     fontWeight: "800",
     flexShrink: 1,

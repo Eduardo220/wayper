@@ -63,7 +63,13 @@ const normalizeSegments = (segments = []) =>
       normalizeCoords(
         Array.isArray(segment)
           ? segment
-          : segment?.summaryRenderPath || segment?.renderPath || segment?.displayPath || segment?.trustedPath || []
+          : segment?.displayPoints ||
+              segment?.summaryRenderPath ||
+              segment?.renderPath ||
+              segment?.displayPath ||
+              segment?.filteredPoints ||
+              segment?.trustedPath ||
+              []
       )
     )
     .filter((segment) => segment.length >= 2);
@@ -260,6 +266,7 @@ function MapArtwork({ coords = [], segments = [], isZone = false, area = "0 m2",
       style={styles.mapArtwork}
       routePath={isZone ? [] : coords}
       routeSegments={isZone ? [] : segments}
+      routeMode="share"
       zones={zones}
       showZones={isZone}
       showUserLocation={false}

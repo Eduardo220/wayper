@@ -21,7 +21,6 @@ import { WPButton } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { auth } from "../../firebaseConfig";
 import sync from "../../utils/sync";
-import { beautifyRoutePath } from "../../utils/routeDrawing";
 import {
   assertTraceHasEnoughPoints,
   captureRunShareImage,
@@ -42,7 +41,7 @@ import {
 import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
 import { isRunOwnedByCurrentUser } from "../../utils/runOwnership";
 import { normalizeRunPath } from "../../utils/runPath";
-import { getRenderablePathForRun, getRenderableSegmentsForRun } from "../../services/tracking";
+import { beautifyRoutePath, getRenderablePathForRun, getRenderableSegmentsForRun } from "../../services/runTracking";
 
 const MIN_BAR_HEIGHT = 22;
 const CHART_BASE_HEIGHT = 118;
@@ -593,6 +592,7 @@ function RunDetailScreenInner({ route, navigation }) {
               style={styles.map}
               routePath={hasZoneShape ? [] : mapPath}
               routeSegments={hasZoneShape ? [] : mapSegments}
+              routeMode="result"
               zones={hasZoneShape ? [{ coords: zoneCoords, area: run?.area }] : []}
               showZones={hasZoneShape}
               centerCoordinate={midPoint}

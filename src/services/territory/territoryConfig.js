@@ -10,6 +10,7 @@ export const TERRITORY_CONFIG = {
   maxJumpM: 500,
   minPointDistanceM: 1.2,
   simplifyTolerance: 0.000015,
+  polygonSmoothIterations: 0,
   maxPoints: 420,
   maxRoutePoints: 1600,
   maxRouteGeometryPoints: 900,

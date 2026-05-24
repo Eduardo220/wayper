@@ -20,6 +20,7 @@ import { recalculateLeaderboardsForCells } from "./territoryLeaderboardService.j
 import { applyTerritoryCaptureStats } from "./territoryStatsService.js";
 import { createTerritoryEvent } from "./territoryEventsService.js";
 import { validateRunForTerritoryCapture } from "./territoryAntiFraudService.js";
+import { flattenSegments, normalizeTrackSegments } from "../runTracking/index.js";
 import {
   TERRITORY_CAPTURE_FAILURE,
   TERRITORY_EVENT_TYPE,
@@ -186,6 +187,7 @@ export async function processRunTerritoryCapture({
   userAvatar,
   runId,
   path,
+  segments,
   mode,
   distanceMeters,
   durationSeconds,
@@ -215,7 +217,11 @@ export async function processRunTerritoryCapture({
   }
 
   try {
-    const antiFraud = validateRunForTerritoryCapture(path, {
+    const routeSegments = normalizeTrackSegments(segments || []);
+    const capturePath = routeSegments.length > 0
+      ? flattenSegments(routeSegments, "filteredPoints")
+      : path;
+    const antiFraud = validateRunForTerritoryCapture(capturePath, {
       distanceMeters,
       durationSeconds,
     });
@@ -233,7 +239,7 @@ export async function processRunTerritoryCapture({
       };
     }
 
-    const capture = buildCaptureGeometryFromPath(path);
+    const capture = buildCaptureGeometryFromPath(capturePath, { segments: routeSegments });
     if (!capture.ok) {
       return {
         ok: false,

@@ -13,6 +13,9 @@ export const TRACKING_REJECT_REASON = {
   too_much_acceleration: "too_much_acceleration",
   short_zigzag: "short_zigzag",
   gps_jump: "gps_jump",
+  gps_gap: "gps_gap",
+  mocked: "mocked",
+  out_of_order: "out_of_order",
   warmup_bad_point: "warmup_bad_point",
   unknown: "unknown",
 };
@@ -23,6 +26,7 @@ export const TRACKING_FILTER_ACTION = {
   replace_previous: "replace_previous",
   ignore: "ignore",
   pending: "pending",
+  segment_break: "segment_break",
 };
 
 export default {

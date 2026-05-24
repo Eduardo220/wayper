@@ -202,6 +202,7 @@ export function buildSummaryRenderPath(trustedPath = [], options = {}) {
 
 export function getBestRenderPathForRun(run = {}) {
   const candidates = [
+    run.displayPoints,
     run.renderPath,
     run.displayPath,
     run.summaryRenderPath,
@@ -217,7 +218,9 @@ export function getBestRenderPathForRun(run = {}) {
 
   const trusted = Array.isArray(run.trustedPath) && run.trustedPath.length > 1
     ? run.trustedPath
-    : run.path;
+    : Array.isArray(run.filteredPoints) && run.filteredPoints.length > 1
+      ? run.filteredPoints
+      : run.path;
   return buildSummaryRenderPath(trusted || []);
 }
 
@@ -228,10 +231,12 @@ export function getRenderableSegmentsForRun(run = {}) {
       .map((segment, index) => {
         const segmentIndex = Number.isFinite(Number(segment?.index)) ? Number(segment.index) : index;
         const candidate =
+          segment?.displayPoints ||
           segment?.summaryRenderPath ||
           segment?.renderPath ||
           segment?.displayPath ||
           segment?.liveRenderPath ||
+          segment?.filteredPoints ||
           segment?.trustedPath ||
           segment?.path ||
           [];
@@ -240,7 +245,7 @@ export function getRenderableSegmentsForRun(run = {}) {
           .map((point) => normalizeSegmentPoint(point, segmentIndex));
         if (clean.length > 1) return clean;
 
-        const trusted = (Array.isArray(segment?.trustedPath) ? segment.trustedPath : [])
+        const trusted = (Array.isArray(segment?.filteredPoints) ? segment.filteredPoints : Array.isArray(segment?.trustedPath) ? segment.trustedPath : [])
           .filter(isValidCoordinate)
           .map((point) => normalizeSegmentPoint(point, segmentIndex));
         return trusted.length > 1
@@ -273,8 +278,10 @@ export function getRenderableSegmentsForRun(run = {}) {
 function getBestFlatCandidate(run = {}) {
   const candidates = [
     run.renderPath,
+    run.displayPoints,
     run.displayPath,
     run.summaryRenderPath,
+    run.filteredPoints,
     run.trustedPath,
     run.path,
   ];

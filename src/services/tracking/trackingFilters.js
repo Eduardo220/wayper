@@ -54,6 +54,7 @@ export function normalizeLocationPoint(location = {}) {
     heading: normalizeOptionalNumber(coords.heading ?? location.heading),
     timestamp: normalizeTimestamp(location.timestamp ?? coords.timestamp ?? location.time ?? location.t),
     source: normalizeSource(location),
+    mocked: Boolean(location.mocked ?? coords.mocked ?? location.isMocked),
   };
 
   if (!isValidCoordinate(point)) return null;
@@ -156,6 +157,10 @@ export function shouldAcceptPoint(rawPoint, state = {}, presetInput = "run") {
     return result(false, point, TRACKING_REJECT_REASON.bad_accuracy, qualityScore, TRACKING_FILTER_ACTION.reject);
   }
 
+  if (point.mocked) {
+    return result(false, point, TRACKING_REJECT_REASON.mocked, qualityScore, TRACKING_FILTER_ACTION.reject);
+  }
+
   if (!last) {
     if (isWarmupBadPoint(point, state, preset)) {
       return result(false, point, TRACKING_REJECT_REASON.warmup_bad_point, qualityScore, TRACKING_FILTER_ACTION.pending);
@@ -169,7 +174,18 @@ export function shouldAcceptPoint(rawPoint, state = {}, presetInput = "run") {
   }
 
   const distanceFromPreviousMeters = calculateDistanceMeters(last, point);
-  const timeFromPreviousMs = Math.max(0, point.timestamp - last.timestamp);
+  const timeFromPreviousMs = point.timestamp - last.timestamp;
+
+  if (!Number.isFinite(timeFromPreviousMs) || timeFromPreviousMs < 0) {
+    return result(false, point, TRACKING_REJECT_REASON.out_of_order, qualityScore, TRACKING_FILTER_ACTION.reject, {
+      distanceFromPreviousMeters,
+      timeFromPreviousMs,
+      calculatedSpeedMps: 0,
+      bearingFromPrevious: null,
+      accelerationMps2: 0,
+    });
+  }
+
   const calculatedSpeedMps = calculateSpeedMps(last, point);
   const bearingFromPrevious = calculateBearing(last, point);
   const previousSpeedMps = Number.isFinite(Number(state.previousSpeedMps))
@@ -194,13 +210,7 @@ export function shouldAcceptPoint(rawPoint, state = {}, presetInput = "run") {
   }
 
   if (hasAccuracy && accuracy > preset.softMaxAccuracyMeters) {
-    const coherent = distanceFromPreviousMeters >= preset.minDistanceMeters &&
-      calculatedSpeedMps <= preset.maxSpeedMps &&
-      acceleration <= preset.maxAccelerationMps2;
-    if (!coherent) {
-      return result(false, point, TRACKING_REJECT_REASON.bad_accuracy, qualityScore, TRACKING_FILTER_ACTION.reject, meta);
-    }
-    qualityScore -= 18;
+    return result(false, point, TRACKING_REJECT_REASON.bad_accuracy, qualityScore, TRACKING_FILTER_ACTION.reject, meta);
   }
 
   if (timeFromPreviousMs < preset.minTimeMs && distanceFromPreviousMeters < preset.minDistanceMeters * 2) {

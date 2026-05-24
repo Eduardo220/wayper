@@ -173,6 +173,7 @@ function CorridasScreen({ navigation }) {
                 <WayperMapLibre
                   style={styles.previewMap}
                   routePath={zoneActivity && zoneCoords.length >= 3 ? [] : path}
+                  routeMode="history"
                   zones={zoneActivity && zoneCoords.length >= 3 ? [{ coords: zoneCoords, area }] : []}
                   showZones={zoneActivity && zoneCoords.length >= 3}
                   centerCoordinate={center}

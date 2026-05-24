@@ -181,7 +181,13 @@ function normalizeTraceSegments(segments = []) {
       normalizeRunPath(
         Array.isArray(segment)
           ? segment
-          : segment?.summaryRenderPath || segment?.renderPath || segment?.displayPath || segment?.trustedPath || []
+          : segment?.displayPoints ||
+              segment?.summaryRenderPath ||
+              segment?.renderPath ||
+              segment?.displayPath ||
+              segment?.filteredPoints ||
+              segment?.trustedPath ||
+              []
       )
     )
     .filter((segment) => segment.length >= 2);

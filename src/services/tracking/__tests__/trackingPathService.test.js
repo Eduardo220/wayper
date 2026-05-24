@@ -215,7 +215,7 @@ describe("tracking pipeline", () => {
     expect(finish.trustedPath.length).toBeGreaterThan(1);
     expect(finish.renderPath.length).toBeGreaterThan(1);
     expect(finish.segments).toHaveLength(1);
-    expect(finish.pathQuality.smoothingVersion).toBe("wayper_tracking_v1");
+    expect(finish.pathQuality.smoothingVersion).toBe("wayper_tracking_v2");
   });
 
   test("corrida sem pausas mantem um unico segmento", () => {
@@ -348,7 +348,8 @@ describe("tracking pipeline", () => {
   test("MapLibre usa MultiLineString quando ha pausa real", () => {
     const mapLibre = fs.readFileSync(path.join(process.cwd(), "src/components/Map/WayperMapLibre.js"), "utf8");
     expect(mapLibre).toContain("type: \"MultiLineString\"");
-    expect(mapLibre).toContain("buildMultiLineStringFeature(routeSegments");
+    expect(mapLibre).toContain("buildRunLineGeoJson(");
+    expect(mapLibre).toContain("routeSegments");
   });
 
   test("pontos ruins no inicio da corrida nao criam linha deslocada", () => {

@@ -1,9 +1,10 @@
-import { getTrackingPreset, TRACKING_SMOOTHING_VERSION } from "./trackingConfig.js";
+import { getTrackingPreset, TRACKING_FILTER_VERSION, TRACKING_SMOOTHING_VERSION } from "./trackingConfig.js";
 import { TRACKING_FILTER_ACTION, TRACKING_REJECT_REASON } from "./trackingTypes.js";
 import { normalizeLocationPoint, shouldAcceptPoint } from "./trackingFilters.js";
 import {
   calculateAverageAccuracy,
   calculateBearing,
+  calculateDistanceMeters,
   calculateMaxAccuracy,
   calculatePathDistanceMeters,
 } from "./trackingMath.js";
@@ -20,6 +21,7 @@ const reasonCounterMap = {
   [TRACKING_REJECT_REASON.bad_accuracy]: "rejectedByAccuracy",
   [TRACKING_REJECT_REASON.too_fast]: "rejectedBySpeed",
   [TRACKING_REJECT_REASON.gps_jump]: "rejectedBySpeed",
+  [TRACKING_REJECT_REASON.gps_gap]: "gpsGapCount",
   [TRACKING_REJECT_REASON.too_much_acceleration]: "rejectedBySpeed",
   [TRACKING_REJECT_REASON.too_close]: "rejectedByDistance",
   [TRACKING_REJECT_REASON.short_zigzag]: "rejectedByZigzag",
@@ -30,6 +32,7 @@ const reasonCounterMap = {
 function emptyQuality() {
   return {
     rawPoints: 0,
+    totalRawPoints: 0,
     acceptedPoints: 0,
     rejectedPoints: 0,
     rejectedByAccuracy: 0,
@@ -40,8 +43,11 @@ function emptyQuality() {
     rejectedByWarmup: 0,
     averageAccuracy: null,
     maxAccuracy: null,
+    poorAccuracyRatio: 0,
+    gpsGapCount: 0,
     lowConfidenceSegments: [],
     smoothingVersion: TRACKING_SMOOTHING_VERSION,
+    filterVersion: TRACKING_FILTER_VERSION,
   };
 }
 
@@ -54,28 +60,50 @@ function clonePath(path = []) {
 }
 
 function cloneSegment(segment = {}) {
+  const rawPath = clonePath(segment.rawPoints || segment.rawPath);
+  const trustedPath = clonePath(segment.filteredPoints || segment.trustedPath);
+  const liveRenderPath = clonePath(segment.liveRenderPath);
+  const summaryRenderPath = clonePath(segment.displayPoints || segment.summaryRenderPath);
   return {
     id: String(segment.id || ""),
     index: Number.isFinite(Number(segment.index)) ? Number(segment.index) : 0,
     startedAt: Number(segment.startedAt || Date.now()),
     endedAt: segment.endedAt ?? null,
-    rawPath: clonePath(segment.rawPath),
-    trustedPath: clonePath(segment.trustedPath),
-    liveRenderPath: clonePath(segment.liveRenderPath),
-    summaryRenderPath: clonePath(segment.summaryRenderPath),
+    startTimestamp: segment.startTimestamp ?? segment.startedAt ?? null,
+    endTimestamp: segment.endTimestamp ?? segment.endedAt ?? null,
+    reason: segment.reason || "active",
+    endReason: segment.endReason || null,
+    rawPath,
+    rawPoints: rawPath,
+    trustedPath,
+    filteredPoints: trustedPath,
+    liveRenderPath,
+    summaryRenderPath,
+    displayPoints: summaryRenderPath,
   };
 }
 
-function createSegment(index = 0, startedAt = Date.now()) {
+function createSegment(index = 0, startedAt = Date.now(), reason = "active") {
+  const rawPath = [];
+  const trustedPath = [];
+  const liveRenderPath = [];
+  const summaryRenderPath = [];
   return {
     id: `segment_${index}_${startedAt}`,
     index,
     startedAt,
     endedAt: null,
-    rawPath: [],
-    trustedPath: [],
-    liveRenderPath: [],
-    summaryRenderPath: [],
+    startTimestamp: startedAt,
+    endTimestamp: null,
+    reason,
+    endReason: null,
+    rawPath,
+    rawPoints: rawPath,
+    trustedPath,
+    filteredPoints: trustedPath,
+    liveRenderPath,
+    summaryRenderPath,
+    displayPoints: summaryRenderPath,
   };
 }
 
@@ -153,9 +181,17 @@ function updateFlattenedState(state) {
 function updateQualityStats(state) {
   updateFlattenedState(state);
   state.pathQuality.rawPoints = state.rawPath.length;
+  state.pathQuality.totalRawPoints = state.rawPath.length;
   state.pathQuality.acceptedPoints = state.trustedPath.length;
   state.pathQuality.averageAccuracy = calculateAverageAccuracy(state.trustedPath);
   state.pathQuality.maxAccuracy = calculateMaxAccuracy(state.trustedPath);
+  const rawWithAccuracy = state.rawPath
+    .map((point) => Number(point?.accuracy))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  const poorAccuracyCount = rawWithAccuracy.filter((value) => value > state.preset.maxAccuracyMeters).length;
+  state.pathQuality.poorAccuracyRatio = rawWithAccuracy.length > 0 ? poorAccuracyCount / rawWithAccuracy.length : 0;
+  state.pathQuality.smoothingVersion = TRACKING_SMOOTHING_VERSION;
+  state.pathQuality.filterVersion = TRACKING_FILTER_VERSION;
 }
 
 function getCurrentSegment(state, { create = true, startedAt = Date.now() } = {}) {
@@ -168,10 +204,14 @@ function getCurrentSegment(state, { create = true, startedAt = Date.now() } = {}
   return current;
 }
 
-function beginNewSegment(state, startedAt = Date.now()) {
+function beginNewSegment(state, startedAt = Date.now(), reason = "resume") {
   const current = getCurrentSegment(state, { create: false });
-  if (current && !current.endedAt) current.endedAt = startedAt;
-  const next = createSegment(state.segments.length, startedAt);
+  if (current && !current.endedAt) {
+    current.endedAt = startedAt;
+    current.endTimestamp = startedAt;
+    current.endReason = reason;
+  }
+  const next = createSegment(state.segments.length, startedAt, reason);
   state.segments.push(next);
   state.currentSegmentIndex = state.segments.length - 1;
   state.segmentId = next.index;
@@ -180,16 +220,41 @@ function beginNewSegment(state, startedAt = Date.now()) {
   return next;
 }
 
+function mirrorSegmentAliases(segment) {
+  if (!segment) return segment;
+  segment.rawPoints = segment.rawPath;
+  segment.filteredPoints = segment.trustedPath;
+  segment.displayPoints = segment.summaryRenderPath;
+  segment.startTimestamp = segment.startedAt;
+  segment.endTimestamp = segment.endedAt;
+  return segment;
+}
+
+function shouldStartGpsGapSegment(currentSegment, rawPoint, preset) {
+  const last = currentSegment?.trustedPath?.[currentSegment.trustedPath.length - 1] || null;
+  if (!last || !rawPoint) return false;
+  const timeMs = Number(rawPoint.timestamp) - Number(last.timestamp);
+  if (!Number.isFinite(timeMs) || timeMs <= 0) return false;
+  const distanceMeters = calculateDistanceMeters(last, rawPoint);
+  const gapTimeMs = Number(preset.gpsGapTimeMs || 15000);
+  const gapDistanceMeters = Number(preset.gpsGapDistanceMeters || 80);
+  const minGapDistanceMeters = Number(preset.gpsGapMinDistanceMeters || 8);
+  return (
+    (timeMs > gapTimeMs && distanceMeters >= minGapDistanceMeters) ||
+    (distanceMeters > gapDistanceMeters && timeMs > Math.min(gapTimeMs, 10000))
+  );
+}
+
 function buildSummarySegments(state) {
   return state.segments.map((segment, index) => {
     const segmentIndex = Number.isFinite(Number(segment.index)) ? Number(segment.index) : index;
     const summaryRenderPath = buildSummaryRenderPath(segment.trustedPath || [], { preset: state.preset });
-    return {
+    return mirrorSegmentAliases({
       ...cloneSegment(segment),
       id: String(segment.id || `segment_${segmentIndex}`),
       index: segmentIndex,
       summaryRenderPath: summaryRenderPath.map((point) => normalizePointSegment(point, segmentIndex)),
-    };
+    });
   });
 }
 
@@ -217,18 +282,22 @@ function buildFinishPayload(state, finishOptions = {}) {
     rawPath: clonePath(state.rawPath),
     rawPoints: clonePath(state.rawPath),
     trustedPath: clonePath(state.trustedPath),
+    filteredPoints: clonePath(state.trustedPath),
     liveRenderPath: clonePath(state.liveRenderPath),
     summaryRenderPath,
     renderPath: summaryRenderPath,
     displayPath: summaryRenderPath,
+    displayPoints: summaryRenderPath,
     path: clonePath(state.trustedPath),
     distanceMeters: state.distanceMeters,
     durationMs,
     averageSpeedMps,
     maxSpeedMps,
     pathQuality: quality,
+    gpsQualitySummary: quality,
     lowConfidenceSegments: state.lowConfidenceSegments,
     smoothingVersion: TRACKING_SMOOTHING_VERSION,
+    filterVersion: TRACKING_FILTER_VERSION,
   };
 }
 
@@ -266,8 +335,11 @@ export function createTrackingSession(options = {}) {
       isPaused: state.isPaused,
       segments: state.segments,
       rawPath: state.rawPath,
+      rawPoints: state.rawPath,
       trustedPath: state.trustedPath,
+      filteredPoints: state.trustedPath,
       liveRenderPath: state.liveRenderPath,
+      displayPoints: state.liveRenderPath,
       trustedSegments: getRenderableSegmentPaths(state.segments, "trustedPath"),
       liveRenderSegments: getRenderableSegmentPaths(state.segments, "liveRenderPath"),
       currentPosition: state.currentPosition,
@@ -277,8 +349,10 @@ export function createTrackingSession(options = {}) {
         averageSpeedMps: extra.durationMs > 0 ? state.distanceMeters / (extra.durationMs / 1000) : 0,
       },
       pathQuality: state.pathQuality,
+      gpsQualitySummary: state.pathQuality,
       lowConfidenceSegments: state.lowConfidenceSegments,
       smoothingVersion: TRACKING_SMOOTHING_VERSION,
+      filterVersion: TRACKING_FILTER_VERSION,
     };
   }
 
@@ -297,7 +371,11 @@ export function createTrackingSession(options = {}) {
     if (!state.isRunning || state.isPaused) return snapshot();
     const endedAt = pauseOptions.endedAt || Date.now();
     const current = getCurrentSegment(state, { create: false });
-    if (current && !current.endedAt) current.endedAt = endedAt;
+    if (current && !current.endedAt) {
+      current.endedAt = endedAt;
+      current.endTimestamp = endedAt;
+      current.endReason = "pause";
+    }
     state.isPaused = true;
     state.status = "paused";
     state.smoothedPosition = null;
@@ -313,7 +391,7 @@ export function createTrackingSession(options = {}) {
     state.status = "active";
     const current = getCurrentSegment(state, { create: false });
     if (!current || current.trustedPath.length > 0 || current.rawPath.length > 0 || current.endedAt) {
-      beginNewSegment(state, startedAt);
+      beginNewSegment(state, startedAt, "resume");
     }
     return snapshot();
   }
@@ -365,15 +443,19 @@ export function createTrackingSession(options = {}) {
 
     let currentSegment = getCurrentSegment(state, { create: true, startedAt: rawPoint.timestamp || Date.now() });
     const shouldBreak =
-      processOptions.segmentBreak === true &&
+      ((processOptions.segmentBreak === true) ||
+        shouldStartGpsGapSegment(currentSegment, rawPoint, preset)) &&
       (currentSegment.trustedPath.length > 0 || currentSegment.rawPath.length > 0);
     if (shouldBreak) {
-      currentSegment = beginNewSegment(state, rawPoint.timestamp || Date.now());
+      const breakReason = processOptions.segmentBreak === true ? "resume" : "gps_gap";
+      if (breakReason === "gps_gap") state.pathQuality.gpsGapCount = (state.pathQuality.gpsGapCount || 0) + 1;
+      currentSegment = beginNewSegment(state, rawPoint.timestamp || Date.now(), breakReason);
     }
 
     const segmentIndex = Number.isFinite(Number(currentSegment.index)) ? Number(currentSegment.index) : state.currentSegmentIndex;
     const rawWithSegment = normalizePointSegment(rawPoint, segmentIndex);
     currentSegment.rawPath.push(rawWithSegment);
+    currentSegment.rawPoints = currentSegment.rawPath;
     updateFlattenedState(state);
 
     const filterState = {
@@ -391,6 +473,7 @@ export function createTrackingSession(options = {}) {
       if (verdict.action === TRACKING_FILTER_ACTION.replace_previous && currentSegment.trustedPath.length > 0) {
         currentSegment.trustedPath.pop();
         currentSegment.liveRenderPath = buildLiveRenderPath(currentSegment.trustedPath, { preset });
+        currentSegment.filteredPoints = currentSegment.trustedPath;
         state.pathQuality.rejectedByZigzag += 1;
       }
 
@@ -406,6 +489,7 @@ export function createTrackingSession(options = {}) {
       }
 
       currentSegment.trustedPath.push(acceptedPoint);
+      currentSegment.filteredPoints = currentSegment.trustedPath;
       state.previousSpeedMps = acceptedPoint.calculatedSpeedMps || 0;
       state.maxSpeedMps = Math.max(state.maxSpeedMps, acceptedPoint.calculatedSpeedMps || 0);
       const resetSmoothing = !lastInSegment || shouldBreak || processOptions.segmentBreak === true;
@@ -417,6 +501,7 @@ export function createTrackingSession(options = {}) {
           : currentSegment.trustedPath,
         { preset }
       ).map((point) => normalizePointSegment(point, segmentIndex));
+      currentSegment.displayPoints = currentSegment.liveRenderPath;
       pathChanged = true;
       currentPositionChanged = true;
     } else {
@@ -447,7 +532,10 @@ export function createTrackingSession(options = {}) {
   function finish(finishOptions = {}) {
     if (state.status === "finished") return buildFinishPayload(state, finishOptions);
     const current = getCurrentSegment(state, { create: false });
-    if (current && !current.endedAt) current.endedAt = finishOptions.finishedAt || Date.now();
+    if (current && !current.endedAt) {
+      current.endedAt = finishOptions.finishedAt || Date.now();
+      current.endTimestamp = current.endedAt;
+    }
     state.isRunning = false;
     state.isPaused = false;
     state.status = "finished";

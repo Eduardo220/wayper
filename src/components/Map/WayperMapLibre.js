@@ -8,7 +8,7 @@ import {
   Marker,
 } from "@maplibre/maplibre-react-native";
 import { WayperTheme } from "../../theme/wayperTheme";
-import { beautifyRoutePath } from "../../utils/routeDrawing";
+import { beautifyRoutePath, buildRunLineGeoJson } from "../../services/runTracking";
 import {
   leaderCellsToFeatureCollection,
   territoriesToFeatureCollection,
@@ -680,8 +680,10 @@ function WayperMapLibre({
   location,
   routePath = [],
   routeSegments = [],
+  routeMode = "live",
   replayPath = [],
   replaySegments = [],
+  replayMode = "live",
   zones = [],
   territories = [],
   leaderCells = [],
@@ -724,18 +726,12 @@ function WayperMapLibre({
   const programmaticMoveUntilRef = useRef(0);
 
   const routeCollection = useMemo(
-    () => {
-      if (Array.isArray(routeSegments) && routeSegments.length > 0) {
-        return buildFeatureCollection([
-          buildMultiLineStringFeature(routeSegments, { kind: "route", preserveGeometry: true }),
-        ]);
-      }
-
-      return buildFeatureCollection([
-        buildLineStringFeature(routePath, { kind: "route", preserveGeometry: true }),
-      ]);
-    },
-    [routePath, routeSegments]
+    () => buildRunLineGeoJson(
+      Array.isArray(routeSegments) && routeSegments.length > 0 ? routeSegments : routePath,
+      routeMode,
+      { kind: "route", preserveGeometry: true }
+    ),
+    [routeMode, routePath, routeSegments]
   );
   const routeHeadCollection = useMemo(
     () => buildFeatureCollection([buildPointFeature(pickLastSegmentPoint(routeSegments, routePath), { kind: "route-head" })]),
@@ -752,15 +748,12 @@ function WayperMapLibre({
     return { start, end };
   }, [routeEndCoordinate, routePath, routeSegments, routeStartCoordinate, showRouteEndpoints]);
   const replayCollection = useMemo(
-    () => {
-      if (Array.isArray(replaySegments) && replaySegments.length > 0) {
-        return buildFeatureCollection([
-          buildMultiLineStringFeature(replaySegments, { kind: "replay", preserveGeometry: true }),
-        ]);
-      }
-      return buildFeatureCollection([buildLineStringFeature(replayPath, { kind: "replay", preserveGeometry: true })]);
-    },
-    [replayPath, replaySegments]
+    () => buildRunLineGeoJson(
+      Array.isArray(replaySegments) && replaySegments.length > 0 ? replaySegments : replayPath,
+      replayMode,
+      { kind: "replay", preserveGeometry: true }
+    ),
+    [replayMode, replayPath, replaySegments]
   );
   const replayHeadCollection = useMemo(
     () => buildFeatureCollection([buildPointFeature(pickLastSegmentPoint(replaySegments, replayPath), { kind: "replay-head" })]),
@@ -1150,7 +1143,7 @@ function WayperMapLibre({
               paint={{
                 "line-color": routeColor,
                 "line-blur": 3.5,
-                "line-width": 17,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 10, 15, 15, 18, 20],
                 "line-opacity": 0.28,
               }}
             />
@@ -1164,7 +1157,7 @@ function WayperMapLibre({
               }}
               paint={{
                 "line-color": routeColor,
-                "line-width": 7.5,
+                "line-width": ["interpolate", ["linear"], ["zoom"], 11, 4.5, 15, 7, 18, 9],
                 "line-opacity": 1,
               }}
             />

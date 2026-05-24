@@ -1,6 +1,8 @@
 const PATH_FIELD_CANDIDATES = [
+  "filteredPoints",
   "trustedPath",
   "path",
+  "displayPoints",
   "coords",
   "coordinates",
   "route",

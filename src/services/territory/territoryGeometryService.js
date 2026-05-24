@@ -151,7 +151,7 @@ function sanitizePathSegmentsForTerritory(points = [], options = {}) {
   const rawSegments = explicitSegments
     ? explicitSegments.map((segment) => {
         if (Array.isArray(segment)) return segment;
-        return segment?.trustedPath || segment?.path || segment?.rawPath || [];
+        return segment?.filteredPoints || segment?.trustedPath || segment?.path || segment?.rawPath || [];
       })
     : splitPathBySegment(Array.isArray(points) ? points : []);
 
@@ -560,6 +560,26 @@ function countGeometryPoints(geometry) {
   return 0;
 }
 
+export function applyPolygonSmoothWithFallback(geometry, config = {}) {
+  const normalized = normalizeGeometry(geometry);
+  const smoothIterations = Number(config?.polygonSmoothIterations ?? config?.smoothIterations ?? 0);
+  const smoothFn = config?.smoothFn || turf.polygonSmooth;
+  if (!normalized || typeof smoothFn !== "function" || smoothIterations <= 0) return normalized;
+
+  try {
+    const smoothed = smoothFn(createFeature(normalized), {
+      iterations: Math.min(2, Math.max(1, Math.round(smoothIterations))),
+      mutate: false,
+    });
+    const smoothedGeometry = normalizeGeometry(smoothed?.geometry || smoothed?.features?.[0]?.geometry);
+    return smoothedGeometry && isGeometryRenderable(smoothedGeometry)
+      ? smoothedGeometry
+      : normalized;
+  } catch {
+    return normalized;
+  }
+}
+
 function prepareGeometryFeature(geometry, config) {
   let normalized = normalizeGeometry(geometry);
   if (!normalized) return null;
@@ -583,6 +603,9 @@ function prepareGeometryFeature(geometry, config) {
       feature = createFeature(normalized);
     }
   }
+
+  normalized = applyPolygonSmoothWithFallback(normalized, config);
+  feature = createFeature(normalized);
 
   return feature;
 }
@@ -1053,6 +1076,7 @@ export default {
   isClosedLoop,
   routeToZoneGeometry,
   buildCaptureGeometryFromPath,
+  applyPolygonSmoothWithFallback,
   calculateGeometryAreaM2,
   calculateGeometryBbox,
   calculateGeometryCenter,
