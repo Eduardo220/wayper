@@ -45,6 +45,20 @@ Motivo:
 
 - Clans exigem ranking, convite, moderação, agregados e regras de grupo.
 
+### Território do MVP é progresso individual
+
+Status: aprovada.
+
+Decisão:
+
+- O território no MVP representa progresso individual derivado de atividades válidas.
+- O MVP não define posse global, perda de território, disputa em tempo real ou controle compartilhado de áreas.
+
+Motivo:
+
+- Reduz complexidade de GPS, mapa, Firestore, ranking e anti-cheat.
+- Mantém o foco na validação do ciclo principal: atividade real, rota, XP, resumo e conquista visível.
+
 ## Decisões pendentes
 
 ### Estratégia final de território
@@ -64,6 +78,23 @@ Impactos:
 - Custo do Firestore.
 - Clareza para o usuário.
 - Complexidade de validação.
+
+### Estrutura persistida de território no MVP
+
+Status: pendente.
+
+Opções:
+
+- Salvar apenas resumo territorial na atividade.
+- Criar `territoryClaims` para conquistas individuais.
+- Criar entidades de território compartilhado somente em fase futura.
+
+Impactos:
+
+- Custo de escrita.
+- Facilidade de exibir histórico.
+- Migração para disputa futura.
+- Complexidade de auditoria.
 
 ### Precisão mínima oficial do GPS
 

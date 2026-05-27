@@ -27,13 +27,14 @@ O MVP não deve tentar resolver clans, eventos, disputas complexas ou economia d
 - Histórico de atividades.
 - Perfil básico do usuário.
 - Persistência em Firebase/Firestore.
-- Mecânica inicial de território em formato simples e documentado.
+- Mecânica inicial de território em formato simples, individual e documentado.
 
 ## O que fica fora do MVP
 
 - Clans ou grupos.
 - Ranking global em tempo real.
 - Disputa direta por território.
+- Posse compartilhada ou competitiva de território.
 - Eventos temporários.
 - Feed social.
 - Chat.
@@ -70,7 +71,7 @@ O MVP será considerado bem-sucedido se:
 
 ## Decisão de escopo
 
-O MVP deve favorecer regras simples, rastreáveis e fáceis de explicar. Qualquer feature que aumente muito a complexidade de GPS, mapa, Firestore ou ranking deve ser tratada como proposta futura e registrada em [[10-decisoes-do-projeto]].
+O MVP deve favorecer regras simples, rastreáveis e fáceis de explicar. Território no MVP deve ser progresso individual do usuário, não posse global disputável. Qualquer feature que aumente muito a complexidade de GPS, mapa, Firestore ou ranking deve ser tratada como proposta futura e registrada em [[10-decisoes-do-projeto]].
 
 ## Documentos relacionados
 

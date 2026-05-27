@@ -19,6 +19,17 @@ O Firestore deve persistir:
 
 O modelo deve evitar custo excessivo, principalmente em rotas com muitos pontos GPS.
 
+## MVP mínimo recomendado
+
+Para reduzir risco no MVP, a persistência inicial deve priorizar:
+
+- `users` para perfil e agregados simples.
+- `activities` para resumo, status e auditoria da atividade.
+- Dados de rota salvos de forma controlada, simplificada ou compactada quando necessário.
+- Campo ou estrutura simples para indicar território individual derivado da atividade, se a mecânica inicial exigir.
+
+No MVP, não criar coleções dedicadas para ranking, achievements, clans ou posse competitiva de território sem decisão registrada em [[10-decisoes-do-projeto]].
+
 ## Coleção `users`
 
 Proposta:
@@ -101,7 +112,7 @@ Criar um documento por ponto GPS pode ficar caro. Antes de implementar, avaliar 
 
 ## Coleção `territoryClaims`
 
-Proposta:
+Proposta opcional, caso a estratégia territorial do MVP exija registro separado de conquistas:
 
 `territoryClaims/{claimId}`
 
@@ -119,7 +130,11 @@ Uso:
 
 - Registrar conquistas derivadas de atividades.
 - Permitir histórico de território.
-- Preparar ranking por território.
+- Preparar métricas futuras de território.
+
+Alerta:
+
+Esta coleção não deve ser usada para disputa entre usuários no MVP.
 
 ## Coleção `territories`
 
@@ -156,6 +171,8 @@ Campos possíveis:
 
 Ranking pode ser derivado de `users` no MVP. Uma coleção dedicada só deve existir se houver necessidade real de performance, período ou ordenação específica.
 
+No MVP, a recomendação é não criar coleção dedicada de rankings. Preparar agregados em `users` é suficiente até uma decisão humana aprovar ranking competitivo.
+
 ## Conquistas
 
 Proposta futura:
@@ -172,6 +189,8 @@ Uso:
 - Eventos futuros.
 
 Fica fora do MVP, exceto se houver uma conquista muito simples e diretamente ligada ao onboarding.
+
+No MVP, a recomendação é não criar coleções de conquistas até a regra de conquistas estar definida.
 
 ## Agregados
 

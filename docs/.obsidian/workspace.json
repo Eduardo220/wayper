@@ -1,20 +1,20 @@
 {
   "main": {
-    "id": "76789d6ee3df9731",
+    "id": "9793382a29eb4910",
     "type": "split",
     "children": [
       {
-        "id": "62709647d03a95ab",
+        "id": "398b62ee1ef158c7",
         "type": "tabs",
         "children": [
           {
-            "id": "78f3af34b4467968",
+            "id": "b9eaa9d7c4353f54",
             "type": "leaf",
             "state": {
-              "type": "graph",
+              "type": "empty",
               "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Visualização em gráfico"
+              "icon": "lucide-file",
+              "title": "Nova aba"
             }
           }
         ]
@@ -23,15 +23,15 @@
     "direction": "vertical"
   },
   "left": {
-    "id": "a2d8c92630731796",
+    "id": "cc8e796f81fbbfcf",
     "type": "split",
     "children": [
       {
-        "id": "f4d164e2ab22e41c",
+        "id": "3ccb75c63dbc88df",
         "type": "tabs",
         "children": [
           {
-            "id": "dde1bda0623d83aa",
+            "id": "f21b666f8672f919",
             "type": "leaf",
             "state": {
               "type": "file-explorer",
@@ -44,7 +44,7 @@
             }
           },
           {
-            "id": "3044a9be192b3321",
+            "id": "0b9f5d840776637c",
             "type": "leaf",
             "state": {
               "type": "search",
@@ -61,7 +61,7 @@
             }
           },
           {
-            "id": "a52814aa717c2319",
+            "id": "c08a09bac7f9e1a8",
             "type": "leaf",
             "state": {
               "type": "bookmarks",
@@ -77,15 +77,15 @@
     "width": 300
   },
   "right": {
-    "id": "34e02d14c788acaa",
+    "id": "0c905754ecb5f180",
     "type": "split",
     "children": [
       {
-        "id": "ef57e76f505c6a29",
+        "id": "8ecc0ec4ce2eb508",
         "type": "tabs",
         "children": [
           {
-            "id": "135d66aa810ca719",
+            "id": "2ee25dab74f5c6b9",
             "type": "leaf",
             "state": {
               "type": "backlink",
@@ -103,7 +103,7 @@
             }
           },
           {
-            "id": "8140c5dea768d5cc",
+            "id": "cf6f64b7626dc026",
             "type": "leaf",
             "state": {
               "type": "outgoing-link",
@@ -116,7 +116,7 @@
             }
           },
           {
-            "id": "1b45224fc4d2920d",
+            "id": "a64de1046618fa96",
             "type": "leaf",
             "state": {
               "type": "tag",
@@ -131,7 +131,7 @@
             }
           },
           {
-            "id": "6325691a4ed85789",
+            "id": "82bbfdc5ec5dea88",
             "type": "leaf",
             "state": {
               "type": "all-properties",
@@ -145,7 +145,7 @@
             }
           },
           {
-            "id": "368896810fb7286b",
+            "id": "4a00cf5357d86142",
             "type": "leaf",
             "state": {
               "type": "outline",
@@ -176,9 +176,23 @@
       "bases:Criar nova base": false
     }
   },
-  "active": "78f3af34b4467968",
+  "active": "b9eaa9d7c4353f54",
   "lastOpenFiles": [
-    "00-index.md",
-    "01-visao-geral.md"
+    "wayper/14-glossario.md",
+    "wayper/13-problemas-conhecidos.md",
+    "wayper/12-ideias-futuras.md",
+    "wayper/11-prompts-para-ia.md",
+    "wayper/10-decisoes-do-projeto.md",
+    "wayper/09-arquitetura-tecnica.md",
+    "wayper/08-firebase-firestore.md",
+    "wayper/07-telas-e-fluxos.md",
+    "wayper/06-xp-nivel-ranking.md",
+    "wayper/05-gps-e-validacao.md",
+    "wayper/04-regras-corrida.md",
+    "wayper/03-mecanica-territorios.md",
+    "wayper/02-mvp.md",
+    "wayper/01-visao-geral.md",
+    "wayper/00-index.md",
+    "wayper"
   ]
 }

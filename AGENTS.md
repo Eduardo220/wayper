@@ -5,6 +5,8 @@
 - Sempre leia `docs/wayper/00-index.md` antes de mexer no código.
 - A documentação em `docs/wayper` é a fonte de verdade da Wayper.
 - Se houver conflito entre código, conversa e documentação, trate `docs/wayper` como referência principal e registre a divergência antes de alterar comportamento.
+- Se `docs/wayper` não existir na branch atual, pare e avise ou sincronize apenas os arquivos de documentação necessários antes de implementar.
+- Arquivos `.obsidian` não substituem a documentação Markdown e não devem orientar decisões de produto.
 
 ## Escopo de implementação
 
@@ -12,6 +14,7 @@
 - Consulte `docs/wayper/02-mvp.md` antes de ampliar escopo.
 - Se uma regra estiver ausente, crie uma proposta na documentação antes de implementar.
 - Não transforme proposta em decisão oficial sem atualizar `docs/wayper/10-decisoes-do-projeto.md`.
+- Não implemente posse competitiva de território, clans ou ranking global como parte do MVP sem nova decisão aprovada.
 
 ## Firestore
 

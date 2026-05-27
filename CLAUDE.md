@@ -5,12 +5,14 @@
 - Leia `docs/wayper/00-index.md`.
 - Use `docs/wayper` como memória principal do projeto.
 - Consulte os documentos específicos antes de alterar regras de produto, arquitetura, GPS, mapa, Firestore, XP, ranking ou território.
+- Se `docs/wayper` não existir na branch atual, pare e avise ou sincronize apenas a documentação necessária antes de implementar.
 
 ## Fonte de verdade
 
 - A documentação em `docs/wayper` é a fonte de verdade da Wayper.
 - Não assuma que uma ideia em conversa é decisão oficial.
 - Não transforme proposta em decisão oficial sem atualizar `docs/wayper/10-decisoes-do-projeto.md`.
+- Arquivos `.obsidian` não substituem os documentos Markdown.
 
 ## Propostas e decisões
 
@@ -23,6 +25,7 @@
 - Consulte `docs/wayper/02-mvp.md` antes de implementar features.
 - Não implemente feature fora do MVP sem justificar.
 - Se uma feature futura for necessária como preparação técnica, explique o motivo e documente o impacto.
+- Não trate posse competitiva de território, clans ou ranking global como escopo do MVP sem nova decisão aprovada.
 
 ## Firestore
 

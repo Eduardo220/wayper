@@ -18,6 +18,8 @@ No MVP, a conquista deve seguir uma regra simples:
 6. O resumo mostra distância, duração, XP e conquista.
 7. O Firestore salva a atividade e os dados derivados necessários.
 
+No MVP, esse território deve representar progresso individual do usuário. Ele não deve definir posse global, disputa contra outros usuários ou controle compartilhado de áreas.
+
 ## Regras iniciais
 
 - Somente atividades finalizadas devem gerar conquista permanente.
@@ -27,6 +29,8 @@ No MVP, a conquista deve seguir uma regra simples:
 - A conquista deve ser calculada no encerramento da atividade no MVP.
 - O usuário deve conseguir ver o resultado da conquista no mapa ou no resumo.
 - A regra inicial deve evitar disputa direta entre usuários até que ranking e anti-cheat estejam mais maduros.
+- Nenhum usuário deve perder território no MVP.
+- A mesma rota não deve gerar bônus ilimitado de território novo.
 
 ## Modelo inicial sugerido
 
@@ -37,11 +41,17 @@ Para o MVP, existem duas abordagens possíveis:
 
 A decisão ainda precisa ser validada. Para implementação inicial, a abordagem deve priorizar simplicidade, custo baixo no Firestore e renderização rápida no mapa.
 
+## Contenção para o MVP
+
+Até decisão humana sobre a estratégia final, a implementação deve tratar território como métrica individual derivada da rota validada. A versão inicial pode mostrar progresso territorial no resumo e no mapa, mas não deve criar mecânica de posse pública, disputa em tempo real, clans ou ranking territorial competitivo.
+
+Se a estratégia escolhida exigir entidades persistidas de território, a modelagem deve ser atualizada em [[08-firebase-firestore]] antes da implementação.
+
 ## Pontos em aberto
 
 - Qual tamanho mínimo de território deve ser conquistado?
 - A conquista será por células, polígonos, tiles ou buffer da rota?
-- O território é individual no MVP ou compartilhado entre usuários?
+- Quando o território deve evoluir de progresso individual para modelo compartilhado?
 - O usuário perde território algum dia?
 - Como evitar duplicação de território em rotas repetidas?
 - Qual precisão mínima de GPS deve permitir conquista?
