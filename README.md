@@ -97,3 +97,15 @@ npm install
 
 # Inicie o app
 npm start
+```
+
+---
+
+## Configuracao de ambiente
+
+O Wayper usa variaveis `EXPO_PUBLIC_*` para configuracoes consumidas pelo app Expo. O arquivo `.env.example` e o modelo versionado; o `.env` real fica local e nao deve entrar no git.
+
+Configuracoes principais:
+- `EXPO_PUBLIC_FIREBASE_*`: Firebase client config usada por `src/firebaseConfig.js`.
+- `EXPO_PUBLIC_GOOGLE_*_CLIENT_ID`: client IDs opcionais para login com Google.
+- `WAYPER_ANDROID_DEVICE`, `ANDROID_SERIAL`, `WAYPER_EMULATOR_LAT`, `WAYPER_EMULATOR_LNG`: ajustes locais dos scripts Android/emulador.

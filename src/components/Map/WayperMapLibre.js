@@ -7,8 +7,9 @@ import {
   Layer,
   Marker,
 } from "@maplibre/maplibre-react-native";
+import { RunFinishMarker, RunStartMarker } from "./RunRouteMarkers";
 import { WayperTheme } from "../../theme/wayperTheme";
-import { beautifyRoutePath, buildRunLineGeoJson } from "../../services/runTracking";
+import { beautifyRoutePath, buildRunLineGeoJson, getRunBoundaryPoints } from "../../services/runTracking";
 import {
   leaderCellsToFeatureCollection,
   territoriesToFeatureCollection,
@@ -628,53 +629,6 @@ function pickLastSegmentPoint(segments = [], fallbackPath = []) {
   return Array.isArray(fallbackPath) ? fallbackPath[fallbackPath.length - 1] : null;
 }
 
-function collectRouteEndpointCandidates(segments = [], fallbackPath = []) {
-  const points = [];
-
-  if (Array.isArray(segments)) {
-    for (const segment of segments) {
-      if (Array.isArray(segment)) {
-        points.push(...segment.filter(isValidCoord));
-      }
-    }
-  }
-
-  if (points.length === 0 && Array.isArray(fallbackPath)) {
-    points.push(...fallbackPath.filter(isValidCoord));
-  }
-
-  return points;
-}
-
-function StartMarker() {
-  return (
-    <View collapsable={false} style={styles.startMarker}>
-      <View style={styles.startMarkerCore}>
-        <Text style={styles.startMarkerText}>INICIO</Text>
-      </View>
-    </View>
-  );
-}
-
-function FinishMarker() {
-  return (
-    <View collapsable={false} style={styles.finishMarker}>
-      <View style={styles.finishFlag}>
-        <View style={styles.finishFlagRow}>
-          <View style={styles.finishFlagDark} />
-          <View style={styles.finishFlagLight} />
-        </View>
-        <View style={styles.finishFlagRow}>
-          <View style={styles.finishFlagLight} />
-          <View style={styles.finishFlagDark} />
-        </View>
-      </View>
-      <View style={styles.finishPole} />
-      <View style={styles.finishMarkerBase} />
-    </View>
-  );
-}
-
 function WayperMapLibre({
   style,
   location,
@@ -738,14 +692,20 @@ function WayperMapLibre({
     [routePath, routeSegments]
   );
   const routeEndpoints = useMemo(() => {
-    if (!showRouteEndpoints) return { start: null, end: null };
+    if (!showRouteEndpoints) return { start: null, finish: null };
 
-    const candidates = collectRouteEndpointCandidates(routeSegments, routePath);
-    const start = toLngLat(routeStartCoordinate) || toLngLat(candidates[0]);
-    const end = toLngLat(routeEndCoordinate) || toLngLat(candidates[candidates.length - 1]);
+    const boundary = getRunBoundaryPoints(routeSegments, { fallbackPath: routePath });
+    const startPoint = normalizeCoord(routeStartCoordinate) || boundary.start;
+    const finishPoint = normalizeCoord(routeEndCoordinate) || boundary.finishCandidate;
+    if (!startPoint) return { start: null, finish: null };
 
-    if (!start || !end) return { start: null, end: null };
-    return { start, end };
+    const resolvedBoundary = getRunBoundaryPoints(
+      finishPoint ? [startPoint, finishPoint] : [startPoint]
+    );
+    const start = toLngLat(resolvedBoundary.start);
+    const finish = toLngLat(resolvedBoundary.finish);
+
+    return { start, finish };
   }, [routeEndCoordinate, routePath, routeSegments, routeStartCoordinate, showRouteEndpoints]);
   const replayCollection = useMemo(
     () => buildRunLineGeoJson(
@@ -786,7 +746,8 @@ function WayperMapLibre({
 
   const hasRoute = routeCollection.features.length > 0;
   const hasRouteHead = routeHeadCollection.features.length > 0 && !showUserLocation && !showRouteEndpoints;
-  const hasRouteEndpoints = showRouteEndpoints && Boolean(routeEndpoints.start && routeEndpoints.end);
+  const hasRouteStartMarker = showRouteEndpoints && Boolean(routeEndpoints.start);
+  const hasRouteFinishMarker = showRouteEndpoints && Boolean(routeEndpoints.finish);
   const hasReplay = replayCollection.features.length > 0;
   const hasReplayHead = replayHeadCollection.features.length > 0;
   const hasUserLocation = userLocationCollection.features.length > 0;
@@ -1194,14 +1155,18 @@ function WayperMapLibre({
           </ShapeSource>
         )}
 
-        {hasRouteEndpoints && (
+        {(hasRouteStartMarker || hasRouteFinishMarker) && (
           <>
-            <Marker id="wayper-route-start-marker" lngLat={routeEndpoints.start} anchor="center">
-              <StartMarker />
-            </Marker>
-            <Marker id="wayper-route-finish-marker" lngLat={routeEndpoints.end} anchor="bottom">
-              <FinishMarker />
-            </Marker>
+            {hasRouteStartMarker && (
+              <Marker id="wayper-route-start-marker" lngLat={routeEndpoints.start} anchor="center">
+                <RunStartMarker />
+              </Marker>
+            )}
+            {hasRouteFinishMarker && (
+              <Marker id="wayper-route-finish-marker" lngLat={routeEndpoints.finish} anchor="center">
+                <RunFinishMarker />
+              </Marker>
+            )}
           </>
         )}
 
@@ -1330,76 +1295,5 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
     textAlign: "center",
-  },
-  startMarker: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(0, 230, 118, 0.22)",
-    borderWidth: 2,
-    borderColor: "rgba(236, 255, 246, 0.92)",
-  },
-  startMarkerCore: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: WAYPER_GREEN,
-    borderWidth: 2,
-    borderColor: "#031009",
-  },
-  startMarkerText: {
-    color: "#031009",
-    fontSize: 7,
-    fontWeight: "900",
-  },
-  finishMarker: {
-    width: 42,
-    height: 54,
-    alignItems: "center",
-  },
-  finishFlag: {
-    width: 31,
-    height: 23,
-    marginLeft: 13,
-    borderWidth: 2,
-    borderColor: "#031009",
-    backgroundColor: "#ecfff6",
-  },
-  finishFlagRow: {
-    flex: 1,
-    flexDirection: "row",
-  },
-  finishFlagDark: {
-    flex: 1,
-    backgroundColor: "#031009",
-  },
-  finishFlagLight: {
-    flex: 1,
-    backgroundColor: "#ecfff6",
-  },
-  finishPole: {
-    position: "absolute",
-    left: 12,
-    top: 2,
-    width: 5,
-    height: 43,
-    borderRadius: 2.5,
-    backgroundColor: WAYPER_GREEN,
-    borderWidth: 1,
-    borderColor: "#031009",
-  },
-  finishMarkerBase: {
-    position: "absolute",
-    bottom: 0,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: WAYPER_GREEN,
-    borderWidth: 3,
-    borderColor: "#ecfff6",
   },
 });

@@ -41,7 +41,7 @@ import {
 import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
 import { isRunOwnedByCurrentUser } from "../../utils/runOwnership";
 import { normalizeRunPath } from "../../utils/runPath";
-import { beautifyRoutePath, getRenderablePathForRun, getRenderableSegmentsForRun } from "../../services/runTracking";
+import { beautifyRoutePath, getRenderablePathForRun, getRenderableSegmentsForRun, getRunBoundaryPoints } from "../../services/runTracking";
 
 const MIN_BAR_HEIGHT = 22;
 const CHART_BASE_HEIGHT = 118;
@@ -318,11 +318,16 @@ function RunDetailScreenInner({ route, navigation }) {
     () => (path.length > 1 ? path : mapPath),
     [mapPath, path]
   );
-  const routeStartPoint = !isZoneRun ? routeEndpointPath[0] : null;
-  const routeEndPoint = !isZoneRun ? routeEndpointPath[routeEndpointPath.length - 1] : null;
+  const routeBoundary = useMemo(
+    () => getRunBoundaryPoints(routeEndpointPath),
+    [routeEndpointPath]
+  );
+  const routeStartPoint = routeBoundary.start;
+  const routeEndPoint = routeBoundary.finishCandidate;
+  const showRouteBoundaryMarkers = routeBoundary.hasStart;
   const shareRoutePath = useMemo(
-    () => (hasZoneShape ? [] : routeEndpointPath),
-    [hasZoneShape, routeEndpointPath]
+    () => routeEndpointPath,
+    [routeEndpointPath]
   );
   const shareTracePoints = useMemo(
     () => buildShareSvgPoints(hasZoneShape ? zoneCoords : shareRoutePath, { smooth: false }),
@@ -599,7 +604,7 @@ function RunDetailScreenInner({ route, navigation }) {
               showUserLocation={false}
               interactive={false}
               fitToContent={hasZoneShape || mapPath.length > 1}
-              showRouteEndpoints={!isZoneRun}
+              showRouteEndpoints={showRouteBoundaryMarkers}
               routeStartCoordinate={routeStartPoint}
               routeEndCoordinate={routeEndPoint}
               contentPadding={{ top: 58, right: 48, bottom: 62, left: 48 }}

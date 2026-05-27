@@ -83,6 +83,7 @@ import {
 import xpService from "../services/xp/xpService";
 import { updateProfileStats, updateTerritoryProfileStats } from "../services/profile/profileService";
 import { fetchAllRanking } from "../services/ranking";
+import { MAP_MODE } from "../services/territory/territoryMapMode.js";
 import {
   fetchActiveTerritoriesNear,
   fetchTerritoriesByOwnerId,
@@ -129,6 +130,7 @@ const TERRITORY_VIEWPORT_DEBOUNCE_MS = 950;
 const TERRITORY_INITIAL_BBOX_DELTA = 0.018;
 const TERRITORY_FETCH_LIMIT = 180;
 const TERRITORY_MAX_VIEWPORT_CELLS = 140;
+const SHOW_TERRITORY_GRID_DEBUG = false;
 
 let backgroundLocationUpdateHandler = null;
 
@@ -499,7 +501,7 @@ const MapScreen = ({ navigation, route }) => {
   const [replaying, setReplaying] = useState(false);
   const [mapFollowEnabled, setMapFollowEnabled] = useState(true);
   const [mapRecenterSignal, setMapRecenterSignal] = useState(0);
-  const [showZones] = useState(true);
+  const [mapMode, setMapMode] = useState(MAP_MODE.default);
   const [selectModeVisible, setSelectModeVisible] = useState(false);
   const [counting, setCounting] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -589,11 +591,13 @@ const MapScreen = ({ navigation, route }) => {
   const selectedTerritoryRequestRef = useRef(null);
   const lastRouteFocusRef = useRef(null);
   const watcherStartTokenRef = useRef(0);
+  const zonesLoadRequestRef = useRef(0);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
   const startPressAnim = useRef(new Animated.Value(1)).current;
   const currentUserId = auth.currentUser?.uid || "offline";
+  const areZonesVisible = mapMode === MAP_MODE.zones;
 
   useEffect(() => {
     modeRef.current = mode;
@@ -670,19 +674,22 @@ const MapScreen = ({ navigation, route }) => {
   }, []);
 
   const loadTerritoriesForViewport = useCallback(
-    async ({ bbox, includeCache = false } = {}) => {
+    async ({ bbox, includeCache = false, force = false, requestId = null } = {}) => {
+      if (!force && !areZonesVisible) return;
       const viewportBbox = normalizeTerritoryBbox(bbox) || buildBboxAroundLocation(location);
       if (!viewportBbox) return;
 
       const fetchKey = viewportBbox.map((value) => value.toFixed(5)).join(":");
       if (!includeCache && lastTerritoryFetchRef.current === fetchKey) return;
       lastTerritoryFetchRef.current = fetchKey;
+      const isCurrentRequest = () =>
+        requestId == null || zonesLoadRequestRef.current === requestId;
 
       setTerritoryLoading(true);
       try {
         if (includeCache) {
           const cached = await loadLocalTerritories();
-          if (mountedRef.current && Array.isArray(cached)) {
+          if (mountedRef.current && isCurrentRequest() && Array.isArray(cached)) {
             setTerritories((prev) => {
               const next = mergeTerritoriesForMap([], cached, viewportBbox);
               return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
@@ -693,43 +700,45 @@ const MapScreen = ({ navigation, route }) => {
         const cellIds = getCellIdsForBbox(viewportBbox).slice(0, TERRITORY_MAX_VIEWPORT_CELLS);
         if (cellIds.length === 0) return;
 
-        const [remoteTerritories, viewportLeaderCells] = await Promise.all([
-          fetchActiveTerritoriesNear({
-            bbox: viewportBbox,
-            cellIds,
-            limitTo: TERRITORY_FETCH_LIMIT,
-          }),
-          getLeaderCellsForViewport({ bbox: viewportBbox, cellIds }),
-        ]);
+        const remoteTerritories = await fetchActiveTerritoriesNear({
+          bbox: viewportBbox,
+          cellIds,
+          limitTo: TERRITORY_FETCH_LIMIT,
+        });
 
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || !isCurrentRequest()) return;
 
         setTerritories((prev) => {
           const next = mergeTerritoriesForMap(prev, remoteTerritories, viewportBbox);
           return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
         });
-        setLeaderCells((prev) => {
-          const next = Array.isArray(viewportLeaderCells) ? viewportLeaderCells : [];
-          return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
-        });
+        if (SHOW_TERRITORY_GRID_DEBUG) {
+          const viewportLeaderCells = await getLeaderCellsForViewport({ bbox: viewportBbox, cellIds });
+          if (mountedRef.current && isCurrentRequest()) {
+            setLeaderCells((prev) => {
+              const next = Array.isArray(viewportLeaderCells) ? viewportLeaderCells : [];
+              return listIdentitySignature(prev) === listIdentitySignature(next) ? prev : next;
+            });
+          }
+        }
       } catch (error) {
         lastTerritoryFetchRef.current = null;
         console.warn("[Wayper] territory viewport load failed", error);
       } finally {
-        if (mountedRef.current) setTerritoryLoading(false);
+        if (mountedRef.current && isCurrentRequest()) setTerritoryLoading(false);
       }
     },
-    [location]
+    [areZonesVisible, location]
   );
 
   useEffect(() => {
-    if (!location || initialTerritoryLoadRef.current) return;
+    if (!areZonesVisible || !location || initialTerritoryLoadRef.current) return;
     initialTerritoryLoadRef.current = true;
     loadTerritoriesForViewport({
       bbox: buildBboxAroundLocation(location),
       includeCache: true,
     });
-  }, [loadTerritoriesForViewport, location]);
+  }, [areZonesVisible, loadTerritoriesForViewport, location]);
 
   useEffect(() => {
     return () => {
@@ -742,6 +751,7 @@ const MapScreen = ({ navigation, route }) => {
 
   const handleTerritoryViewportChange = useCallback(
     ({ bbox } = {}) => {
+      if (!areZonesVisible) return;
       const viewportBbox = normalizeTerritoryBbox(bbox);
       if (!viewportBbox) return;
 
@@ -753,12 +763,12 @@ const MapScreen = ({ navigation, route }) => {
         loadTerritoriesForViewport({ bbox: viewportBbox, includeCache: false });
       }, TERRITORY_VIEWPORT_DEBOUNCE_MS);
     },
-    [loadTerritoriesForViewport]
+    [areZonesVisible, loadTerritoriesForViewport]
   );
 
   const handleTerritoryPress = useCallback(
     async (properties = {}) => {
-      if (running || replaying) return;
+      if (!areZonesVisible || running || replaying) return;
       const territoryId = properties?.id ? String(properties.id) : null;
       const fullTerritory = territoryId
         ? territories.find((territory) => String(territory.id) === territoryId)
@@ -782,16 +792,16 @@ const MapScreen = ({ navigation, route }) => {
         console.warn("[Wayper] territory leaderboard load failed", error);
       }
     },
-    [replaying, running, territories]
+    [areZonesVisible, replaying, running, territories]
   );
 
   const handleLeaderCellPress = useCallback(
     (properties = {}) => {
-      if (running || replaying) return;
+      if (!areZonesVisible || running || replaying) return;
       const cellId = properties?.cellId || properties?.id || null;
       navigation?.navigate("Ranking", cellId ? { cellId } : undefined);
     },
-    [navigation, replaying, running]
+    [areZonesVisible, navigation, replaying, running]
   );
 
   useEffect(() => {
@@ -802,6 +812,7 @@ const MapScreen = ({ navigation, route }) => {
     const focusKey = [focusTerritoryId, focusCellId, focusUserId].filter(Boolean).join("|");
 
     if (!focusKey || lastRouteFocusRef.current === focusKey) return;
+    if (!areZonesVisible) return;
 
     const focusedTerritory = territories.find((territory) => {
       if (focusTerritoryId && String(territory.id) === focusTerritoryId) return true;
@@ -826,7 +837,7 @@ const MapScreen = ({ navigation, route }) => {
         setMapFollowEnabled(false);
       }
     }
-  }, [handleTerritoryPress, route?.params, territories]);
+  }, [areZonesVisible, handleTerritoryPress, route?.params, territories]);
 
   const closeSelectedTerritory = useCallback(() => {
     selectedTerritoryRequestRef.current = null;
@@ -834,36 +845,68 @@ const MapScreen = ({ navigation, route }) => {
     setSelectedTerritoryLeaderboard(null);
   }, []);
 
+  const hideTerritoryMode = useCallback(() => {
+    zonesLoadRequestRef.current += 1;
+    if (territoryViewportDebounceRef.current) {
+      clearTimeout(territoryViewportDebounceRef.current);
+      territoryViewportDebounceRef.current = null;
+    }
+    setMapMode(MAP_MODE.default);
+    setZonesPanelVisible(false);
+    setZonesPanelLoading(false);
+    setTerritoryLoading(false);
+    initialTerritoryLoadRef.current = false;
+    lastTerritoryFetchRef.current = null;
+    setSelectedRankingUser(null);
+    setSelectedTerritory(null);
+    setSelectedTerritoryLeaderboard(null);
+    selectedTerritoryRequestRef.current = null;
+    setLeaderCells([]);
+  }, []);
+
   const openZonesPanel = useCallback(async (tab = "mine") => {
+    const requestId = zonesLoadRequestRef.current + 1;
+    zonesLoadRequestRef.current = requestId;
+    setMapMode(MAP_MODE.zones);
     setZonesPanelTab(tab);
     setZonesPanelVisible(true);
     setZonesPanelLoading(true);
+    initialTerritoryLoadRef.current = true;
+    lastTerritoryFetchRef.current = null;
     try {
-      const [cached, ranking] = await Promise.all([
-        loadLocalTerritories(),
+      const [, ranking] = await Promise.all([
+        loadTerritoriesForViewport({
+          bbox: buildBboxAroundLocation(location || DEFAULT_COORD),
+          includeCache: true,
+          force: true,
+          requestId,
+        }),
         fetchAllRanking({ criterion: "area", limitTo: 50 }),
       ]);
-      if (!mountedRef.current) return;
-      setTerritories((prev) => mergeTerritoriesForMap(prev, cached, null));
+      if (!mountedRef.current || zonesLoadRequestRef.current !== requestId) return;
       setZonesRanking(Array.isArray(ranking) ? ranking : []);
     } catch (error) {
       console.warn("[Wayper] zones panel load failed", error);
     } finally {
-      if (mountedRef.current) setZonesPanelLoading(false);
+      if (mountedRef.current && zonesLoadRequestRef.current === requestId) setZonesPanelLoading(false);
     }
-  }, []);
+  }, [loadTerritoriesForViewport, location]);
 
   const focusTerritoryOnMap = useCallback((territory) => {
+    if (!areZonesVisible) return;
     if (!territory) return;
     setSelectedTerritory(territory);
     setMapFocusCenter(territory.center || territory.coordsPreview?.[0] || null);
     setMapFollowEnabled(false);
     setZonesPanelVisible(false);
-  }, []);
+  }, [areZonesVisible]);
 
   const loadRankingUserZones = useCallback(async (user) => {
     const userId = user?.id || user?.userId || user?.ownerId;
     if (!userId) return;
+    const requestId = zonesLoadRequestRef.current + 1;
+    zonesLoadRequestRef.current = requestId;
+    setMapMode(MAP_MODE.zones);
     setZonesPanelLoading(true);
     setSelectedRankingUser(user);
     try {
@@ -872,7 +915,7 @@ const MapScreen = ({ navigation, route }) => {
         status: "active",
         includeLocal: true,
       });
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || zonesLoadRequestRef.current !== requestId) return;
       setTerritories((prev) =>
         mergeTerritoriesForMap(prev, userZones.map((territory) => ({
           ...territory,
@@ -888,7 +931,7 @@ const MapScreen = ({ navigation, route }) => {
     } catch (error) {
       console.warn("[Wayper] ranking user zones load failed", error);
     } finally {
-      if (mountedRef.current) setZonesPanelLoading(false);
+      if (mountedRef.current && zonesLoadRequestRef.current === requestId) setZonesPanelLoading(false);
     }
   }, []);
 
@@ -1589,6 +1632,7 @@ const MapScreen = ({ navigation, route }) => {
         runStatusRef.current = "active";
         setReplaying(false);
         setCaptureResult(null);
+        hideTerritoryMode();
         closeSelectedTerritory();
         currentRunIdRef.current = uid();
         resetTrackingPipeline({ segmentId: 0 });
@@ -1642,7 +1686,7 @@ const MapScreen = ({ navigation, route }) => {
         debug("startRun catch", e);
       }
     },
-    [closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startLocationWatcher]
+    [closeSelectedTerritory, handleLocationUpdate, hideTerritoryMode, resetTrackingPipeline, running, startBackgroundLocationService, startLocationWatcher]
   );
 
   const pauseRun = useCallback(() => {
@@ -2446,8 +2490,8 @@ const MapScreen = ({ navigation, route }) => {
   const safeLocation = location || DEFAULT_COORD;
   const replayCenter = Array.isArray(replayPathState) && replayPathState.length > 0 ? replayPathState[replayPathState.length - 1] : null;
   const mapLocation = replaying && replayCenter ? replayCenter : safeLocation;
-  const activeZonePreview = showZones && running && mode === "zones" && Array.isArray(polygons) ? polygons : [];
-  const finishedZonePreview = showZones && (showRunModal || showSavedModal) && Array.isArray(completedZonePreview) ? completedZonePreview : [];
+  const activeZonePreview = running && mode === "zones" && Array.isArray(polygons) ? polygons : [];
+  const finishedZonePreview = (showRunModal || showSavedModal) && Array.isArray(completedZonePreview) ? completedZonePreview : [];
   const visibleMapZones = finishedZonePreview.length > 0 ? finishedZonePreview : activeZonePreview;
   const liveRoutePath = running || paused ? displayRouteState : routeState;
   const liveRouteSegments = running || paused ? displayRouteSegments : splitPathIntoSegments(liveRoutePath);
@@ -2519,13 +2563,13 @@ const MapScreen = ({ navigation, route }) => {
           replayPath={replayPathState}
           replaySegments={replaySegmentsState}
           zones={visibleMapZones}
-          territories={territories}
-          leaderCells={leaderCells}
-          selectedTerritory={selectedTerritory}
+          territories={areZonesVisible ? territories : []}
+          leaderCells={areZonesVisible && SHOW_TERRITORY_GRID_DEBUG ? leaderCells : []}
+          selectedTerritory={areZonesVisible ? selectedTerritory : null}
           currentUserId={currentUserId}
           showZones={visibleMapZones.length > 0}
-          showTerritories
-          showLeaderAreas
+          showTerritories={areZonesVisible}
+          showLeaderAreas={areZonesVisible && SHOW_TERRITORY_GRID_DEBUG}
           showUserLocation={!replaying}
           followUserLocation={shouldFollowMap || shouldFollowReplay}
           initialZoom={replaying ? REPLAY_FOLLOW_ZOOM : 15}
@@ -2535,9 +2579,9 @@ const MapScreen = ({ navigation, route }) => {
           minCameraMoveIntervalMs={replaying ? REPLAY_CAMERA_MOVE_INTERVAL_MS : MIN_CAMERA_MOVE_INTERVAL_MS}
           recenterSignal={mapRecenterSignal}
           onUserInteraction={handleMapUserInteraction}
-          onTerritoryPress={handleTerritoryPress}
-          onLeaderCellPress={handleLeaderCellPress}
-          onViewportChange={handleTerritoryViewportChange}
+          onTerritoryPress={areZonesVisible ? handleTerritoryPress : undefined}
+          onLeaderCellPress={areZonesVisible && SHOW_TERRITORY_GRID_DEBUG ? handleLeaderCellPress : undefined}
+          onViewportChange={areZonesVisible ? handleTerritoryViewportChange : undefined}
           fitToContent={false}
         />
       </View>
@@ -2554,7 +2598,7 @@ const MapScreen = ({ navigation, route }) => {
         style={styles.mapTopVignette}
       />
 
-      {territoryLoading && !running && !replaying ? (
+      {areZonesVisible && territoryLoading && !running && !replaying ? (
         <View pointerEvents="none" style={styles.territoryLoadingBadge}>
           <ActivityIndicator size="small" color={WayperTheme.colors.primary} />
         </View>
@@ -2684,9 +2728,19 @@ const MapScreen = ({ navigation, route }) => {
             </Animated.View>
           </Animated.View>
 
-          <TouchableOpacity activeOpacity={0.9} style={styles.viewZonesButton} onPress={() => openZonesPanel("mine")}>
-            <Ionicons name="layers-outline" size={20} color={WayperTheme.colors.primary} />
-            <Text style={styles.viewZonesButtonText}>Ver zonas</Text>
+          <TouchableOpacity
+            activeOpacity={0.9}
+            style={[styles.viewZonesButton, areZonesVisible && styles.viewZonesButtonActive]}
+            onPress={areZonesVisible ? hideTerritoryMode : () => openZonesPanel("mine")}
+          >
+            <Ionicons
+              name={areZonesVisible ? "eye-off-outline" : "layers-outline"}
+              size={20}
+              color={areZonesVisible ? WayperTheme.colors.textInverse : WayperTheme.colors.primary}
+            />
+            <Text style={[styles.viewZonesButtonText, areZonesVisible && styles.viewZonesButtonTextActive]}>
+              {areZonesVisible ? "Ocultar zonas" : "Ver zonas"}
+            </Text>
           </TouchableOpacity>
 
         </View>
@@ -2766,7 +2820,7 @@ const MapScreen = ({ navigation, route }) => {
         </View>
       </Modal>
 
-      <Modal visible={zonesPanelVisible} animationType="slide" transparent onRequestClose={() => setZonesPanelVisible(false)}>
+      <Modal visible={areZonesVisible && zonesPanelVisible} animationType="slide" transparent onRequestClose={() => setZonesPanelVisible(false)}>
         <View style={styles.zonesPanelOverlay}>
           <View style={styles.zonesPanel}>
             <View style={styles.zonesPanelHandle} />
@@ -3112,7 +3166,7 @@ const MapScreen = ({ navigation, route }) => {
       />
 
       <TerritoryBottomSheet
-        territory={showRunModal ? null : selectedTerritory}
+        territory={areZonesVisible && !showRunModal ? selectedTerritory : null}
         leaderboard={selectedTerritoryLeaderboard}
         currentUserId={currentUserId}
         onClose={closeSelectedTerritory}
@@ -3755,10 +3809,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
   },
+  viewZonesButtonActive: {
+    backgroundColor: WayperTheme.colors.primary,
+    borderColor: WayperTheme.colors.primaryLight,
+    shadowColor: WayperTheme.colors.primary,
+    shadowOpacity: 0.34,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 8,
+  },
   viewZonesButtonText: {
     color: WayperTheme.colors.text,
     fontSize: 15,
     fontWeight: "900",
+  },
+  viewZonesButtonTextActive: {
+    color: WayperTheme.colors.textInverse,
   },
 
   bottomButtons: { position: "absolute", bottom: 28, left: 22, right: 22, alignItems: "stretch" },

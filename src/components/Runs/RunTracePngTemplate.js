@@ -1,7 +1,8 @@
 import React, { forwardRef, useMemo } from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
-import Svg, { Circle, Defs, LinearGradient, Polygon, Polyline, Stop } from "react-native-svg";
+import Svg, { Defs, LinearGradient, Polygon, Polyline, Stop } from "react-native-svg";
 
+import { SvgRunFinishMarker, SvgRunStartMarker } from "../Map/RunRouteMarkers";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { getRenderableTraceSource } from "../../utils/runShareImage";
 
@@ -110,6 +111,32 @@ const buildTraceSegmentShapes = (segments = [], { padding = 64 } = {}) => {
   );
 };
 
+const parseSvgPoint = (pointText) => {
+  const [x, y] = String(pointText || "").split(",").map(Number);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+};
+
+const getSvgBoundaryPoints = (segmentShapes = [], shapePoints = "") => {
+  const shapes = segmentShapes.length > 0 ? segmentShapes : (shapePoints ? [shapePoints] : []);
+  const firstShape = shapes[0] || "";
+  const lastShape = shapes[shapes.length - 1] || "";
+  const firstTokens = firstShape.split(" ").filter(Boolean);
+  const lastTokens = lastShape.split(" ").filter(Boolean);
+  const start = parseSvgPoint(firstTokens[0]);
+  const finish = parseSvgPoint(lastTokens[lastTokens.length - 1]);
+  if (!start) return null;
+
+  const distance = finish
+    ? Math.hypot(start.x - finish.x, start.y - finish.y)
+    : 0;
+
+  return {
+    start,
+    finish: distance > 3 ? finish : null,
+  };
+};
+
 const Metric = ({ label, value }) => (
   <View style={styles.metric}>
     <Text style={styles.metricValue} numberOfLines={1}>{value}</Text>
@@ -144,6 +171,10 @@ const RunTracePngTemplate = forwardRef(function RunTracePngTemplate(
   const shape = useMemo(
     () => buildTracePoints(source.points, { closed: isZoneShape, padding: isZoneShape ? 86 : 70 }),
     [isZoneShape, source.points]
+  );
+  const routeMarkerPoints = useMemo(
+    () => (!isZoneShape && (shape.hasShape || segmentShapes.length > 0) ? getSvgBoundaryPoints(segmentShapes, shape.points) : null),
+    [isZoneShape, segmentShapes, shape.hasShape, shape.points]
   );
 
   return (
@@ -232,9 +263,21 @@ const RunTracePngTemplate = forwardRef(function RunTracePngTemplate(
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
-                <Circle cx={shape.points.split(" ")[0]?.split(",")?.[0] || 0} cy={shape.points.split(" ")[0]?.split(",")?.[1] || 0} r="22" fill={WayperTheme.colors.primaryLight} />
               </>
             )}
+            {routeMarkerPoints ? (
+              <>
+                <SvgRunStartMarker x={routeMarkerPoints.start.x} y={routeMarkerPoints.start.y} outerRadius={24} innerRadius={13} />
+                {routeMarkerPoints.finish ? (
+                  <SvgRunFinishMarker
+                    x={routeMarkerPoints.finish.x}
+                    y={routeMarkerPoints.finish.y}
+                    radius={29}
+                    clipId="wayperTracePngFinishMarkerClip"
+                  />
+                ) : null}
+              </>
+            ) : null}
           </Svg>
         ) : (
           <View style={styles.emptyTrace}>

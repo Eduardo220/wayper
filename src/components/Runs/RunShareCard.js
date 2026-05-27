@@ -12,7 +12,9 @@ import Svg, {
   Stop,
 } from "react-native-svg";
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../Map/WayperMapLibre";
+import { SvgRunFinishMarker, SvgRunStartMarker } from "../Map/RunRouteMarkers";
 import { WayperTheme } from "../../theme/wayperTheme";
+import { getRunBoundaryPoints } from "../../services/runTracking";
 
 export const RUN_SHARE_CARD_SIZE = {
   card: { width: 1080, height: 1350 },
@@ -169,6 +171,32 @@ const buildSvgSegmentShapes = (segments = [], { width, height, padding = 72 } = 
   );
 };
 
+const parseSvgPoint = (pointText) => {
+  const [x, y] = String(pointText || "").split(",").map(Number);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+};
+
+const getSvgBoundaryPoints = (segmentShapes = [], shapePoints = "") => {
+  const shapes = segmentShapes.length > 0 ? segmentShapes : (shapePoints ? [shapePoints] : []);
+  const firstShape = shapes[0] || "";
+  const lastShape = shapes[shapes.length - 1] || "";
+  const firstTokens = firstShape.split(" ").filter(Boolean);
+  const lastTokens = lastShape.split(" ").filter(Boolean);
+  const start = parseSvgPoint(firstTokens[0]);
+  const finish = parseSvgPoint(lastTokens[lastTokens.length - 1]);
+  if (!start) return null;
+
+  const distance = finish
+    ? Math.hypot(start.x - finish.x, start.y - finish.y)
+    : 0;
+
+  return {
+    start,
+    finish: distance > 3 ? finish : null,
+  };
+};
+
 function Metric({ label, value }) {
   return (
     <View style={styles.metric}>
@@ -200,6 +228,10 @@ function Artwork({ mode, coords, segments = [], isZone }) {
         closed: isZone,
       }),
     [coords, isZone, mode, viewBox.height, viewBox.width]
+  );
+  const routeMarkerPoints = useMemo(
+    () => (!isZone && (shape.hasShape || segmentShapes.length > 0) ? getSvgBoundaryPoints(segmentShapes, shape.points) : null),
+    [isZone, segmentShapes, shape.hasShape, shape.points]
   );
 
   const gradientId = mode === "trace" ? "wayperTraceGradient" : "wayperCardGradient";
@@ -249,6 +281,20 @@ function Artwork({ mode, coords, segments = [], isZone }) {
       ) : (
         <Circle cx={viewBox.width / 2} cy={viewBox.height / 2} r={mode === "trace" ? 42 : 32} fill={WayperTheme.colors.primary} opacity="0.96" />
       )}
+
+      {routeMarkerPoints ? (
+        <>
+          <SvgRunStartMarker x={routeMarkerPoints.start.x} y={routeMarkerPoints.start.y} outerRadius={mode === "trace" ? 18 : 13} innerRadius={mode === "trace" ? 10 : 7} />
+          {routeMarkerPoints.finish ? (
+            <SvgRunFinishMarker
+              x={routeMarkerPoints.finish.x}
+              y={routeMarkerPoints.finish.y}
+              radius={mode === "trace" ? 22 : 16}
+              clipId={`${gradientId}FinishMarkerClip`}
+            />
+          ) : null}
+        </>
+      ) : null}
     </Svg>
   );
 }
@@ -258,8 +304,13 @@ function getArtworkCenter(coords = []) {
   return coords[Math.floor(coords.length / 2)] || coords[0] || WAYPER_FALLBACK_COORD;
 }
 
-function MapArtwork({ coords = [], segments = [], isZone = false, area = "0 m2", mapStyle }) {
+function MapArtwork({ coords = [], routeCoords = [], segments = [], isZone = false, area = "0 m2", mapStyle }) {
   const zones = isZone && coords.length >= 3 ? [{ coords, area }] : [];
+  const endpointPath = routeCoords.length > 0 ? routeCoords : (isZone ? [] : coords);
+  const routeBoundary = useMemo(
+    () => getRunBoundaryPoints(endpointPath.length > 0 ? endpointPath : segments, { fallbackPath: endpointPath }),
+    [endpointPath, segments]
+  );
 
   return (
     <WayperMapLibre
@@ -275,6 +326,9 @@ function MapArtwork({ coords = [], segments = [], isZone = false, area = "0 m2",
       interactive={false}
       fitToContent={coords.length > 1}
       centerCoordinate={getArtworkCenter(coords)}
+      showRouteEndpoints={routeBoundary.hasStart}
+      routeStartCoordinate={routeBoundary.start}
+      routeEndCoordinate={routeBoundary.finishCandidate}
       contentPadding={{ top: 82, right: 78, bottom: 82, left: 78 }}
       mapStyle={mapStyle}
     />
@@ -353,7 +407,7 @@ const RunShareCard = forwardRef(function RunShareCard(
       </View>
 
       <View collapsable={false} style={styles.cardArtwork}>
-        <MapArtwork coords={artworkCoords} segments={segmentCoords} isZone={useZoneShape} area={area} mapStyle={mapStyle} />
+        <MapArtwork coords={artworkCoords} routeCoords={routeCoords} segments={segmentCoords} isZone={useZoneShape} area={area} mapStyle={mapStyle} />
       </View>
 
       <View style={styles.cardInfo}>

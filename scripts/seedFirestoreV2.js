@@ -1,18 +1,9 @@
 // scripts/seedFirestoreV2.js
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, collection, addDoc, Timestamp } from "firebase/firestore";
+import { firebaseClientConfig } from "../src/config/env.js";
 
-// 🔧 CONFIG FIREBASE (cole o seu aqui)
-const firebaseConfig = {
-  apiKey: "IzaSyDMEuHH1fq9qlGL6cfIK6jA9UvqD4YFS6Y",
-  authDomain: "wayper-3ee61.firebaseapp.com",
-  projectId: "wayper-3ee61",
-  storageBucket: "wayper-3ee61.appspot.com",
-  messagingSenderId: "284903184569",
-  appId: "1:284903184569:web:956fb1d235443d002f2368",
-};
-
-const app = initializeApp(firebaseConfig);
+const app = initializeApp(firebaseClientConfig);
 const db = getFirestore(app);
 
 const now = () => Timestamp.fromDate(new Date());

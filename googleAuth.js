@@ -2,6 +2,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import { useEffect } from 'react';
 import { auth } from './src/firebaseConfig';
+import { googleAuthConfig } from './src/config/env';
 import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
 import { createUserIfNotExists } from './src/services/userService';
 
@@ -9,15 +10,31 @@ WebBrowser.maybeCompleteAuthSession();
 
 export function useGoogleAuth() {
   const [request, response, promptAsync] = Google.useAuthRequest({
-    androidClientId: "TEU_CLIENT_ID_ANDROID.apps.googleusercontent.com",
-    iosClientId: "TEU_CLIENT_ID_IOS.apps.googleusercontent.com",
-    expoClientId: "TEU_CLIENT_ID_EXPO.apps.googleusercontent.com",
+    ...(googleAuthConfig.androidClientId
+      ? { androidClientId: googleAuthConfig.androidClientId }
+      : {}),
+    ...(googleAuthConfig.iosClientId
+      ? { iosClientId: googleAuthConfig.iosClientId }
+      : {}),
+    ...(googleAuthConfig.webClientId
+      ? { webClientId: googleAuthConfig.webClientId }
+      : {}),
+    ...(googleAuthConfig.expoClientId
+      ? { expoClientId: googleAuthConfig.expoClientId }
+      : {}),
+    responseType: "id_token",
+    selectAccount: true,
   });
 
   useEffect(() => {
     if (response?.type === "success") {
-      const { id_token } = response.authentication;
-      const credential = GoogleAuthProvider.credential(id_token);
+      const idToken = response.authentication?.idToken
+        || response.authentication?.id_token
+        || response.params?.id_token;
+
+      if (!idToken) return;
+
+      const credential = GoogleAuthProvider.credential(idToken);
 
       signInWithCredential(auth, credential)
         .then(async (userCredential) => {

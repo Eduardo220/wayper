@@ -1,5 +1,6 @@
 import React, { memo, useMemo } from "react";
-import { Circle, Defs, LinearGradient as SvgLinearGradient, Path, Polyline, Stop } from "react-native-svg";
+import { Defs, LinearGradient as SvgLinearGradient, Polyline, Stop } from "react-native-svg";
+import { SvgRunFinishMarker, SvgRunStartMarker } from "../Map/RunRouteMarkers";
 import {
   PreviewSvg,
   buildPointObjects,
@@ -43,16 +44,8 @@ function RoutePreview({ path }) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <Circle cx={start.x} cy={start.y} r="7" fill="#03080B" stroke={previewColors.primary} strokeWidth="4" />
-      <Circle cx={start.x} cy={start.y} r="2.4" fill="#F4F7F5" />
-      <Circle cx={end.x} cy={end.y} r="8" fill={previewColors.primary} />
-      <Path
-        d={`M${end.x - 1} ${end.y - 20} L${end.x - 1} ${end.y + 4} M${end.x + 1} ${end.y - 18} L${end.x + 16} ${end.y - 13} L${end.x + 1} ${end.y - 8} Z`}
-        stroke="#03080B"
-        strokeWidth="3"
-        fill="#F4F7F5"
-        strokeLinejoin="round"
-      />
+      <SvgRunStartMarker x={start.x} y={start.y} outerRadius={7.5} innerRadius={4.2} />
+      <SvgRunFinishMarker x={end.x} y={end.y} radius={10.5} clipId="routePreviewFinishMarkerClip" />
     </PreviewSvg>
   );
 }

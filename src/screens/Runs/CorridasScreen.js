@@ -15,6 +15,7 @@ import {
   loadLocalTerritoryFeed,
   mergeRunsZonesAndTerritoryEvents,
 } from "../../services/territory";
+import { getRunBoundaryPoints } from "../../services/runTracking";
 import sync from "../../utils/sync";
 
 const safeDate = (d) => {
@@ -153,6 +154,7 @@ function CorridasScreen({ navigation }) {
       const distance = item.distance ?? raw.distance ?? raw.totalMeters ?? 0;
       const duration = item.duration ?? raw.duration ?? 0;
       const title = item.title || raw.name || (zoneActivity ? "Captura por zonas" : "Corrida");
+      const routeBoundary = getRunBoundaryPoints(path);
 
       return (
         <Pressable onPress={() => goToRun(raw)} style={styles.cardPressable}>
@@ -178,6 +180,9 @@ function CorridasScreen({ navigation }) {
                   showZones={zoneActivity && zoneCoords.length >= 3}
                   centerCoordinate={center}
                   showUserLocation={false}
+                  showRouteEndpoints={routeBoundary.hasStart}
+                  routeStartCoordinate={routeBoundary.start}
+                  routeEndCoordinate={routeBoundary.finishCandidate}
                   interactive={false}
                   fitToContent
                   contentPadding={{ top: 40, right: 40, bottom: 40, left: 40 }}

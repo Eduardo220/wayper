@@ -15,19 +15,12 @@ import {
   memoryLocalCache,
 } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { firebaseClientConfig } from "./config/env";
 
 // =========================================================================
 //  🔥 CONFIGURAÇÃO OFICIAL DO FIREBASE
 // =========================================================================
-const firebaseConfig = {
-  apiKey: "AIzaSyDMEuHH1fq9qlGL6cfIK6jA9UvqD4YFS6Y",
-  authDomain: "wayper-3ee61.firebaseapp.com",
-  projectId: "wayper-3ee61",
-  storageBucket: "wayper-3ee61.appspot.com",
-  messagingSenderId: "284903184569",
-  appId: "1:284903184569:web:956fb1d235443d002f2368",
-  measurementId: "G-DQLGQ44YBV",
-};
+const firebaseConfig = firebaseClientConfig;
 
 // =========================================================================
 //  🔥 GARANTE QUE O FIREBASE NÃO INICIE 2 VEZES

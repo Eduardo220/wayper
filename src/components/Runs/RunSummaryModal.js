@@ -5,6 +5,7 @@ import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { WPBottomSheet, WPChip, WPInput } from "../ui";
+import { RunFinishMarker } from "../Map/RunRouteMarkers";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { computeTerritoryXP } from "../../services/xp/territoryXp.js";
 import { openAppSettings, requestImageLibraryPermission } from "../../services/permissions";
@@ -207,7 +208,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
           <View style={styles.finishBadgeOuter}>
             <View style={styles.finishBadgeMid}>
               <View style={styles.finishBadgeInner}>
-                <Ionicons name="flag" size={32} color={WayperTheme.colors.primary} />
+                <RunFinishMarker />
               </View>
             </View>
           </View>
