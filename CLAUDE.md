@@ -1,53 +1,86 @@
 # Instruções para Claude Code
 
-## Antes de alterar o projeto
+## Papel
 
-- Leia `docs/wayper/00-index.md`.
-- Use `docs/wayper` como memória principal do projeto.
-- Consulte os documentos específicos antes de alterar regras de produto, arquitetura, GPS, mapa, Firestore, XP, ranking ou território.
-- Se `docs/wayper` não existir na branch atual, pare e avise ou sincronize apenas a documentação necessária antes de implementar.
+Claude Code deve usar `/docs` e `docs/wayper` como memória viva do projeto Wayper. A função é ajudar em produto, engenharia e revisão sem transformar conversa solta em implementação automática.
 
 ## Fonte de verdade
 
-- A documentação em `docs/wayper` é a fonte de verdade da Wayper.
-- Não assuma que uma ideia em conversa é decisão oficial.
-- Não transforme proposta em decisão oficial sem atualizar `docs/wayper/10-decisoes-do-projeto.md`.
+- Leia `docs/wayper/00-index.md` antes de sugerir ou alterar código quando a tarefa envolver produto, regra, arquitetura ou comportamento do app.
+- Use `docs/wayper` como fonte canônica de regras de produto.
+- Use `/docs` como portal operacional de IA, backlog, changelog, revisões e comunicação com o humano.
+- Se houver conflito entre código, conversa e documentação, registre a divergência antes de propor alteração.
 - Arquivos `.obsidian` não substituem os documentos Markdown.
 
-## Propostas e decisões
+## Ordem de leitura mínima
 
-- Registre ideias novas como proposta antes de implementar.
-- Use `docs/wayper/10-decisoes-do-projeto.md` para decisões aprovadas, pendentes e rejeitadas.
-- Use `docs/wayper/12-ideias-futuras.md` para ideias fora do MVP.
+Antes de sugerir código, leia:
 
-## MVP
+1. `docs/00-fontes-do-projeto.md`
+2. `docs/01-visao-do-produto.md`
+3. `docs/02-roadmap.md`
+4. `docs/03-backlog.md`
+5. `docs/04-arquitetura.md`
+6. `docs/10-regras-de-negocio.md`
+7. `docs/14-instrucoes-para-ia.md`
+8. `docs/15-workflow-obsidian-ia.md`
 
-- Consulte `docs/wayper/02-mvp.md` antes de implementar features.
-- Não implemente feature fora do MVP sem justificar.
-- Se uma feature futura for necessária como preparação técnica, explique o motivo e documente o impacto.
-- Não trate posse competitiva de território, clans ou ranking global como escopo do MVP sem nova decisão aprovada.
+Consulte documentos de domínio conforme o impacto:
 
-## Firestore
+- GPS: `docs/wayper/05-gps-e-validacao.md`.
+- Corrida/caminhada: `docs/wayper/04-regras-corrida.md`.
+- Território: `docs/wayper/03-mecanica-territorios.md`.
+- Firestore: `docs/wayper/08-firebase-firestore.md`.
+- XP/ranking: `docs/wayper/06-xp-nivel-ranking.md`.
+- Arquitetura: `docs/wayper/09-arquitetura-tecnica.md`.
 
-- Não crie coleção nova sem atualizar `docs/wayper/08-firebase-firestore.md`.
-- Registre mudanças estruturais no Firestore em `docs/wayper/10-decisoes-do-projeto.md`.
-- Separe proposta de decisão definitiva.
+## Gatilhos formais
+
+Trate estes prefixos como entradas formais do projeto:
+
+- `Ideia Wayper:`
+- `Melhoria Wayper:`
+- `Problema Wayper:`
+- `Feature Wayper:`
+- `Revisão Wayper:`
+- `Implementar Wayper:`
+- `Sincronizar Wayper:`
+
+Para qualquer gatilho, primeiro analise contra a documentação, registre quando necessário e só então proponha próximo passo.
+
+## Aprovação humana
+
+- Claude não deve transformar proposta em implementação sem aprovação humana explícita.
+- Ideias novas devem ir para `docs/16-ideias-de-melhoria.md` ou `docs/17-propostas-pendentes.md`.
+- Decisões técnicas importantes devem ir para `docs/08-decisoes-tecnicas.md`.
+- Bugs e riscos devem ir para `docs/13-bugs-conhecidos.md`.
+- Após mudanças aprovadas, atualize `docs/18-changelog-produto.md` e `docs/19-revisoes-de-implementacao.md`.
+
+## Prioridade de execução
+
+Respeite a prioridade atual registrada no roadmap e backlog:
+
+1. Corrida com GPS confiável.
+2. Histórico de corridas.
+3. Zonas no mapa.
+4. Ranking.
+5. Segurança do Firestore.
+6. UX de permissão de localização.
+
+Não altere essa prioridade sem registrar decisão humana.
 
 ## Impactos obrigatórios
 
-Sempre explique impactos em:
+Toda análise deve considerar:
 
+- Produto.
+- MVP.
 - GPS.
 - Mapa.
 - Firestore.
 - Performance.
-- Experiência do usuário.
-
-## Documentos de referência rápida
-
-- `docs/wayper/03-mecanica-territorios.md` para território.
-- `docs/wayper/04-regras-corrida.md` para caminhada e corrida.
-- `docs/wayper/05-gps-e-validacao.md` para GPS.
-- `docs/wayper/06-xp-nivel-ranking.md` para XP, nível e ranking.
-- `docs/wayper/09-arquitetura-tecnica.md` para arquitetura.
-
+- UX.
+- Arquitetura.
+- Custo.
+- Segurança.
+- Risco de complexidade.

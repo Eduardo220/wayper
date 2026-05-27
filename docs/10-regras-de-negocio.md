@@ -1,5 +1,16 @@
 # Regras de Negócio
 
+## Regras iniciais da Wayper
+
+- Wayper é um app de corrida/caminhada gamificado.
+- GPS real é base do produto.
+- Corrida precisa ser registrada de forma confiável.
+- Zonas dependem de rotas reais.
+- Gamificação não pode prejudicar a precisão da corrida.
+- MVP deve priorizar corrida, mapa, histórico e zonas.
+- Features sociais e cosméticas são secundárias.
+- Mudanças em território, ranking, GPS ou Firestore precisam de proposta e aprovação.
+
 ## Usuário
 
 - Um usuário precisa estar autenticado para registrar corridas.

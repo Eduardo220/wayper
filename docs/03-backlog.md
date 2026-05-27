@@ -9,7 +9,7 @@ Backlog inicial de funcionalidades, melhorias e pendências. Use issues do GitHu
 | Corrida com GPS confiável | Feature | A fazer | Base do produto. |
 | Histórico de corridas | Feature | A fazer | Necessário para progresso do usuário. |
 | Zonas no mapa | Feature | A fazer | Coração da gamificação. |
-| Ranking global | Feature | A fazer | Competição básica. |
+| Ranking | Feature | A fazer | Competição básica; ranking global competitivo depende de decisão específica. |
 | Regras de segurança do Firestore | Segurança | A validar | Não brincar com dado de usuário, por favor. |
 | Tratamento de permissão de localização | UX | A fazer | Usuário nega permissão e o app não pode morrer dramaticamente. |
 
@@ -47,3 +47,24 @@ Backlog inicial de funcionalidades, melhorias e pendências. Use issues do GitHu
 2. Depois, transformar corrida em território.
 3. Depois, ranquear e competir.
 4. Por último, enfeitar.
+
+## Fluxo de entrada com IA
+
+- Novas ideias sugeridas por IA devem primeiro ir para [[16-ideias-de-melhoria]].
+- Propostas concretas que precisam de aprovação devem ir para [[17-propostas-pendentes]].
+- Tarefas aprovadas podem entrar neste backlog principal quando fizerem parte da prioridade do produto.
+- Tarefas técnicas sugeridas pela IA podem ir para [[20-backlog-ia]] antes de virarem backlog principal.
+- Bugs e riscos técnicos devem ser registrados em [[13-bugs-conhecidos]].
+
+## Prioridade atual
+
+A prioridade atual continua sendo:
+
+1. Corrida com GPS confiável.
+2. Histórico de corridas.
+3. Zonas no mapa.
+4. Ranking.
+5. Segurança do Firestore.
+6. UX de permissão de localização.
+
+Não mude essa prioridade principal sem registrar decisão humana em [[08-decisoes-tecnicas]] quando for decisão técnica, e em [[10-decisoes-do-projeto]] quando afetar produto ou MVP.

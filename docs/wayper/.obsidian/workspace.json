@@ -4,11 +4,33 @@
     "type": "split",
     "children": [
       {
-        "id": "62709647d03a95ab",
+        "id": "541128f6e616cded",
         "type": "tabs",
+        "dimension": 66.49746192893402,
         "children": [
           {
-            "id": "78f3af34b4467968",
+            "id": "3017209801f7d578",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "09-arquitetura-tecnica.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "09-arquitetura-tecnica"
+            }
+          }
+        ]
+      },
+      {
+        "id": "909f92cb784cc241",
+        "type": "tabs",
+        "dimension": 33.50253807106599,
+        "children": [
+          {
+            "id": "4d1479fc931edddd",
             "type": "leaf",
             "state": {
               "type": "graph",
@@ -176,9 +198,14 @@
       "bases:Criar nova base": false
     }
   },
-  "active": "78f3af34b4467968",
+  "active": "4d1479fc931edddd",
   "lastOpenFiles": [
-    "00-index.md",
-    "01-visao-geral.md"
+    "09-arquitetura-tecnica.md",
+    "10-decisoes-do-projeto.md",
+    "08-firebase-firestore.md",
+    "03-mecanica-territorios.md",
+    "02-mvp.md",
+    "01-visao-geral.md",
+    "00-index.md"
   ]
 }

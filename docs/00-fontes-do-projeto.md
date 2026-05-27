@@ -11,6 +11,18 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 5. Issues, pull requests e decisões registradas no GitHub.
 6. Conversas e anotações externas, somente quando não contradizem o código ou a documentação.
 
+## Fonte de verdade para IA
+
+Para trabalho com Codex, Claude e outros assistentes, a documentação deve ser tratada como memória viva do projeto.
+
+- `AGENTS.md` é a instrução principal do Codex.
+- `CLAUDE.md` é a instrução principal do Claude Code.
+- [[14-instrucoes-para-ia]] define o comportamento geral dos assistentes.
+- [[15-workflow-obsidian-ia]] define o ciclo de trabalho entre Obsidian, documentação e IA.
+- [[16-ideias-de-melhoria]], [[17-propostas-pendentes]], [[18-changelog-produto]], [[19-revisoes-de-implementacao]] e [[20-backlog-ia]] guardam ideias, propostas, changelog, revisões e backlog sugerido pela IA.
+
+Nota de alinhamento: a lista acima de prioridade descreve fontes de consulta do projeto. Para decisões de produto, regras de negócio e escopo do MVP, `docs/wayper` continua sendo a fonte canônica registrada em [[00-index]].
+
 ## Branches oficiais
 
 | Branch | Uso |
@@ -36,6 +48,13 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 | Testes | `docs/12-guia-de-testes.md` |
 | Bugs conhecidos | `docs/13-bugs-conhecidos.md` |
 | Instruções para IA | `docs/14-instrucoes-para-ia.md` |
+| Workflow Obsidian + IA | `docs/15-workflow-obsidian-ia.md` |
+| Ideias de melhoria | `docs/16-ideias-de-melhoria.md` |
+| Propostas pendentes | `docs/17-propostas-pendentes.md` |
+| Changelog do produto | `docs/18-changelog-produto.md` |
+| Revisões de implementação | `docs/19-revisoes-de-implementacao.md` |
+| Backlog da IA | `docs/20-backlog-ia.md` |
+| Exemplos de comandos para IA | `docs/21-exemplos-de-comandos-ia.md` |
 
 ## Como manter isso útil
 
