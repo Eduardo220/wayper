@@ -8,6 +8,7 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
 import {
   collection,
   writeBatch,
@@ -42,6 +43,12 @@ import { Platform } from "react-native";
 const RUNS_KEY = "runs";
 const ZONES_KEY = "zones";
 const MEDALS_KEY = "medals"; // NEW
+const RUN_SYNC_STATUS = {
+  PENDING: "PENDING",
+  SYNCING: "SYNCING",
+  SYNCED: "SYNCED",
+  FAILED: "FAILED",
+};
 
 const SYNC_DEBOUNCE_MS = 2500;
 const MAX_BATCH_WRITE = 400;
@@ -66,6 +73,7 @@ let debounceMedalsTimer = null;
 let debounceTerritoriesTimer = null;
 let debounceTerritoryEventsTimer = null;
 let autoSyncTimer = null;
+let netInfoUnsubscribe = null;
 
 const RETRY_META_RUNS = "wayper:retry:runs";
 const RETRY_META_ZONES = "wayper:retry:zones";
@@ -99,6 +107,22 @@ const logError = (err, context = {}) => {
     } catch {}
   }
 };
+
+async function hasNetworkConnection() {
+  try {
+    const state = await NetInfo.fetch();
+    return Boolean(state.isConnected && state.isInternetReachable !== false);
+  } catch {
+    return true;
+  }
+}
+
+function getRemoteRunStatus(status) {
+  if (["PENDING_SYNC", "SYNCING", "SYNC_FAILED", "SYNCED"].includes(status)) {
+    return "completed";
+  }
+  return status || "completed";
+}
 
 const uniqueById = (arr = []) => {
   const m = new Map();
@@ -259,6 +283,17 @@ export async function saveLocalRun(run = {}) {
       pausedDurationSeconds: run.pausedDurationSeconds ?? null,
       status: run.status || "completed",
       synced: !!run.synced || false,
+      pendingSync: run.pendingSync !== undefined ? !!run.pendingSync : !run.synced,
+      syncStatus: run.syncStatus || (run.synced ? RUN_SYNC_STATUS.SYNCED : RUN_SYNC_STATUS.PENDING),
+      offlineStatus: run.offlineStatus || run.localStatus || (run.synced ? "SYNCED" : "PENDING_SYNC"),
+      localRunId: run.localRunId || run.id || null,
+      remoteRunId: run.remoteRunId || null,
+      syncAttempts: Number(run.syncAttempts || 0),
+      lastSyncError: run.lastSyncError || null,
+      lastSyncedAt: run.lastSyncedAt || null,
+      schemaVersion: Number(run.schemaVersion || 1),
+      createdAt: run.createdAt || now,
+      updatedAt: now,
       name: run.name || `${run.mode === "zones" ? "Captura por zonas" : "Corrida"} ${new Date(now).toLocaleString()}`,
       effort: Number(run.effort ?? 5),
       notes: run.notes || "",
@@ -635,14 +670,23 @@ export function scheduleZonesSync(delay = SYNC_DEBOUNCE_MS) {
 export async function syncRunsToFirestore() {
   if (isSyncingRuns) return;
   isSyncingRuns = true;
+  let localForFailure = null;
+  const syncingRunIds = new Set();
   try {
     const local = await loadLocalRuns();
+    localForFailure = local;
     if (!Array.isArray(local) || local.length === 0) {
       isSyncingRuns = false;
       return;
     }
 
-    const unsynced = local.filter((r) => !r.synced);
+    const online = await hasNetworkConnection();
+    if (!online) {
+      isSyncingRuns = false;
+      return;
+    }
+
+    const unsynced = local.filter((r) => !r.synced || r.syncStatus !== RUN_SYNC_STATUS.SYNCED);
     if (unsynced.length === 0) {
       isSyncingRuns = false;
       return;
@@ -654,6 +698,15 @@ export async function syncRunsToFirestore() {
     let opsInBatch = 0;
 
     for (const run of unsynced) {
+      if (!run?.id) continue;
+      syncingRunIds.add(String(run.id));
+      run.pendingSync = true;
+      run.syncStatus = RUN_SYNC_STATUS.SYNCING;
+      run.offlineStatus = "SYNCING";
+      run.syncAttempts = Number(run.syncAttempts || 0) + 1;
+      run.lastSyncError = null;
+      run.updatedAt = new Date().toISOString();
+
       const path = sanitizeCoordsArray(run.trustedPath || run.path || []).slice(0, ROUTE_CAP);
       const rawPath = sanitizeCoordsArray(run.rawPoints || run.rawPath || []).slice(0, ROUTE_CAP);
       const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
@@ -706,7 +759,9 @@ export async function syncRunsToFirestore() {
         startedAt: run.startedAt || null,
         endedAt: run.endedAt || run.date || null,
         pausedDurationSeconds: run.pausedDurationSeconds ?? null,
-        status: run.status || "completed",
+        status: getRemoteRunStatus(run.status),
+        localRunId: run.localRunId || run.id,
+        schemaVersion: Number(run.schemaVersion || 1),
         createdAt: Timestamp.now(),
       };
 
@@ -753,8 +808,6 @@ export async function syncRunsToFirestore() {
         }
       }
 
-      run.synced = true;
-
       if (opsInBatch >= MAX_BATCH_WRITE - 4) {
         batches.push(batch);
         batch = writeBatch(db);
@@ -784,6 +837,19 @@ export async function syncRunsToFirestore() {
       }
     }
 
+    const syncedAt = new Date().toISOString();
+    for (const run of unsynced) {
+      if (!run?.id || !syncingRunIds.has(String(run.id))) continue;
+      run.synced = true;
+      run.pendingSync = false;
+      run.syncStatus = RUN_SYNC_STATUS.SYNCED;
+      run.offlineStatus = "SYNCED";
+      run.remoteRunId = run.remoteRunId || run.id;
+      run.lastSyncError = null;
+      run.lastSyncedAt = syncedAt;
+      run.updatedAt = syncedAt;
+    }
+
     for (const item of pendingPostNotifications) {
       try {
         await notifyActivitySubscribers(item);
@@ -796,6 +862,27 @@ export async function syncRunsToFirestore() {
     await _setRetryMeta(RETRY_META_RUNS, { attempts: 0, nextAt: 0 });
   } catch (err) {
     logError(err, { fn: "syncRunsToFirestore" });
+    try {
+      if (Array.isArray(localForFailure) && syncingRunIds.size > 0) {
+        const failedAt = new Date().toISOString();
+        const message = err?.message || String(err);
+        const next = localForFailure.map((run) => {
+          if (!run?.id || !syncingRunIds.has(String(run.id))) return run;
+          return {
+            ...run,
+            synced: false,
+            pendingSync: true,
+            syncStatus: RUN_SYNC_STATUS.FAILED,
+            offlineStatus: "SYNC_FAILED",
+            lastSyncError: message,
+            updatedAt: failedAt,
+          };
+        });
+        await AsyncStorage.setItem(RUNS_KEY, safeStringify(next));
+      }
+    } catch (statusErr) {
+      logError(statusErr, { fn: "syncRunsToFirestore.markFailed" });
+    }
     const meta = (await _getRetryMeta(RETRY_META_RUNS)) || { attempts: 0 };
     const attempts = (meta.attempts || 0) + 1;
     const backoff = Math.min(2 ** attempts * 1000, MAX_BACKOFF_MS);
@@ -1190,6 +1277,14 @@ export async function syncNow() {
 }
 
 export function startAutoSync(intervalMs = AUTO_SYNC_INTERVAL_MS) {
+  if (!netInfoUnsubscribe) {
+    netInfoUnsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) {
+        syncAll().catch((e) => logError(e, { fn: "startAutoSync.netInfo" }));
+      }
+    });
+  }
+
   if (autoSyncTimer) return;
   syncAll().catch((e) => logError(e, { fn: "startAutoSync.initial" }));
   autoSyncTimer = setInterval(() => {
@@ -1198,9 +1293,16 @@ export function startAutoSync(intervalMs = AUTO_SYNC_INTERVAL_MS) {
 }
 
 export function stopAutoSync() {
-  if (!autoSyncTimer) return;
-  clearInterval(autoSyncTimer);
-  autoSyncTimer = null;
+  if (autoSyncTimer) {
+    clearInterval(autoSyncTimer);
+    autoSyncTimer = null;
+  }
+  if (netInfoUnsubscribe) {
+    try {
+      netInfoUnsubscribe();
+    } catch {}
+    netInfoUnsubscribe = null;
+  }
 }
 
 // ----------------- Background sync task handler -----------------

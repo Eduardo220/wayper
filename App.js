@@ -1,6 +1,7 @@
 // APP.JS — WAYPER (CLEAN, STABLE, SEM FIRULA)
 
 import "react-native-reanimated";
+import "./src/services/runTracking/activeRunTrackingService";
 import {
   configureReanimatedLogger,
   ReanimatedLogLevel,

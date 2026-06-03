@@ -15,7 +15,6 @@ import {
   Platform,
 } from "react-native";
 import * as Location from "expo-location";
-import * as TaskManager from "expo-task-manager";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import Svg, {
@@ -42,15 +41,16 @@ import formatTime from "../utils/formatTime";
 import {
   TRACKING_CONFIG,
   buildSummaryRenderPath,
+  calculateActiveRunDurationSeconds,
   calculateRouteDistance,
   createTrackingSession,
+  createTrackingSessionFromSnapshot,
   debugTracking,
   enableNetworkProviderForRun,
   finalizeRoutePath,
   getGpsQualityWarning,
   getRenderablePathForRun,
   getRenderableSegmentsForRun,
-  getRunBackgroundLocationOptions,
   getRunWatchPositionOptions,
   limitPathForRendering,
   normalizeLocation,
@@ -60,6 +60,7 @@ import {
   splitPathIntoSegments,
   warmUpGpsForRun,
 } from "../services/runTracking";
+import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
 import sync from "../utils/sync";
 import {
   assertTraceHasEnoughPoints,
@@ -104,6 +105,17 @@ import {
   openAppSettings,
   requestBackgroundLocationPermission,
 } from "../services/permissions";
+import {
+  ACTIVE_RUN_STATUS,
+  ACTIVE_RUN_SYNC_STATUS,
+  clearActiveRun,
+  createActiveRun,
+  finishActiveRun,
+  loadActiveRun,
+  saveActiveRunSnapshot,
+  shouldRestoreActiveRun,
+  toAppRunMode,
+} from "../services/runOfflineStorageService";
 
 /* Tunáveis */
 const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
@@ -116,7 +128,6 @@ const WAYPER_GREEN = WayperTheme.colors.primary;
 const ROUTE_CAP = 8000;
 const MAX_RUNNING_SPEED_MPS = TRACKING_CONFIG.MAX_HUMAN_SPRINT_SPEED_KMH / 3.6;
 const ZONE_PREVIEW_INTERVAL_MS = 1400;
-const BACKGROUND_LOCATION_TASK = "WAYPER_ACTIVE_RUN_LOCATION";
 const FOLLOW_MAP_ZOOM = 17.2;
 const FOLLOW_ANIMATION_DURATION = 450;
 const REPLAY_FOLLOW_ZOOM = 18.1;
@@ -129,8 +140,6 @@ const TERRITORY_VIEWPORT_DEBOUNCE_MS = 950;
 const TERRITORY_INITIAL_BBOX_DELTA = 0.018;
 const TERRITORY_FETCH_LIMIT = 180;
 const TERRITORY_MAX_VIEWPORT_CELLS = 140;
-
-let backgroundLocationUpdateHandler = null;
 
 const requestReplayAnimationFrame = (callback) => {
   if (typeof globalThis.requestAnimationFrame === "function") {
@@ -149,37 +158,6 @@ const cancelReplayAnimationFrame = (handle) => {
 
   clearTimeout(handle);
 };
-
-try {
-  if (TaskManager && !TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK)) {
-    TaskManager.defineTask(BACKGROUND_LOCATION_TASK, ({ data, error }) => {
-      if (error) {
-        console.warn("[Wayper] background location task failed", error);
-        return;
-      }
-
-      const locations = data?.locations || [];
-      if (!Array.isArray(locations) || !backgroundLocationUpdateHandler) return;
-
-      locations.forEach((loc) => {
-        if (!loc?.coords) return;
-        backgroundLocationUpdateHandler({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-          accuracy: loc.coords.accuracy,
-          speed: loc.coords.speed,
-          heading: loc.coords.heading,
-          altitude: loc.coords.altitude,
-          altitudeAccuracy: loc.coords.altitudeAccuracy,
-          timestamp: loc.timestamp,
-          source: "background",
-        });
-      });
-    });
-  }
-} catch (taskError) {
-  console.warn("[Wayper] could not define background location task", taskError);
-}
 
 const debug = (...args) => {
   // habilite se precisar
@@ -310,6 +288,21 @@ const toFiniteNumber = (value, fallback = null) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 };
+
+const toTimestampMs = (value, fallback = Date.now()) => {
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0) return number;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? fallback : parsed;
+};
+
+const restorePointTimestamp = (point = {}) => ({
+  ...point,
+  timestamp: toTimestampMs(point.timestamp),
+  segmentId: Number.isFinite(Number(point.segmentIndex ?? point.segmentId))
+    ? Number(point.segmentIndex ?? point.segmentId)
+    : 0,
+});
 
 const normalizeTerritoryBbox = (bbox) => {
   if (!Array.isArray(bbox) || bbox.length < 4) return null;
@@ -493,6 +486,7 @@ const MapScreen = ({ navigation, route }) => {
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [locationPermission, setLocationPermission] = useState(null);
   const [runPermissionNoticeVisible, setRunPermissionNoticeVisible] = useState(false);
+  const [recoveryNoticeVisible, setRecoveryNoticeVisible] = useState(false);
 
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -589,6 +583,8 @@ const MapScreen = ({ navigation, route }) => {
   const selectedTerritoryRequestRef = useRef(null);
   const lastRouteFocusRef = useRef(null);
   const watcherStartTokenRef = useRef(0);
+  const activeRunRestoreAttemptedRef = useRef(false);
+  const activeRunPersistLastAtRef = useRef(0);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
@@ -975,6 +971,14 @@ const MapScreen = ({ navigation, route }) => {
 
         appStateSub = AppState.addEventListener("change", (next) => {
           appStateRef.current = next;
+          if (next !== "active" && currentRunIdRef.current) {
+            persistActiveRunSnapshot({
+              status: runStatusRef.current === "paused"
+                ? ACTIVE_RUN_STATUS.PAUSED
+                : ACTIVE_RUN_STATUS.RUNNING,
+              syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+            }, { force: true });
+          }
           if (next === "active" && !runningRef.current) {
             refreshForegroundLocation({ updatePosition: true });
           }
@@ -1005,7 +1009,6 @@ const MapScreen = ({ navigation, route }) => {
       mountedRef.current = false;
       if (flushTimer) clearInterval(flushTimer);
       stopWatcherAndPolling();
-      stopBackgroundLocationService();
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -1023,8 +1026,6 @@ const MapScreen = ({ navigation, route }) => {
       } catch (e) {
         debug("appState remove fail", e);
       }
-      runningRef.current = false;
-      runStatusRef.current = "finished";
     };
   }, [refreshForegroundLocation]); // so uma vez
 
@@ -1173,6 +1174,57 @@ const MapScreen = ({ navigation, route }) => {
     }
   }, [updateActiveZonePreview]);
 
+  const buildActiveRunSnapshot = useCallback((overrides = {}) => {
+    const trackingState = trackingSessionRef.current?.getState?.() || {};
+    const trustedPath = sanitizePath(trackingState.trustedPath || savedPathRef.current || []);
+    const rawPath = sanitizePath(trackingState.rawPath || rawPathRef.current || trustedPath);
+    const segments = sanitizeTrackingSegments(trackingState.segments || []);
+    const durationMs = Math.max(0, Number(timeSecRef.current || 0) * 1000);
+    const distanceMeters = Number(trackingState.stats?.distanceMeters ?? distanceRef.current) || 0;
+    const averageSpeed = durationMs > 0 ? distanceMeters / (durationMs / 1000) : 0;
+    const currentMode = modeRef.current || "free";
+
+    return {
+      localRunId: currentRunIdRef.current,
+      userId: auth.currentUser?.uid || "offline",
+      mode: currentMode === "zones" ? "territory" : "free",
+      status: overrides.status || (runStatusRef.current === "paused" ? ACTIVE_RUN_STATUS.PAUSED : ACTIVE_RUN_STATUS.RUNNING),
+      syncStatus: overrides.syncStatus || ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+      startedAt: trackingSessionRef.current?.state?.startedAt || Date.now(),
+      endedAt: overrides.endedAt,
+      durationMs,
+      movingDurationMs: durationMs,
+      distanceMeters,
+      pace: distanceMeters > 0 && durationMs > 0 ? durationMs / 1000 / (distanceMeters / 1000) : undefined,
+      averageSpeed,
+      maxSpeed: Number(trackingState.stats?.maxSpeedMps || 0),
+      points: trustedPath.map((point) => ({
+        ...point,
+        segmentIndex: Number.isFinite(Number(point.segmentId ?? point.segmentIndex))
+          ? Number(point.segmentId ?? point.segmentIndex)
+          : 0,
+      })),
+      rawPoints: rawPath,
+      segments,
+      territoryData: currentMode === "zones"
+        ? { pendingCalculation: true }
+        : undefined,
+      ...overrides,
+    };
+  }, []);
+
+  const persistActiveRunSnapshot = useCallback((overrides = {}, options = {}) => {
+    if (!currentRunIdRef.current) return;
+    const now = Date.now();
+    if (!options.force && now - activeRunPersistLastAtRef.current < 1400) return;
+    activeRunPersistLastAtRef.current = now;
+
+    const snapshot = buildActiveRunSnapshot(overrides);
+    saveActiveRunSnapshot(snapshot).catch((error) => {
+      debug("persistActiveRunSnapshot failed", error);
+    });
+  }, [buildActiveRunSnapshot]);
+
   /* ===== Core location update ===== */
   const handleLocationUpdate = useCallback(
     (locObj = {}) => {
@@ -1215,6 +1267,15 @@ const MapScreen = ({ navigation, route }) => {
             source: locObj.source,
           });
           return;
+        }
+
+        if (locObj.source !== "background") {
+          activeRunTrackingService.recordLocation?.({
+            ...locObj,
+            source: "foreground",
+          }, { source: "foreground" }).catch((error) => {
+            debug("active run snapshot point failed", error);
+          });
         }
 
         const result = trackingSessionRef.current.processLocationPoint(
@@ -1294,38 +1355,21 @@ const MapScreen = ({ navigation, route }) => {
           setDistanceState(distanceRef.current);
           setGpsQualityWarning(getGpsQualityWarning(gpsSummary));
           updateActiveZonePreview(trustedPath);
+          persistActiveRunSnapshot({
+            status: ACTIVE_RUN_STATUS.RUNNING,
+            syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+          }, { force: true });
         }
       } catch (e) {
         debug("handleLocationUpdate", e);
       }
     },
-    [updateActiveZonePreview]
+    [persistActiveRunSnapshot, updateActiveZonePreview]
   );
-
-  useEffect(() => {
-    const handler = (locObj) => handleLocationUpdate({
-      ...locObj,
-      runSessionId: currentRunIdRef.current,
-    });
-    backgroundLocationUpdateHandler = handler;
-
-    return () => {
-      if (backgroundLocationUpdateHandler === handler) {
-        backgroundLocationUpdateHandler = null;
-      }
-    };
-  }, [handleLocationUpdate]);
 
   const buildRunNotificationBody = useCallback(() => {
     return `Tempo ${formatTime(timeSecRef.current)} - ${(distanceRef.current / 1000).toFixed(2)} km`;
   }, []);
-
-  const getBackgroundLocationOptions = useCallback(
-    (notificationBody) => getRunBackgroundLocationOptions(Location, notificationBody, {
-      notificationColor: WayperTheme.colors.primary,
-    }),
-    []
-  );
 
   const stopBackgroundLocationService = useCallback(async () => {
     try {
@@ -1334,11 +1378,7 @@ const MapScreen = ({ navigation, route }) => {
         backgroundNotificationRef.current = null;
       }
       lastNotificationBodyRef.current = "";
-
-      const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-      if (started) {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-      }
+      await activeRunTrackingService.stopBackgroundLocationUpdates?.({ reason: "map_control" });
     } catch (e) {
       debug("stopBackgroundLocationService", e);
     }
@@ -1350,17 +1390,13 @@ const MapScreen = ({ navigation, route }) => {
         if (!runningRef.current) return;
         const body = buildRunNotificationBody();
         if (!force && body === lastNotificationBodyRef.current) return;
-
-        await Location.startLocationUpdatesAsync(
-          BACKGROUND_LOCATION_TASK,
-          getBackgroundLocationOptions(body)
-        );
+        await activeRunTrackingService.startBackgroundLocationUpdates?.({ force });
         lastNotificationBodyRef.current = body;
       } catch (e) {
         debug("updateBackgroundLocationNotification", e);
       }
     },
-    [buildRunNotificationBody, getBackgroundLocationOptions]
+    [buildRunNotificationBody]
   );
 
   const startBackgroundLocationService = useCallback(async () => {
@@ -1504,6 +1540,134 @@ const MapScreen = ({ navigation, route }) => {
     }
   }, [handleLocationUpdate, stopWatcherAndPolling]);
 
+  const startElapsedTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    const updateElapsed = () => {
+      const next = activeRunTrackingService.getCurrentDurationSeconds?.() || timeSecRef.current || 0;
+      timeSecRef.current = next;
+      setTimeSec(next);
+    };
+
+    updateElapsed();
+    timerRef.current = setInterval(updateElapsed, 1000);
+  }, []);
+
+  const stopElapsedTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const applyActiveRunSnapshotToUi = useCallback((snapshot, options = {}) => {
+    if (!snapshot?.activeRunId) return;
+
+    const status = snapshot.status || ACTIVE_RUN_STATUS.RUNNING;
+    const isPaused = status === ACTIVE_RUN_STATUS.PAUSED;
+    const isLive = status === ACTIVE_RUN_STATUS.RUNNING || isPaused;
+    const session = createTrackingSessionFromSnapshot(snapshot);
+    const trackingState = session.getState?.() || {};
+    const trustedPath = sanitizePath(trackingState.trustedPath || snapshot.trustedPath || snapshot.path || []);
+    const liveSegments = sanitizeSegmentPaths(trackingState.liveRenderSegments || snapshot.routeSegments || snapshot.segments || []);
+    const livePath = limitPathForRendering(
+      liveSegments.length > 0
+        ? flattenSegmentPaths(liveSegments)
+        : sanitizePath(trackingState.liveRenderPath || snapshot.liveRenderPath || trustedPath),
+      TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
+    );
+    const segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
+    const durationSeconds = calculateActiveRunDurationSeconds(snapshot);
+    const distanceMeters = Number(snapshot.distanceMeters ?? snapshot.distance ?? trackingState.stats?.distanceMeters ?? 0) || 0;
+
+    trackingSessionRef.current = session;
+    currentRunIdRef.current = snapshot.activeRunId;
+    modeRef.current = snapshot.mode || "free";
+    runningRef.current = status === ACTIVE_RUN_STATUS.RUNNING;
+    runStatusRef.current = status === ACTIVE_RUN_STATUS.RUNNING ? "active" : isPaused ? "paused" : "idle";
+    rawPathRef.current = sanitizePath(snapshot.rawPath || snapshot.rawPoints || trustedPath);
+    savedPathRef.current = trustedPath;
+    routeStateRef.current = trustedPath;
+    displayPathRef.current = livePath;
+    displaySegmentsRef.current = segmentSnapshot;
+    distanceRef.current = distanceMeters;
+    timeSecRef.current = durationSeconds;
+    lastAcceptedLocationRef.current = trustedPath[trustedPath.length - 1] || null;
+    lastPointRef.current = lastAcceptedLocationRef.current;
+    lastSmoothedLocationRef.current = snapshot.currentLocation || livePath[livePath.length - 1] || null;
+
+    setRunning(isLive);
+    setPaused(isPaused);
+    setMode(snapshot.mode || "free");
+    setReplaying(false);
+    setRouteState(limitPathForRendering(trustedPath, ROUTE_CAP));
+    setDisplayRouteState(livePath);
+    setDisplayRouteSegments(segmentSnapshot);
+    setDistanceState(distanceMeters);
+    setTimeSec(durationSeconds);
+    if (snapshot.currentLocation) setLocation(snapshot.currentLocation);
+    setGpsQualityWarning(getGpsQualityWarning(snapshot.gpsQualitySummary || snapshot.pathQuality));
+
+    if (status === ACTIVE_RUN_STATUS.RUNNING) startElapsedTimer();
+    else stopElapsedTimer();
+
+    if (options.recovered) {
+      setRecoveryNoticeVisible(true);
+      setTimeout(() => {
+        if (mountedRef.current) setRecoveryNoticeVisible(false);
+      }, 6500);
+    }
+  }, [startElapsedTimer, stopElapsedTimer]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unsubscribe = activeRunTrackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
+      if (!snapshot || !mountedRef.current) return;
+      if (event === "active_snapshot_cleared" || event === "run_cancelled") return;
+      applyActiveRunSnapshotToUi(snapshot, { recovered: event === "run_restored" });
+    });
+
+    (async () => {
+      try {
+        const recovered = await activeRunTrackingService.restoreActiveRun?.({ restartTracking: true });
+        if (cancelled || !recovered) return;
+        activeRunRestoreAttemptedRef.current = true;
+        applyActiveRunSnapshotToUi(recovered, { recovered: true });
+        if (recovered.status === ACTIVE_RUN_STATUS.FINISHED) {
+          const restoredRunData = await activeRunTrackingService.buildFinishedRunData?.({
+            status: "completed",
+          });
+          if (restoredRunData) {
+            const restoredMode =
+              restoredRunData.mode === "territory" || restoredRunData.mode === "zones"
+                ? "zones"
+                : "free";
+            modeRef.current = restoredMode;
+            setMode(restoredMode);
+            setCurrentRunData(restoredRunData);
+            setShowRunModal(true);
+          }
+          return;
+        }
+        if (recovered.status === ACTIVE_RUN_STATUS.RUNNING) {
+          await startLocationWatcher();
+        }
+      } catch (error) {
+        debug("restore active run failed", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      try {
+        unsubscribe?.();
+      } catch {}
+    };
+  }, [applyActiveRunSnapshotToUi, startLocationWatcher]);
+
   /* ===== Start / Pause / Stop run ===== */
   const startWithCountdown = useCallback(
     async (selectedMode = "free") => {
@@ -1514,6 +1678,27 @@ const MapScreen = ({ navigation, route }) => {
       if (!permission.granted) {
         setRunPermissionNoticeVisible(true);
         return;
+      }
+      if (Platform.OS !== "web") {
+        const currentBackground = await checkBackgroundLocationPermission();
+        const background = currentBackground.granted
+          ? currentBackground
+          : await requestBackgroundLocationPermission();
+
+        if (!background.granted) {
+          setRunPermissionNoticeVisible(true);
+          Alert.alert(
+            "Localizacao em segundo plano",
+            "Para salvar sua corrida com a tela bloqueada, permita localizacao em segundo plano antes de iniciar.",
+            background.canAskAgain
+              ? undefined
+              : [
+                  { text: "Agora nao", style: "cancel" },
+                  { text: "Abrir configuracoes", onPress: openAppSettings },
+                ]
+          );
+          return;
+        }
       }
       setRunPermissionNoticeVisible(false);
       await refreshForegroundLocation({ updatePosition: true });
@@ -1590,9 +1775,11 @@ const MapScreen = ({ navigation, route }) => {
         setReplaying(false);
         setCaptureResult(null);
         closeSelectedTerritory();
-        currentRunIdRef.current = uid();
+        const startedAtMs = Date.now();
+        const runId = uid();
+        currentRunIdRef.current = runId;
         resetTrackingPipeline({ segmentId: 0 });
-        trackingSessionRef.current?.start?.({ startedAt: Date.now() });
+        trackingSessionRef.current?.start?.({ startedAt: startedAtMs });
         setPolygons([]);
         setCompletedZonePreview([]);
         distanceRef.current = 0;
@@ -1601,18 +1788,34 @@ const MapScreen = ({ navigation, route }) => {
         timeSecRef.current = 0;
         setTimeSec(0);
         debugTracking("session_started", { runSessionId: currentRunIdRef.current, mode: selectedMode });
-
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-        timerRef.current = setInterval(() => {
-          setTimeSec((t) => {
-            const next = t + 1;
-            timeSecRef.current = next;
-            return next;
+        try {
+          const activeSnapshot = await activeRunTrackingService.startActiveRun?.({
+            activeRunId: runId,
+            userId: auth.currentUser?.uid || "offline",
+            mode: selectedMode,
+            startedAtMs,
           });
-        }, 1000);
+          if (activeSnapshot?.activeRunId) {
+            currentRunIdRef.current = activeSnapshot.activeRunId;
+          }
+        } catch (activeRunError) {
+          debug("startActiveRun service failed", activeRunError);
+        }
+        try {
+          await createActiveRun({
+            localRunId: currentRunIdRef.current,
+            userId: auth.currentUser?.uid || "offline",
+            mode: selectedMode === "zones" ? "territory" : "free",
+            startedAt: startedAtMs,
+            status: ACTIVE_RUN_STATUS.RUNNING,
+            syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+          });
+          activeRunPersistLastAtRef.current = Date.now();
+        } catch (storageError) {
+          debug("createActiveRun failed", storageError);
+        }
+
+        startElapsedTimer();
 
         let pos = null;
         try {
@@ -1642,7 +1845,7 @@ const MapScreen = ({ navigation, route }) => {
         debug("startRun catch", e);
       }
     },
-    [closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startLocationWatcher]
+    [closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]
   );
 
   const pauseRun = useCallback(() => {
@@ -1653,19 +1856,22 @@ const MapScreen = ({ navigation, route }) => {
     setPaused(true);
     flushRouteBufferToState();
     trackingSessionRef.current?.pause?.({ endedAt: Date.now() });
+    persistActiveRunSnapshot({
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+    }, { force: true });
     debugTracking("session_paused", {
       runSessionId: currentRunIdRef.current,
       segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
       distanceMeters: distanceRef.current,
     });
+    activeRunTrackingService.pauseActiveRun?.({ endedAtMs: Date.now() }).catch((error) => {
+      debug("pauseActiveRun service failed", error);
+    });
     stopWatcherAndPolling();
     stopBackgroundLocationService();
-
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }, [flushRouteBufferToState, paused, running, stopBackgroundLocationService, stopWatcherAndPolling]);
+    stopElapsedTimer();
+  }, [flushRouteBufferToState, paused, persistActiveRunSnapshot, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
 
   const resumeRun = useCallback(async () => {
     if (!running || !paused) return;
@@ -1691,18 +1897,13 @@ const MapScreen = ({ navigation, route }) => {
         segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
         nextSegmentStartsOnFirstAcceptedPoint: true,
       });
+      persistActiveRunSnapshot({
+        status: ACTIVE_RUN_STATUS.RUNNING,
+        syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+      }, { force: true });
+      await activeRunTrackingService.resumeActiveRun?.({ startedAtMs: Date.now() });
 
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      timerRef.current = setInterval(() => {
-        setTimeSec((t) => {
-          const next = t + 1;
-          timeSecRef.current = next;
-          return next;
-        });
-      }, 1000);
+      startElapsedTimer();
 
       try {
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest, timeout: 7000 });
@@ -1729,7 +1930,7 @@ const MapScreen = ({ navigation, route }) => {
     } catch (e) {
       debug("resumeRun catch", e);
     }
-  }, [paused, running, startBackgroundLocationService, startLocationWatcher]);
+  }, [paused, persistActiveRunSnapshot, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]);
 
   const fadeOutRoute = useCallback(() => {
     return new Promise((resolve) => {
@@ -1777,34 +1978,36 @@ const MapScreen = ({ navigation, route }) => {
 
         stopWatcherAndPolling();
         stopBackgroundLocationService();
-
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
+        stopElapsedTimer();
 
         flushRouteBufferToState();
 
-        const totalDuration = timeSecRef.current || timeSec;
+        const finishedAtMs = Date.now();
+        const activeFinalSnapshot = await activeRunTrackingService.finishActiveRun?.({ finishedAtMs });
+        const totalDuration = Number(activeFinalSnapshot?.durationSeconds || timeSecRef.current || timeSec || 0);
         const trackingFinish = trackingSessionRef.current?.finishTrackingSession?.({
           durationMs: totalDuration * 1000,
+          finishedAt: finishedAtMs,
         });
         lastTrackingFinishRef.current = trackingFinish || null;
 
-        const sanitizedPath = sanitizePath(trackingFinish?.trustedPath || savedPathRef.current);
+        const snapshotPath = sanitizePath(activeFinalSnapshot?.trustedPath || activeFinalSnapshot?.path || []);
+        const sanitizedPath = snapshotPath.length > 0 ? snapshotPath : sanitizePath(trackingFinish?.trustedPath || savedPathRef.current);
         const fallbackPoint = location || DEFAULT_COORD;
         const rawPath = sanitizedPath.length > 0 ? sanitizedPath : sanitizePath([fallbackPoint]);
         const path = rawPath;
         const summaryRenderPath = sanitizePath(
+          activeFinalSnapshot?.renderPath ||
+          activeFinalSnapshot?.summaryRenderPath ||
           trackingFinish?.summaryRenderPath ||
           trackingFinish?.renderPath ||
           (path.length > 1 ? buildSummaryRenderPath(path) : path)
         );
-        const routeDistance = Number(trackingFinish?.distanceMeters || 0) || calculateRouteDistance(path);
+        const routeDistance = Number(activeFinalSnapshot?.distanceMeters || trackingFinish?.distanceMeters || 0) || calculateRouteDistance(path);
         const totalDistance = routeDistance > 0 ? routeDistance : distanceRef.current;
         const stoppedRunSessionId = currentRunIdRef.current;
         const runId = stoppedRunSessionId || uid();
-        const finishedAt = new Date().toISOString();
+        const finishedAt = new Date(finishedAtMs).toISOString();
         const avgSpeedKmh = totalDistance && totalDuration
           ? Number(((totalDistance / 1000) / (totalDuration / 3600)).toFixed(2))
           : 0;
@@ -1812,22 +2015,22 @@ const MapScreen = ({ navigation, route }) => {
 
         const runData = {
           id: runId,
-          segments: sanitizeTrackingSegments(trackingFinish?.segments || []),
-          routeSegments: sanitizeTrackingSegments(trackingFinish?.segments || []),
+          segments: sanitizeTrackingSegments(activeFinalSnapshot?.segments || trackingFinish?.segments || []),
+          routeSegments: sanitizeTrackingSegments(activeFinalSnapshot?.routeSegments || activeFinalSnapshot?.segments || trackingFinish?.segments || []),
           path,
           trustedPath: path,
           filteredPoints: path,
-          rawPath: sanitizePath(trackingFinish?.rawPath || rawPath),
-          rawPoints: sanitizePath(trackingFinish?.rawPath || rawPath),
-          liveRenderPath: sanitizePath(trackingFinish?.liveRenderPath || displayPathRef.current || []),
+          rawPath: sanitizePath(activeFinalSnapshot?.rawPath || trackingFinish?.rawPath || rawPath),
+          rawPoints: sanitizePath(activeFinalSnapshot?.rawPath || trackingFinish?.rawPath || rawPath),
+          liveRenderPath: sanitizePath(activeFinalSnapshot?.liveRenderPath || trackingFinish?.liveRenderPath || displayPathRef.current || []),
           renderPath: summaryRenderPath,
           displayPath: summaryRenderPath,
           displayPoints: summaryRenderPath,
-          pathQuality: trackingFinish?.pathQuality || null,
-          gpsQualitySummary: trackingFinish?.gpsQualitySummary || trackingFinish?.pathQuality || null,
-          lowConfidenceSegments: trackingFinish?.lowConfidenceSegments || [],
-          smoothingVersion: trackingFinish?.smoothingVersion || "wayper_tracking_v2",
-          filterVersion: trackingFinish?.filterVersion || trackingFinish?.pathQuality?.filterVersion || "wayper_gps_filter_v2",
+          pathQuality: activeFinalSnapshot?.pathQuality || trackingFinish?.pathQuality || null,
+          gpsQualitySummary: activeFinalSnapshot?.gpsQualitySummary || trackingFinish?.gpsQualitySummary || trackingFinish?.pathQuality || null,
+          lowConfidenceSegments: activeFinalSnapshot?.lowConfidenceSegments || trackingFinish?.lowConfidenceSegments || [],
+          smoothingVersion: activeFinalSnapshot?.smoothingVersion || trackingFinish?.smoothingVersion || "wayper_tracking_v2",
+          filterVersion: activeFinalSnapshot?.filterVersion || trackingFinish?.filterVersion || trackingFinish?.pathQuality?.filterVersion || "wayper_gps_filter_v2",
           distance: totalDistance,
           distanceMeters: totalDistance,
           duration: totalDuration,
@@ -1835,7 +2038,7 @@ const MapScreen = ({ navigation, route }) => {
           avgSpeed: avgSpeedKmh,
           maxSpeed: maxSpeedKmh,
           date: finishedAt,
-          startedAt: trackingSessionRef.current?.state?.startedAt || null,
+          startedAt: activeFinalSnapshot?.startedAt || trackingSessionRef.current?.state?.startedAt || null,
           endedAt: finishedAt,
           pausedDurationSeconds: null,
           status: "completed",
@@ -1861,6 +2064,8 @@ const MapScreen = ({ navigation, route }) => {
               durationSeconds: totalDuration,
               visibility: "followers",
               createdAt: finishedAt,
+              existingTerritories: territories,
+              persistRemote: false,
             });
 
             setCaptureResult(result);
@@ -1927,6 +2132,34 @@ const MapScreen = ({ navigation, route }) => {
           setCaptureResult(null);
         }
 
+        try {
+          await finishActiveRun(runData, {
+            userId: auth.currentUser?.uid || "offline",
+            status: ACTIVE_RUN_STATUS.FINISHED,
+            syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+          });
+        } catch (storageError) {
+          debug("finishActiveRun failed", storageError);
+        }
+
+        let savedLocalRun = null;
+        try {
+          savedLocalRun = await sync.saveLocalRun?.({
+            ...runData,
+            synced: false,
+            pendingSync: true,
+            syncStatus: ACTIVE_RUN_SYNC_STATUS.PENDING,
+            offlineStatus: "PENDING_SYNC",
+          });
+          sync.scheduleRunsSync?.();
+          if (savedLocalRun?.id === runData.id) {
+            await activeRunTrackingService.markActiveRunLocallySaved?.();
+            await clearActiveRun();
+          }
+        } catch (saveLocalError) {
+          debug("final local run save failed; keeping active snapshot", saveLocalError);
+        }
+
         await fadeOutRoute();
         resetRunVisuals();
         setCompletedZonePreview(
@@ -1943,7 +2176,19 @@ const MapScreen = ({ navigation, route }) => {
             : []
         );
 
-        setCurrentRunData(runData);
+        setCurrentRunData(savedLocalRun?.id === runData.id ? savedLocalRun : runData);
+        if (savedLocalRun?.id === runData.id) {
+          setRunsList((prev) => {
+            const seen = new Set();
+            return [savedLocalRun, ...(Array.isArray(prev) ? prev : [])].filter((item) => {
+              if (!item) return false;
+              const key = item.zoneId ? `zone:${item.zoneId}` : `run:${item.id || item.date}`;
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+          });
+        }
         setShowRunModal(true);
         debugTracking("session_stopped", {
           runSessionId: stoppedRunSessionId,
@@ -1960,8 +2205,232 @@ const MapScreen = ({ navigation, route }) => {
         debug("stopRun catch", e);
       }
     },
-    [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopWatcherAndPolling, flushRouteBufferToState, mode]
+    [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, flushRouteBufferToState, mode, territories]
   );
+
+  const buildRunDataFromOfflineRun = useCallback((offlineRun = {}) => {
+    const points = sanitizePath((offlineRun.points || []).map(restorePointTimestamp));
+    const finalRunData = offlineRun.finalRunData || {};
+    const path = sanitizePath(finalRunData.trustedPath || finalRunData.path || points);
+    const renderPath = sanitizePath(
+      finalRunData.renderPath ||
+      finalRunData.displayPath ||
+      (path.length > 1 ? buildSummaryRenderPath(path) : path)
+    );
+    const endedAt = offlineRun.endedAt || finalRunData.endedAt || new Date().toISOString();
+    const durationSeconds = Math.round(Number(offlineRun.durationMs || 0) / 1000);
+
+    return {
+      ...finalRunData,
+      id: finalRunData.id || offlineRun.localRunId,
+      localRunId: offlineRun.localRunId,
+      userId: offlineRun.userId || auth.currentUser?.uid || "offline",
+      mode: finalRunData.mode || toAppRunMode(offlineRun.mode),
+      path,
+      trustedPath: path,
+      filteredPoints: path,
+      rawPath: sanitizePath(finalRunData.rawPath || finalRunData.rawPoints || points),
+      rawPoints: sanitizePath(finalRunData.rawPoints || finalRunData.rawPath || points),
+      renderPath,
+      displayPath: renderPath,
+      displayPoints: renderPath,
+      segments: sanitizeTrackingSegments(finalRunData.segments || finalRunData.routeSegments || offlineRun.segments || []),
+      routeSegments: sanitizeTrackingSegments(finalRunData.routeSegments || finalRunData.segments || offlineRun.segments || []),
+      distance: Number(finalRunData.distance ?? finalRunData.distanceMeters ?? offlineRun.distanceMeters ?? 0),
+      distanceMeters: Number(finalRunData.distanceMeters ?? finalRunData.distance ?? offlineRun.distanceMeters ?? 0),
+      duration: Number(finalRunData.duration ?? finalRunData.durationSeconds ?? durationSeconds),
+      durationSeconds: Number(finalRunData.durationSeconds ?? finalRunData.duration ?? durationSeconds),
+      avgSpeed: Number(finalRunData.avgSpeed ?? offlineRun.averageSpeed ?? 0),
+      maxSpeed: Number(finalRunData.maxSpeed ?? offlineRun.maxSpeed ?? 0),
+      date: finalRunData.date || endedAt,
+      startedAt: finalRunData.startedAt || offlineRun.startedAt || null,
+      endedAt,
+      status: finalRunData.status || "completed",
+      synced: false,
+      syncStatus: ACTIVE_RUN_SYNC_STATUS.PENDING,
+      offlineStatus: "PENDING_SYNC",
+      schemaVersion: offlineRun.schemaVersion || 1,
+    };
+  }, []);
+
+  const hydrateTrackingSessionFromOfflineRun = useCallback((offlineRun = {}) => {
+    const startedAt = toTimestampMs(offlineRun.startedAt);
+    const points = sanitizePath((offlineRun.points || []).map(restorePointTimestamp));
+    const session = createTrackingSession({ mode: "run", startedAt, autoStart: false });
+    session.start({ startedAt });
+
+    let previousSegmentIndex = null;
+    points.forEach((point, index) => {
+      const segmentIndex = Number.isFinite(Number(point.segmentId ?? point.segmentIndex))
+        ? Number(point.segmentId ?? point.segmentIndex)
+        : 0;
+      session.processLocationPoint(
+        {
+          ...point,
+          segmentId: segmentIndex,
+          source: "restore",
+        },
+        {
+          segmentBreak: index > 0 && previousSegmentIndex !== segmentIndex,
+        }
+      );
+      previousSegmentIndex = segmentIndex;
+    });
+
+    if (offlineRun.status === ACTIVE_RUN_STATUS.PAUSED) {
+      session.pause({ endedAt: Date.now() });
+    }
+
+    trackingSessionRef.current = session;
+    const trackingState = session.getState();
+    const trustedPath = sanitizePath(trackingState.trustedPath || points);
+    const liveSegments = sanitizeSegmentPaths(trackingState.liveRenderSegments || []);
+    const displaySnapshot = limitPathForRendering(
+      liveSegments.length > 0
+        ? flattenSegmentPaths(liveSegments)
+        : sanitizePath(trackingState.liveRenderPath || trustedPath),
+      TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
+    );
+    const segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(displaySnapshot);
+
+    savedPathRef.current = trustedPath;
+    routeStateRef.current = trustedPath;
+    rawPathRef.current = sanitizePath(trackingState.rawPath || points);
+    displayPathRef.current = displaySnapshot;
+    displaySegmentsRef.current = segmentSnapshot;
+    distanceRef.current = Number(offlineRun.distanceMeters || trackingState.stats?.distanceMeters || 0);
+    lastAcceptedLocationRef.current = trustedPath[trustedPath.length - 1] || null;
+    lastPointRef.current = lastAcceptedLocationRef.current;
+    lastSmoothedLocationRef.current = displaySnapshot[displaySnapshot.length - 1] || lastAcceptedLocationRef.current;
+    currentSegmentIdRef.current = Number(lastAcceptedLocationRef.current?.segmentId || previousSegmentIndex || 0);
+
+    setRouteState(limitPathForRendering(trustedPath, ROUTE_CAP));
+    setDisplayRouteState(displaySnapshot);
+    setDisplayRouteSegments(segmentSnapshot);
+    setDistanceState(distanceRef.current);
+    if (lastSmoothedLocationRef.current) setLocation(lastSmoothedLocationRef.current);
+    setGpsQualityWarning(getGpsQualityWarning(trackingState.gpsQualitySummary || trackingState.pathQuality));
+  }, []);
+
+  useEffect(() => {
+    if (loading || activeRunRestoreAttemptedRef.current) return;
+    activeRunRestoreAttemptedRef.current = true;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const offlineRun = await loadActiveRun();
+        if (cancelled || !shouldRestoreActiveRun(offlineRun)) return;
+
+        const currentUid = auth.currentUser?.uid || "offline";
+        if (offlineRun.userId && offlineRun.userId !== "offline" && offlineRun.userId !== currentUid) {
+          return;
+        }
+
+        const finishedStatuses = [
+          ACTIVE_RUN_STATUS.FINISHED,
+          ACTIVE_RUN_STATUS.PENDING_SYNC,
+          ACTIVE_RUN_STATUS.SYNC_FAILED,
+        ];
+
+        if (finishedStatuses.includes(offlineRun.status)) {
+          const restoredRunData = buildRunDataFromOfflineRun(offlineRun);
+          setMode(restoredRunData.mode || "free");
+          modeRef.current = restoredRunData.mode || "free";
+          setCurrentRunData(restoredRunData);
+          setShowRunModal(true);
+          hydrateTrackingSessionFromOfflineRun(offlineRun);
+          timeSecRef.current = Math.round(Number(offlineRun.durationMs || 0) / 1000);
+          setTimeSec(timeSecRef.current);
+          return;
+        }
+
+        const restoredMode = toAppRunMode(offlineRun.mode);
+        const pausedRun = offlineRun.status === ACTIVE_RUN_STATUS.PAUSED;
+        const restoredDurationSeconds = Math.max(
+          0,
+          Math.round(Number(offlineRun.durationMs || 0) / 1000) +
+            (pausedRun ? 0 : Math.max(0, Math.round((Date.now() - toTimestampMs(offlineRun.updatedAt)) / 1000)))
+        );
+
+        currentRunIdRef.current = offlineRun.localRunId;
+        modeRef.current = restoredMode;
+        setMode(restoredMode);
+        setRunning(true);
+        setPaused(pausedRun);
+        runningRef.current = !pausedRun;
+        runStatusRef.current = pausedRun ? "paused" : "active";
+        timeSecRef.current = restoredDurationSeconds;
+        setTimeSec(restoredDurationSeconds);
+        setReplaying(false);
+        setCaptureResult(null);
+        activeRunPersistLastAtRef.current = 0;
+        hydrateTrackingSessionFromOfflineRun(offlineRun);
+        persistActiveRunSnapshot({
+          status: pausedRun ? ACTIVE_RUN_STATUS.PAUSED : ACTIVE_RUN_STATUS.RUNNING,
+          durationMs: restoredDurationSeconds * 1000,
+        }, { force: true });
+        try {
+          const restoredPoints = sanitizePath((offlineRun.points || []).map(restorePointTimestamp));
+          await activeRunTrackingService.startActiveRun?.({
+            activeRunId: offlineRun.localRunId,
+            userId: offlineRun.userId || auth.currentUser?.uid || "offline",
+            mode: restoredMode,
+            startedAtMs: toTimestampMs(offlineRun.startedAt),
+            meta: { migratedFromLegacySnapshot: true },
+          });
+          for (const point of restoredPoints) {
+            await activeRunTrackingService.recordLocation?.({
+              ...point,
+              source: "restore",
+            }, { source: "restore" });
+          }
+          if (pausedRun) {
+            await activeRunTrackingService.pauseActiveRun?.({ endedAtMs: Date.now(), source: "restore" });
+          }
+        } catch (migrationError) {
+          debug("legacy active run migration failed", migrationError);
+        }
+
+        if (!pausedRun) {
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          timerRef.current = setInterval(() => {
+            const baseSeconds = Math.max(0, Math.round(Number(offlineRun.durationMs || 0) / 1000));
+            const resumedSinceSeconds = Math.max(0, Math.round((Date.now() - toTimestampMs(offlineRun.updatedAt)) / 1000));
+            const next = baseSeconds + resumedSinceSeconds;
+            timeSecRef.current = next;
+            setTimeSec(next);
+            if (next % 5 === 0) {
+              persistActiveRunSnapshot({
+                status: ACTIVE_RUN_STATUS.RUNNING,
+                syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+                durationMs: next * 1000,
+              });
+            }
+          }, 1000);
+
+          await startLocationWatcher();
+          await startBackgroundLocationService();
+        }
+      } catch (error) {
+        debug("restore offline run failed", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    buildRunDataFromOfflineRun,
+    hydrateTrackingSessionFromOfflineRun,
+    loading,
+    persistActiveRunSnapshot,
+    startBackgroundLocationService,
+    startLocationWatcher,
+  ]);
 
   /* ============ Replay ============ */
   const clearReplayPlayback = useCallback(() => {
@@ -2553,6 +3022,13 @@ const MapScreen = ({ navigation, route }) => {
         colors={["rgba(3,7,11,0.42)", "rgba(3,7,11,0)"]}
         style={styles.mapTopVignette}
       />
+
+      {recoveryNoticeVisible && running ? (
+        <View pointerEvents="none" style={styles.recoveryBanner}>
+          <Ionicons name="checkmark-circle" size={17} color={WayperTheme.colors.primary} />
+          <Text style={styles.recoveryBannerText}>Corrida recuperada. Continuamos salvando seu trajeto.</Text>
+        </View>
+      ) : null}
 
       {territoryLoading && !running && !replaying ? (
         <View pointerEvents="none" style={styles.territoryLoadingBadge}>
@@ -3154,6 +3630,11 @@ const MapScreen = ({ navigation, route }) => {
               lowConfidenceSegments: payload.lowConfidenceSegments || currentRunData?.lowConfidenceSegments || [],
               smoothingVersion: payload.smoothingVersion || currentRunData?.smoothingVersion || "wayper_tracking_v2",
               filterVersion: payload.filterVersion || currentRunData?.filterVersion || payload.pathQuality?.filterVersion || "wayper_gps_filter_v2",
+              synced: false,
+              syncStatus: ACTIVE_RUN_SYNC_STATUS.PENDING,
+              offlineStatus: "PENDING_SYNC",
+              localRunId: payload.localRunId || currentRunData?.localRunId || payload.id || currentRunData?.id,
+              schemaVersion: 1,
             };
 
             if (normalized.mode === "zones" && normalized.zoneId && normalized.color) {
@@ -3192,6 +3673,10 @@ const MapScreen = ({ navigation, route }) => {
 
             const saved = await sync.saveLocalRun?.(normalized);
             sync.scheduleRunsSync?.();
+            if (saved?.id && String(saved.id) === String(normalized.id)) {
+              await activeRunTrackingService.markActiveRunLocallySaved?.();
+              await clearActiveRun();
+            }
 
             setRunsList((prev) => {
               const seen = new Set();
@@ -3467,6 +3952,27 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     height: 120,
+  },
+  recoveryBanner: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    top: 18,
+    minHeight: 44,
+    borderRadius: WayperTheme.radius.pill,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(8, 16, 24, 0.9)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  recoveryBannerText: {
+    flex: 1,
+    color: WayperTheme.colors.text,
+    fontSize: 12,
+    fontWeight: "800",
   },
   territoryLoadingBadge: {
     position: "absolute",

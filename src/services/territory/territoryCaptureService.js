@@ -198,6 +198,7 @@ export async function processRunTerritoryCapture({
   createdAt = new Date().toISOString(),
   existingTerritories = null,
   persist = true,
+  persistRemote = true,
 } = {}) {
   const runContext = createRunContext({
     userId,
@@ -497,6 +498,7 @@ export async function processRunTerritoryCapture({
       const leaderboardResult = await recalculateLeaderboardsForCells(impactedCellIds, {
         territories: leaderboardTerritories,
         persist,
+        persistRemote,
         updatedAt: createdAt,
       });
       localLeaderboardUpdates = leaderboardResult.updates || [];
@@ -565,7 +567,7 @@ export async function processRunTerritoryCapture({
         conqueredTerritories,
         becameLeaderInCells,
         distanceMeters,
-        persist,
+        persist: persist && persistRemote,
         updatedAt: createdAt,
       });
     } catch (statsError) {

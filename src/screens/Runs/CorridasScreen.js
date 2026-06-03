@@ -40,6 +40,14 @@ const formatDuration = (seconds) => {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 };
 
+const getRunSyncBadge = (run = {}) => {
+  const status = run.syncStatus || (run.synced ? "SYNCED" : "PENDING");
+  if (status === "SYNCED") return null;
+  if (status === "SYNCING") return { label: "Sincronizando", icon: "sync-outline", accent: "cyan" };
+  if (status === "FAILED") return { label: "Falha no sync", icon: "warning-outline", accent: "danger" };
+  return { label: "Pendente de sync", icon: "cloud-upload-outline", accent: "green" };
+};
+
 const getZoneCoords = (item = {}) => {
   if (Array.isArray(item.coordsPreview)) return item.coordsPreview;
   if (Array.isArray(item.zoneCoords)) return item.zoneCoords;
@@ -153,6 +161,7 @@ function CorridasScreen({ navigation }) {
       const distance = item.distance ?? raw.distance ?? raw.totalMeters ?? 0;
       const duration = item.duration ?? raw.duration ?? 0;
       const title = item.title || raw.name || (zoneActivity ? "Captura por zonas" : "Corrida");
+      const syncBadge = getRunSyncBadge(raw);
 
       return (
         <Pressable onPress={() => goToRun(raw)} style={styles.cardPressable}>
@@ -200,7 +209,29 @@ function CorridasScreen({ navigation }) {
 
             <View style={styles.footerRow}>
               <Text style={styles.tagText}>{zoneActivity ? `${zoneCoords.length || 0} pontos capturados` : raw.tags?.slice(0, 2).join(", ") || "Sem tags"}</Text>
-              <Ionicons name="arrow-forward-circle" size={24} color={zoneActivity ? WayperTheme.colors.cyan : WayperTheme.colors.primary} />
+              <View style={styles.footerActions}>
+                {syncBadge ? (
+                  <View style={[
+                    styles.syncBadge,
+                    syncBadge.accent === "danger" && styles.syncBadgeDanger,
+                    syncBadge.accent === "cyan" && styles.syncBadgeCyan,
+                  ]}>
+                    <Ionicons
+                      name={syncBadge.icon}
+                      size={13}
+                      color={syncBadge.accent === "danger" ? WayperTheme.colors.danger : syncBadge.accent === "cyan" ? WayperTheme.colors.cyan : WayperTheme.colors.primary}
+                    />
+                    <Text style={[
+                      styles.syncBadgeText,
+                      syncBadge.accent === "danger" && styles.syncBadgeTextDanger,
+                      syncBadge.accent === "cyan" && styles.syncBadgeTextCyan,
+                    ]}>
+                      {syncBadge.label}
+                    </Text>
+                  </View>
+                ) : null}
+                <Ionicons name="arrow-forward-circle" size={24} color={zoneActivity ? WayperTheme.colors.cyan : WayperTheme.colors.primary} />
+              </View>
             </View>
           </WPCard>
         </Pressable>
@@ -395,10 +426,47 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginTop: WayperTheme.spacing.lg,
+    gap: WayperTheme.spacing.sm,
+  },
+  footerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.sm,
   },
   tagText: {
     ...WayperTheme.typography.caption,
     color: WayperTheme.colors.textMuted,
+    flex: 1,
+  },
+  syncBadge: {
+    minHeight: 28,
+    borderRadius: WayperTheme.radius.pill,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    paddingHorizontal: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  syncBadgeCyan: {
+    borderColor: WayperTheme.colors.cyanBorder,
+    backgroundColor: "rgba(56, 217, 255, 0.10)",
+  },
+  syncBadgeDanger: {
+    borderColor: WayperTheme.colors.dangerBorder,
+    backgroundColor: WayperTheme.colors.dangerSoft,
+  },
+  syncBadgeText: {
+    color: WayperTheme.colors.primary,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  syncBadgeTextCyan: {
+    color: WayperTheme.colors.cyan,
+  },
+  syncBadgeTextDanger: {
+    color: WayperTheme.colors.danger,
   },
   empty: {
     padding: WayperTheme.spacing.xxl,

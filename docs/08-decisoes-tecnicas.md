@@ -57,3 +57,16 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Mudanças passam primeiro por `develop`.
 - `main` deve receber apenas versões estáveis.
 - Pull requests para `main` devem ser mais criteriosos.
+
+## ADR-006: Persistir corrida ativa localmente antes do Firestore
+
+**Status:** aceito
+**Contexto:** a Wayper precisa garantir que uma corrida nao seja perdida por perda de internet, fechamento do app ou falha durante a atividade. O projeto ja usa AsyncStorage em servicos de perfil, sync, zonas e territorio, e a rota salva ja possui limites de pontos para historico e renderizacao.
+**Decisao:** a corrida ativa deve ter uma camada local propria (`runOfflineStorageService`) como fonte de verdade durante a atividade. A sincronizacao com Firestore acontece somente apos a corrida ser finalizada e salva localmente, com status de sync pendente ate o envio remoto concluir.
+**Consequencias:**
+
+- GPS, pausa, retomada, tempo, distancia e desenho da rota deixam de depender de Firestore durante a corrida.
+- Corridas finalizadas offline aparecem no historico local como pendentes de sincronizacao.
+- O app pode restaurar uma corrida ativa ou finalizada nao salva ao reabrir.
+- AsyncStorage continua aceitavel nesta etapa por ser padrao atual do projeto e por usar limites de pontos; se atividades longas excederem esse volume, migrar a camada para SQLite/Expo SQLite.
+- O Firestore recebe dados depois, por fila e sincronizacao automatica quando a conexao voltar.

@@ -151,6 +151,77 @@ function calculateMaxSpeed(path = []) {
   return maxSpeedMps;
 }
 
+function getSnapshotStatus(snapshot = {}) {
+  const rawStatus = String(snapshot.status || "").toLowerCase();
+  if (rawStatus === "running" || rawStatus === "active") return "active";
+  if (rawStatus === "paused") return "paused";
+  if (rawStatus === "finished" || rawStatus === "completed") return "finished";
+  if (rawStatus === "cancelled" || rawStatus === "canceled") return "cancelled";
+  return "active";
+}
+
+function getSnapshotSegments(snapshot = {}) {
+  const sourceSegments = Array.isArray(snapshot.segments)
+    ? snapshot.segments
+    : Array.isArray(snapshot.routeSegments)
+      ? snapshot.routeSegments
+      : [];
+
+  if (sourceSegments.length > 0) {
+    return sourceSegments.map((segment, index) => {
+      const cloned = cloneSegment({
+        ...segment,
+        id: segment?.id || `segment_${index}`,
+        index: Number.isFinite(Number(segment?.index ?? segment?.segmentId)) ? Number(segment.index ?? segment.segmentId) : index,
+        rawPath: segment?.rawPath || segment?.rawPoints || [],
+        trustedPath: segment?.trustedPath || segment?.filteredPoints || segment?.path || [],
+        liveRenderPath: segment?.liveRenderPath || segment?.displayPoints || segment?.summaryRenderPath || [],
+        summaryRenderPath: segment?.summaryRenderPath || segment?.displayPoints || segment?.renderPath || [],
+      });
+      return mirrorSegmentAliases(cloned);
+    });
+  }
+
+  const trustedPath = clonePath(snapshot.trustedPath || snapshot.filteredPoints || snapshot.points || snapshot.path || []);
+  const rawPath = clonePath(snapshot.rawPath || snapshot.rawPoints || trustedPath);
+  const liveRenderPath = clonePath(snapshot.liveRenderPath || snapshot.displayPoints || snapshot.displayPath || trustedPath);
+  const summaryRenderPath = clonePath(snapshot.summaryRenderPath || snapshot.renderPath || snapshot.displayPath || liveRenderPath);
+  if (rawPath.length === 0 && trustedPath.length === 0 && liveRenderPath.length === 0) return [];
+
+  return [
+    mirrorSegmentAliases({
+      ...createSegment(0, Number(snapshot.startedAtMs || snapshot.startedAt) || Date.now()),
+      rawPath: rawPath.map((point) => normalizePointSegment(point, 0)),
+      trustedPath: trustedPath.map((point) => normalizePointSegment(point, 0)),
+      liveRenderPath: liveRenderPath.map((point) => normalizePointSegment(point, 0)),
+      summaryRenderPath: summaryRenderPath.map((point) => normalizePointSegment(point, 0)),
+    }),
+  ];
+}
+
+function hydrateStateFromSnapshot(state, snapshot = {}) {
+  const status = getSnapshotStatus(snapshot);
+  const segments = getSnapshotSegments(snapshot);
+  state.startedAt = Number(snapshot.startedAtMs || snapshot.startedAt || state.startedAt || Date.now());
+  state.status = status === "cancelled" ? "finished" : status;
+  state.isRunning = status === "active";
+  state.isPaused = status === "paused";
+  state.segments = segments;
+  state.currentSegmentIndex = Math.max(segments.length - 1, -1);
+  state.pathQuality = {
+    ...emptyQuality(),
+    ...(snapshot.pathQuality || snapshot.gpsQualitySummary || {}),
+  };
+  state.lowConfidenceSegments = Array.isArray(snapshot.lowConfidenceSegments) ? snapshot.lowConfidenceSegments : [];
+  updateQualityStats(state);
+  state.currentPosition = clonePoint(snapshot.currentLocation || state.trustedPath[state.trustedPath.length - 1] || null);
+  state.smoothedPosition = clonePoint(state.currentPosition);
+  state.maxSpeedMps = Number(snapshot.maxSpeedMps ?? snapshot.stats?.maxSpeedMps ?? calculateMaxSpeed(state.trustedPath)) || 0;
+  const lastPoint = state.trustedPath[state.trustedPath.length - 1] || null;
+  state.previousSpeedMps = Number(lastPoint?.calculatedSpeedMps || lastPoint?.speed || 0) || 0;
+  state.segmentId = Number.isFinite(Number(segments[segments.length - 1]?.index)) ? Number(segments[segments.length - 1].index) : 0;
+}
+
 function incrementRejectCounter(pathQuality, reason) {
   pathQuality.rejectedPoints += 1;
   const key = reasonCounterMap[reason];
@@ -326,6 +397,10 @@ export function createTrackingSession(options = {}) {
     lowConfidenceSegments: [],
     lastResult: null,
   };
+
+  if (options.snapshot) {
+    hydrateStateFromSnapshot(state, options.snapshot);
+  }
 
   function snapshot(extra = {}) {
     updateFlattenedState(state);

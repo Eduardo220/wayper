@@ -32,8 +32,8 @@ export function getRunBackgroundLocationOptions(Location, notificationBody, over
     pausesUpdatesAutomatically: false,
     activityType: Location?.ActivityType?.Fitness,
     foregroundService: {
-      notificationTitle: "Wayper - corrida em andamento",
-      notificationBody,
+      notificationTitle: "Wayper registrando corrida",
+      notificationBody: notificationBody || "Sua corrida esta sendo salva mesmo com a tela bloqueada.",
       notificationColor,
       killServiceOnDestroy: false,
     },
