@@ -8,13 +8,22 @@ import {
 } from "react-native-reanimated";
 
 import React, { useEffect, useState } from "react";
-import { LogBox, View, ActivityIndicator, Image, StyleSheet, Text } from "react-native";
+import { LogBox, View, ActivityIndicator, Image, StyleSheet, Text, Linking } from "react-native";
 import ErrorBoundary from "./src/components/ErrorBoundary";
-import { installGlobalRunErrorHandlers } from "./src/services/run/runAutoSaveService.js";
+import {
+  installGlobalRunErrorHandlers,
+  startActiveRunAutoCheckpointing,
+  stopActiveRunAutoCheckpointing,
+} from "./src/services/run/runAutoSaveService.js";
 import {
   startRunNotificationCoordinator,
   stopRunNotificationCoordinator,
 } from "./src/services/run/runNotificationService.js";
+import {
+  flushPendingNavigation,
+  handleNavigationUrl,
+  navigationRef,
+} from "./src/navigation/rootNavigation.js";
 
 // ===============================
 // NAVIGATION
@@ -103,11 +112,37 @@ export default function App() {
 
   useEffect(() => {
     installGlobalRunErrorHandlers();
+    startActiveRunAutoCheckpointing();
     startRunNotificationCoordinator();
     return () => {
       stopRunNotificationCoordinator();
+      stopActiveRunAutoCheckpointing();
     };
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    Linking.getInitialURL()
+      .then((url) => {
+        if (mounted) handleNavigationUrl(url);
+      })
+      .catch(() => {});
+
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      handleNavigationUrl(url);
+    });
+
+    return () => {
+      mounted = false;
+      subscription?.remove?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authChecked || !user) return;
+    const handle = setTimeout(flushPendingNavigation, 0);
+    return () => clearTimeout(handle);
+  }, [authChecked, user]);
 
   // ============================
   // SPLASH / LOADING
@@ -134,7 +169,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ErrorBoundary>
-        <NavigationContainer>
+        <NavigationContainer ref={navigationRef} onReady={flushPendingNavigation}>
           <Stack.Navigator screenOptions={{ headerShown: false }}>
             {!USE_AUTH && (
               <Stack.Screen name="Main" component={MainNavigator} />

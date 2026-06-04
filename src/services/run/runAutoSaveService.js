@@ -11,6 +11,10 @@ const LOG_PREFIX = "[Wayper RunAutoSave]";
 
 let handlersInstalled = false;
 let previousErrorHandler = null;
+let checkpointUnsubscribe = null;
+let checkpointInFlight = false;
+let checkpointPendingContext = null;
+let lastCheckpointAt = 0;
 
 const isDev = () => typeof __DEV__ !== "undefined" && __DEV__;
 
@@ -180,6 +184,85 @@ export async function forceCheckpointForAppState(appState) {
   });
 }
 
+function shouldForceCheckpointForEvent(event) {
+  return [
+    "run_started",
+    "run_paused",
+    "run_resumed",
+    "run_finished_snapshot_saved",
+    "active_snapshot_cleared",
+    "run_cancelled",
+  ].includes(event);
+}
+
+async function flushQueuedCheckpoint(context = {}) {
+  if (checkpointInFlight) {
+    checkpointPendingContext = {
+      ...(checkpointPendingContext || {}),
+      ...context,
+    };
+    return null;
+  }
+
+  checkpointInFlight = true;
+  try {
+    lastCheckpointAt = Date.now();
+    return await flushActiveRunCheckpoint(context);
+  } finally {
+    checkpointInFlight = false;
+    const pending = checkpointPendingContext;
+    checkpointPendingContext = null;
+    if (pending) {
+      flushQueuedCheckpoint(pending);
+    }
+  }
+}
+
+export function startActiveRunAutoCheckpointing(options = {}) {
+  if (checkpointUnsubscribe) return stopActiveRunAutoCheckpointing;
+
+  const minIntervalMs = Number(options.minIntervalMs ?? 1500);
+  checkpointUnsubscribe = activeRunTrackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
+    if (!snapshot?.activeRunId) return;
+
+    const now = Date.now();
+    const force = shouldForceCheckpointForEvent(event);
+    if (!force && now - lastCheckpointAt < minIntervalMs) {
+      checkpointPendingContext = {
+        reason: "tracking_snapshot_throttled",
+        event,
+      };
+      return;
+    }
+
+    flushQueuedCheckpoint({
+      reason: "tracking_snapshot",
+      event,
+    }).catch((error) => {
+      log("auto_checkpoint_failed", {
+        event,
+        error: error?.message || String(error),
+      });
+    });
+  }) || null;
+
+  log("auto_checkpoint_started");
+  return stopActiveRunAutoCheckpointing;
+}
+
+export function stopActiveRunAutoCheckpointing() {
+  if (checkpointUnsubscribe) {
+    try {
+      checkpointUnsubscribe();
+    } catch {}
+    checkpointUnsubscribe = null;
+  }
+  checkpointInFlight = false;
+  checkpointPendingContext = null;
+  lastCheckpointAt = 0;
+  log("auto_checkpoint_stopped");
+}
+
 export function getAppRunModeFromCheckpoint(checkpoint = {}) {
   return toAppRunMode(checkpoint.mode || "free");
 }
@@ -191,4 +274,6 @@ export default {
   forceCheckpointForAppState,
   getAppRunModeFromCheckpoint,
   installGlobalRunErrorHandlers,
+  startActiveRunAutoCheckpointing,
+  stopActiveRunAutoCheckpointing,
 };

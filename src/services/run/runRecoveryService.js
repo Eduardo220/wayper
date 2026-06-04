@@ -104,6 +104,14 @@ function getRunDurationSeconds(run = {}) {
 }
 
 function hasRecoverablePayload(run = {}) {
+  const status = normalizeRecoveryStatus(run.status);
+  if (
+    (status === RUN_RECOVERY_STATUS.RUNNING || status === RUN_RECOVERY_STATUS.PAUSED) &&
+    toTimestampMs(getRunStartedAt(run))
+  ) {
+    return true;
+  }
+
   const points = getRunPoints(run);
   if (points.length > 0) return true;
   if (getRunDistanceMeters(run) > 0) return true;
@@ -241,6 +249,10 @@ export function isFinishedRecovery(candidate = {}) {
   return FINISHED_STATUSES.has(candidate.status);
 }
 
+export function isLiveRecovery(candidate = {}) {
+  return candidate.status === RUN_RECOVERY_STATUS.RUNNING || candidate.status === RUN_RECOVERY_STATUS.PAUSED;
+}
+
 export function buildRunDataFromRecoveredRun(candidate = {}, overrides = {}) {
   const raw = candidate.raw || {};
   if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) {
@@ -316,6 +328,7 @@ export default {
   discardRecoveredRun,
   findRecoverableRunForUser,
   isFinishedRecovery,
+  isLiveRecovery,
   normalizeRecoveryStatus,
   validateRecoverableRun,
 };

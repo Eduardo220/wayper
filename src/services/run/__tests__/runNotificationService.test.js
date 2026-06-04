@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "@jest/globals";
+import fs from "node:fs";
+import path from "node:path";
 
 const nativeModule = {
   configureRunNotificationActions: jest.fn(async () => true),
@@ -252,5 +254,21 @@ describe("run notification service", () => {
 
     expect(nativeModule.startRunNotification).toHaveBeenCalledTimes(1);
     expect(nativeModule.updateRunNotification).toHaveBeenCalled();
+  });
+
+  test("toque na notificacao abre deep link da corrida ativa sem criar rota nova", () => {
+    const foregroundService = fs.readFileSync(
+      path.join(process.cwd(), "android/app/src/main/java/com/wayper/app/run/RunNotificationForegroundService.kt"),
+      "utf8"
+    );
+    const mainActivity = fs.readFileSync(
+      path.join(process.cwd(), "android/app/src/main/java/com/wayper/app/MainActivity.kt"),
+      "utf8"
+    );
+
+    expect(foregroundService).toContain('ACTIVE_RUN_DEEP_LINK = "wayper://run/active"');
+    expect(foregroundService).toContain("Intent.FLAG_ACTIVITY_REORDER_TO_FRONT");
+    expect(mainActivity).toContain("override fun onNewIntent");
+    expect(mainActivity).toContain("setIntent(intent)");
   });
 });

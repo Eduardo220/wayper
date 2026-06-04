@@ -95,6 +95,10 @@ function ensureSession(snapshot) {
   return activeSession;
 }
 
+function isLiveStatus(status) {
+  return status === ACTIVE_RUN_STATUS.RUNNING || status === ACTIVE_RUN_STATUS.PAUSED;
+}
+
 async function getActiveSession() {
   if (activeSession && activeSnapshot) return activeSession;
   const snapshot = await loadPersistedSnapshot();
@@ -186,6 +190,36 @@ export async function stopBackgroundLocationUpdates(options = {}) {
 export async function startActiveRun(options = {}) {
   const nowMs = Number(options.startedAtMs || Date.now());
   const runId = options.activeRunId || options.id || createRunId(nowMs);
+  const existing = activeSnapshot || (await loadPersistedSnapshot());
+  if (
+    existing?.activeRunId &&
+    isLiveStatus(existing.status) &&
+    existing.activeRunId !== runId &&
+    options.replaceExisting !== true
+  ) {
+    const restored = ensureSession({
+      ...existing,
+      meta: {
+        ...(existing.meta || {}),
+        protectedFromReplace: true,
+      },
+    });
+    const protectedSnapshot = normalizeActiveRunSnapshot({
+      ...existing,
+      meta: {
+        ...(existing.meta || {}),
+        protectedFromReplace: true,
+      },
+    });
+    activeSession = restored;
+    activeSnapshot = protectedSnapshot;
+    emitSnapshot(protectedSnapshot, "run_start_ignored_existing_active");
+    if (protectedSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) {
+      await startBackgroundLocationUpdates({ force: false });
+    }
+    return protectedSnapshot;
+  }
+
   const base = {
     activeRunId: runId,
     id: runId,
@@ -284,6 +318,8 @@ export async function pauseActiveRun(options = {}) {
   try {
     const session = await getActiveSession();
     if (!session || !activeSnapshot) return null;
+    if (activeSnapshot.status === ACTIVE_RUN_STATUS.PAUSED) return activeSnapshot;
+    if (activeSnapshot.status !== ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
     const endedAt = Number(options.endedAtMs || Date.now());
     session.pause?.({ endedAt });
     const snapshot = createSnapshotFromTrackingSession(session, activeSnapshot, {
@@ -304,6 +340,8 @@ export async function resumeActiveRun(options = {}) {
   try {
     const session = await getActiveSession();
     if (!session || !activeSnapshot) return null;
+    if (activeSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
+    if (activeSnapshot.status !== ACTIVE_RUN_STATUS.PAUSED) return activeSnapshot;
     const startedAt = Number(options.startedAtMs || Date.now());
     session.resume?.({ startedAt });
     const snapshot = createSnapshotFromTrackingSession(session, activeSnapshot, {
@@ -324,6 +362,7 @@ export async function finishActiveRun(options = {}) {
   try {
     const session = await getActiveSession();
     if (!session || !activeSnapshot) return null;
+    if (activeSnapshot.status === ACTIVE_RUN_STATUS.FINISHED) return activeSnapshot;
     const finishedAtMs = Number(options.finishedAtMs || Date.now());
     const durationMs = calculateActiveRunDurationSeconds(activeSnapshot, { nowMs: finishedAtMs }) * 1000;
     const finish = session.finishTrackingSession?.({

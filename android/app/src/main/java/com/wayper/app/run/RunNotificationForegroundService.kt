@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -135,9 +136,12 @@ class RunNotificationForegroundService : Service() {
     )
 
     val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-      action = ACTION_OPEN_RUN
+      action = Intent.ACTION_VIEW
+      data = Uri.parse(ACTIVE_RUN_DEEP_LINK)
       putExtra(EXTRA_OPEN_ACTIVE_RUN, true)
-      flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+      flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or
+        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
     }
     val contentIntent = launchIntent?.let {
       PendingIntent.getActivity(
@@ -198,6 +202,7 @@ class RunNotificationForegroundService : Service() {
     const val ACTION_OPEN_RUN = "com.wayper.app.run.notification.OPEN_RUN"
     const val ACTION_PAUSE = "pause"
     const val ACTION_RESUME = "resume"
+    const val ACTIVE_RUN_DEEP_LINK = "wayper://run/active"
     const val EXTRA_ELAPSED_SECONDS = "elapsedTimeSeconds"
     const val EXTRA_DISTANCE_KM = "distanceKm"
     const val EXTRA_IS_PAUSED = "isPaused"

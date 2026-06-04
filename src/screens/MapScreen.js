@@ -70,6 +70,7 @@ import {
   discardRecoveredRun,
   findRecoverableRunForUser,
   isFinishedRecovery,
+  isLiveRecovery,
 } from "../services/run/runRecoveryService.js";
 import { enqueueFinishedRun, schedulePendingRunsSync } from "../services/run/runSyncQueueService.js";
 import sync from "../utils/sync";
@@ -596,6 +597,9 @@ const MapScreen = ({ navigation, route }) => {
   const watcherStartTokenRef = useRef(0);
   const activeRunRestoreAttemptedRef = useRef(false);
   const activeRunPersistLastAtRef = useRef(0);
+  const restoreActiveRunForReentryRef = useRef(null);
+  const restoringActiveRunRef = useRef(false);
+  const lastNotificationOpenRequestRef = useRef(null);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
@@ -841,6 +845,16 @@ const MapScreen = ({ navigation, route }) => {
     setSelectedTerritoryLeaderboard(null);
   }, []);
 
+  const closeActiveRunBlockingOverlays = useCallback(() => {
+    setSelectModeVisible(false);
+    setShowRunsModal(false);
+    setZonesPanelVisible(false);
+    setShowSavedModal(false);
+    setSavedShareVisible(false);
+    setShowRunModal(false);
+    closeSelectedTerritory();
+  }, [closeSelectedTerritory]);
+
   const openZonesPanel = useCallback(async (tab = "mine") => {
     setZonesPanelTab(tab);
     setZonesPanelVisible(true);
@@ -994,8 +1008,25 @@ const MapScreen = ({ navigation, route }) => {
               debug("forceCheckpointForAppState failed", error);
             });
           }
-          if (next === "active" && !runningRef.current) {
-            refreshForegroundLocation({ updatePosition: true });
+          if (next === "active") {
+            const restoreForReentry = restoreActiveRunForReentryRef.current;
+            if (typeof restoreForReentry === "function") {
+              restoreForReentry({
+                reason: "app_state_active",
+                forceSyncControls: true,
+              }).then((restored) => {
+                if (!restored && !runningRef.current) {
+                  refreshForegroundLocation({ updatePosition: true });
+                }
+              }).catch((error) => {
+                debug("restore on active failed", error);
+                if (!runningRef.current) {
+                  refreshForegroundLocation({ updatePosition: true });
+                }
+              });
+            } else if (!runningRef.current) {
+              refreshForegroundLocation({ updatePosition: true });
+            }
           }
         });
 
@@ -1574,6 +1605,7 @@ const MapScreen = ({ navigation, route }) => {
     const distanceMeters = Number(snapshot.distanceMeters ?? snapshot.distance ?? trackingState.stats?.distanceMeters ?? 0) || 0;
     const previousRunStatus = runStatusRef.current;
     const shouldSyncControls = options.syncControls !== false;
+    const forceSyncControls = options.forceSyncControls === true;
 
     trackingSessionRef.current = session;
     currentRunIdRef.current = snapshot.activeRunId;
@@ -1605,13 +1637,13 @@ const MapScreen = ({ navigation, route }) => {
 
     if (status === ACTIVE_RUN_STATUS.RUNNING) {
       startElapsedTimer();
-      if (shouldSyncControls && previousRunStatus !== "active") {
+      if (shouldSyncControls && (forceSyncControls || previousRunStatus !== "active")) {
         startLocationWatcher().catch((error) => debug("snapshot startLocationWatcher failed", error));
         startBackgroundLocationService().catch((error) => debug("snapshot startBackgroundLocationService failed", error));
       }
     } else {
       stopElapsedTimer();
-      if (shouldSyncControls && previousRunStatus === "active") {
+      if (shouldSyncControls && (forceSyncControls || previousRunStatus === "active")) {
         stopWatcherAndPolling();
         stopBackgroundLocationService();
       }
@@ -1792,6 +1824,13 @@ const MapScreen = ({ navigation, route }) => {
             },
           });
           if (activeSnapshot?.activeRunId) {
+            if (activeSnapshot.activeRunId !== runId && activeSnapshot.meta?.protectedFromReplace) {
+              applyActiveRunSnapshotToUi(activeSnapshot, {
+                recovered: true,
+                forceSyncControls: true,
+              });
+              return;
+            }
             currentRunIdRef.current = activeSnapshot.activeRunId;
           }
         } catch (activeRunError) {
@@ -1846,7 +1885,7 @@ const MapScreen = ({ navigation, route }) => {
         debug("startRun catch", e);
       }
     },
-    [closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]
+    [applyActiveRunSnapshotToUi, closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]
   );
 
   const pauseRun = useCallback(() => {
@@ -2383,6 +2422,96 @@ const MapScreen = ({ navigation, route }) => {
     ]
   );
 
+  const restoreRecoveryCandidateToUi = useCallback(
+    async (candidate, options = {}) => {
+      if (!candidate?.recoverable || isFinishedRecovery(candidate)) return false;
+      if (restoringActiveRunRef.current) return false;
+
+      restoringActiveRunRef.current = true;
+      try {
+        if (options.closeBlockingOverlays !== false) {
+          closeActiveRunBlockingOverlays();
+        }
+        setRecoveryModalVisible(false);
+        setPendingRecovery(null);
+
+        if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) {
+          const restored = await activeRunTrackingService.restoreActiveRun?.({
+            restartTracking: options.restartTracking !== false,
+          });
+          const snapshot = restored || candidate.raw;
+          if (!snapshot?.activeRunId) return false;
+          applyActiveRunSnapshotToUi(snapshot, {
+            recovered: options.recovered !== false,
+            forceSyncControls: options.forceSyncControls !== false,
+          });
+          return true;
+        }
+
+        await applyOfflineRecoveryToUi(candidate.raw, {
+          startWatchers: options.startWatchers !== false,
+        });
+        if (options.recovered !== false) {
+          setRecoveryNoticeVisible(true);
+          setTimeout(() => {
+            if (mountedRef.current) setRecoveryNoticeVisible(false);
+          }, 6500);
+        }
+        return true;
+      } finally {
+        restoringActiveRunRef.current = false;
+      }
+    },
+    [
+      applyActiveRunSnapshotToUi,
+      applyOfflineRecoveryToUi,
+      closeActiveRunBlockingOverlays,
+    ]
+  );
+
+  const restoreActiveRunForReentry = useCallback(
+    async (options = {}) => {
+      const recovery = await findRecoverableRunForUser(auth.currentUser?.uid || "offline");
+      if (!recovery?.recoverable || !isLiveRecovery(recovery)) return false;
+      return restoreRecoveryCandidateToUi(recovery, {
+        closeBlockingOverlays: options.closeBlockingOverlays,
+        forceSyncControls: options.forceSyncControls,
+        recovered: options.recovered,
+        restartTracking: true,
+        startWatchers: true,
+      });
+    },
+    [restoreRecoveryCandidateToUi]
+  );
+
+  useEffect(() => {
+    restoreActiveRunForReentryRef.current = restoreActiveRunForReentry;
+    return () => {
+      if (restoreActiveRunForReentryRef.current === restoreActiveRunForReentry) {
+        restoreActiveRunForReentryRef.current = null;
+      }
+    };
+  }, [restoreActiveRunForReentry]);
+
+  useEffect(() => {
+    const requestId = route?.params?.activeRunOpenRequestId;
+    if (!requestId || lastNotificationOpenRequestRef.current === requestId) return;
+    lastNotificationOpenRequestRef.current = requestId;
+
+    restoreActiveRunForReentry({
+      closeBlockingOverlays: true,
+      forceSyncControls: true,
+      recovered: false,
+    }).catch((error) => {
+      debug("notification active run restore failed", error);
+    });
+
+    navigation?.setParams?.({
+      activeRunOpenRequestId: undefined,
+      fromRunNotification: undefined,
+    });
+  }, [navigation, restoreActiveRunForReentry, route?.params?.activeRunOpenRequestId]);
+
   useEffect(() => {
     if (loading || activeRunRestoreAttemptedRef.current) return;
     activeRunRestoreAttemptedRef.current = true;
@@ -2392,6 +2521,14 @@ const MapScreen = ({ navigation, route }) => {
       try {
         const recovery = await findRecoverableRunForUser(auth.currentUser?.uid || "offline");
         if (cancelled || !recovery?.recoverable) return;
+        if (isLiveRecovery(recovery)) {
+          await restoreRecoveryCandidateToUi(recovery, {
+            closeBlockingOverlays: false,
+            forceSyncControls: true,
+            recovered: true,
+          });
+          return;
+        }
         setPendingRecovery(recovery);
         setRecoveryModalVisible(true);
         if (isFinishedRecovery(recovery)) {
@@ -2409,23 +2546,18 @@ const MapScreen = ({ navigation, route }) => {
     };
   }, [
     loading,
+    restoreRecoveryCandidateToUi,
   ]);
 
   const handleContinueRecovery = useCallback(async () => {
     if (!pendingRecovery || isFinishedRecovery(pendingRecovery)) return;
     setRecoveryActionLoading(true);
     try {
-      if (pendingRecovery.source === RUN_RECOVERY_SOURCE.TRACKING) {
-        const restored = await activeRunTrackingService.restoreActiveRun?.({ restartTracking: true });
-        const snapshot = restored || pendingRecovery.raw;
-        applyActiveRunSnapshotToUi(snapshot, { recovered: true, syncControls: false });
-        if (snapshot.status === ACTIVE_RUN_STATUS.RUNNING) {
-          await startLocationWatcher();
-          await startBackgroundLocationService();
-        }
-      } else {
-        await applyOfflineRecoveryToUi(pendingRecovery.raw, { startWatchers: true });
-      }
+      await restoreRecoveryCandidateToUi(pendingRecovery, {
+        closeBlockingOverlays: true,
+        forceSyncControls: true,
+        recovered: true,
+      });
       setRecoveryModalVisible(false);
       setPendingRecovery(null);
     } catch (error) {
@@ -2435,11 +2567,8 @@ const MapScreen = ({ navigation, route }) => {
       setRecoveryActionLoading(false);
     }
   }, [
-    applyActiveRunSnapshotToUi,
-    applyOfflineRecoveryToUi,
     pendingRecovery,
-    startBackgroundLocationService,
-    startLocationWatcher,
+    restoreRecoveryCandidateToUi,
   ]);
 
   const handleFinishRecovery = useCallback(async () => {

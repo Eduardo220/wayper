@@ -59,6 +59,7 @@ scripts/serviceAccountKey.json
 /android/app/src/main/java/com/wayper/*
 !/android/app/src/main/java/com/wayper/app/
 /android/app/src/main/java/com/wayper/app/*
+!/android/app/src/main/java/com/wayper/app/MainActivity.kt
 !/android/app/src/main/java/com/wayper/app/MainApplication.kt
 !/android/app/src/main/java/com/wayper/app/run/
 !/android/app/src/main/java/com/wayper/app/run/**

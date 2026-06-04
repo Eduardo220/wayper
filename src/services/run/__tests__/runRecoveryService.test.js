@@ -43,6 +43,27 @@ describe("runRecoveryService", () => {
     expect(buildRecoverySummary(candidate).distanceMeters).toBe(420);
   });
 
+  test("corrida viva sem ponto aceito ainda e recuperavel pelo snapshot local", () => {
+    const candidate = createRecoveryCandidate(
+      RUN_RECOVERY_SOURCE.TRACKING,
+      {
+        activeRunId: "run-sem-ponto-ainda",
+        userId: "user-1",
+        mode: "free",
+        status: "RUNNING",
+        startedAt: "2026-06-03T10:00:00.000Z",
+        trustedPath: [],
+        distanceMeters: 0,
+        durationSeconds: 0,
+      },
+      { userId: "user-1" }
+    );
+
+    expect(candidate.recoverable).toBe(true);
+    expect(candidate.status).toBe(RUN_RECOVERY_STATUS.RUNNING);
+    expect(candidate.pointsCount).toBe(0);
+  });
+
   test("detecta corrida paused recuperavel", () => {
     const candidate = createRecoveryCandidate(
       RUN_RECOVERY_SOURCE.OFFLINE,

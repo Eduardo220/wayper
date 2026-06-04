@@ -21,6 +21,25 @@ Este roteiro valida o fluxo critico de corrida ativa, snapshot local, background
 7. Finalizar.
 8. Validar que a corrida aparece no historico.
 
+## Cenario critico: reentrada por icone e notificacao
+
+1. Usar Android real em development build (`npm run dev:phone` ou APK dev). Nao validar este cenario no Expo Go.
+2. Conceder localizacao em primeiro plano, localizacao em segundo plano e notificacoes.
+3. Iniciar corrida livre.
+4. Caminhar ou correr por 1 minuto com o app aberto.
+5. Bloquear a tela por pelo menos 2 minutos.
+6. Desbloquear e voltar pelo icone do app.
+7. Confirmar que a tela volta para a corrida ativa sem modal bloqueando os controles.
+8. Confirmar que tempo, distancia, rota e notificacao continuam coerentes.
+9. Tocar em Pausar e confirmar que o botao responde.
+10. Tocar em Retomar e confirmar que o GPS continua acumulando pontos na mesma corrida.
+11. Bloquear a tela novamente por pelo menos 2 minutos.
+12. Voltar tocando na notificacao permanente do Wayper.
+13. Confirmar que o app foca a tela Mapa/corrida ativa sem empilhar outra tela.
+14. Pausar, retomar e finalizar.
+15. Salvar a corrida e confirmar que ela aparece no historico com a rota completa.
+16. Repetir com economia de bateria ligada e desligada quando o aparelho permitir.
+
 ## Cenario 2: sem internet
 
 1. Iniciar uma corrida.
