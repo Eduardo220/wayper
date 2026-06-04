@@ -2,6 +2,20 @@
 
 Este roteiro valida o fluxo critico de corrida ativa, snapshot local, background location e sync pendente.
 
+## Checklist obrigatorio de hardening
+
+1. Iniciar corrida, bloquear tela por alguns minutos e voltar pelo icone do app.
+2. Iniciar corrida, bloquear tela e voltar pela notificacao persistente, quando existir.
+3. Iniciar corrida, colocar app em background e voltar.
+4. Iniciar corrida, pausar, matar app e reabrir.
+5. Iniciar corrida em andamento, matar app e reabrir.
+6. Finalizar corrida offline e confirmar que aparece localmente como pendente.
+7. Voltar internet e confirmar sync sem duplicata.
+8. Negar permissao de background e conferir mensagem clara.
+9. Confirmar que os botoes de pausar, retomar e finalizar continuam clicaveis ao retornar.
+
+O resultado esperado em todos os cenarios e preservar `localRunId`, status, tempo, distancia, path, rawPath, renderPath e segments. Corrida finalizada ou em `FINISHING` nao pode voltar como ativa.
+
 ## Preparacao
 
 - Usar Android real com build dev e repetir em build release.
@@ -73,3 +87,4 @@ Este roteiro valida o fluxo critico de corrida ativa, snapshot local, background
 - Se o usuario usar "Forcar parada" nas configuracoes do Android, o sistema pode impedir qualquer task ate o app ser aberto manualmente.
 - Fabricantes com economia agressiva podem encerrar processos mesmo com foreground service. O Wayper deve preservar o ultimo snapshot salvo, mas nao pode garantir pontos depois que o processo foi morto pelo sistema.
 - Sem permissao de localizacao em segundo plano, o app bloqueia o inicio da corrida para evitar uma sessao quebrada.
+- Testes em emulador nao validam completamente tela bloqueada, foreground service e restricoes agressivas de bateria; repetir em aparelho fisico antes de considerar o fluxo fechado.

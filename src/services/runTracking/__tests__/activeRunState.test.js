@@ -120,6 +120,8 @@ describe("active run persistence state", () => {
     expect(syncSource).toContain('batch.set(doc(db, "runs", run.id), payload, { merge: true })');
     expect(syncSource).toContain('batch.set(doc(db, "users", uid, "runs", run.id), payload, { merge: true })');
     expect(syncSource).toContain("uniqueById(next)");
+    expect(syncSource).toContain("run.remoteRunId = run.remoteRunId || run.id");
+    expect(syncSource).toContain('offlineStatus: "SYNC_FAILED"');
   });
 
   test("desmontar MapScreen nao para background tracking da corrida ativa", () => {
@@ -129,5 +131,7 @@ describe("active run persistence state", () => {
     const cleanup = mapScreen.slice(cleanupStart, cleanupEnd);
     expect(cleanup).not.toContain("stopBackgroundLocationService()");
     expect(mapScreen).toContain("activeRunTrackingService.startActiveRun");
+    expect(mapScreen).toContain("checkpointOnLocationError");
+    expect(mapScreen).toContain('reason: "before_finish"');
   });
 });

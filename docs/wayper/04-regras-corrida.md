@@ -105,6 +105,25 @@ Regra vigente desde 2026-06-04:
 - Legado vivo so pode ser aplicado depois de migrado para o snapshot canonico.
 - Depois que uma corrida finalizada entra no historico/fila local, os storages de corrida ativa devem ser limpos.
 
+### Auto-save e estados offline
+
+Estados praticos da corrida:
+
+- `RUNNING`: corrida ativa coletando pontos.
+- `PAUSED`: corrida pausada, preservada assim apos reload.
+- `FINISHING`: transicao de encerramento; no recovery deve ser tratada como finalizada, nunca como ativa.
+- `FINISHED_LOCAL` / `PENDING_SYNC`: corrida ja salva localmente e aguardando sync.
+- `SYNCED`: corrida sincronizada.
+- `SYNC_FAILED`: sync falhou, dados locais continuam preservados para retry.
+
+Politica de protecao:
+
+- Checkpoints acontecem por eventos de lifecycle, por AppState, por falhas recuperaveis de GPS e periodicamente durante a corrida ativa.
+- Um checkpoint antigo nao pode sobrescrever checkpoint mais recente do mesmo `localRunId`.
+- Se o app fechar durante a finalizacao, a recuperacao deve tratar a corrida como rascunho finalizado/pendente, nao como ativa.
+- Se Firestore falhar, a corrida permanece no historico local com status pendente ou falho de sync.
+- Perda temporaria de localizacao deve registrar lacuna/estado coerente; o app nao deve inventar trajeto falso.
+
 ## Cancelamento
 
 O usuário pode cancelar uma atividade em andamento.

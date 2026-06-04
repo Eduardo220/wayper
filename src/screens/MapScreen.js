@@ -62,7 +62,11 @@ import {
   warmUpGpsForRun,
 } from "../services/runTracking";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
-import { forceCheckpointForAppState } from "../services/run/runAutoSaveService.js";
+import {
+  checkpointOnLocationError,
+  flushActiveRunCheckpoint,
+  forceCheckpointForAppState,
+} from "../services/run/runAutoSaveService.js";
 import { ensureRunNotificationPermission } from "../services/run/runNotificationService.js";
 import {
   buildRunDataFromRecoveredRun,
@@ -959,13 +963,19 @@ const MapScreen = ({ navigation, route }) => {
         let pos = null;
         if (status === "granted") {
           try {
-          pos = await Promise.race([
-            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest }),
-            new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 6000)),
-          ]);
-        } catch (e) {
-          debug("initial position failed (non-blocking)", e);
-        }
+            pos = await Promise.race([
+              Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest }),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 6000)),
+            ]);
+          } catch (e) {
+            debug("initial position failed (non-blocking)", e);
+            checkpointOnLocationError(e, {
+              phase: "initial_position",
+              minIntervalMs: 15000,
+            }).catch((checkpointError) => {
+              debug("initial position checkpoint failed", checkpointError);
+            });
+          }
         }
 
         const initial = pos?.coords
@@ -1328,6 +1338,11 @@ const MapScreen = ({ navigation, route }) => {
         }
       } catch (e) {
         debug("handleLocationUpdate", e);
+        checkpointOnLocationError(e, {
+          phase: "handle_location_update",
+        }).catch((checkpointError) => {
+          debug("handleLocationUpdate checkpoint failed", checkpointError);
+        });
       }
     },
     [updateActiveZonePreview]
@@ -1372,6 +1387,11 @@ const MapScreen = ({ navigation, route }) => {
       await activeRunTrackingService.startBackgroundLocationUpdates?.({ force: true });
     } catch (e) {
       debug("startBackgroundLocationService", e);
+      checkpointOnLocationError(e, {
+        phase: "background_location_service",
+      }).catch((checkpointError) => {
+        debug("background location checkpoint failed", checkpointError);
+      });
     }
   }, []);
 
@@ -1432,6 +1452,11 @@ const MapScreen = ({ navigation, route }) => {
         } catch (watchError) {
           lastWatchError = watchError;
           debug("watchPositionAsync accuracy fallback", watchError);
+          checkpointOnLocationError(watchError, {
+            phase: "watch_position_accuracy_fallback",
+          }).catch((checkpointError) => {
+            debug("watchPosition fallback checkpoint failed", checkpointError);
+          });
         }
       }
 
@@ -1446,6 +1471,11 @@ const MapScreen = ({ navigation, route }) => {
       debugTracking("watcher_started", { runSessionId, distanceInterval: WATCH_DISTANCE_INTERVAL, timeInterval: WATCH_TIME_INTERVAL_MS });
     } catch (e) {
       debug("watchPositionAsync failed, fallback polling", e);
+      checkpointOnLocationError(e, {
+        phase: "watch_position_start",
+      }).catch((checkpointError) => {
+        debug("watchPosition start checkpoint failed", checkpointError);
+      });
       const poll = setInterval(async () => {
         try {
           if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") return;
@@ -1466,6 +1496,11 @@ const MapScreen = ({ navigation, route }) => {
           }
         } catch (err) {
           debug("polling error", err);
+          checkpointOnLocationError(err, {
+            phase: "fallback_polling",
+          }).catch((checkpointError) => {
+            debug("fallback polling checkpoint failed", checkpointError);
+          });
         }
       }, WATCH_TIME_INTERVAL_MS);
       if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") {
@@ -1759,6 +1794,11 @@ const MapScreen = ({ navigation, route }) => {
           pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest, timeout: 7000 });
         } catch (e) {
           debug("startRun getCurrentPosition failed", e);
+          checkpointOnLocationError(e, {
+            phase: "start_current_position",
+          }).catch((checkpointError) => {
+            debug("start position checkpoint failed", checkpointError);
+          });
         }
 
         if (pos?.coords) {
@@ -1853,6 +1893,11 @@ const MapScreen = ({ navigation, route }) => {
         }
       } catch (e) {
         debug("resumeRun getCurrentPosition failed", e);
+        checkpointOnLocationError(e, {
+          phase: "resume_current_position",
+        }).catch((checkpointError) => {
+          debug("resume position checkpoint failed", checkpointError);
+        });
       }
 
       await startLocationWatcher();
@@ -1914,6 +1959,10 @@ const MapScreen = ({ navigation, route }) => {
         flushRouteBufferToState();
 
         const finishedAtMs = Date.now();
+        await flushActiveRunCheckpoint({
+          reason: "before_finish",
+          checkpointAtMs: finishedAtMs,
+        });
         const activeFinalSnapshot = await activeRunTrackingService.finishActiveRun?.({ finishedAtMs });
         const totalDuration = Number(activeFinalSnapshot?.durationSeconds || timeSecRef.current || timeSec || 0);
         const trackingFinish = trackingSessionRef.current?.finishTrackingSession?.({

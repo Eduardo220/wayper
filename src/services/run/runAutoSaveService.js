@@ -1,5 +1,6 @@
 import NetInfo from "@react-native-community/netinfo";
 import activeRunTrackingService from "../runTracking/activeRunTrackingService.js";
+import { calculateActiveRunDurationSeconds } from "../runTracking/activeRunState.js";
 import {
   ACTIVE_RUN_STATUS as OFFLINE_RUN_STATUS,
   ACTIVE_RUN_SYNC_STATUS,
@@ -12,9 +13,12 @@ const LOG_PREFIX = "[Wayper RunAutoSave]";
 let handlersInstalled = false;
 let previousErrorHandler = null;
 let checkpointUnsubscribe = null;
+let checkpointErrorUnsubscribe = null;
+let checkpointInterval = null;
 let checkpointInFlight = false;
 let checkpointPendingContext = null;
 let lastCheckpointAt = 0;
+let lastLocationErrorCheckpointAt = 0;
 
 const isDev = () => typeof __DEV__ !== "undefined" && __DEV__;
 
@@ -32,6 +36,7 @@ function toOfflineMode(mode = "free") {
 function toOfflineStatus(status) {
   const raw = String(status || "").toUpperCase();
   if (raw === "PAUSED") return OFFLINE_RUN_STATUS.PAUSED;
+  if (raw === "FINISHING") return OFFLINE_RUN_STATUS.FINISHED;
   if (raw === "FINISHED" || raw === "COMPLETED") return OFFLINE_RUN_STATUS.FINISHED;
   if (raw === "PENDING_SYNC" || raw === "SYNC_FAILED") return raw;
   return OFFLINE_RUN_STATUS.RUNNING;
@@ -67,12 +72,20 @@ export function buildOfflineCheckpointFromTrackingSnapshot(snapshot = {}, contex
     : Array.isArray(snapshot.rawPoints)
       ? snapshot.rawPoints
       : points;
-  const durationMs = Number(snapshot.durationMs ?? snapshot.durationSeconds * 1000 ?? snapshot.duration * 1000 ?? 0) || 0;
+  const checkpointAtMs = Number(context.checkpointAtMs || Date.now());
+  const checkpointAt = new Date(checkpointAtMs).toISOString();
+  const liveDurationSeconds = calculateActiveRunDurationSeconds(snapshot, { nowMs: checkpointAtMs });
+  const durationMs = Number(
+    context.durationMs ??
+      liveDurationSeconds * 1000 ??
+      snapshot.durationMs ??
+      snapshot.durationSeconds * 1000 ??
+      snapshot.duration * 1000 ??
+      0
+  ) || 0;
   const distanceMeters = Number(snapshot.distanceMeters ?? snapshot.distance ?? 0) || 0;
   const mode = toOfflineMode(snapshot.mode);
   const now = new Date().toISOString();
-  const checkpointAtMs = Number(snapshot.lastUpdatedAtMs || Date.parse(snapshot.lastUpdatedAt || "") || Date.now());
-  const checkpointAt = new Date(checkpointAtMs).toISOString();
 
   return {
     localRunId: String(snapshot.activeRunId),
@@ -217,15 +230,34 @@ async function flushQueuedCheckpoint(context = {}) {
     const pending = checkpointPendingContext;
     checkpointPendingContext = null;
     if (pending) {
-      flushQueuedCheckpoint(pending);
+      flushQueuedCheckpoint(pending).catch((error) => {
+        log("queued_checkpoint_failed", {
+          reason: pending.reason || "queued",
+          error: error?.message || String(error),
+        });
+      });
     }
   }
+}
+
+export async function checkpointOnLocationError(error, context = {}) {
+  const now = Date.now();
+  const minIntervalMs = Number(context.minIntervalMs ?? 8000);
+  if (now - lastLocationErrorCheckpointAt < minIntervalMs) return null;
+  lastLocationErrorCheckpointAt = now;
+  return flushQueuedCheckpoint({
+    ...context,
+    reason: context.reason || "location_error",
+    checkpointAtMs: now,
+    errorName: error?.name || null,
+  });
 }
 
 export function startActiveRunAutoCheckpointing(options = {}) {
   if (checkpointUnsubscribe) return stopActiveRunAutoCheckpointing;
 
   const minIntervalMs = Number(options.minIntervalMs ?? 1500);
+  const periodicIntervalMs = Number(options.periodicIntervalMs ?? 10000);
   checkpointUnsubscribe = activeRunTrackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
     if (!snapshot?.activeRunId) return;
 
@@ -250,6 +282,32 @@ export function startActiveRunAutoCheckpointing(options = {}) {
     });
   }) || null;
 
+  checkpointErrorUnsubscribe = activeRunTrackingService.onActiveRunError?.(({ error, context }) => {
+    flushQueuedCheckpoint({
+      reason: "tracking_error",
+      checkpointAtMs: Date.now(),
+      errorName: error?.name || null,
+      source: context?.fn || null,
+    }).catch((checkpointError) => {
+      log("tracking_error_checkpoint_failed", {
+        error: checkpointError?.message || String(checkpointError),
+      });
+    });
+  }) || null;
+
+  if (periodicIntervalMs > 0) {
+    checkpointInterval = setInterval(() => {
+      flushQueuedCheckpoint({
+        reason: "periodic_active_run",
+        checkpointAtMs: Date.now(),
+      }).catch((error) => {
+        log("periodic_checkpoint_failed", {
+          error: error?.message || String(error),
+        });
+      });
+    }, periodicIntervalMs);
+  }
+
   log("auto_checkpoint_started");
   return stopActiveRunAutoCheckpointing;
 }
@@ -261,9 +319,20 @@ export function stopActiveRunAutoCheckpointing() {
     } catch {}
     checkpointUnsubscribe = null;
   }
+  if (checkpointErrorUnsubscribe) {
+    try {
+      checkpointErrorUnsubscribe();
+    } catch {}
+    checkpointErrorUnsubscribe = null;
+  }
+  if (checkpointInterval) {
+    clearInterval(checkpointInterval);
+    checkpointInterval = null;
+  }
   checkpointInFlight = false;
   checkpointPendingContext = null;
   lastCheckpointAt = 0;
+  lastLocationErrorCheckpointAt = 0;
   log("auto_checkpoint_stopped");
 }
 
@@ -273,6 +342,7 @@ export function getAppRunModeFromCheckpoint(checkpoint = {}) {
 
 export default {
   buildOfflineCheckpointFromTrackingSnapshot,
+  checkpointOnLocationError,
   checkpointOnCaughtError,
   flushActiveRunCheckpoint,
   forceCheckpointForAppState,

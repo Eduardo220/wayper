@@ -41,7 +41,9 @@ const {
   createRecoveryCandidate,
   findRecoverableRunForUser,
   hydrateRecoverableRunCandidate,
+  isLiveRecovery,
   markRecoveredRunLocallySaved,
+  normalizeRecoveryStatus,
   resolveRecoveryConflict,
   validateRecoverableRun,
 } = await import("../runRecoveryService.js");
@@ -148,6 +150,24 @@ describe("runRecoveryService", () => {
     expect(candidate.recoverable).toBe(true);
     expect(candidate.status).toBe(RUN_RECOVERY_STATUS.PENDING_SYNC);
     expect(candidate.pendingSync).toBe(true);
+  });
+
+  test("corrida finishing nao volta como active no recovery", async () => {
+    const candidate = createRecoveryCandidate(RUN_RECOVERY_SOURCE.TRACKING, {
+      ...BASE_RUN,
+      activeRunId: "run-finishing",
+      status: "FINISHING",
+      finishedAt: null,
+    }, { userId: "user-1" });
+
+    expect(normalizeRecoveryStatus("FINISHING")).toBe(RUN_RECOVERY_STATUS.FINISHED);
+    expect(candidate.recoverable).toBe(true);
+    expect(candidate.status).toBe(RUN_RECOVERY_STATUS.FINISHED);
+    expect(isLiveRecovery(candidate)).toBe(false);
+    await expect(hydrateRecoverableRunCandidate(candidate, {
+      userId: "user-1",
+      restartTracking: false,
+    })).resolves.toBeNull();
   });
 
   test("recovery usa estado canonico quando ele e valido", async () => {
@@ -267,6 +287,28 @@ describe("runRecoveryService", () => {
     const selected = resolveRecoveryConflict([staleLiveCandidate, finishedCandidate]);
 
     expect(selected.status).toBe(RUN_RECOVERY_STATUS.FINISHED);
+  });
+
+  test("snapshot finishing vence legado running do mesmo id", () => {
+    const finishingCandidate = createRecoveryCandidate(RUN_RECOVERY_SOURCE.TRACKING, {
+      ...BASE_RUN,
+      activeRunId: "same-finishing-run",
+      status: "FINISHING",
+      lastUpdatedAt: "2026-06-03T10:05:00.000Z",
+    }, { userId: "user-1" });
+    const staleLiveCandidate = createRecoveryCandidate(RUN_RECOVERY_SOURCE.OFFLINE, {
+      ...BASE_RUN,
+      activeRunId: undefined,
+      localRunId: "same-finishing-run",
+      status: "RUNNING",
+      updatedAt: "2026-06-03T10:04:00.000Z",
+      schemaVersion: 1,
+    }, { userId: "user-1" });
+
+    const selected = resolveRecoveryConflict([staleLiveCandidate, finishingCandidate]);
+
+    expect(selected.status).toBe(RUN_RECOVERY_STATUS.FINISHED);
+    expect(isLiveRecovery(selected)).toBe(false);
   });
 
   test("estado corrompido e descartado sem candidato recuperavel", async () => {

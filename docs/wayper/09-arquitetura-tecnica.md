@@ -169,6 +169,21 @@ Fluxo consolidado:
 
 `start -> snapshot canonico -> checkpoint legado -> pause/resume canonicos -> AppState/background checkpoint -> recovery via runRecoveryService -> finish canonico -> rascunho final legado -> saveLocalRun/enqueue -> limpeza dos storages ativos -> sync posterior`.
 
+### Politica de auto-save e hardening
+
+Desde 2026-06-04, `runAutoSaveService` tambem protege a corrida ativa contra quedas entre eventos de GPS:
+
+- Checkpoints sao disparados por eventos canonicos de `activeRunTrackingService`: start, pause, resume e snapshot final.
+- Enquanto houver corrida ativa, existe checkpoint periodico leve, por padrao a cada 10 segundos.
+- `MapScreen` forca checkpoint ao entrar em `background` ou `inactive`, antes de finalizar a corrida e quando falhas recuperaveis de localizacao aparecem.
+- Falhas repetidas de localizacao usam throttle para evitar escrita excessiva no AsyncStorage.
+- Todo checkpoint carrega `checkpointAtMs`; `runOfflineStorageService` ignora escrita viva mais antiga do mesmo `localRunId`.
+- Estado `FINISHING` e tratado como finalizado para recovery, nunca como corrida viva.
+
+Fluxo reforcado:
+
+`start -> checkpoint imediato -> checkpoints por snapshot/periodico -> pause checkpoint -> resume checkpoint -> AppState checkpoint -> recovery consolidado -> before_finish checkpoint -> finish canonico -> rascunho final -> saveLocalRun pending sync -> limpeza ativa -> sync idempotente`.
+
 Riscos pendentes:
 
 - Validar em dispositivo real que background location e tela bloqueada continuam entregando pontos suficientes.

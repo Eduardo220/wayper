@@ -66,12 +66,14 @@ export function normalizeRecoveryStatus(status) {
   const raw = String(status || "").toLowerCase();
   if (raw === "running" || raw === "active") return RUN_RECOVERY_STATUS.RUNNING;
   if (raw === "paused") return RUN_RECOVERY_STATUS.PAUSED;
+  if (raw === "finishing" || raw === "finalizing") return RUN_RECOVERY_STATUS.FINISHED;
   if (raw === "finished" || raw === "completed") return RUN_RECOVERY_STATUS.FINISHED;
   if (raw === "pending_sync" || raw === "sync_failed" || raw === "syncing") return RUN_RECOVERY_STATUS.PENDING_SYNC;
 
   const upper = String(status || "").toUpperCase();
   if (upper === TRACKING_RUN_STATUS.RUNNING || upper === OFFLINE_RUN_STATUS.RUNNING) return RUN_RECOVERY_STATUS.RUNNING;
   if (upper === TRACKING_RUN_STATUS.PAUSED || upper === OFFLINE_RUN_STATUS.PAUSED) return RUN_RECOVERY_STATUS.PAUSED;
+  if (upper === TRACKING_RUN_STATUS.FINISHING) return RUN_RECOVERY_STATUS.FINISHED;
   if (upper === TRACKING_RUN_STATUS.FINISHED || upper === OFFLINE_RUN_STATUS.FINISHED) return RUN_RECOVERY_STATUS.FINISHED;
   if (upper === OFFLINE_RUN_STATUS.PENDING_SYNC || upper === OFFLINE_RUN_STATUS.SYNC_FAILED) return RUN_RECOVERY_STATUS.PENDING_SYNC;
 

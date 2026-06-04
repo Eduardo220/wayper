@@ -83,3 +83,16 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Corridas finalizadas ou pendentes de sync nao voltam como ativas.
 - Checkpoints legados mais antigos nao sobrescrevem checkpoints mais recentes do mesmo `localRunId`.
 - Firestore continua sendo apenas destino de sincronizacao posterior.
+
+## ADR-008: Blindar auto-save, recovery e finalizacao offline
+
+**Status:** aceito
+**Contexto:** mesmo com a fonte canonica consolidada, ainda era necessario proteger bordas operacionais: app indo para background/inactive, tela bloqueada, erro temporario de GPS, reload durante corrida e queda durante finalizacao.
+**Decisao:** manter `activeRunTrackingService`/`activeRunState` como fonte primaria e reforcar `runAutoSaveService` como checkpoint consolidado. O autosave passa a escrever periodicamente, em AppState critico, em erro recuperavel de localizacao e antes do finish. `FINISHING` e considerado estado finalizado para recovery.
+**Consequencias:**
+
+- Corrida running ou paused tem snapshots mais recentes mesmo sem novo ponto aceito.
+- Falhas de GPS disparam checkpoint com throttle, sem criar trajeto falso.
+- Checkpoints antigos continuam bloqueados por `checkpointAtMs`.
+- Se o app cair durante finish, recovery nao ressuscita a corrida como ativa.
+- Firestore segue opcional para preservar e finalizar corrida localmente.
