@@ -143,6 +143,38 @@ Regra arquitetural:
 - Firestore só deve receber dados depois que a corrida estiver salva localmente.
 - Se AsyncStorage se tornar insuficiente para atividades longas, a camada `runOfflineStorageService` deve migrar para SQLite/Expo SQLite sem mudar a interface usada pela tela.
 
+### Fonte de verdade consolidada da corrida ativa
+
+Desde 2026-06-04, a fonte de verdade pratica da corrida ativa e o snapshot canonico `wayper:activeRun:v2`, mantido por `activeRunTrackingService` e modelado por `activeRunState`.
+
+Papel de cada camada:
+
+- `activeRunTrackingService` / `activeRunState`: estado ativo canonico, lifecycle start/pause/resume/finish, path confiavel, rawPath, renderPath, segmentos, distancia, duracao e pace.
+- `trackingPathService`: filtro de GPS, criacao de segmentos, distancia, render path e qualidade da rota.
+- `runAutoSaveService`: escuta snapshots canonicos e gera checkpoint local de compatibilidade.
+- `runOfflineStorageService`: checkpoint legado/compatibilidade em `wayper_active_offline_run_v1` e rascunho final caso o app feche entre finish e save local.
+- `runRecoveryService`: unica camada que decide entre snapshot canonico e legado, migra legado vivo para o canonico e limpa os dois storages depois que a corrida finalizada entra no historico/fila.
+- `runSyncQueueService` / `sync.js`: historico local, fila pendente e sincronizacao posterior com Firestore.
+
+Regra de conflito entre `wayper:activeRun:v2` e `wayper_active_offline_run_v1`:
+
+1. Estados invalidos, corrompidos, de outro usuario ou com schema incompativel sao descartados.
+2. Se o mesmo `runId/localRunId` aparece como finalizado e vivo, o estado finalizado vence para impedir que uma corrida encerrada volte como ativa.
+3. Entre estados vivos, vence o checkpoint mais recente (`lastUpdatedAt`, `checkpointAt` ou `updatedAt`).
+4. Em empate, vence o payload mais completo: possui `localRunId`, path, rawPath, segments, duracao/distancia consistentes.
+5. Persistindo empate, vence o snapshot canonico.
+6. Legado vivo nunca e aplicado diretamente na tela; antes ele e convertido para snapshot canonico.
+
+Fluxo consolidado:
+
+`start -> snapshot canonico -> checkpoint legado -> pause/resume canonicos -> AppState/background checkpoint -> recovery via runRecoveryService -> finish canonico -> rascunho final legado -> saveLocalRun/enqueue -> limpeza dos storages ativos -> sync posterior`.
+
+Riscos pendentes:
+
+- Validar em dispositivo real que background location e tela bloqueada continuam entregando pontos suficientes.
+- Medir AsyncStorage em corridas longas; migrar a interface de checkpoint para SQLite somente se houver gargalo real.
+- Garantir que telas fora de corrida ativa continuem tratando Firestore como sync posterior, nao dependencia obrigatoria.
+
 ## Turf.js ou biblioteca geográfica
 
 Uma biblioteca geográfica pode ser usada para:

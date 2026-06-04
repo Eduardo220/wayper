@@ -1,14 +1,18 @@
 import {
   ACTIVE_RUN_SCHEMA_VERSION,
   ACTIVE_RUN_STATUS as OFFLINE_RUN_STATUS,
+  ACTIVE_RUN_SYNC_STATUS,
   clearActiveRun,
+  finishActiveRun as persistOfflineFinishedRun,
   loadActiveRun,
+  shouldRecoverOfflineRun,
   shouldRestoreActiveRun,
   toAppRunMode,
 } from "../runOfflineStorageService.js";
 import {
   ACTIVE_RUN_STATUS as TRACKING_RUN_STATUS,
   buildRunDataFromActiveSnapshot,
+  normalizeActiveRunSnapshot,
 } from "../runTracking/activeRunState.js";
 import { buildSummaryRenderPath, sanitizeRunPath } from "../runTracking/index.js";
 
@@ -30,6 +34,15 @@ const FINISHED_STATUSES = new Set([
   RUN_RECOVERY_STATUS.PENDING_SYNC,
   "sync_failed",
 ]);
+
+const LOG_PREFIX = "[Wayper RunRecovery]";
+
+function logRecovery(event, payload = {}) {
+  if (typeof __DEV__ === "undefined" || !__DEV__) return;
+  try {
+    console.log(`${LOG_PREFIX} ${event}`, payload);
+  } catch {}
+}
 
 function toTimestampMs(value) {
   if (value == null || value === "") return null;
@@ -85,12 +98,88 @@ function getRunPoints(run = {}) {
   );
 }
 
+function getRunRawPoints(run = {}) {
+  return sanitizeRunPath(
+    run.rawPath ||
+      run.rawPoints ||
+      run.finalRunData?.rawPath ||
+      run.finalRunData?.rawPoints ||
+      getRunPoints(run)
+  );
+}
+
+function getRunRenderPath(run = {}) {
+  const path = getRunPoints(run);
+  return sanitizeRunPath(
+    run.renderPath ||
+      run.summaryRenderPath ||
+      run.displayPath ||
+      run.displayPoints ||
+      run.finalRunData?.renderPath ||
+      run.finalRunData?.displayPath ||
+      (path.length > 1 ? buildSummaryRenderPath(path) : path)
+  );
+}
+
+function getRunSegments(run = {}) {
+  const segments =
+    run.segments ||
+    run.routeSegments ||
+    run.finalRunData?.segments ||
+    run.finalRunData?.routeSegments ||
+    [];
+  if (!Array.isArray(segments) || segments.length === 0) return [];
+
+  const points = getRunPoints(run);
+  const rawPoints = getRunRawPoints(run);
+  return segments.map((segment = {}, index) => {
+    const segmentIndex = Number.isFinite(Number(segment.index ?? segment.segmentIndex ?? segment.segmentId))
+      ? Number(segment.index ?? segment.segmentIndex ?? segment.segmentId)
+      : index;
+    const trustedPath = sanitizeRunPath(segment.trustedPath || segment.filteredPoints || segment.path || points.filter((point) => {
+      const pointSegment = Number(point.segmentId ?? point.segmentIndex ?? 0);
+      return pointSegment === segmentIndex;
+    }));
+    const rawPath = sanitizeRunPath(segment.rawPath || segment.rawPoints || rawPoints.filter((point) => {
+      const pointSegment = Number(point.segmentId ?? point.segmentIndex ?? 0);
+      return pointSegment === segmentIndex;
+    }) || trustedPath);
+    return {
+      ...segment,
+      index: segmentIndex,
+      trustedPath,
+      filteredPoints: trustedPath,
+      rawPath,
+      rawPoints: rawPath,
+      displayPoints: sanitizeRunPath(segment.displayPoints || segment.summaryRenderPath || segment.renderPath || trustedPath),
+    };
+  });
+}
+
 function getRunStartedAt(run = {}) {
   return run.startedAt || run.startedAtMs || run.date || run.finalRunData?.startedAt || run.finalRunData?.date || null;
 }
 
 function getRunUpdatedAt(run = {}) {
-  return run.updatedAt || run.lastUpdatedAt || run.lastUpdatedAtMs || run.endedAt || run.finishedAt || run.date || null;
+  return (
+    run.checkpointAtMs ||
+    run.checkpointAt ||
+    run.updatedAtMs ||
+    run.updatedAt ||
+    run.lastUpdatedAtMs ||
+    run.lastUpdatedAt ||
+    run.endedAt ||
+    run.finishedAt ||
+    run.date ||
+    run.finalRunData?.updatedAt ||
+    run.finalRunData?.endedAt ||
+    run.finalRunData?.date ||
+    null
+  );
+}
+
+function getRunFinishedAt(run = {}) {
+  return run.finishedAt || run.finishedAtMs || run.endedAt || run.finalRunData?.endedAt || run.finalRunData?.date || null;
 }
 
 function getRunDistanceMeters(run = {}) {
@@ -182,15 +271,22 @@ export function createRecoveryCandidate(source, run = {}, options = {}) {
     recoverable: true,
     validation,
     id: String(getRunId(run)),
+    activeRunId: run.activeRunId || run.id || null,
+    localRunId: run.localRunId || run.activeRunId || run.id || null,
+    remoteRunId: run.remoteRunId || run.finalRunData?.remoteRunId || null,
     userId: getRunUserId(run) || options.userId || "offline",
     status: validation.status,
     mode,
     startedAt,
     updatedAt,
+    finishedAt: toIso(getRunFinishedAt(run)),
     durationSeconds,
     distanceMeters,
     lastPoint: run.currentLocation || run.lastValidPoint || points[points.length - 1] || null,
     pointsCount: points.length,
+    segmentsCount: getRunSegments(run).length,
+    syncStatus: run.syncStatus || run.finalRunData?.syncStatus || null,
+    offlineStatus: run.offlineStatus || run.status || null,
     pendingSync: run.pendingSync !== false || validation.status === RUN_RECOVERY_STATUS.PENDING_SYNC,
   };
 }
@@ -205,6 +301,168 @@ async function getActiveRunSnapshot() {
   }
 }
 
+async function getTrackingService() {
+  const module = await import("../runTracking/activeRunTrackingService.js");
+  return module.default || module;
+}
+
+function candidateUpdatedAtMs(candidate = {}) {
+  return toTimestampMs(candidate.updatedAt) || toTimestampMs(getRunUpdatedAt(candidate.raw || {})) || 0;
+}
+
+function candidateFinishedAtMs(candidate = {}) {
+  return toTimestampMs(candidate.finishedAt) || toTimestampMs(getRunFinishedAt(candidate.raw || {})) || 0;
+}
+
+function hasFinishedMarker(candidate = {}) {
+  return isFinishedRecovery(candidate) || Boolean(candidateFinishedAtMs(candidate));
+}
+
+function hasLiveStatus(candidate = {}) {
+  return isLiveRecovery(candidate);
+}
+
+function sameLogicalRun(a = {}, b = {}) {
+  const idsA = [a.id, a.activeRunId, a.localRunId].filter(Boolean).map(String);
+  const idsB = [b.id, b.activeRunId, b.localRunId].filter(Boolean).map(String);
+  return idsA.some((id) => idsB.includes(id));
+}
+
+function candidateCompletenessScore(candidate = {}) {
+  const raw = candidate.raw || {};
+  let score = 0;
+  if (candidate.localRunId || raw.localRunId) score += 20;
+  if (candidate.pointsCount > 0) score += Math.min(candidate.pointsCount, 200);
+  if (candidate.segmentsCount > 0) score += Math.min(candidate.segmentsCount * 8, 80);
+  if (candidate.distanceMeters > 0) score += 20;
+  if (candidate.durationSeconds > 0) score += 20;
+  if (!hasFinishedMarker(candidate)) score += 15;
+  if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) score += 5;
+  return score;
+}
+
+function compareRecoveryCandidates(a = {}, b = {}) {
+  const aFinished = hasFinishedMarker(a);
+  const bFinished = hasFinishedMarker(b);
+  if (sameLogicalRun(a, b) && aFinished !== bFinished) {
+    return aFinished ? -1 : 1;
+  }
+
+  const aLive = hasLiveStatus(a);
+  const bLive = hasLiveStatus(b);
+  if (aLive !== bLive) return aLive ? -1 : 1;
+
+  const timeDiff = candidateUpdatedAtMs(b) - candidateUpdatedAtMs(a);
+  if (Math.abs(timeDiff) > 1000) return timeDiff;
+
+  const scoreDiff = candidateCompletenessScore(b) - candidateCompletenessScore(a);
+  if (scoreDiff !== 0) return scoreDiff;
+
+  if (a.source !== b.source) {
+    return a.source === RUN_RECOVERY_SOURCE.TRACKING ? -1 : 1;
+  }
+
+  return String(a.id || "").localeCompare(String(b.id || ""));
+}
+
+// Regra deterministica de conflito:
+// 1. candidatos invalidos/corrompidos sao descartados;
+// 2. se o mesmo run aparece como finalizado e vivo, o finalizado vence para nao ressuscitar corrida ja encerrada;
+// 3. entre corridas vivas, vence o checkpoint mais recente; em empate, vence o payload mais completo;
+// 4. em empate real, o snapshot canonico (`wayper:activeRun:v2`) vence o legado;
+// 5. candidato legado vivo so e aplicado depois de migrar para o snapshot canonico.
+export function resolveRecoveryConflict(candidates = [], options = {}) {
+  const valid = [];
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    if (!candidate) continue;
+    if (candidate.recoverable) {
+      valid.push(candidate);
+      continue;
+    }
+    logRecovery("recovery_candidate_discarded", {
+      source: candidate.source,
+      reasons: candidate.validation?.reasons || ["not_recoverable"],
+    });
+  }
+
+  if (valid.length === 0) return null;
+  const sorted = [...valid].sort(compareRecoveryCandidates);
+  const selected = sorted[0] || null;
+
+  if (valid.length > 1 && selected) {
+    logRecovery("recovery_conflict_resolved", {
+      selectedSource: selected.source,
+      selectedRunId: selected.id,
+      selectedStatus: selected.status,
+      alternatives: valid.slice(1).map((candidate) => ({
+        source: candidate.source,
+        id: candidate.id,
+        status: candidate.status,
+        updatedAt: candidate.updatedAt,
+      })),
+      reason: options.reason || "deterministic_resolution",
+    });
+  }
+
+  return selected;
+}
+
+export function buildActiveSnapshotFromOfflineRun(offlineRun = {}, options = {}) {
+  const candidateStatus = normalizeRecoveryStatus(options.status || offlineRun.status);
+  if (isFinishedRecovery({ status: candidateStatus })) return null;
+
+  const startedAtMs = toTimestampMs(getRunStartedAt(offlineRun)) || Date.now();
+  const updatedAtMs = toTimestampMs(getRunUpdatedAt(offlineRun)) || Date.now();
+  const status =
+    options.forceRunning === true
+      ? TRACKING_RUN_STATUS.RUNNING
+      : candidateStatus === RUN_RECOVERY_STATUS.PAUSED
+        ? TRACKING_RUN_STATUS.PAUSED
+        : TRACKING_RUN_STATUS.RUNNING;
+  const path = getRunPoints(offlineRun);
+  const rawPath = getRunRawPoints(offlineRun);
+  const renderPath = getRunRenderPath(offlineRun);
+  const runId = String(offlineRun.localRunId || offlineRun.activeRunId || offlineRun.id || `local_${startedAtMs}`);
+
+  return normalizeActiveRunSnapshot({
+    activeRunId: runId,
+    id: runId,
+    localRunId: offlineRun.localRunId || runId,
+    remoteRunId: offlineRun.remoteRunId || offlineRun.finalRunData?.remoteRunId || null,
+    userId: offlineRun.userId || options.userId || "offline",
+    mode: toAppRunMode(offlineRun.mode || offlineRun.finalRunData?.mode || "free"),
+    status,
+    startedAtMs,
+    startedAt: toIso(startedAtMs),
+    lastUpdatedAtMs: updatedAtMs,
+    lastUpdatedAt: toIso(updatedAtMs),
+    path,
+    trustedPath: path,
+    filteredPoints: path,
+    rawPath,
+    rawPoints: rawPath,
+    segments: getRunSegments(offlineRun),
+    routeSegments: getRunSegments(offlineRun),
+    liveRenderPath: sanitizeRunPath(offlineRun.liveRenderPath || renderPath),
+    displayPoints: renderPath,
+    renderPath,
+    distance: getRunDistanceMeters(offlineRun),
+    distanceMeters: getRunDistanceMeters(offlineRun),
+    duration: getRunDurationSeconds(offlineRun),
+    durationSeconds: getRunDurationSeconds(offlineRun),
+    syncStatus: offlineRun.syncStatus || ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+    offlineStatus: offlineRun.status || null,
+    pendingSync: true,
+    synced: false,
+    source: "legacy_offline_recovery",
+    meta: {
+      ...(offlineRun.meta || {}),
+      migratedFromLegacySnapshot: true,
+      legacyUpdatedAt: toIso(getRunUpdatedAt(offlineRun)),
+    },
+  });
+}
+
 export async function findRecoverableRunForUser(userId, options = {}) {
   const activeSnapshot = options.activeSnapshot === undefined
     ? await getActiveRunSnapshot()
@@ -212,8 +470,6 @@ export async function findRecoverableRunForUser(userId, options = {}) {
   const activeCandidate = activeSnapshot
     ? createRecoveryCandidate(RUN_RECOVERY_SOURCE.TRACKING, activeSnapshot, { userId })
     : null;
-
-  if (activeCandidate?.recoverable) return activeCandidate;
 
   let offlineRun = options.offlineRun;
   if (offlineRun === undefined) {
@@ -224,9 +480,137 @@ export async function findRecoverableRunForUser(userId, options = {}) {
     }
   }
 
-  if (!shouldRestoreActiveRun(offlineRun)) return null;
-  const offlineCandidate = createRecoveryCandidate(RUN_RECOVERY_SOURCE.OFFLINE, offlineRun, { userId });
-  return offlineCandidate?.recoverable ? offlineCandidate : null;
+  const offlineCandidate = shouldRecoverOfflineRun(offlineRun)
+    ? createRecoveryCandidate(RUN_RECOVERY_SOURCE.OFFLINE, offlineRun, { userId })
+    : offlineRun
+      ? {
+          source: RUN_RECOVERY_SOURCE.OFFLINE,
+          raw: offlineRun,
+          recoverable: false,
+          validation: {
+            ok: false,
+            reasons: [shouldRestoreActiveRun(offlineRun) ? "not_recoverable" : "not_active_or_pending"],
+          },
+        }
+      : null;
+
+  return resolveRecoveryConflict([activeCandidate, offlineCandidate], {
+    userId,
+    reason: options.reason || "find_recoverable_run",
+  });
+}
+
+export async function hydrateRecoverableRunCandidate(candidate = {}, options = {}) {
+  if (!candidate?.recoverable || isFinishedRecovery(candidate)) {
+    logRecovery("recovery_hydration_discarded", {
+      source: candidate?.source,
+      id: candidate?.id,
+      status: candidate?.status,
+      reason: "not_live",
+    });
+    return null;
+  }
+
+  try {
+    const service = await getTrackingService();
+
+    if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) {
+      const restored = await service.restoreActiveRun?.({
+        restartTracking: options.restartTracking !== false,
+      });
+      const snapshot = restored || candidate.raw || null;
+      logRecovery("canonical_recovery_applied", {
+        activeRunId: snapshot?.activeRunId,
+        status: snapshot?.status,
+        points: snapshot?.trustedPath?.length || snapshot?.path?.length || 0,
+      });
+      return {
+        candidate,
+        snapshot,
+        source: RUN_RECOVERY_SOURCE.TRACKING,
+      };
+    }
+
+    const snapshot = buildActiveSnapshotFromOfflineRun(candidate.raw, {
+      userId: options.userId || candidate.userId,
+      forceRunning: options.forceRunning,
+    });
+    if (!snapshot?.activeRunId) {
+      logRecovery("legacy_recovery_discarded", {
+        id: candidate.id,
+        status: candidate.status,
+        reason: "cannot_build_canonical_snapshot",
+      });
+      return null;
+    }
+
+    const hydrated = await service.hydrateActiveRunSnapshot?.(snapshot, {
+      replaceExisting: true,
+      restartTracking: options.restartTracking !== false,
+      recovered: true,
+      event: "legacy_run_hydrated",
+    });
+
+    logRecovery("legacy_recovery_migrated", {
+      localRunId: candidate.localRunId || candidate.id,
+      activeRunId: hydrated?.activeRunId,
+      status: hydrated?.status,
+      points: hydrated?.trustedPath?.length || 0,
+      segments: hydrated?.segments?.length || 0,
+    });
+
+    return {
+      candidate: createRecoveryCandidate(RUN_RECOVERY_SOURCE.TRACKING, hydrated || snapshot, {
+        userId: options.userId || candidate.userId,
+      }),
+      snapshot: hydrated || snapshot,
+      source: RUN_RECOVERY_SOURCE.TRACKING,
+      migratedFrom: RUN_RECOVERY_SOURCE.OFFLINE,
+    };
+  } catch (error) {
+    logRecovery("recovery_hydration_failed", {
+      source: candidate.source,
+      id: candidate.id,
+      error: error?.message || String(error),
+    });
+    return null;
+  }
+}
+
+export async function persistFinishedRunDraft(runData = {}, options = {}) {
+  try {
+    const saved = await persistOfflineFinishedRun(runData, options);
+    logRecovery("finished_run_draft_persisted", {
+      localRunId: saved?.localRunId,
+      status: saved?.status,
+      syncStatus: saved?.syncStatus,
+    });
+    return saved;
+  } catch (error) {
+    logRecovery("finished_run_draft_failed", {
+      runId: runData?.id || runData?.localRunId,
+      error: error?.message || String(error),
+    });
+    throw error;
+  }
+}
+
+export async function markRecoveredRunLocallySaved(options = {}) {
+  try {
+    const service = await getTrackingService();
+    await service.markActiveRunLocallySaved?.();
+    await clearActiveRun();
+    logRecovery("active_run_state_cleared_after_local_save", {
+      reason: options.reason || "local_run_saved",
+    });
+    return { ok: true };
+  } catch (error) {
+    logRecovery("active_run_state_clear_failed", {
+      reason: options.reason || "local_run_saved",
+      error: error?.message || String(error),
+    });
+    return { ok: false, error };
+  }
 }
 
 export function buildRecoverySummary(candidate = {}) {
@@ -256,10 +640,17 @@ export function isLiveRecovery(candidate = {}) {
 export function buildRunDataFromRecoveredRun(candidate = {}, overrides = {}) {
   const raw = candidate.raw || {};
   if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) {
-    return buildRunDataFromActiveSnapshot(raw, {
+    const runData = buildRunDataFromActiveSnapshot(raw, {
       status: "completed",
       ...overrides,
     });
+    return {
+      ...runData,
+      localRunId: raw.localRunId || candidate.localRunId || runData.localRunId || runData.id,
+      remoteRunId: raw.remoteRunId || candidate.remoteRunId || runData.remoteRunId || null,
+      syncStatus: overrides.syncStatus || "PENDING",
+      offlineStatus: overrides.offlineStatus || "PENDING_SYNC",
+    };
   }
 
   const finalRunData = raw.finalRunData || {};
@@ -300,6 +691,8 @@ export function buildRunDataFromRecoveredRun(candidate = {}, overrides = {}) {
     status: "completed",
     synced: false,
     pendingSync: true,
+    syncStatus: overrides.syncStatus || "PENDING",
+    offlineStatus: overrides.offlineStatus || "PENDING_SYNC",
   };
 }
 
@@ -322,13 +715,18 @@ export async function discardRecoveredRun(candidate = {}) {
 export default {
   RUN_RECOVERY_SOURCE,
   RUN_RECOVERY_STATUS,
+  buildActiveSnapshotFromOfflineRun,
   buildRecoverySummary,
   buildRunDataFromRecoveredRun,
   createRecoveryCandidate,
   discardRecoveredRun,
   findRecoverableRunForUser,
+  hydrateRecoverableRunCandidate,
   isFinishedRecovery,
   isLiveRecovery,
+  markRecoveredRunLocallySaved,
   normalizeRecoveryStatus,
+  persistFinishedRunDraft,
+  resolveRecoveryConflict,
   validateRecoverableRun,
 };

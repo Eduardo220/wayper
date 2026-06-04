@@ -171,4 +171,36 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(resumedAgain.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
     expect(resumedAgain.segments).toEqual(resumed.segments);
   });
+
+  test("hidrata snapshot canonico preservando pausa, path e segmentos", async () => {
+    const hydrated = await service.hydrateActiveRunSnapshot({
+      activeRunId: "run-hydrated",
+      userId: "user-1",
+      mode: "free",
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      startedAtMs: BASE_TIME,
+      lastUpdatedAtMs: BASE_TIME + 6000,
+      trustedPath: [nextPoint(1), nextPoint(2)],
+      rawPath: [nextPoint(1), nextPoint(2)],
+      segments: [
+        {
+          index: 0,
+          startedAt: BASE_TIME,
+          endedAt: BASE_TIME + 6000,
+          trustedPath: [nextPoint(1), nextPoint(2)],
+          rawPath: [nextPoint(1), nextPoint(2)],
+        },
+      ],
+    }, { restartTracking: false });
+
+    expect(hydrated.status).toBe(ACTIVE_RUN_STATUS.PAUSED);
+    expect(hydrated.trustedPath).toHaveLength(2);
+    expect(hydrated.segments).toHaveLength(1);
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+    expect(restored.activeRunId).toBe("run-hydrated");
+    expect(restored.status).toBe(ACTIVE_RUN_STATUS.PAUSED);
+    expect(restored.trustedPath).toHaveLength(2);
+  });
 });

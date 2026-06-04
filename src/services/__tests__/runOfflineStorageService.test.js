@@ -26,6 +26,7 @@ const {
   finishActiveRun,
   loadActiveRun,
   saveActiveRunSnapshot,
+  shouldRecoverOfflineRun,
   shouldRestoreActiveRun,
 } = await import("../runOfflineStorageService.js");
 
@@ -82,7 +83,7 @@ describe("runOfflineStorageService", () => {
     expect(saved.segments).toHaveLength(2);
   });
 
-  test("finishActiveRun guarda rascunho final recuperavel", async () => {
+  test("finishActiveRun guarda rascunho final recuperavel sem voltar como ativo", async () => {
     const finished = await finishActiveRun({
       id: "run-3",
       userId: "user-1",
@@ -106,7 +107,38 @@ describe("runOfflineStorageService", () => {
       distanceMeters: 100,
     });
     expect(loaded.finalRunData.id).toBe("run-3");
-    expect(shouldRestoreActiveRun(loaded)).toBe(true);
+    expect(shouldRestoreActiveRun(loaded)).toBe(false);
+    expect(shouldRecoverOfflineRun(loaded)).toBe(true);
+  });
+
+  test("checkpoint antigo nao sobrescreve checkpoint mais recente do mesmo run", async () => {
+    await createActiveRun({ localRunId: "run-stale", userId: "user-1", mode: "free" });
+    const newer = await saveActiveRunSnapshot({
+      localRunId: "run-stale",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      checkpointAtMs: 3000,
+      points: [
+        { latitude: -30, longitude: -51, timestamp: 1000 },
+        { latitude: -30.0005, longitude: -51, timestamp: 2000 },
+      ],
+      durationMs: 20_000,
+      distanceMeters: 120,
+    });
+    const stale = await saveActiveRunSnapshot({
+      localRunId: "run-stale",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      checkpointAtMs: 2000,
+      points: [
+        { latitude: -30, longitude: -51, timestamp: 1000 },
+      ],
+      durationMs: 10_000,
+      distanceMeters: 10,
+    });
+
+    expect(stale).toEqual(newer);
+    const loaded = await loadActiveRun();
+    expect(loaded.points).toHaveLength(2);
+    expect(loaded.distanceMeters).toBe(120);
   });
 
   test("dados locais corrompidos nao quebram o app", async () => {

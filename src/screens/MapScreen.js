@@ -65,12 +65,14 @@ import activeRunTrackingService from "../services/runTracking/activeRunTrackingS
 import { forceCheckpointForAppState } from "../services/run/runAutoSaveService.js";
 import { ensureRunNotificationPermission } from "../services/run/runNotificationService.js";
 import {
-  RUN_RECOVERY_SOURCE,
   buildRunDataFromRecoveredRun,
   discardRecoveredRun,
   findRecoverableRunForUser,
+  hydrateRecoverableRunCandidate,
   isFinishedRecovery,
   isLiveRecovery,
+  markRecoveredRunLocallySaved,
+  persistFinishedRunDraft,
 } from "../services/run/runRecoveryService.js";
 import { enqueueFinishedRun, schedulePendingRunsSync } from "../services/run/runSyncQueueService.js";
 import sync from "../utils/sync";
@@ -120,11 +122,6 @@ import {
 import {
   ACTIVE_RUN_STATUS,
   ACTIVE_RUN_SYNC_STATUS,
-  clearActiveRun,
-  createActiveRun,
-  finishActiveRun,
-  saveActiveRunSnapshot,
-  toAppRunMode,
 } from "../services/runOfflineStorageService";
 
 /* Tunáveis */
@@ -298,21 +295,6 @@ const toFiniteNumber = (value, fallback = null) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 };
-
-const toTimestampMs = (value, fallback = Date.now()) => {
-  const number = Number(value);
-  if (Number.isFinite(number) && number > 0) return number;
-  const parsed = new Date(value).getTime();
-  return Number.isNaN(parsed) ? fallback : parsed;
-};
-
-const restorePointTimestamp = (point = {}) => ({
-  ...point,
-  timestamp: toTimestampMs(point.timestamp),
-  segmentId: Number.isFinite(Number(point.segmentIndex ?? point.segmentId))
-    ? Number(point.segmentIndex ?? point.segmentId)
-    : 0,
-});
 
 const normalizeTerritoryBbox = (bbox) => {
   if (!Array.isArray(bbox) || bbox.length < 4) return null;
@@ -596,7 +578,6 @@ const MapScreen = ({ navigation, route }) => {
   const lastRouteFocusRef = useRef(null);
   const watcherStartTokenRef = useRef(0);
   const activeRunRestoreAttemptedRef = useRef(false);
-  const activeRunPersistLastAtRef = useRef(0);
   const restoreActiveRunForReentryRef = useRef(null);
   const restoringActiveRunRef = useRef(false);
   const lastNotificationOpenRequestRef = useRef(null);
@@ -998,12 +979,6 @@ const MapScreen = ({ navigation, route }) => {
         appStateSub = AppState.addEventListener("change", (next) => {
           appStateRef.current = next;
           if (next !== "active" && currentRunIdRef.current) {
-            persistActiveRunSnapshot({
-              status: runStatusRef.current === "paused"
-                ? ACTIVE_RUN_STATUS.PAUSED
-                : ACTIVE_RUN_STATUS.RUNNING,
-              syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-            }, { force: true });
             forceCheckpointForAppState(next).catch((error) => {
               debug("forceCheckpointForAppState failed", error);
             });
@@ -1220,62 +1195,6 @@ const MapScreen = ({ navigation, route }) => {
     }
   }, [updateActiveZonePreview]);
 
-  const buildActiveRunSnapshot = useCallback((overrides = {}) => {
-    const trackingState = trackingSessionRef.current?.getState?.() || {};
-    const trustedPath = sanitizePath(trackingState.trustedPath || savedPathRef.current || []);
-    const rawPath = sanitizePath(trackingState.rawPath || rawPathRef.current || trustedPath);
-    const segments = sanitizeTrackingSegments(trackingState.segments || []);
-    const durationMs = Math.max(0, Number(timeSecRef.current || 0) * 1000);
-    const distanceMeters = Number(trackingState.stats?.distanceMeters ?? distanceRef.current) || 0;
-    const averageSpeed = durationMs > 0 ? distanceMeters / (durationMs / 1000) : 0;
-    const currentMode = modeRef.current || "free";
-
-    return {
-      localRunId: currentRunIdRef.current,
-      userId: auth.currentUser?.uid || "offline",
-      mode: currentMode === "zones" ? "territory" : "free",
-      status: overrides.status || (runStatusRef.current === "paused" ? ACTIVE_RUN_STATUS.PAUSED : ACTIVE_RUN_STATUS.RUNNING),
-      syncStatus: overrides.syncStatus || ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-      startedAt: trackingSessionRef.current?.state?.startedAt || Date.now(),
-      endedAt: overrides.endedAt,
-      durationMs,
-      movingDurationMs: durationMs,
-      distanceMeters,
-      pace: distanceMeters > 0 && durationMs > 0 ? durationMs / 1000 / (distanceMeters / 1000) : undefined,
-      averageSpeed,
-      maxSpeed: Number(trackingState.stats?.maxSpeedMps || 0),
-      points: trustedPath.map((point) => ({
-        ...point,
-        segmentIndex: Number.isFinite(Number(point.segmentId ?? point.segmentIndex))
-          ? Number(point.segmentId ?? point.segmentIndex)
-          : 0,
-      })),
-      rawPoints: rawPath,
-      segments,
-      territoryData: currentMode === "zones"
-        ? { pendingCalculation: true }
-        : undefined,
-      permissions: {
-        locationStatus: locationPermissionRef.current?.status || null,
-        locationGranted: Boolean(locationPermissionRef.current?.granted),
-        canAskAgain: locationPermissionRef.current?.canAskAgain !== false,
-      },
-      ...overrides,
-    };
-  }, []);
-
-  const persistActiveRunSnapshot = useCallback((overrides = {}, options = {}) => {
-    if (!currentRunIdRef.current) return;
-    const now = Date.now();
-    if (!options.force && now - activeRunPersistLastAtRef.current < 1400) return;
-    activeRunPersistLastAtRef.current = now;
-
-    const snapshot = buildActiveRunSnapshot(overrides);
-    saveActiveRunSnapshot(snapshot).catch((error) => {
-      debug("persistActiveRunSnapshot failed", error);
-    });
-  }, [buildActiveRunSnapshot]);
-
   /* ===== Core location update ===== */
   const handleLocationUpdate = useCallback(
     (locObj = {}) => {
@@ -1406,16 +1325,12 @@ const MapScreen = ({ navigation, route }) => {
           setDistanceState(distanceRef.current);
           setGpsQualityWarning(getGpsQualityWarning(gpsSummary));
           updateActiveZonePreview(trustedPath);
-          persistActiveRunSnapshot({
-            status: ACTIVE_RUN_STATUS.RUNNING,
-            syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-          }, { force: true });
         }
       } catch (e) {
         debug("handleLocationUpdate", e);
       }
     },
-    [persistActiveRunSnapshot, updateActiveZonePreview]
+    [updateActiveZonePreview]
   );
 
   const stopBackgroundLocationService = useCallback(async () => {
@@ -1836,24 +1751,6 @@ const MapScreen = ({ navigation, route }) => {
         } catch (activeRunError) {
           debug("startActiveRun service failed", activeRunError);
         }
-        try {
-          await createActiveRun({
-            localRunId: currentRunIdRef.current,
-            userId: auth.currentUser?.uid || "offline",
-            mode: selectedMode === "zones" ? "territory" : "free",
-            startedAt: startedAtMs,
-            status: ACTIVE_RUN_STATUS.RUNNING,
-            syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-            permissions: {
-              locationStatus: permission.status || null,
-              locationGranted: Boolean(permission.granted),
-              canAskAgain: permission.canAskAgain !== false,
-            },
-          });
-          activeRunPersistLastAtRef.current = Date.now();
-        } catch (storageError) {
-          debug("createActiveRun failed", storageError);
-        }
 
         startElapsedTimer();
 
@@ -1896,10 +1793,6 @@ const MapScreen = ({ navigation, route }) => {
     setPaused(true);
     flushRouteBufferToState();
     trackingSessionRef.current?.pause?.({ endedAt: Date.now() });
-    persistActiveRunSnapshot({
-      status: ACTIVE_RUN_STATUS.PAUSED,
-      syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-    }, { force: true });
     debugTracking("session_paused", {
       runSessionId: currentRunIdRef.current,
       segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
@@ -1911,7 +1804,7 @@ const MapScreen = ({ navigation, route }) => {
     stopWatcherAndPolling();
     stopBackgroundLocationService();
     stopElapsedTimer();
-  }, [flushRouteBufferToState, paused, persistActiveRunSnapshot, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
+  }, [flushRouteBufferToState, paused, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
 
   const resumeRun = useCallback(async () => {
     if (!running || !paused) return;
@@ -1938,10 +1831,6 @@ const MapScreen = ({ navigation, route }) => {
         segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
         nextSegmentStartsOnFirstAcceptedPoint: true,
       });
-      persistActiveRunSnapshot({
-        status: ACTIVE_RUN_STATUS.RUNNING,
-        syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-      }, { force: true });
       await activeRunTrackingService.resumeActiveRun?.({ startedAtMs: Date.now() });
 
       startElapsedTimer();
@@ -1971,7 +1860,7 @@ const MapScreen = ({ navigation, route }) => {
     } catch (e) {
       debug("resumeRun catch", e);
     }
-  }, [paused, persistActiveRunSnapshot, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]);
+  }, [paused, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]);
 
   const fadeOutRoute = useCallback(() => {
     return new Promise((resolve) => {
@@ -2175,13 +2064,13 @@ const MapScreen = ({ navigation, route }) => {
         }
 
         try {
-          await finishActiveRun(runData, {
+          await persistFinishedRunDraft(runData, {
             userId: auth.currentUser?.uid || "offline",
             status: ACTIVE_RUN_STATUS.FINISHED,
             syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
           });
         } catch (storageError) {
-          debug("finishActiveRun failed", storageError);
+          debug("persistFinishedRunDraft failed", storageError);
         }
 
         let savedLocalRun = null;
@@ -2195,8 +2084,7 @@ const MapScreen = ({ navigation, route }) => {
           });
           sync.scheduleRunsSync?.();
           if (savedLocalRun?.id === runData.id) {
-            await activeRunTrackingService.markActiveRunLocallySaved?.();
-            await clearActiveRun();
+            await markRecoveredRunLocallySaved({ reason: "finish_local_run_saved" });
           }
         } catch (saveLocalError) {
           debug("final local run save failed; keeping active snapshot", saveLocalError);
@@ -2250,178 +2138,6 @@ const MapScreen = ({ navigation, route }) => {
     [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, flushRouteBufferToState, mode, territories]
   );
 
-  const buildRunDataFromOfflineRun = useCallback((offlineRun = {}) => {
-    const points = sanitizePath((offlineRun.points || []).map(restorePointTimestamp));
-    const finalRunData = offlineRun.finalRunData || {};
-    const path = sanitizePath(finalRunData.trustedPath || finalRunData.path || points);
-    const renderPath = sanitizePath(
-      finalRunData.renderPath ||
-      finalRunData.displayPath ||
-      (path.length > 1 ? buildSummaryRenderPath(path) : path)
-    );
-    const endedAt = offlineRun.endedAt || finalRunData.endedAt || new Date().toISOString();
-    const durationSeconds = Math.round(Number(offlineRun.durationMs || 0) / 1000);
-
-    return {
-      ...finalRunData,
-      id: finalRunData.id || offlineRun.localRunId,
-      localRunId: offlineRun.localRunId,
-      userId: offlineRun.userId || auth.currentUser?.uid || "offline",
-      mode: finalRunData.mode || toAppRunMode(offlineRun.mode),
-      path,
-      trustedPath: path,
-      filteredPoints: path,
-      rawPath: sanitizePath(finalRunData.rawPath || finalRunData.rawPoints || points),
-      rawPoints: sanitizePath(finalRunData.rawPoints || finalRunData.rawPath || points),
-      renderPath,
-      displayPath: renderPath,
-      displayPoints: renderPath,
-      segments: sanitizeTrackingSegments(finalRunData.segments || finalRunData.routeSegments || offlineRun.segments || []),
-      routeSegments: sanitizeTrackingSegments(finalRunData.routeSegments || finalRunData.segments || offlineRun.segments || []),
-      distance: Number(finalRunData.distance ?? finalRunData.distanceMeters ?? offlineRun.distanceMeters ?? 0),
-      distanceMeters: Number(finalRunData.distanceMeters ?? finalRunData.distance ?? offlineRun.distanceMeters ?? 0),
-      duration: Number(finalRunData.duration ?? finalRunData.durationSeconds ?? durationSeconds),
-      durationSeconds: Number(finalRunData.durationSeconds ?? finalRunData.duration ?? durationSeconds),
-      avgSpeed: Number(finalRunData.avgSpeed ?? offlineRun.averageSpeed ?? 0),
-      maxSpeed: Number(finalRunData.maxSpeed ?? offlineRun.maxSpeed ?? 0),
-      date: finalRunData.date || endedAt,
-      startedAt: finalRunData.startedAt || offlineRun.startedAt || null,
-      endedAt,
-      status: finalRunData.status || "completed",
-      synced: false,
-      syncStatus: ACTIVE_RUN_SYNC_STATUS.PENDING,
-      offlineStatus: "PENDING_SYNC",
-      schemaVersion: offlineRun.schemaVersion || 1,
-    };
-  }, []);
-
-  const hydrateTrackingSessionFromOfflineRun = useCallback((offlineRun = {}) => {
-    const startedAt = toTimestampMs(offlineRun.startedAt);
-    const points = sanitizePath((offlineRun.points || []).map(restorePointTimestamp));
-    const session = createTrackingSession({ mode: "run", startedAt, autoStart: false });
-    session.start({ startedAt });
-
-    let previousSegmentIndex = null;
-    points.forEach((point, index) => {
-      const segmentIndex = Number.isFinite(Number(point.segmentId ?? point.segmentIndex))
-        ? Number(point.segmentId ?? point.segmentIndex)
-        : 0;
-      session.processLocationPoint(
-        {
-          ...point,
-          segmentId: segmentIndex,
-          source: "restore",
-        },
-        {
-          segmentBreak: index > 0 && previousSegmentIndex !== segmentIndex,
-        }
-      );
-      previousSegmentIndex = segmentIndex;
-    });
-
-    if (offlineRun.status === ACTIVE_RUN_STATUS.PAUSED) {
-      session.pause({ endedAt: Date.now() });
-    }
-
-    trackingSessionRef.current = session;
-    const trackingState = session.getState();
-    const trustedPath = sanitizePath(trackingState.trustedPath || points);
-    const liveSegments = sanitizeSegmentPaths(trackingState.liveRenderSegments || []);
-    const displaySnapshot = limitPathForRendering(
-      liveSegments.length > 0
-        ? flattenSegmentPaths(liveSegments)
-        : sanitizePath(trackingState.liveRenderPath || trustedPath),
-      TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
-    );
-    const segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(displaySnapshot);
-
-    savedPathRef.current = trustedPath;
-    routeStateRef.current = trustedPath;
-    rawPathRef.current = sanitizePath(trackingState.rawPath || points);
-    displayPathRef.current = displaySnapshot;
-    displaySegmentsRef.current = segmentSnapshot;
-    distanceRef.current = Number(offlineRun.distanceMeters || trackingState.stats?.distanceMeters || 0);
-    lastAcceptedLocationRef.current = trustedPath[trustedPath.length - 1] || null;
-    lastPointRef.current = lastAcceptedLocationRef.current;
-    lastSmoothedLocationRef.current = displaySnapshot[displaySnapshot.length - 1] || lastAcceptedLocationRef.current;
-    currentSegmentIdRef.current = Number(lastAcceptedLocationRef.current?.segmentId || previousSegmentIndex || 0);
-
-    setRouteState(limitPathForRendering(trustedPath, ROUTE_CAP));
-    setDisplayRouteState(displaySnapshot);
-    setDisplayRouteSegments(segmentSnapshot);
-    setDistanceState(distanceRef.current);
-    if (lastSmoothedLocationRef.current) setLocation(lastSmoothedLocationRef.current);
-    setGpsQualityWarning(getGpsQualityWarning(trackingState.gpsQualitySummary || trackingState.pathQuality));
-  }, []);
-
-  const applyOfflineRecoveryToUi = useCallback(
-    async (offlineRun = {}, options = {}) => {
-      const restoredMode = toAppRunMode(offlineRun.mode);
-      const pausedRun = !options.forceRunning && offlineRun.status === ACTIVE_RUN_STATUS.PAUSED;
-      const restoredDurationSeconds = Math.max(0, Math.round(Number(offlineRun.durationMs || 0) / 1000));
-
-      currentRunIdRef.current = offlineRun.localRunId;
-      modeRef.current = restoredMode;
-      setMode(restoredMode);
-      setRunning(true);
-      setPaused(pausedRun);
-      runningRef.current = !pausedRun || options.forceRunning === true;
-      runStatusRef.current = pausedRun ? "paused" : "active";
-      timeSecRef.current = restoredDurationSeconds;
-      setTimeSec(restoredDurationSeconds);
-      setReplaying(false);
-      setCaptureResult(null);
-      activeRunPersistLastAtRef.current = 0;
-      hydrateTrackingSessionFromOfflineRun(offlineRun);
-      persistActiveRunSnapshot({
-        status: pausedRun ? ACTIVE_RUN_STATUS.PAUSED : ACTIVE_RUN_STATUS.RUNNING,
-        syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-        durationMs: restoredDurationSeconds * 1000,
-      }, { force: true });
-
-      try {
-        const restoredPoints = sanitizePath((offlineRun.points || []).map(restorePointTimestamp));
-        await activeRunTrackingService.startActiveRun?.({
-          activeRunId: offlineRun.localRunId,
-          userId: offlineRun.userId || auth.currentUser?.uid || "offline",
-          mode: restoredMode,
-          startedAtMs: toTimestampMs(offlineRun.startedAt),
-          meta: { migratedFromLegacySnapshot: true },
-        });
-        for (const point of restoredPoints) {
-          await activeRunTrackingService.recordLocation?.({
-            ...point,
-            source: "restore",
-          }, { source: "restore" });
-        }
-        if (pausedRun) {
-          await activeRunTrackingService.pauseActiveRun?.({ endedAtMs: Date.now(), source: "restore" });
-        }
-      } catch (migrationError) {
-        debug("legacy active run migration failed", migrationError);
-      }
-
-      if (options.startWatchers && !pausedRun) {
-        startElapsedTimer();
-        await startLocationWatcher();
-        await startBackgroundLocationService();
-      }
-
-      return {
-        mode: restoredMode,
-        paused: pausedRun,
-        durationSeconds: restoredDurationSeconds,
-      };
-    },
-    [
-      hydrateTrackingSessionFromOfflineRun,
-      persistActiveRunSnapshot,
-      startBackgroundLocationService,
-      startElapsedTimer,
-      startLocationWatcher,
-    ]
-  );
-
   const restoreRecoveryCandidateToUi = useCallback(
     async (candidate, options = {}) => {
       if (!candidate?.recoverable || isFinishedRecovery(candidate)) return false;
@@ -2435,28 +2151,17 @@ const MapScreen = ({ navigation, route }) => {
         setRecoveryModalVisible(false);
         setPendingRecovery(null);
 
-        if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) {
-          const restored = await activeRunTrackingService.restoreActiveRun?.({
-            restartTracking: options.restartTracking !== false,
-          });
-          const snapshot = restored || candidate.raw;
-          if (!snapshot?.activeRunId) return false;
-          applyActiveRunSnapshotToUi(snapshot, {
-            recovered: options.recovered !== false,
-            forceSyncControls: options.forceSyncControls !== false,
-          });
-          return true;
-        }
-
-        await applyOfflineRecoveryToUi(candidate.raw, {
-          startWatchers: options.startWatchers !== false,
+        const hydrated = await hydrateRecoverableRunCandidate(candidate, {
+          userId: auth.currentUser?.uid || "offline",
+          restartTracking: options.restartTracking !== false,
+          forceRunning: options.forceRunning,
         });
-        if (options.recovered !== false) {
-          setRecoveryNoticeVisible(true);
-          setTimeout(() => {
-            if (mountedRef.current) setRecoveryNoticeVisible(false);
-          }, 6500);
-        }
+        const snapshot = hydrated?.snapshot || candidate.raw;
+        if (!snapshot?.activeRunId) return false;
+        applyActiveRunSnapshotToUi(snapshot, {
+          recovered: options.recovered !== false,
+          forceSyncControls: options.forceSyncControls !== false,
+        });
         return true;
       } finally {
         restoringActiveRunRef.current = false;
@@ -2464,7 +2169,6 @@ const MapScreen = ({ navigation, route }) => {
     },
     [
       applyActiveRunSnapshotToUi,
-      applyOfflineRecoveryToUi,
       closeActiveRunBlockingOverlays,
     ]
   );
@@ -2577,31 +2281,24 @@ const MapScreen = ({ navigation, route }) => {
     try {
       setRecoveryModalVisible(false);
       if (isFinishedRecovery(pendingRecovery)) {
-        const runData =
-          pendingRecovery.source === RUN_RECOVERY_SOURCE.OFFLINE
-            ? buildRunDataFromOfflineRun(pendingRecovery.raw)
-            : buildRunDataFromRecoveredRun(pendingRecovery);
+        const runData = buildRunDataFromRecoveredRun(pendingRecovery);
         const saved = await enqueueFinishedRun(runData, {
           userId: auth.currentUser?.uid || "offline",
           delayMs: 0,
         });
-        await activeRunTrackingService.markActiveRunLocallySaved?.();
-        await clearActiveRun();
+        await markRecoveredRunLocallySaved({ reason: "finished_recovery_enqueued" });
         setCurrentRunData(saved || runData);
         setShowRunModal(true);
         setPendingRecovery(null);
         return;
       }
 
-      if (pendingRecovery.source === RUN_RECOVERY_SOURCE.TRACKING) {
-        const restored = await activeRunTrackingService.restoreActiveRun?.({ restartTracking: false });
-        applyActiveRunSnapshotToUi(restored || pendingRecovery.raw, { recovered: true });
-      } else {
-        await applyOfflineRecoveryToUi(pendingRecovery.raw, {
-          forceRunning: true,
-          startWatchers: false,
-        });
-      }
+      const hydrated = await hydrateRecoverableRunCandidate(pendingRecovery, {
+        userId: auth.currentUser?.uid || "offline",
+        restartTracking: false,
+        forceRunning: true,
+      });
+      applyActiveRunSnapshotToUi(hydrated?.snapshot || pendingRecovery.raw, { recovered: true });
 
       await stopRun({ force: true, fromRecovery: true });
       setPendingRecovery(null);
@@ -2613,8 +2310,6 @@ const MapScreen = ({ navigation, route }) => {
     }
   }, [
     applyActiveRunSnapshotToUi,
-    applyOfflineRecoveryToUi,
-    buildRunDataFromOfflineRun,
     pendingRecovery,
     stopRun,
   ]);
@@ -3900,8 +3595,7 @@ const MapScreen = ({ navigation, route }) => {
             const saved = await sync.saveLocalRun?.(normalized);
             sync.scheduleRunsSync?.();
             if (saved?.id && String(saved.id) === String(normalized.id)) {
-              await activeRunTrackingService.markActiveRunLocallySaved?.();
-              await clearActiveRun();
+              await markRecoveredRunLocallySaved({ reason: "summary_modal_local_run_saved" });
             }
 
             setRunsList((prev) => {

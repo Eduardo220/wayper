@@ -253,36 +253,82 @@ export async function startActiveRun(options = {}) {
 }
 
 export async function restoreActiveRun(options = {}) {
+  if (options.snapshot) {
+    return hydrateActiveRunSnapshot(options.snapshot, {
+      ...options,
+      event: options.event || "run_restored",
+    });
+  }
+
   const snapshot = await loadPersistedSnapshot();
   if (!snapshot) return null;
 
-  activeSession = createTrackingSessionFromSnapshot({
+  return hydrateActiveRunSnapshot({
     ...snapshot,
     meta: {
       ...(snapshot.meta || {}),
       recovered: true,
     },
+  }, {
+    ...options,
+    event: "run_restored",
   });
-  activeSnapshot = normalizeActiveRunSnapshot({
-    ...snapshot,
-    meta: {
-      ...(snapshot.meta || {}),
-      recovered: true,
-    },
-  });
+}
 
-  log("run_restored", {
-    activeRunId: activeSnapshot.activeRunId,
-    status: activeSnapshot.status,
-    points: activeSnapshot.trustedPath?.length || 0,
-  });
-  emitSnapshot(activeSnapshot, "run_restored");
+export async function hydrateActiveRunSnapshot(snapshot = {}, options = {}) {
+  try {
+    const normalized = normalizeActiveRunSnapshot({
+      ...snapshot,
+      meta: {
+        ...(snapshot.meta || {}),
+        recovered: Boolean(snapshot.meta?.recovered || options.recovered),
+      },
+    });
+    if (!normalized?.activeRunId) return null;
 
-  if (options.restartTracking !== false && activeSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) {
-    await startBackgroundLocationUpdates({ force: false });
+    const existing = activeSnapshot || (await loadPersistedSnapshot());
+    if (
+      existing?.activeRunId &&
+      existing.activeRunId !== normalized.activeRunId &&
+      isLiveStatus(existing.status) &&
+      options.replaceExisting !== true
+    ) {
+      const protectedSnapshot = normalizeActiveRunSnapshot({
+        ...existing,
+        meta: {
+          ...(existing.meta || {}),
+          protectedFromReplace: true,
+        },
+      });
+      activeSession = createTrackingSessionFromSnapshot(protectedSnapshot);
+      activeSnapshot = protectedSnapshot;
+      log("run_hydrate_ignored_existing_active", {
+        activeRunId: protectedSnapshot.activeRunId,
+        incomingRunId: normalized.activeRunId,
+      });
+      emitSnapshot(protectedSnapshot, "run_hydrate_ignored_existing_active");
+      return protectedSnapshot;
+    }
+
+    activeSession = createTrackingSessionFromSnapshot(normalized);
+    const saved = await persistSnapshot(normalized, options.event || "run_hydrated");
+
+    log("run_hydrated", {
+      activeRunId: saved.activeRunId,
+      status: saved.status,
+      points: saved.trustedPath?.length || 0,
+      source: saved.source,
+    });
+
+    if (options.restartTracking !== false && saved.status === ACTIVE_RUN_STATUS.RUNNING) {
+      await startBackgroundLocationUpdates({ force: false });
+    }
+
+    return saved;
+  } catch (error) {
+    emitError(error, { fn: "hydrateActiveRunSnapshot" });
+    return null;
   }
-
-  return activeSnapshot;
 }
 
 export async function recordLocation(location = {}, options = {}) {
@@ -483,6 +529,7 @@ export default {
   getActiveRunSnapshot,
   getCurrentDurationSeconds,
   hasActiveRunSnapshot,
+  hydrateActiveRunSnapshot,
   markActiveRunLocallySaved,
   onActiveRunError,
   onActiveRunSnapshot,

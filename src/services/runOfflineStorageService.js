@@ -22,11 +22,20 @@ export const ACTIVE_RUN_SYNC_STATUS = {
   FAILED: "FAILED",
 };
 
+const LOG_PREFIX = "[Wayper RunOfflineStorage]";
+
 let writeQueue = Promise.resolve();
 
 function enqueueWrite(task) {
   writeQueue = writeQueue.then(task, task);
   return writeQueue;
+}
+
+function log(event, payload = {}) {
+  if (typeof __DEV__ === "undefined" || !__DEV__) return;
+  try {
+    console.log(`${LOG_PREFIX} ${event}`, payload);
+  } catch {}
 }
 
 function nowIso() {
@@ -49,6 +58,41 @@ function toIso(value, fallback = nowIso()) {
   const timestamp = toTimestampMs(value, null);
   if (timestamp == null) return fallback;
   return new Date(timestamp).toISOString();
+}
+
+function getCheckpointTimestampMs(run = {}, fallback = null) {
+  return toTimestampMs(
+    run.checkpointAtMs ??
+      run.checkpointAt ??
+      run.lastUpdatedAtMs ??
+      run.lastUpdatedAt ??
+      run.updatedAtMs ??
+      run.updatedAt ??
+      run.endedAt ??
+      run.finishedAt,
+    fallback
+  );
+}
+
+function isLiveStatus(status) {
+  return status === ACTIVE_RUN_STATUS.RUNNING || status === ACTIVE_RUN_STATUS.PAUSED;
+}
+
+function hasCheckpointPayload(run = {}) {
+  return (
+    sanitizePoints(run.points).length > 0 ||
+    toFiniteNumber(run.distanceMeters, 0) > 0 ||
+    toFiniteNumber(run.durationMs, 0) > 0 ||
+    sanitizeSegments(run.segments, sanitizePoints(run.points)).length > 1
+  );
+}
+
+function normalizeCheckpointFields(run = {}, fallbackMs = Date.now()) {
+  const checkpointAtMs = getCheckpointTimestampMs(run, fallbackMs) || fallbackMs;
+  return {
+    checkpointAtMs,
+    checkpointAt: toIso(checkpointAtMs),
+  };
 }
 
 export function normalizeOfflineMode(mode = "free") {
@@ -157,6 +201,7 @@ function buildBaseRun({
   startedAt = nowIso(),
 } = {}) {
   const createdAt = nowIso();
+  const checkpoint = normalizeCheckpointFields({ startedAt }, toTimestampMs(startedAt, Date.now()));
   return {
     localRunId: String(localRunId || `local_${Date.now()}`),
     remoteRunId: undefined,
@@ -182,6 +227,8 @@ function buildBaseRun({
     finalRunData: undefined,
     createdAt,
     updatedAt: createdAt,
+    checkpointAt: checkpoint.checkpointAt,
+    checkpointAtMs: checkpoint.checkpointAtMs,
     syncAttempts: 0,
     lastSyncError: undefined,
     schemaVersion: ACTIVE_RUN_SCHEMA_VERSION,
@@ -199,6 +246,7 @@ export async function loadActiveRun() {
 
 export async function saveActiveRun(run = {}) {
   return enqueueWrite(async () => {
+    const checkpoint = normalizeCheckpointFields(run);
     const normalized = {
       ...buildBaseRun(run),
       ...run,
@@ -206,6 +254,8 @@ export async function saveActiveRun(run = {}) {
       points: sanitizePoints(run.points),
       segments: sanitizeSegments(run.segments, sanitizePoints(run.points)),
       updatedAt: nowIso(),
+      checkpointAt: checkpoint.checkpointAt,
+      checkpointAtMs: checkpoint.checkpointAtMs,
       schemaVersion: ACTIVE_RUN_SCHEMA_VERSION,
     };
 
@@ -221,21 +271,53 @@ export async function createActiveRun(options = {}) {
 export async function updateActiveRun(patch = {}) {
   return enqueueWrite(async () => {
     const existing = await loadActiveRun();
-    if (!existing) return null;
+    const base = existing || buildBaseRun({
+      localRunId: patch.localRunId || patch.activeRunId || patch.id,
+      userId: patch.userId,
+      mode: patch.mode,
+      status: patch.status || ACTIVE_RUN_STATUS.RUNNING,
+      syncStatus: patch.syncStatus || ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+      startedAt: patch.startedAt || patch.startedAtMs || patch.date,
+    });
 
-    const points = patch.points ? sanitizePoints(patch.points) : sanitizePoints(existing.points);
+    const incomingLocalRunId = patch.localRunId || patch.activeRunId || patch.id || base.localRunId;
+    const incomingCheckpointAtMs = getCheckpointTimestampMs(patch, null);
+    const existingCheckpointAtMs = existing ? getCheckpointTimestampMs(existing, 0) : 0;
+    const incomingStatus = patch.status || base.status;
+    if (
+      existing &&
+      incomingCheckpointAtMs != null &&
+      String(incomingLocalRunId) === String(existing.localRunId) &&
+      isLiveStatus(incomingStatus) &&
+      hasCheckpointPayload(existing) &&
+      existingCheckpointAtMs > incomingCheckpointAtMs
+    ) {
+      log("stale_checkpoint_ignored", {
+        localRunId: existing.localRunId,
+        existingCheckpointAtMs,
+        incomingCheckpointAtMs,
+        status: incomingStatus,
+      });
+      return existing;
+    }
+
+    const points = patch.points ? sanitizePoints(patch.points) : sanitizePoints(base.points);
     const segments = patch.segments
       ? sanitizeSegments(patch.segments, points)
-      : sanitizeSegments(existing.segments, points);
+      : sanitizeSegments(base.segments, points);
+    const checkpoint = normalizeCheckpointFields(patch);
 
     const next = {
-      ...existing,
+      ...base,
       ...patch,
-      mode: normalizeOfflineMode(patch.mode || existing.mode),
+      localRunId: String(incomingLocalRunId || base.localRunId),
+      mode: normalizeOfflineMode(patch.mode || base.mode),
       points,
       segments,
-      territoryData: patch.territoryData === undefined ? existing.territoryData : patch.territoryData,
+      territoryData: patch.territoryData === undefined ? base.territoryData : patch.territoryData,
       updatedAt: nowIso(),
+      checkpointAt: checkpoint.checkpointAt,
+      checkpointAtMs: checkpoint.checkpointAtMs,
       schemaVersion: ACTIVE_RUN_SCHEMA_VERSION,
     };
 
@@ -284,6 +366,8 @@ export function buildOfflineRunFromRunData(runData = {}, options = {}) {
     finalRunData: runData,
     createdAt: toIso(runData.createdAt || options.createdAt || runData.date),
     updatedAt: nowIso(),
+    checkpointAt: toIso(runData.endedAt || runData.date || options.endedAt),
+    checkpointAtMs: toTimestampMs(runData.endedAt || runData.date || options.endedAt, Date.now()),
     syncAttempts: toFiniteNumber(runData.syncAttempts, 0) ?? 0,
     lastSyncError: runData.lastSyncError,
     schemaVersion: ACTIVE_RUN_SCHEMA_VERSION,
@@ -302,6 +386,17 @@ export async function clearActiveRun() {
 
 export function shouldRestoreActiveRun(run = null) {
   if (!run?.localRunId) return false;
+  return [
+    ACTIVE_RUN_STATUS.RUNNING,
+    ACTIVE_RUN_STATUS.PAUSED,
+  ].includes(run.status);
+}
+
+export function shouldRecoverOfflineRun(run = null) {
+  if (!run?.localRunId) return false;
+  if (run.syncStatus === ACTIVE_RUN_SYNC_STATUS.SYNCED || run.status === ACTIVE_RUN_STATUS.SYNCED) {
+    return false;
+  }
   return [
     ACTIVE_RUN_STATUS.RUNNING,
     ACTIVE_RUN_STATUS.PAUSED,
@@ -325,6 +420,7 @@ export default {
   normalizeOfflineMode,
   saveActiveRun,
   saveActiveRunSnapshot,
+  shouldRecoverOfflineRun,
   shouldRestoreActiveRun,
   toAppRunMode,
   updateActiveRun,

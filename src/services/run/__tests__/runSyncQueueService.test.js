@@ -1,4 +1,4 @@
-import { describe, expect, jest, test } from "@jest/globals";
+import { beforeEach, describe, expect, jest, test } from "@jest/globals";
 
 const saveLocalRun = jest.fn(async (run) => run);
 const scheduleRunsSync = jest.fn();
@@ -18,6 +18,13 @@ const {
 } = await import("../runSyncQueueService.js");
 
 describe("runSyncQueueService", () => {
+  beforeEach(() => {
+    saveLocalRun.mockClear();
+    scheduleRunsSync.mockClear();
+    loadLocalRuns.mockClear();
+    syncRunsToFirestore.mockClear();
+  });
+
   test("enfileira corrida finalizada mantendo runId idempotente", async () => {
     const saved = await enqueueFinishedRun({
       id: "run-idempotente",
@@ -36,5 +43,25 @@ describe("runSyncQueueService", () => {
       pendingSync: true,
     }));
     expect(scheduleRunsSync).toHaveBeenCalledWith(0);
+  });
+
+  test("reenfileirar a mesma corrida preserva a mesma chave local", async () => {
+    await enqueueFinishedRun({
+      id: "run-recovery-dedup",
+      localRunId: "run-recovery-dedup",
+      userId: "user-1",
+    }, { schedule: false });
+    await enqueueFinishedRun({
+      id: "run-recovery-dedup",
+      localRunId: "run-recovery-dedup",
+      userId: "user-1",
+    }, { schedule: false });
+
+    expect(saveLocalRun).toHaveBeenCalledTimes(2);
+    expect(saveLocalRun.mock.calls.at(-1)[0]).toMatchObject({
+      id: "run-recovery-dedup",
+      localRunId: "run-recovery-dedup",
+      pendingSync: true,
+    });
   });
 });

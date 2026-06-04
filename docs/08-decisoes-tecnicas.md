@@ -70,3 +70,16 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - O app pode restaurar uma corrida ativa ou finalizada nao salva ao reabrir.
 - AsyncStorage continua aceitavel nesta etapa por ser padrao atual do projeto e por usar limites de pontos; se atividades longas excederem esse volume, migrar a camada para SQLite/Expo SQLite.
 - O Firestore recebe dados depois, por fila e sincronizacao automatica quando a conexao voltar.
+
+## ADR-007: Consolidar fonte de verdade da corrida ativa
+
+**Status:** aceito
+**Contexto:** a corrida ativa passou a ter dois snapshots locais: `wayper:activeRun:v2` e `wayper_active_offline_run_v1`. A duplicidade podia recuperar estado antigo, duplicar fila de sync ou fazer uma corrida finalizada voltar como ativa.
+**Decisao:** `activeRunTrackingService` / `activeRunState` sao a fonte de verdade canonica da corrida ativa. `runOfflineStorageService` permanece como checkpoint legado, compatibilidade e rascunho final temporario. `runRecoveryService` centraliza conflito, migracao e limpeza.
+**Consequencias:**
+
+- `MapScreen` nao decide mais entre storages concorrentes.
+- Legado vivo e migrado para o snapshot canonico antes de chegar na UI.
+- Corridas finalizadas ou pendentes de sync nao voltam como ativas.
+- Checkpoints legados mais antigos nao sobrescrevem checkpoints mais recentes do mesmo `localRunId`.
+- Firestore continua sendo apenas destino de sincronizacao posterior.

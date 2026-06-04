@@ -93,6 +93,18 @@ A corrida ativa deve ser offline-first:
 - Se o app fechar depois de finalizar mas antes de salvar o resumo, ao reabrir deve mostrar novamente o resumo recuperado.
 - Firestore é destino de sincronização posterior, não fonte de verdade durante a corrida ativa.
 
+### Recovery consolidado
+
+Regra vigente desde 2026-06-04:
+
+- `wayper:activeRun:v2` e a fonte canonica da corrida ativa.
+- `wayper_active_offline_run_v1` e mantido como checkpoint legado e rascunho final temporario.
+- Ao reabrir o app, `runRecoveryService` resolve qualquer conflito antes da tela consumir o estado.
+- Corrida pausada deve voltar pausada.
+- Corrida finalizada ou pendente de sync nao pode voltar como ativa.
+- Legado vivo so pode ser aplicado depois de migrado para o snapshot canonico.
+- Depois que uma corrida finalizada entra no historico/fila local, os storages de corrida ativa devem ser limpos.
+
 ## Cancelamento
 
 O usuário pode cancelar uma atividade em andamento.

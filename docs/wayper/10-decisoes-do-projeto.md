@@ -77,6 +77,37 @@ Motivo:
 - A coleta GPS funciona sem internet e deve permanecer desacoplada do backend durante a atividade.
 - A sincronização posterior reduz custo, falhas e acoplamento com Firestore.
 
+### Fonte de verdade canonica da corrida ativa
+
+Status: aprovada.
+
+Contexto:
+
+- O app mantinha dois estados locais para corrida ativa: `wayper:activeRun:v2` e `wayper_active_offline_run_v1`.
+- Essa duplicidade podia fazer uma corrida finalizada voltar como ativa, recuperar snapshot antigo ou duplicar envio para a fila de sync.
+
+Decisao:
+
+- `activeRunTrackingService` / `activeRunState` sao a fonte de verdade canonica da corrida ativa.
+- `runOfflineStorageService` continua existindo como checkpoint legado, compatibilidade e rascunho final temporario.
+- `runRecoveryService` e a unica camada que decide entre canonico e legado.
+- Legado vivo deve ser migrado para o snapshot canonico antes de ser aplicado na UI.
+- Corrida finalizada ou pendente de sync nunca deve ser restaurada como ativa.
+
+Motivo:
+
+- Evitar ambiguidade pratica entre storages locais.
+- Preservar compatibilidade com corridas locais antigas sem reimplementar o sistema de corrida.
+- Manter a corrida ativa funcionando offline e sem dependencia obrigatoria de Firestore.
+
+Impactos:
+
+- GPS: path, rawPath, renderPath e segments passam pelo snapshot canonico.
+- Mapa: `MapScreen` consome snapshot consolidado em vez de decidir entre storages.
+- Firestore: continua sendo destino de sync posterior.
+- Performance: AsyncStorage segue aceitavel nesta etapa; SQLite fica pendente de medicao real.
+- Experiencia do usuario: UX principal nao muda, mas recovery fica deterministico.
+
 ## Decisões pendentes
 
 ### Estratégia final de território

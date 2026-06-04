@@ -71,6 +71,8 @@ export function buildOfflineCheckpointFromTrackingSnapshot(snapshot = {}, contex
   const distanceMeters = Number(snapshot.distanceMeters ?? snapshot.distance ?? 0) || 0;
   const mode = toOfflineMode(snapshot.mode);
   const now = new Date().toISOString();
+  const checkpointAtMs = Number(snapshot.lastUpdatedAtMs || Date.parse(snapshot.lastUpdatedAt || "") || Date.now());
+  const checkpointAt = new Date(checkpointAtMs).toISOString();
 
   return {
     localRunId: String(snapshot.activeRunId),
@@ -100,6 +102,8 @@ export function buildOfflineCheckpointFromTrackingSnapshot(snapshot = {}, contex
     appState: context.appState || null,
     finalRunData: snapshot.finalRunData,
     schemaVersion: 1,
+    checkpointAt,
+    checkpointAtMs,
     updatedAt: now,
   };
 }
