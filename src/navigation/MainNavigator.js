@@ -38,6 +38,7 @@ import DashboardScreen from "../screens/Runs/DashboardScreen";
 // UI
 import CustomDrawer from "../components/CustomDrawer";
 import { WayperTheme } from "../theme/wayperTheme";
+import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
 
 // SYNC
 import * as sync from "../utils/sync";
@@ -149,6 +150,7 @@ function HomeStack() {
 export default function MainNavigator() {
   const [userData, setUserData] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
+  const [initialRouteName, setInitialRouteName] = useState(null);
 
   // ===========================
   // LOAD USER DATA (SAFE)
@@ -180,6 +182,21 @@ export default function MainNavigator() {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    activeRunTrackingService.hasActiveRunSnapshot?.()
+      .then((hasActiveRun) => {
+        if (mounted) setInitialRouteName(hasActiveRun ? "Mapa" : "Inicio");
+      })
+      .catch(() => {
+        if (mounted) setInitialRouteName("Inicio");
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // ===========================
   // START BACKGROUND SYNC
   // ===========================
@@ -209,7 +226,7 @@ export default function MainNavigator() {
   // ===========================
   // LOADING
   // ===========================
-  if (loadingUser) {
+  if (loadingUser || !initialRouteName) {
     return (
       <View style={styles.loadingScreen}>
         <LinearGradient
@@ -245,7 +262,7 @@ export default function MainNavigator() {
   // ===========================
   return (
     <Drawer.Navigator
-      initialRouteName="Inicio"
+      initialRouteName={initialRouteName}
       screenOptions={({ navigation }) => ({
         headerShown: true,
         headerStyle: { backgroundColor: WayperTheme.colors.background, height: 102 },

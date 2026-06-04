@@ -29,6 +29,7 @@ Objetivo: permitir iniciar, acompanhar, pausar/finalizar e salvar corridas.
 - [ ] Finalizar corrida.
 - [ ] Salvar histórico no Firestore.
 - [ ] Tratar GPS fraco, permissão negada e perda de sinal.
+- [ ] Recuperar corrida após crash/fechamento inesperado com autosave local contínuo e sync pendente.
 
 ## Fase 2: Zonas conquistadas
 

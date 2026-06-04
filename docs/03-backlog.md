@@ -10,6 +10,7 @@ Backlog inicial de funcionalidades, melhorias e pendências. Use issues do GitHu
 | Histórico de corridas | Feature | A fazer | Necessário para progresso do usuário. |
 | Zonas no mapa | Feature | A fazer | Coração da gamificação. |
 | Ranking global | Feature | A fazer | Competição básica. |
+| Recuperação de corrida após crash | Técnica | Alta prioridade | Autosave local contínuo, recovery assistido e sync idempotente. |
 | Regras de segurança do Firestore | Segurança | A validar | Não brincar com dado de usuário, por favor. |
 | Tratamento de permissão de localização | UX | A fazer | Usuário nega permissão e o app não pode morrer dramaticamente. |
 

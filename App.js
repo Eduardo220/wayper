@@ -9,6 +9,8 @@ import {
 
 import React, { useEffect, useState } from "react";
 import { LogBox, View, ActivityIndicator, Image, StyleSheet, Text } from "react-native";
+import ErrorBoundary from "./src/components/ErrorBoundary";
+import { installGlobalRunErrorHandlers } from "./src/services/run/runAutoSaveService.js";
 
 // ===============================
 // NAVIGATION
@@ -95,6 +97,10 @@ export default function App() {
     return unsub;
   }, []);
 
+  useEffect(() => {
+    installGlobalRunErrorHandlers();
+  }, []);
+
   // ============================
   // SPLASH / LOADING
   // ============================
@@ -119,24 +125,26 @@ export default function App() {
   // ============================
   return (
     <QueryClientProvider client={queryClient}>
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          {!USE_AUTH && (
-            <Stack.Screen name="Main" component={MainNavigator} />
-          )}
+      <ErrorBoundary>
+        <NavigationContainer>
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            {!USE_AUTH && (
+              <Stack.Screen name="Main" component={MainNavigator} />
+            )}
 
-          {USE_AUTH && user && (
-            <Stack.Screen name="Main" component={MainNavigator} />
-          )}
+            {USE_AUTH && user && (
+              <Stack.Screen name="Main" component={MainNavigator} />
+            )}
 
-          {USE_AUTH && !user && (
-            <>
-              <Stack.Screen name="Login" component={LoginScreen} />
-              <Stack.Screen name="Register" component={RegisterScreen} />
-            </>
-          )}
-        </Stack.Navigator>
-      </NavigationContainer>
+            {USE_AUTH && !user && (
+              <>
+                <Stack.Screen name="Login" component={LoginScreen} />
+                <Stack.Screen name="Register" component={RegisterScreen} />
+              </>
+            )}
+          </Stack.Navigator>
+        </NavigationContainer>
+      </ErrorBoundary>
     </QueryClientProvider>
   );
 }

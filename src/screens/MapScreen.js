@@ -31,6 +31,7 @@ import Svg, {
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../components/Map/WayperMapLibre";
 import RunShareModal from "../components/Runs/RunShareModal";
 import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../components/Runs/RunShareCard";
+import RunRecoveryModal from "../components/Runs/RunRecoveryModal";
 import RunSummaryModal from "../components/Runs/RunSummaryModal";
 import TerritoryBottomSheet from "../components/Territory/TerritoryBottomSheet";
 import PermissionNotice from "../components/permissions/PermissionNotice";
@@ -61,6 +62,16 @@ import {
   warmUpGpsForRun,
 } from "../services/runTracking";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
+import { forceCheckpointForAppState } from "../services/run/runAutoSaveService.js";
+import { ensureRunNotificationPermission } from "../services/run/runNotificationService.js";
+import {
+  RUN_RECOVERY_SOURCE,
+  buildRunDataFromRecoveredRun,
+  discardRecoveredRun,
+  findRecoverableRunForUser,
+  isFinishedRecovery,
+} from "../services/run/runRecoveryService.js";
+import { enqueueFinishedRun, schedulePendingRunsSync } from "../services/run/runSyncQueueService.js";
 import sync from "../utils/sync";
 import {
   assertTraceHasEnoughPoints,
@@ -111,9 +122,7 @@ import {
   clearActiveRun,
   createActiveRun,
   finishActiveRun,
-  loadActiveRun,
   saveActiveRunSnapshot,
-  shouldRestoreActiveRun,
   toAppRunMode,
 } from "../services/runOfflineStorageService";
 
@@ -487,6 +496,9 @@ const MapScreen = ({ navigation, route }) => {
   const [locationPermission, setLocationPermission] = useState(null);
   const [runPermissionNoticeVisible, setRunPermissionNoticeVisible] = useState(false);
   const [recoveryNoticeVisible, setRecoveryNoticeVisible] = useState(false);
+  const [pendingRecovery, setPendingRecovery] = useState(null);
+  const [recoveryModalVisible, setRecoveryModalVisible] = useState(false);
+  const [recoveryActionLoading, setRecoveryActionLoading] = useState(false);
 
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -538,10 +550,8 @@ const MapScreen = ({ navigation, route }) => {
 
   const watcherRef = useRef(null);
   const timerRef = useRef(null);
-  const backgroundNotificationRef = useRef(null);
   const backgroundPermissionWarnedRef = useRef(false);
   const timeSecRef = useRef(0);
-  const lastNotificationBodyRef = useRef("");
   const replayIntervalRef = useRef(null);
   const replayFrameRef = useRef(null);
   const replayPathRef = useRef([]);
@@ -555,6 +565,7 @@ const MapScreen = ({ navigation, route }) => {
   const lastReplayRequestRef = useRef(null);
   const appStateRef = useRef(AppState.currentState);
   const mountedRef = useRef(true);
+  const locationPermissionRef = useRef(null);
 
   const lastPointRef = useRef(null);
   const rawPathRef = useRef([]);
@@ -893,6 +904,7 @@ const MapScreen = ({ navigation, route }) => {
     if (!mountedRef.current) return permission;
 
     setLocationPermission(permission);
+    locationPermissionRef.current = permission;
     setPermissionDenied(!permission.granted);
 
     if (!permission.granted) {
@@ -978,6 +990,9 @@ const MapScreen = ({ navigation, route }) => {
                 : ACTIVE_RUN_STATUS.RUNNING,
               syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
             }, { force: true });
+            forceCheckpointForAppState(next).catch((error) => {
+              debug("forceCheckpointForAppState failed", error);
+            });
           }
           if (next === "active" && !runningRef.current) {
             refreshForegroundLocation({ updatePosition: true });
@@ -1209,6 +1224,11 @@ const MapScreen = ({ navigation, route }) => {
       territoryData: currentMode === "zones"
         ? { pendingCalculation: true }
         : undefined,
+      permissions: {
+        locationStatus: locationPermissionRef.current?.status || null,
+        locationGranted: Boolean(locationPermissionRef.current?.granted),
+        canAskAgain: locationPermissionRef.current?.canAskAgain !== false,
+      },
       ...overrides,
     };
   }, []);
@@ -1367,37 +1387,13 @@ const MapScreen = ({ navigation, route }) => {
     [persistActiveRunSnapshot, updateActiveZonePreview]
   );
 
-  const buildRunNotificationBody = useCallback(() => {
-    return `Tempo ${formatTime(timeSecRef.current)} - ${(distanceRef.current / 1000).toFixed(2)} km`;
-  }, []);
-
   const stopBackgroundLocationService = useCallback(async () => {
     try {
-      if (backgroundNotificationRef.current) {
-        clearInterval(backgroundNotificationRef.current);
-        backgroundNotificationRef.current = null;
-      }
-      lastNotificationBodyRef.current = "";
       await activeRunTrackingService.stopBackgroundLocationUpdates?.({ reason: "map_control" });
     } catch (e) {
       debug("stopBackgroundLocationService", e);
     }
   }, []);
-
-  const updateBackgroundLocationNotification = useCallback(
-    async (force = false) => {
-      try {
-        if (!runningRef.current) return;
-        const body = buildRunNotificationBody();
-        if (!force && body === lastNotificationBodyRef.current) return;
-        await activeRunTrackingService.startBackgroundLocationUpdates?.({ force });
-        lastNotificationBodyRef.current = body;
-      } catch (e) {
-        debug("updateBackgroundLocationNotification", e);
-      }
-    },
-    [buildRunNotificationBody]
-  );
 
   const startBackgroundLocationService = useCallback(async () => {
     try {
@@ -1427,18 +1423,11 @@ const MapScreen = ({ navigation, route }) => {
         }
       }
 
-      await updateBackgroundLocationNotification(true);
-
-      if (backgroundNotificationRef.current) {
-        clearInterval(backgroundNotificationRef.current);
-      }
-      backgroundNotificationRef.current = setInterval(() => {
-        updateBackgroundLocationNotification(false);
-      }, 15000);
+      await activeRunTrackingService.startBackgroundLocationUpdates?.({ force: true });
     } catch (e) {
       debug("startBackgroundLocationService", e);
     }
-  }, [updateBackgroundLocationNotification]);
+  }, []);
 
   const startLocationWatcher = useCallback(async () => {
     stopWatcherAndPolling();
@@ -1450,6 +1439,7 @@ const MapScreen = ({ navigation, route }) => {
       const permission = await checkLocationPermission();
       if (!permission.granted) {
         setLocationPermission(permission);
+        locationPermissionRef.current = permission;
         setPermissionDenied(true);
         setRunPermissionNoticeVisible(true);
         return;
@@ -1582,6 +1572,8 @@ const MapScreen = ({ navigation, route }) => {
     const segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
     const durationSeconds = calculateActiveRunDurationSeconds(snapshot);
     const distanceMeters = Number(snapshot.distanceMeters ?? snapshot.distance ?? trackingState.stats?.distanceMeters ?? 0) || 0;
+    const previousRunStatus = runStatusRef.current;
+    const shouldSyncControls = options.syncControls !== false;
 
     trackingSessionRef.current = session;
     currentRunIdRef.current = snapshot.activeRunId;
@@ -1611,8 +1603,19 @@ const MapScreen = ({ navigation, route }) => {
     if (snapshot.currentLocation) setLocation(snapshot.currentLocation);
     setGpsQualityWarning(getGpsQualityWarning(snapshot.gpsQualitySummary || snapshot.pathQuality));
 
-    if (status === ACTIVE_RUN_STATUS.RUNNING) startElapsedTimer();
-    else stopElapsedTimer();
+    if (status === ACTIVE_RUN_STATUS.RUNNING) {
+      startElapsedTimer();
+      if (shouldSyncControls && previousRunStatus !== "active") {
+        startLocationWatcher().catch((error) => debug("snapshot startLocationWatcher failed", error));
+        startBackgroundLocationService().catch((error) => debug("snapshot startBackgroundLocationService failed", error));
+      }
+    } else {
+      stopElapsedTimer();
+      if (shouldSyncControls && previousRunStatus === "active") {
+        stopWatcherAndPolling();
+        stopBackgroundLocationService();
+      }
+    }
 
     if (options.recovered) {
       setRecoveryNoticeVisible(true);
@@ -1620,53 +1623,28 @@ const MapScreen = ({ navigation, route }) => {
         if (mountedRef.current) setRecoveryNoticeVisible(false);
       }, 6500);
     }
-  }, [startElapsedTimer, stopElapsedTimer]);
+  }, [
+    startBackgroundLocationService,
+    startElapsedTimer,
+    startLocationWatcher,
+    stopBackgroundLocationService,
+    stopElapsedTimer,
+    stopWatcherAndPolling,
+  ]);
 
   useEffect(() => {
-    let cancelled = false;
     const unsubscribe = activeRunTrackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
       if (!snapshot || !mountedRef.current) return;
       if (event === "active_snapshot_cleared" || event === "run_cancelled") return;
       applyActiveRunSnapshotToUi(snapshot, { recovered: event === "run_restored" });
     });
 
-    (async () => {
-      try {
-        const recovered = await activeRunTrackingService.restoreActiveRun?.({ restartTracking: true });
-        if (cancelled || !recovered) return;
-        activeRunRestoreAttemptedRef.current = true;
-        applyActiveRunSnapshotToUi(recovered, { recovered: true });
-        if (recovered.status === ACTIVE_RUN_STATUS.FINISHED) {
-          const restoredRunData = await activeRunTrackingService.buildFinishedRunData?.({
-            status: "completed",
-          });
-          if (restoredRunData) {
-            const restoredMode =
-              restoredRunData.mode === "territory" || restoredRunData.mode === "zones"
-                ? "zones"
-                : "free";
-            modeRef.current = restoredMode;
-            setMode(restoredMode);
-            setCurrentRunData(restoredRunData);
-            setShowRunModal(true);
-          }
-          return;
-        }
-        if (recovered.status === ACTIVE_RUN_STATUS.RUNNING) {
-          await startLocationWatcher();
-        }
-      } catch (error) {
-        debug("restore active run failed", error);
-      }
-    })();
-
     return () => {
-      cancelled = true;
       try {
         unsubscribe?.();
       } catch {}
     };
-  }, [applyActiveRunSnapshotToUi, startLocationWatcher]);
+  }, [applyActiveRunSnapshotToUi]);
 
   /* ===== Start / Pause / Stop run ===== */
   const startWithCountdown = useCallback(
@@ -1674,6 +1652,7 @@ const MapScreen = ({ navigation, route }) => {
       if (counting || running) return;
       const permission = await ensureLocationForRun();
       setLocationPermission(permission);
+      locationPermissionRef.current = permission;
       setPermissionDenied(!permission.granted);
       if (!permission.granted) {
         setRunPermissionNoticeVisible(true);
@@ -1698,6 +1677,15 @@ const MapScreen = ({ navigation, route }) => {
                 ]
           );
           return;
+        }
+      }
+      if (Platform.OS === "android") {
+        const notificationPermission = await ensureRunNotificationPermission({ request: true });
+        if (!notificationPermission.granted) {
+          Alert.alert(
+            "Notificacao da corrida",
+            "Sem permissao de notificacao, o Android pode ocultar o painel persistente da corrida. A corrida ainda pode ser iniciada, mas recomendamos permitir notificacoes para pausar e retomar pela barra do sistema."
+          );
         }
       }
       setRunPermissionNoticeVisible(false);
@@ -1759,6 +1747,7 @@ const MapScreen = ({ navigation, route }) => {
 
         const permission = await checkLocationPermission();
         setLocationPermission(permission);
+        locationPermissionRef.current = permission;
         setPermissionDenied(!permission.granted);
         if (!permission.granted) {
           setRunPermissionNoticeVisible(true);
@@ -1794,6 +1783,13 @@ const MapScreen = ({ navigation, route }) => {
             userId: auth.currentUser?.uid || "offline",
             mode: selectedMode,
             startedAtMs,
+            meta: {
+              permissions: {
+                locationStatus: permission.status || null,
+                locationGranted: Boolean(permission.granted),
+                canAskAgain: permission.canAskAgain !== false,
+              },
+            },
           });
           if (activeSnapshot?.activeRunId) {
             currentRunIdRef.current = activeSnapshot.activeRunId;
@@ -1809,6 +1805,11 @@ const MapScreen = ({ navigation, route }) => {
             startedAt: startedAtMs,
             status: ACTIVE_RUN_STATUS.RUNNING,
             syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+            permissions: {
+              locationStatus: permission.status || null,
+              locationGranted: Boolean(permission.granted),
+              canAskAgain: permission.canAskAgain !== false,
+            },
           });
           activeRunPersistLastAtRef.current = Date.now();
         } catch (storageError) {
@@ -1879,6 +1880,7 @@ const MapScreen = ({ navigation, route }) => {
     try {
       const permission = await checkLocationPermission();
       setLocationPermission(permission);
+      locationPermissionRef.current = permission;
       setPermissionDenied(!permission.granted);
       if (!permission.granted) {
         setRunPermissionNoticeVisible(true);
@@ -1969,12 +1971,13 @@ const MapScreen = ({ navigation, route }) => {
   const stopRun = useCallback(
     async (opts = {}) => {
       try {
-        if (!running) return;
+        if (!running && !runningRef.current && !opts.force) return;
 
         runningRef.current = false;
         runStatusRef.current = "finishing";
         setRunning(false);
         setPaused(false);
+        const activeMode = modeRef.current || mode || "free";
 
         stopWatcherAndPolling();
         stopBackgroundLocationService();
@@ -2042,14 +2045,14 @@ const MapScreen = ({ navigation, route }) => {
           endedAt: finishedAt,
           pausedDurationSeconds: null,
           status: "completed",
-          mode: mode || "free",
+          mode: activeMode,
           area: 0,
           zoneId: null,
           zoneCoords: [],
           zoneCount: 0,
         };
 
-        if (mode === "zones") {
+        if (activeMode === "zones") {
           try {
             const actor = getCurrentWayperUser();
             const result = await processRunTerritoryCapture({
@@ -2059,7 +2062,7 @@ const MapScreen = ({ navigation, route }) => {
               runId,
               path,
               segments: runData.routeSegments,
-              mode,
+              mode: activeMode,
               distanceMeters: totalDistance,
               durationSeconds: totalDuration,
               visibility: "followers",
@@ -2312,6 +2315,74 @@ const MapScreen = ({ navigation, route }) => {
     setGpsQualityWarning(getGpsQualityWarning(trackingState.gpsQualitySummary || trackingState.pathQuality));
   }, []);
 
+  const applyOfflineRecoveryToUi = useCallback(
+    async (offlineRun = {}, options = {}) => {
+      const restoredMode = toAppRunMode(offlineRun.mode);
+      const pausedRun = !options.forceRunning && offlineRun.status === ACTIVE_RUN_STATUS.PAUSED;
+      const restoredDurationSeconds = Math.max(0, Math.round(Number(offlineRun.durationMs || 0) / 1000));
+
+      currentRunIdRef.current = offlineRun.localRunId;
+      modeRef.current = restoredMode;
+      setMode(restoredMode);
+      setRunning(true);
+      setPaused(pausedRun);
+      runningRef.current = !pausedRun || options.forceRunning === true;
+      runStatusRef.current = pausedRun ? "paused" : "active";
+      timeSecRef.current = restoredDurationSeconds;
+      setTimeSec(restoredDurationSeconds);
+      setReplaying(false);
+      setCaptureResult(null);
+      activeRunPersistLastAtRef.current = 0;
+      hydrateTrackingSessionFromOfflineRun(offlineRun);
+      persistActiveRunSnapshot({
+        status: pausedRun ? ACTIVE_RUN_STATUS.PAUSED : ACTIVE_RUN_STATUS.RUNNING,
+        syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+        durationMs: restoredDurationSeconds * 1000,
+      }, { force: true });
+
+      try {
+        const restoredPoints = sanitizePath((offlineRun.points || []).map(restorePointTimestamp));
+        await activeRunTrackingService.startActiveRun?.({
+          activeRunId: offlineRun.localRunId,
+          userId: offlineRun.userId || auth.currentUser?.uid || "offline",
+          mode: restoredMode,
+          startedAtMs: toTimestampMs(offlineRun.startedAt),
+          meta: { migratedFromLegacySnapshot: true },
+        });
+        for (const point of restoredPoints) {
+          await activeRunTrackingService.recordLocation?.({
+            ...point,
+            source: "restore",
+          }, { source: "restore" });
+        }
+        if (pausedRun) {
+          await activeRunTrackingService.pauseActiveRun?.({ endedAtMs: Date.now(), source: "restore" });
+        }
+      } catch (migrationError) {
+        debug("legacy active run migration failed", migrationError);
+      }
+
+      if (options.startWatchers && !pausedRun) {
+        startElapsedTimer();
+        await startLocationWatcher();
+        await startBackgroundLocationService();
+      }
+
+      return {
+        mode: restoredMode,
+        paused: pausedRun,
+        durationSeconds: restoredDurationSeconds,
+      };
+    },
+    [
+      hydrateTrackingSessionFromOfflineRun,
+      persistActiveRunSnapshot,
+      startBackgroundLocationService,
+      startElapsedTimer,
+      startLocationWatcher,
+    ]
+  );
+
   useEffect(() => {
     if (loading || activeRunRestoreAttemptedRef.current) return;
     activeRunRestoreAttemptedRef.current = true;
@@ -2319,104 +2390,17 @@ const MapScreen = ({ navigation, route }) => {
     let cancelled = false;
     (async () => {
       try {
-        const offlineRun = await loadActiveRun();
-        if (cancelled || !shouldRestoreActiveRun(offlineRun)) return;
-
-        const currentUid = auth.currentUser?.uid || "offline";
-        if (offlineRun.userId && offlineRun.userId !== "offline" && offlineRun.userId !== currentUid) {
-          return;
-        }
-
-        const finishedStatuses = [
-          ACTIVE_RUN_STATUS.FINISHED,
-          ACTIVE_RUN_STATUS.PENDING_SYNC,
-          ACTIVE_RUN_STATUS.SYNC_FAILED,
-        ];
-
-        if (finishedStatuses.includes(offlineRun.status)) {
-          const restoredRunData = buildRunDataFromOfflineRun(offlineRun);
-          setMode(restoredRunData.mode || "free");
-          modeRef.current = restoredRunData.mode || "free";
-          setCurrentRunData(restoredRunData);
-          setShowRunModal(true);
-          hydrateTrackingSessionFromOfflineRun(offlineRun);
-          timeSecRef.current = Math.round(Number(offlineRun.durationMs || 0) / 1000);
-          setTimeSec(timeSecRef.current);
-          return;
-        }
-
-        const restoredMode = toAppRunMode(offlineRun.mode);
-        const pausedRun = offlineRun.status === ACTIVE_RUN_STATUS.PAUSED;
-        const restoredDurationSeconds = Math.max(
-          0,
-          Math.round(Number(offlineRun.durationMs || 0) / 1000) +
-            (pausedRun ? 0 : Math.max(0, Math.round((Date.now() - toTimestampMs(offlineRun.updatedAt)) / 1000)))
-        );
-
-        currentRunIdRef.current = offlineRun.localRunId;
-        modeRef.current = restoredMode;
-        setMode(restoredMode);
-        setRunning(true);
-        setPaused(pausedRun);
-        runningRef.current = !pausedRun;
-        runStatusRef.current = pausedRun ? "paused" : "active";
-        timeSecRef.current = restoredDurationSeconds;
-        setTimeSec(restoredDurationSeconds);
-        setReplaying(false);
-        setCaptureResult(null);
-        activeRunPersistLastAtRef.current = 0;
-        hydrateTrackingSessionFromOfflineRun(offlineRun);
-        persistActiveRunSnapshot({
-          status: pausedRun ? ACTIVE_RUN_STATUS.PAUSED : ACTIVE_RUN_STATUS.RUNNING,
-          durationMs: restoredDurationSeconds * 1000,
-        }, { force: true });
-        try {
-          const restoredPoints = sanitizePath((offlineRun.points || []).map(restorePointTimestamp));
-          await activeRunTrackingService.startActiveRun?.({
-            activeRunId: offlineRun.localRunId,
-            userId: offlineRun.userId || auth.currentUser?.uid || "offline",
-            mode: restoredMode,
-            startedAtMs: toTimestampMs(offlineRun.startedAt),
-            meta: { migratedFromLegacySnapshot: true },
+        const recovery = await findRecoverableRunForUser(auth.currentUser?.uid || "offline");
+        if (cancelled || !recovery?.recoverable) return;
+        setPendingRecovery(recovery);
+        setRecoveryModalVisible(true);
+        if (isFinishedRecovery(recovery)) {
+          schedulePendingRunsSync(0).catch((error) => {
+            debug("schedule pending recovery sync failed", error);
           });
-          for (const point of restoredPoints) {
-            await activeRunTrackingService.recordLocation?.({
-              ...point,
-              source: "restore",
-            }, { source: "restore" });
-          }
-          if (pausedRun) {
-            await activeRunTrackingService.pauseActiveRun?.({ endedAtMs: Date.now(), source: "restore" });
-          }
-        } catch (migrationError) {
-          debug("legacy active run migration failed", migrationError);
-        }
-
-        if (!pausedRun) {
-          if (timerRef.current) {
-            clearInterval(timerRef.current);
-            timerRef.current = null;
-          }
-          timerRef.current = setInterval(() => {
-            const baseSeconds = Math.max(0, Math.round(Number(offlineRun.durationMs || 0) / 1000));
-            const resumedSinceSeconds = Math.max(0, Math.round((Date.now() - toTimestampMs(offlineRun.updatedAt)) / 1000));
-            const next = baseSeconds + resumedSinceSeconds;
-            timeSecRef.current = next;
-            setTimeSec(next);
-            if (next % 5 === 0) {
-              persistActiveRunSnapshot({
-                status: ACTIVE_RUN_STATUS.RUNNING,
-                syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-                durationMs: next * 1000,
-              });
-            }
-          }, 1000);
-
-          await startLocationWatcher();
-          await startBackgroundLocationService();
         }
       } catch (error) {
-        debug("restore offline run failed", error);
+        debug("detect recoverable run failed", error);
       }
     })();
 
@@ -2424,13 +2408,116 @@ const MapScreen = ({ navigation, route }) => {
       cancelled = true;
     };
   }, [
-    buildRunDataFromOfflineRun,
-    hydrateTrackingSessionFromOfflineRun,
     loading,
-    persistActiveRunSnapshot,
+  ]);
+
+  const handleContinueRecovery = useCallback(async () => {
+    if (!pendingRecovery || isFinishedRecovery(pendingRecovery)) return;
+    setRecoveryActionLoading(true);
+    try {
+      if (pendingRecovery.source === RUN_RECOVERY_SOURCE.TRACKING) {
+        const restored = await activeRunTrackingService.restoreActiveRun?.({ restartTracking: true });
+        const snapshot = restored || pendingRecovery.raw;
+        applyActiveRunSnapshotToUi(snapshot, { recovered: true, syncControls: false });
+        if (snapshot.status === ACTIVE_RUN_STATUS.RUNNING) {
+          await startLocationWatcher();
+          await startBackgroundLocationService();
+        }
+      } else {
+        await applyOfflineRecoveryToUi(pendingRecovery.raw, { startWatchers: true });
+      }
+      setRecoveryModalVisible(false);
+      setPendingRecovery(null);
+    } catch (error) {
+      debug("continue recovery failed", error);
+      Alert.alert("Recuperacao", "Nao foi possivel continuar a corrida recuperada.");
+    } finally {
+      setRecoveryActionLoading(false);
+    }
+  }, [
+    applyActiveRunSnapshotToUi,
+    applyOfflineRecoveryToUi,
+    pendingRecovery,
     startBackgroundLocationService,
     startLocationWatcher,
   ]);
+
+  const handleFinishRecovery = useCallback(async () => {
+    if (!pendingRecovery) return;
+    setRecoveryActionLoading(true);
+    try {
+      setRecoveryModalVisible(false);
+      if (isFinishedRecovery(pendingRecovery)) {
+        const runData =
+          pendingRecovery.source === RUN_RECOVERY_SOURCE.OFFLINE
+            ? buildRunDataFromOfflineRun(pendingRecovery.raw)
+            : buildRunDataFromRecoveredRun(pendingRecovery);
+        const saved = await enqueueFinishedRun(runData, {
+          userId: auth.currentUser?.uid || "offline",
+          delayMs: 0,
+        });
+        await activeRunTrackingService.markActiveRunLocallySaved?.();
+        await clearActiveRun();
+        setCurrentRunData(saved || runData);
+        setShowRunModal(true);
+        setPendingRecovery(null);
+        return;
+      }
+
+      if (pendingRecovery.source === RUN_RECOVERY_SOURCE.TRACKING) {
+        const restored = await activeRunTrackingService.restoreActiveRun?.({ restartTracking: false });
+        applyActiveRunSnapshotToUi(restored || pendingRecovery.raw, { recovered: true });
+      } else {
+        await applyOfflineRecoveryToUi(pendingRecovery.raw, {
+          forceRunning: true,
+          startWatchers: false,
+        });
+      }
+
+      await stopRun({ force: true, fromRecovery: true });
+      setPendingRecovery(null);
+    } catch (error) {
+      debug("finish recovery failed", error);
+      Alert.alert("Recuperacao", "Nao foi possivel finalizar a corrida recuperada.");
+    } finally {
+      setRecoveryActionLoading(false);
+    }
+  }, [
+    applyActiveRunSnapshotToUi,
+    applyOfflineRecoveryToUi,
+    buildRunDataFromOfflineRun,
+    pendingRecovery,
+    stopRun,
+  ]);
+
+  const handleDiscardRecovery = useCallback(() => {
+    if (!pendingRecovery) return;
+    Alert.alert(
+      "Descartar corrida?",
+      "Essa acao remove apenas o rascunho local recuperavel. Ela nao pode ser desfeita.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Descartar",
+          style: "destructive",
+          onPress: async () => {
+            setRecoveryActionLoading(true);
+            try {
+              await discardRecoveredRun(pendingRecovery);
+              setRecoveryModalVisible(false);
+              setPendingRecovery(null);
+              await resetRunVisuals();
+            } catch (error) {
+              debug("discard recovery failed", error);
+              Alert.alert("Recuperacao", "Nao foi possivel descartar a corrida recuperada.");
+            } finally {
+              setRecoveryActionLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [pendingRecovery, resetRunVisuals]);
 
   /* ============ Replay ============ */
   const clearReplayPlayback = useCallback(() => {
@@ -3030,6 +3117,15 @@ const MapScreen = ({ navigation, route }) => {
         </View>
       ) : null}
 
+      <RunRecoveryModal
+        visible={recoveryModalVisible}
+        recovery={pendingRecovery}
+        loading={recoveryActionLoading}
+        onContinue={handleContinueRecovery}
+        onFinish={handleFinishRecovery}
+        onDiscard={handleDiscardRecovery}
+      />
+
       {territoryLoading && !running && !replaying ? (
         <View pointerEvents="none" style={styles.territoryLoadingBadge}>
           <ActivityIndicator size="small" color={WayperTheme.colors.primary} />
@@ -3108,6 +3204,7 @@ const MapScreen = ({ navigation, route }) => {
                   }
                   const permission = await ensureLocationForRun();
                   setLocationPermission(permission);
+                  locationPermissionRef.current = permission;
                   setPermissionDenied(!permission.granted);
                   if (permission.granted) {
                     await refreshForegroundLocation({ updatePosition: true });
@@ -3840,6 +3937,7 @@ const MapScreen = ({ navigation, route }) => {
                 }
                 const permission = await ensureLocationForRun();
                 setLocationPermission(permission);
+                locationPermissionRef.current = permission;
                 setPermissionDenied(!permission.granted);
                 if (permission.granted) {
                   setRunPermissionNoticeVisible(false);

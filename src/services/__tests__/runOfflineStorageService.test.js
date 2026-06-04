@@ -18,6 +18,7 @@ jest.unstable_mockModule("@react-native-async-storage/async-storage", () => ({
 
 const {
   ACTIVE_RUN_MAX_POINTS,
+  ACTIVE_RUN_STORAGE_KEY,
   ACTIVE_RUN_STATUS,
   ACTIVE_RUN_SYNC_STATUS,
   clearActiveRun,
@@ -106,5 +107,11 @@ describe("runOfflineStorageService", () => {
     });
     expect(loaded.finalRunData.id).toBe("run-3");
     expect(shouldRestoreActiveRun(loaded)).toBe(true);
+  });
+
+  test("dados locais corrompidos nao quebram o app", async () => {
+    storage.set(ACTIVE_RUN_STORAGE_KEY, "{json-quebrado");
+
+    await expect(loadActiveRun()).resolves.toBeNull();
   });
 });
