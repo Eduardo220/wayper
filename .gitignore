@@ -40,3 +40,25 @@ scripts/serviceAccountKey.json
 # generated native folders
 /ios
 /android
+
+# Native source kept because Wayper has a custom Android run notification module.
+!/android/
+/android/*
+!/android/app/
+/android/app/*
+!/android/app/src/
+/android/app/src/*
+!/android/app/src/main/
+/android/app/src/main/*
+!/android/app/src/main/AndroidManifest.xml
+!/android/app/src/main/java/
+/android/app/src/main/java/*
+!/android/app/src/main/java/com/
+/android/app/src/main/java/com/*
+!/android/app/src/main/java/com/wayper/
+/android/app/src/main/java/com/wayper/*
+!/android/app/src/main/java/com/wayper/app/
+/android/app/src/main/java/com/wayper/app/*
+!/android/app/src/main/java/com/wayper/app/MainApplication.kt
+!/android/app/src/main/java/com/wayper/app/run/
+!/android/app/src/main/java/com/wayper/app/run/**

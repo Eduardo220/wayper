@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Platform } from "react-native";
+import { NativeModules, Platform } from "react-native";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { getRunBackgroundLocationOptions } from "./expoLocation.js";
@@ -103,8 +103,12 @@ async function getActiveSession() {
 }
 
 function getBackgroundOptions(body = NOTIFICATION_BODY) {
+  const useExpoForegroundService =
+    Platform.OS !== "android" || !NativeModules?.WayperRunNotificationAndroid;
+
   return getRunBackgroundLocationOptions(Location, body, {
     notificationColor: DEFAULT_NOTIFICATION_COLOR,
+    useForegroundService: useExpoForegroundService,
   });
 }
 

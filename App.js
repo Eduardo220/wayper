@@ -11,6 +11,10 @@ import React, { useEffect, useState } from "react";
 import { LogBox, View, ActivityIndicator, Image, StyleSheet, Text } from "react-native";
 import ErrorBoundary from "./src/components/ErrorBoundary";
 import { installGlobalRunErrorHandlers } from "./src/services/run/runAutoSaveService.js";
+import {
+  startRunNotificationCoordinator,
+  stopRunNotificationCoordinator,
+} from "./src/services/run/runNotificationService.js";
 
 // ===============================
 // NAVIGATION
@@ -99,6 +103,10 @@ export default function App() {
 
   useEffect(() => {
     installGlobalRunErrorHandlers();
+    startRunNotificationCoordinator();
+    return () => {
+      stopRunNotificationCoordinator();
+    };
   }, []);
 
   // ============================

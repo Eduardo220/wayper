@@ -22,8 +22,13 @@ export function getRunWatchPositionOptions(Location, overrides = {}) {
 }
 
 export function getRunBackgroundLocationOptions(Location, notificationBody, overrides = {}) {
-  const { notificationColor, ...locationOverrides } = overrides;
-  return {
+  const {
+    notificationColor,
+    useForegroundService = true,
+    ...locationOverrides
+  } = overrides;
+
+  const options = {
     accuracy: getBestRunAccuracy(Location),
     timeInterval: RUN_WATCH_TIME_INTERVAL_MS,
     distanceInterval: RUN_WATCH_DISTANCE_INTERVAL_M,
@@ -31,14 +36,19 @@ export function getRunBackgroundLocationOptions(Location, notificationBody, over
     deferredUpdatesDistance: 0,
     pausesUpdatesAutomatically: false,
     activityType: Location?.ActivityType?.Fitness,
-    foregroundService: {
+    ...locationOverrides,
+  };
+
+  if (useForegroundService) {
+    options.foregroundService = {
       notificationTitle: "Wayper registrando corrida",
       notificationBody: notificationBody || "Sua corrida esta sendo salva mesmo com a tela bloqueada.",
       notificationColor,
       killServiceOnDestroy: false,
-    },
-    ...locationOverrides,
-  };
+    };
+  }
+
+  return options;
 }
 
 export async function enableNetworkProviderForRun(Location, Platform) {
