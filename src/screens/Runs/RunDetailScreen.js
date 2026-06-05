@@ -242,14 +242,35 @@ function computeSplits(path = [], totalDuration = 0) {
   return { splits, pacePerKm, avgSpeedKmh, maxSpeedKmh, totalMeters, totalTime };
 }
 
+const getRunIdentityCandidates = (run = {}) =>
+  [run?.id, run?.localRunId, run?.remoteRunId, run?.runId, run?.legacyId]
+    .filter((value) => value !== undefined && value !== null && String(value).trim())
+    .map((value) => String(value));
+
+const getRunLookupFromParams = (params = {}, initialRun = null) => ({
+  id: params.runId || params.id || initialRun?.id || null,
+  localRunId: params.localRunId || initialRun?.localRunId || null,
+  remoteRunId: params.remoteRunId || initialRun?.remoteRunId || null,
+  runId: params.legacyRunId || initialRun?.runId || null,
+  legacyId: params.legacyId || initialRun?.legacyId || null,
+});
+
+const isSameRunIdentity = (left = {}, right = {}) => {
+  const ids = new Set(getRunIdentityCandidates(left));
+  return getRunIdentityCandidates(right).some((id) => ids.has(id));
+};
+
 function RunDetailScreenInner({ route, navigation }) {
-  const initialRun = route?.params?.run || null;
+  const params = route?.params || {};
+  const initialRun = params.run || null;
   const readOnly = !!(route?.params?.readOnly || route?.params?.viewOnly || initialRun?.readOnly);
   const captureViewRef = useRef(null);
   const shareFullRef = useRef(null);
   const shareTraceRef = useRef(null);
   const anim = useRef(new Animated.Value(0)).current;
   const [currentRun, setCurrentRun] = useState(initialRun);
+  const [loadingRun, setLoadingRun] = useState(false);
+  const [runLoadError, setRunLoadError] = useState(null);
   const [userAvgPace, setUserAvgPace] = useState(null);
   const [shareVisible, setShareVisible] = useState(false);
   const [shareLoading, setShareLoading] = useState(null);
@@ -259,8 +280,63 @@ function RunDetailScreenInner({ route, navigation }) {
   const run = currentRun;
 
   useEffect(() => {
-    setCurrentRun(initialRun);
-  }, [initialRun]);
+    let mounted = true;
+    const lookup = getRunLookupFromParams(params, initialRun);
+    const hasLookup = getRunIdentityCandidates(lookup).length > 0;
+
+    if (initialRun) {
+      setCurrentRun(initialRun);
+      setRunLoadError(null);
+    }
+
+    async function hydrateFromLocalHistory() {
+      if (!hasLookup) {
+        if (!initialRun) {
+          setCurrentRun(null);
+          setRunLoadError("Corrida nao encontrada no historico local.");
+        }
+        return;
+      }
+
+      setLoadingRun(true);
+      try {
+        const localRun = await sync.findLocalRunById?.(lookup);
+        if (!mounted) return;
+        if (localRun) {
+          setCurrentRun(localRun);
+          setRunLoadError(null);
+        } else if (initialRun) {
+          setCurrentRun(initialRun);
+          setRunLoadError(null);
+        } else {
+          setCurrentRun(null);
+          setRunLoadError("Corrida nao encontrada no historico local.");
+        }
+      } catch (error) {
+        debug("hydrateFromLocalHistory", error);
+        if (!mounted) return;
+        if (!initialRun) {
+          setCurrentRun(null);
+          setRunLoadError("Nao foi possivel carregar esta corrida localmente.");
+        }
+      } finally {
+        if (mounted) setLoadingRun(false);
+      }
+    }
+
+    hydrateFromLocalHistory();
+    return () => {
+      mounted = false;
+    };
+  }, [
+    initialRun,
+    params.id,
+    params.legacyId,
+    params.legacyRunId,
+    params.localRunId,
+    params.remoteRunId,
+    params.runId,
+  ]);
 
   useLayoutEffect(() => {
     navigation?.setOptions?.({
@@ -300,8 +376,10 @@ function RunDetailScreenInner({ route, navigation }) {
   }, [hasZoneShape, mapPath, zoneCoords]);
 
   const stats = useMemo(() => computeSplits(path, run?.duration || 0), [path, run]);
-  const totalMeters = stats.totalMeters > 0 ? stats.totalMeters : safeNum(run?.distance);
-  const totalTime = stats.totalTime > 0 ? stats.totalTime : safeNum(run?.duration);
+  const savedDistanceMeters = safeNum(run?.distanceMeters ?? run?.distance);
+  const savedDurationSeconds = safeNum(run?.durationSeconds ?? run?.duration);
+  const totalMeters = savedDistanceMeters > 0 ? savedDistanceMeters : stats.totalMeters;
+  const totalTime = savedDurationSeconds > 0 ? savedDurationSeconds : stats.totalTime;
   const totalKm = (totalMeters / 1000).toFixed(2);
   const paceSec = calculatePaceSecondsPerKm(totalTime, totalMeters / 1000) || 0;
   const paceDisplay = getFormattedPace(totalTime, totalMeters / 1000, { suffix: "/km" });
@@ -439,10 +517,15 @@ function RunDetailScreenInner({ route, navigation }) {
     async function loadAveragePace() {
       if (!run) return;
       try {
-        const localRuns = await sync.loadLocalRuns();
+        const localRuns = await (sync.loadLocalRunHistory?.() || sync.loadLocalRuns());
         if (!mounted) return;
+        const currentIds = new Set(getRunIdentityCandidates(run));
         const comparable = (Array.isArray(localRuns) ? localRuns : []).filter(
-          (item) => item.id !== run.id && safeNum(item.distance) >= MIN_DISTANCE_FOR_PACE_KM * 1000 && safeNum(item.duration) > 0
+          (item) =>
+            !isSameRunIdentity(item, run) &&
+            !getRunIdentityCandidates(item).some((id) => currentIds.has(id)) &&
+            safeNum(item.distance) >= MIN_DISTANCE_FOR_PACE_KM * 1000 &&
+            safeNum(item.duration) > 0
         );
         const total = comparable.reduce(
           (acc, item) => {
@@ -577,7 +660,7 @@ function RunDetailScreenInner({ route, navigation }) {
   if (!run) {
     return (
       <View style={[styles.container, styles.center]}>
-        <Text style={styles.invalidText}>Corrida invalida</Text>
+        <Text style={styles.invalidText}>{loadingRun ? "Carregando corrida..." : runLoadError || "Corrida invalida"}</Text>
       </View>
     );
   }

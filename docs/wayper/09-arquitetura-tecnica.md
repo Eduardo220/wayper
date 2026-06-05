@@ -250,6 +250,45 @@ Regra arquitetural:
 - Recovery deve hidratar `rawPath`, `trustedPath`, `renderPath` e `segments` sem recalcular uma rota paralela.
 - Firestore so recebe corrida depois do save local/fila de sync.
 
+### Historico local-first de corridas finalizadas
+
+Desde 2026-06-05, o historico oficial de corridas finalizadas tambem e local-first.
+
+Fonte oficial:
+
+- Storage: chave `runs` no AsyncStorage.
+- Escrita: `sync.saveLocalRun()`.
+- Listagem: `sync.loadLocalRunHistory()` ou `sync.loadLocalRuns()`.
+- Detalhe: `sync.findLocalRunById()`.
+- Sync remoto: `syncRunsToFirestore()` atualiza a mesma copia local, sem criar storage paralelo.
+
+Campos minimos esperados por corrida finalizada:
+
+- `id`, `localRunId`, `remoteRunId` opcional e `userId`.
+- `mode` (`free` ou `zones`), `startedAt`, `finishedAt`/`endedAt`, `date`, `createdAt`, `updatedAt`.
+- `distance`, `distanceMeters`, `duration`, `durationSeconds`, `avgPace`, `avgSpeed`, `maxSpeed`.
+- `syncStatus`, `offlineStatus`, `pendingSync`, `synced`, `lastSyncError`, `lastSyncedAt`.
+- `trustedPath`, `renderPath`, `rawPath`, `segments` e `routeSegments`.
+- Campos territoriais quando existirem: `area`, `areaM2`, `zoneCoords`, `zoneId`, `geometry`, `territorySummary`.
+
+Regra de deduplicacao:
+
+- Se dois registros compartilham `id`, `localRunId`, `remoteRunId`, `runId` ou `legacyId`, representam a mesma corrida.
+- A versao final preserva a identidade local estavel, o `remoteRunId` quando existir, a rota mais completa e o status de sync mais recente.
+- `SYNCED`, `PENDING`, `FAILED`, `SYNCING`, `PENDING_SYNC`, `SYNC_FAILED` e `LOCAL_ONLY` continuam visiveis no historico.
+- Estados vivos (`RUNNING`, `PAUSED`, `RECOVERING`, `FINISHING`) nao aparecem como finalizados.
+
+Uso nas telas:
+
+- `CorridasScreen` lista a fonte local normalizada e usa `renderPath`/`segments` para preview.
+- `RunDetailScreen` abre por `localRunId`, `remoteRunId`, `id` ou id legado e prefere a copia local.
+- Metricas exibidas usam a distancia/duracao salvas; a rota visual usa `renderPath` com fallback para `trustedPath/path`.
+- Corrida por zonas preserva resumo territorial quando existir; corrida livre nao inventa area conquistada.
+
+Limite atual:
+
+- A lista ainda usa AsyncStorage. O risco principal e volume de rota em historicos longos; migrar para SQLite/Expo SQLite se parse/carregamento de JSON ficar perceptivelmente pesado.
+
 ## Turf.js ou biblioteca geográfica
 
 Uma biblioteca geográfica pode ser usada para:

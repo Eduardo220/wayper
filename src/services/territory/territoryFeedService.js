@@ -163,7 +163,9 @@ export function normalizeRunForFeed(run = {}) {
   const isZoneRun = run.mode === "zones" || areaM2 > 0 || zoneCoords.length >= 3 || !!run.zoneId;
   const date = run.date || run.createdAt || run.updatedAt || new Date().toISOString();
   return {
-    id: String(run.id || `run_${date}`),
+    id: String(run.localRunId || run.id || run.remoteRunId || `run_${date}`),
+    localRunId: run.localRunId || run.id || null,
+    remoteRunId: run.remoteRunId || null,
     __type: "run",
     title: run.name || (isZoneRun ? "Captura por zonas" : "Corrida"),
     subtitle: isZoneRun ? "Corrida por zonas" : "Corrida livre",
@@ -175,7 +177,11 @@ export function normalizeRunForFeed(run = {}) {
     duration: toNumber(run.duration ?? run.durationSeconds),
     geometry: run.geometry || null,
     coordsPreview: zoneCoords,
-    path: normalizeCoords(run.path || run.coords || []),
+    path: normalizeCoords(run.renderPath || run.displayPath || run.trustedPath || run.path || run.coords || []),
+    routeSegments: Array.isArray(run.routeSegments || run.segments) ? (run.routeSegments || run.segments) : [],
+    syncStatus: run.syncStatus || (run.synced ? "SYNCED" : "PENDING"),
+    offlineStatus: run.offlineStatus || (run.synced ? "SYNCED" : "PENDING_SYNC"),
+    pendingSync: run.pendingSync !== undefined ? !!run.pendingSync : !run.synced,
     visibility: run.visibility || "followers",
     eventType: null,
     zoneId: run.zoneId || null,

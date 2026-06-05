@@ -16,6 +16,7 @@ import {
   mergeRunsZonesAndTerritoryEvents,
 } from "../../services/territory";
 import sync from "../../utils/sync";
+import { getRenderablePathForRun, getRenderableSegmentsForRun } from "../../services/runTracking";
 
 const safeDate = (d) => {
   try {
@@ -79,7 +80,7 @@ function CorridasScreen({ navigation }) {
     try {
       const currentUserId = auth?.currentUser?.uid ?? null;
       const [rRaw, zRaw, localEventsRaw, remoteEventsRaw] = await Promise.allSettled([
-        sync.loadLocalRuns(),
+        sync.loadLocalRunHistory?.() || sync.loadLocalRuns(),
         sync.loadLocalZones(),
         loadLocalTerritoryFeed({ currentUserId }),
         fetchTerritoryFeed({ scope: "public", userId: currentUserId, limitTo: 60 }),
@@ -139,7 +140,12 @@ function CorridasScreen({ navigation }) {
     return filterCompetitiveFeedItems(items, filter);
   }, [runs, zones, territoryEvents, filter]);
 
-  const goToRun = useCallback((item) => navigation.navigate("RunDetail", { run: item }), [navigation]);
+  const goToRun = useCallback((item) => navigation.navigate("RunDetail", {
+    run: item,
+    runId: item?.id || item?.localRunId || item?.remoteRunId,
+    localRunId: item?.localRunId || null,
+    remoteRunId: item?.remoteRunId || null,
+  }), [navigation]);
   const goToZone = useCallback((item) => navigation.navigate("ZoneDetail", { zone: item }), [navigation]);
   const goToMap = useCallback((item = null) => {
     const params = item ? buildTerritoryMapParams(item) : null;
@@ -153,10 +159,13 @@ function CorridasScreen({ navigation }) {
   const RenderRun = useCallback(
     ({ item }) => {
       const raw = item.raw || item;
-      const path = Array.isArray(item.path) && item.path.length > 0 ? item.path : (Array.isArray(raw.path) ? raw.path : []);
+      const path = getRenderablePathForRun(raw);
+      const routeSegments = getRenderableSegmentsForRun(raw).filter((segment) => Array.isArray(segment) && segment.length > 1);
+      const fallbackPath = Array.isArray(item.path) && item.path.length > 0 ? item.path : (Array.isArray(raw.path) ? raw.path : []);
+      const previewPath = path.length > 1 ? path : fallbackPath;
       const zoneCoords = getZoneCoords(item);
       const zoneActivity = isZoneActivityRun(item);
-      const center = (zoneActivity && zoneCoords[0]) || path[0] || WAYPER_FALLBACK_COORD;
+      const center = (zoneActivity && zoneCoords[0]) || previewPath[0] || WAYPER_FALLBACK_COORD;
       const area = Math.round(safeNumber(item.areaM2 ?? raw.areaM2 ?? raw.area));
       const distance = item.distance ?? raw.distance ?? raw.totalMeters ?? 0;
       const duration = item.duration ?? raw.duration ?? 0;
@@ -165,7 +174,7 @@ function CorridasScreen({ navigation }) {
 
       return (
         <Pressable onPress={() => goToRun(raw)} style={styles.cardPressable}>
-          <WPCard style={styles.card} accent={zoneActivity ? "cyan" : "green"} glow={path.length > 1 || zoneCoords.length >= 3}>
+          <WPCard style={styles.card} accent={zoneActivity ? "cyan" : "green"} glow={previewPath.length > 1 || zoneCoords.length >= 3}>
             <View style={styles.cardHeader}>
               <View style={[styles.runIcon, zoneActivity && styles.zoneIcon]}>
                 <Ionicons name={zoneActivity ? "map-outline" : "walk-outline"} size={21} color={WayperTheme.colors.textInverse} />
@@ -177,11 +186,12 @@ function CorridasScreen({ navigation }) {
               <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.textSubtle} />
             </View>
 
-            {(zoneActivity && zoneCoords.length >= 3) || path.length > 1 ? (
+            {(zoneActivity && zoneCoords.length >= 3) || previewPath.length > 1 ? (
               <View pointerEvents="none" style={styles.preview}>
                 <WayperMapLibre
                   style={styles.previewMap}
-                  routePath={zoneActivity && zoneCoords.length >= 3 ? [] : path}
+                  routePath={zoneActivity && zoneCoords.length >= 3 ? [] : previewPath}
+                  routeSegments={zoneActivity && zoneCoords.length >= 3 ? [] : routeSegments}
                   routeMode="history"
                   zones={zoneActivity && zoneCoords.length >= 3 ? [{ coords: zoneCoords, area }] : []}
                   showZones={zoneActivity && zoneCoords.length >= 3}
@@ -300,7 +310,7 @@ function CorridasScreen({ navigation }) {
     <WPScreen safe={false}>
       <FlatList
         data={merged}
-        keyExtractor={(item) => item?.id || `${item?.__type || "item"}_${String(item?.date || Date.now())}`}
+        keyExtractor={(item) => item?.localRunId || item?.remoteRunId || item?.id || `${item?.__type || "item"}_${String(item?.date || Date.now())}`}
         renderItem={renderItem}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadAll} tintColor={WayperTheme.colors.primary} />}
         contentContainerStyle={styles.listContent}

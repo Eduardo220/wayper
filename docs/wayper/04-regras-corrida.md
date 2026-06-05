@@ -89,6 +89,9 @@ A corrida ativa deve ser offline-first:
 - Pausa e retomada atualizam o estado local e criam separação de segmento para evitar linhas artificiais.
 - Finalizar a corrida não depende de Firestore; o resumo final fica salvo localmente antes de abrir a tela de confirmação.
 - Ao salvar o resumo, a corrida entra no histórico local com `syncStatus: PENDING` e deve aparecer como pendente até a sincronização remota concluir.
+- Historico e detalhes devem abrir pela copia local (`runs`) mesmo sem internet, por `localRunId`, `remoteRunId` ou id legado.
+- Corridas com `PENDING_SYNC`, `SYNC_FAILED`, `LOCAL_ONLY` ou `SYNCED` continuam visiveis; corridas `RUNNING`, `PAUSED`, `RECOVERING` e `FINISHING` nao aparecem como finalizadas.
+- A tela de detalhes deve usar metricas salvas e rota visual de `renderPath`/`segments`, preservando `trustedPath` para dados oficiais.
 - Se o app fechar durante a corrida, ao reabrir deve restaurar a atividade como em andamento ou pausada conforme o último estado persistido.
 - Se o app fechar depois de finalizar mas antes de salvar o resumo, ao reabrir deve mostrar novamente o resumo recuperado.
 - Firestore é destino de sincronização posterior, não fonte de verdade durante a corrida ativa.

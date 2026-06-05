@@ -124,13 +124,188 @@ function getRemoteRunStatus(status) {
   return status || "completed";
 }
 
+const ACTIVE_RUN_HISTORY_STATUSES = new Set([
+  "ACTIVE",
+  "RUNNING",
+  "PAUSED",
+  "RECOVERING",
+  "FINISHING",
+  "CANCELLED",
+  "CANCELED",
+]);
+
+const FINISHED_RUN_HISTORY_STATUSES = new Set([
+  "COMPLETED",
+  "COMPLETE",
+  "FINISHED",
+  "FINISHED_LOCAL",
+  "PENDING_SYNC",
+  "SYNC_FAILED",
+  "SYNCED",
+  "LOCAL_ONLY",
+]);
+
+const SYNC_STATUS_VALUES = new Set(Object.values(RUN_SYNC_STATUS));
+
+const normalizeStatusText = (value) => String(value || "").trim().toUpperCase();
+
+function toIsoString(value, fallback = null) {
+  try {
+    if (!value) return fallback;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? fallback : value.toISOString();
+    if (typeof value?.toDate === "function") return value.toDate().toISOString();
+    if (Number.isFinite(Number(value?.seconds))) return new Date(Number(value.seconds) * 1000).toISOString();
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
+  } catch {
+    return fallback;
+  }
+}
+
+function dateMs(value) {
+  const date = toIsoString(value);
+  return date ? new Date(date).getTime() : 0;
+}
+
+function getRunIdentityCandidates(run = {}) {
+  return [
+    run.id,
+    run.localRunId,
+    run.remoteRunId,
+    run.runId,
+    run.activeRunId,
+    run.legacyId,
+    run.clientRunId,
+  ]
+    .filter((value) => value !== undefined && value !== null && String(value).trim())
+    .map((value) => String(value));
+}
+
+function hasSharedRunIdentity(left = {}, right = {}) {
+  const leftIds = new Set(getRunIdentityCandidates(left));
+  if (leftIds.size === 0) return false;
+  return getRunIdentityCandidates(right).some((id) => leftIds.has(id));
+}
+
+function getStableRunId(run = {}) {
+  const candidates = getRunIdentityCandidates(run);
+  if (candidates.length > 0) return candidates[0];
+  const date = toIsoString(run.finishedAt || run.endedAt || run.date || run.createdAt);
+  return date ? `run_${date}` : null;
+}
+
+function isFinishedHistoryRun(run = {}) {
+  const status = normalizeStatusText(run.status || run.runStatus || run.state);
+  if (ACTIVE_RUN_HISTORY_STATUSES.has(status)) return false;
+
+  const offlineStatus = normalizeStatusText(run.offlineStatus || run.localStatus);
+  if (offlineStatus === "FINISHING") return false;
+
+  if (FINISHED_RUN_HISTORY_STATUSES.has(status) || FINISHED_RUN_HISTORY_STATUSES.has(offlineStatus)) return true;
+  if (run.finishedAt || run.endedAt || run.date) return true;
+  return Number(run.distance ?? run.distanceMeters ?? 0) > 0 || Number(run.duration ?? run.durationSeconds ?? 0) > 0;
+}
+
+function normalizeRunSyncStatus(run = {}) {
+  const syncStatus = normalizeStatusText(run.syncStatus);
+  if (SYNC_STATUS_VALUES.has(syncStatus)) return syncStatus;
+  const offlineStatus = normalizeStatusText(run.offlineStatus || run.localStatus);
+  if (offlineStatus === "SYNCED") return RUN_SYNC_STATUS.SYNCED;
+  if (offlineStatus === "SYNC_FAILED") return RUN_SYNC_STATUS.FAILED;
+  if (offlineStatus === "SYNCING") return RUN_SYNC_STATUS.SYNCING;
+  if (run.synced) return RUN_SYNC_STATUS.SYNCED;
+  return RUN_SYNC_STATUS.PENDING;
+}
+
+function normalizeRunOfflineStatus(run = {}, syncStatus = normalizeRunSyncStatus(run)) {
+  const offlineStatus = normalizeStatusText(run.offlineStatus || run.localStatus);
+  if (["PENDING_SYNC", "SYNCING", "SYNC_FAILED", "SYNCED", "LOCAL_ONLY"].includes(offlineStatus)) {
+    return offlineStatus;
+  }
+  if (syncStatus === RUN_SYNC_STATUS.SYNCED) return "SYNCED";
+  if (syncStatus === RUN_SYNC_STATUS.SYNCING) return "SYNCING";
+  if (syncStatus === RUN_SYNC_STATUS.FAILED) return "SYNC_FAILED";
+  return "PENDING_SYNC";
+}
+
+function preferArray(primary = [], fallback = []) {
+  const left = Array.isArray(primary) ? primary : [];
+  const right = Array.isArray(fallback) ? fallback : [];
+  return left.length > 0 ? left : right;
+}
+
+function runCompletenessScore(run = {}) {
+  const routeScore =
+    (Array.isArray(run.trustedPath) ? run.trustedPath.length : 0) * 3 +
+    (Array.isArray(run.renderPath) ? run.renderPath.length : 0) * 2 +
+    (Array.isArray(run.rawPath) ? run.rawPath.length : 0) +
+    (Array.isArray(run.segments) ? run.segments.length : 0) * 5;
+  const idScore = getRunIdentityCandidates(run).length * 4;
+  const syncScore = (run.remoteRunId ? 8 : 0) + (run.localRunId ? 8 : 0) + (run.syncStatus ? 3 : 0);
+  const metricsScore = (Number(run.distance ?? run.distanceMeters ?? 0) > 0 ? 4 : 0) +
+    (Number(run.duration ?? run.durationSeconds ?? 0) > 0 ? 4 : 0);
+  return routeScore + idScore + syncScore + metricsScore + dateMs(run.updatedAt);
+}
+
+function mergeLocalRunRecords(existing = {}, incoming = {}) {
+  const trustedPath = preferArray(incoming.trustedPath || incoming.path, existing.trustedPath || existing.path);
+  const renderPath = preferArray(incoming.renderPath || incoming.displayPath, existing.renderPath || existing.displayPath);
+  const rawPath = preferArray(incoming.rawPath || incoming.rawPoints, existing.rawPath || existing.rawPoints);
+  const filteredPoints = preferArray(incoming.filteredPoints, existing.filteredPoints || trustedPath);
+  const displayPath = preferArray(incoming.displayPath, existing.displayPath || renderPath || trustedPath);
+  const displayPoints = preferArray(incoming.displayPoints, existing.displayPoints || displayPath);
+  const segments = preferArray(incoming.segments || incoming.routeSegments, existing.segments || existing.routeSegments);
+  const createdAt = existing.createdAt || incoming.createdAt || incoming.date || existing.date || new Date().toISOString();
+  const updatedAt = dateMs(incoming.updatedAt) >= dateMs(existing.updatedAt)
+    ? incoming.updatedAt || existing.updatedAt
+    : existing.updatedAt || incoming.updatedAt;
+
+  return {
+    ...existing,
+    ...incoming,
+    id: incoming.localRunId || existing.localRunId || existing.id || incoming.id || incoming.remoteRunId || existing.remoteRunId,
+    localRunId: incoming.localRunId || existing.localRunId || existing.id || incoming.id || null,
+    remoteRunId: incoming.remoteRunId || existing.remoteRunId || null,
+    trustedPath,
+    path: trustedPath,
+    filteredPoints,
+    renderPath,
+    displayPath,
+    displayPoints,
+    rawPath,
+    rawPoints: rawPath,
+    segments,
+    routeSegments: segments,
+    createdAt,
+    updatedAt: updatedAt || new Date().toISOString(),
+  };
+}
+
+function dedupeLocalRunRecords(runs = []) {
+  const output = [];
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (!run) continue;
+    const index = output.findIndex((item) => hasSharedRunIdentity(item, run));
+    if (index < 0) {
+      output.push(run);
+      continue;
+    }
+    const merged = mergeLocalRunRecords(output[index], run);
+    output[index] = runCompletenessScore(run) > runCompletenessScore(output[index])
+      ? mergeLocalRunRecords(run, output[index])
+      : merged;
+  }
+  return output;
+}
+
 const uniqueById = (arr = []) => {
   const m = new Map();
   for (const item of arr) {
     if (!item || !item.id) continue;
-    m.set(item.id, item);
+    const existing = m.get(item.id);
+    m.set(item.id, existing ? mergeLocalRunRecords(existing, item) : item);
   }
-  return Array.from(m.values());
+  return dedupeLocalRunRecords(Array.from(m.values()));
 };
 
 function sanitizeCoordsArray(coords = []) {
@@ -217,8 +392,123 @@ function sanitizeRunSegments(segments = []) {
         segment.rawPath.length > 0 ||
         segment.trustedPath.length > 0 ||
         segment.liveRenderPath.length > 0 ||
-        segment.summaryRenderPath.length > 0
+      segment.summaryRenderPath.length > 0
     );
+}
+
+function normalizeLocalRunRecord(run = {}, { now = new Date().toISOString(), forHistory = false } = {}) {
+  if (!run || typeof run !== "object") return null;
+
+  const stableId = getStableRunId(run);
+  if (!stableId) return null;
+  if (forHistory && !isFinishedHistoryRun(run)) return null;
+
+  const trustedPath = sanitizeCoordsArray(run.trustedPath || run.path || run.coords || run.filteredPoints || []);
+  const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || run.displayPoints || trustedPath);
+  const rawPath = sanitizeCoordsArray(run.rawPoints || run.rawPath || []);
+  const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
+  const syncStatus = normalizeRunSyncStatus(run);
+  const offlineStatus = normalizeRunOfflineStatus(run, syncStatus);
+  const finishedAt = toIsoString(run.finishedAt || run.endedAt || run.date, null);
+  const createdAt = toIsoString(run.createdAt || run.startedAt || run.date, now);
+  const updatedAt = toIsoString(run.updatedAt, now);
+  const date = finishedAt || toIsoString(run.date || run.createdAt || run.updatedAt, now);
+  const inferredMode =
+    run.mode ||
+    run.type ||
+    run.runMode ||
+    (Number(run.area ?? run.areaM2 ?? 0) > 0 || Array.isArray(run.zoneCoords || run.zone?.coords) ? "zones" : "free");
+
+  return {
+    ...run,
+    id: String(run.id || stableId),
+    userId: run.userId || run.ownerId || auth?.currentUser?.uid || "offline",
+    localRunId: run.localRunId || run.id || stableId,
+    remoteRunId: run.remoteRunId || null,
+    legacyId: run.legacyId || run.runId || null,
+    path: trustedPath,
+    trustedPath,
+    filteredPoints: sanitizeCoordsArray(run.filteredPoints || trustedPath),
+    rawPath,
+    rawPoints: rawPath,
+    segments,
+    routeSegments: segments,
+    liveRenderPath: sanitizeCoordsArray(run.liveRenderPath || []),
+    renderPath,
+    displayPath: sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath),
+    displayPoints: sanitizeCoordsArray(run.displayPoints || run.displayPath || run.renderPath || renderPath),
+    pathQuality: run.pathQuality || null,
+    gpsQualitySummary: run.gpsQualitySummary || run.pathQuality || null,
+    lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
+    smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
+    filterVersion: run.filterVersion || run.pathQuality?.filterVersion || run.gpsQualitySummary?.filterVersion || null,
+    distance: Number(run.distance ?? run.distanceMeters ?? 0),
+    distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
+    duration: Number(run.duration ?? run.durationSeconds ?? 0),
+    durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
+    avgSpeed: Number(run.avgSpeed ?? 0),
+    maxSpeed: Number(run.maxSpeed ?? 0),
+    avgPace: Number(run.avgPace ?? 0),
+    date,
+    startedAt: toIsoString(run.startedAt, null),
+    finishedAt,
+    endedAt: finishedAt,
+    pausedDurationSeconds: run.pausedDurationSeconds ?? null,
+    status: run.status && !ACTIVE_RUN_HISTORY_STATUSES.has(normalizeStatusText(run.status)) ? run.status : "completed",
+    synced: syncStatus === RUN_SYNC_STATUS.SYNCED,
+    pendingSync: run.pendingSync !== undefined ? !!run.pendingSync : syncStatus !== RUN_SYNC_STATUS.SYNCED,
+    syncStatus,
+    offlineStatus,
+    syncAttempts: Number(run.syncAttempts || 0),
+    lastSyncError: run.lastSyncError || null,
+    lastSyncedAt: run.lastSyncedAt || null,
+    schemaVersion: Number(run.schemaVersion || 1),
+    createdAt,
+    updatedAt,
+    name: run.name || run.title || `${inferredMode === "zones" ? "Captura por zonas" : "Corrida"} ${new Date(date).toLocaleString()}`,
+    title: run.title || run.name || null,
+    effort: Number(run.effort ?? 5),
+    notes: run.notes || "",
+    tags: Array.isArray(run.tags) ? run.tags : [],
+    photoUri: run.photoUri || null,
+    mode: inferredMode,
+    zoneId: run.zoneId || null,
+    area: Number(run.area ?? run.areaM2 ?? 0),
+    areaM2: Number(run.areaM2 ?? run.area ?? 0),
+    zoneCoords: sanitizeCoordsArray(run.zoneCoords || run.zone?.coords || []),
+    territorySummary: run.territorySummary || run.zoneSummary || null,
+    territoryEvents: Array.isArray(run.territoryEvents) ? run.territoryEvents : [],
+    color: run.color || run.zoneColor || run.territoryColor || "#00E676",
+    strokeColor: run.strokeColor || run.color || "#00E676",
+    fillOpacity: Number(run.fillOpacity ?? 0.22),
+    geometry: run.geometry || run.zoneGeometry || null,
+    routeGeometry: run.routeGeometry || null,
+    zoneCount: Number(run.zoneCount ?? (Array.isArray(run.zoneCoords) && run.zoneCoords.length >= 3 ? 1 : 0)),
+    visibility: run.visibility || "followers",
+    subscriberNotificationSent: !!run.subscriberNotificationSent,
+    subscriberNotificationSentAt: run.subscriberNotificationSentAt || null,
+  };
+}
+
+function normalizeLocalRunsForHistory(runs = []) {
+  return dedupeLocalRunRecords(
+    (Array.isArray(runs) ? runs : [])
+      .map((run) => normalizeLocalRunRecord(run, { forHistory: true }))
+      .filter(Boolean)
+  ).sort((a, b) => dateMs(b.finishedAt || b.date || b.createdAt) - dateMs(a.finishedAt || a.date || a.createdAt));
+}
+
+function findRunInListByAnyId(runs = [], lookup) {
+  const ids = getRunIdentityCandidates(
+    typeof lookup === "object"
+      ? lookup
+      : { id: lookup, localRunId: lookup, remoteRunId: lookup, runId: lookup, legacyId: lookup }
+  );
+  if (ids.length === 0) return null;
+  const set = new Set(ids);
+  return (Array.isArray(runs) ? runs : []).find((run) =>
+    getRunIdentityCandidates(run).some((id) => set.has(id))
+  ) || null;
 }
 
 // Retry meta storage helpers
@@ -240,96 +530,52 @@ async function _setRetryMeta(key, meta) {
 export async function loadLocalRuns() {
   try {
     const raw = await AsyncStorage.getItem(RUNS_KEY);
-    return safeParse(raw);
+    return normalizeLocalRunsForHistory(safeParse(raw));
   } catch (err) {
     logError(err, { fn: "loadLocalRuns" });
     return [];
   }
 }
+
+export async function loadLocalRunHistory() {
+  return loadLocalRuns();
+}
+
+export async function findLocalRunById(lookup) {
+  try {
+    const local = await loadLocalRuns();
+    return findRunInListByAnyId(local, lookup);
+  } catch (err) {
+    logError(err, { fn: "findLocalRunById", lookup });
+    return null;
+  }
+}
+
 export async function saveLocalRun(run = {}) {
   try {
     const existing = await loadLocalRuns();
     const now = new Date().toISOString();
-    const trustedPath = sanitizeCoordsArray(run.trustedPath || run.path || run.coords || []);
-    const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || trustedPath);
-    const rawPath = sanitizeCoordsArray(run.rawPoints || run.rawPath || []);
-    const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
-    const normalized = {
-      id: run.id || uid(),
-      path: trustedPath,
-      trustedPath,
-      filteredPoints: sanitizeCoordsArray(run.filteredPoints || trustedPath),
-      rawPath,
-      rawPoints: rawPath,
-      segments,
-      routeSegments: segments,
-      liveRenderPath: sanitizeCoordsArray(run.liveRenderPath || []),
-      renderPath,
-      displayPath: sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath),
-      displayPoints: sanitizeCoordsArray(run.displayPoints || run.displayPath || run.renderPath || renderPath),
-      pathQuality: run.pathQuality || null,
-      gpsQualitySummary: run.gpsQualitySummary || run.pathQuality || null,
-      lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
-      smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
-      filterVersion: run.filterVersion || run.pathQuality?.filterVersion || run.gpsQualitySummary?.filterVersion || null,
-      distance: Number(run.distance ?? 0),
-      distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
-      duration: Number(run.duration ?? 0),
-      durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
-      avgSpeed: Number(run.avgSpeed ?? 0),
-      maxSpeed: Number(run.maxSpeed ?? 0),
-      avgPace: Number(run.avgPace ?? 0),
-      date: run.date || now,
-      startedAt: run.startedAt || null,
-      endedAt: run.endedAt || run.date || now,
-      pausedDurationSeconds: run.pausedDurationSeconds ?? null,
-      status: run.status || "completed",
-      synced: !!run.synced || false,
-      pendingSync: run.pendingSync !== undefined ? !!run.pendingSync : !run.synced,
-      syncStatus: run.syncStatus || (run.synced ? RUN_SYNC_STATUS.SYNCED : RUN_SYNC_STATUS.PENDING),
-      offlineStatus: run.offlineStatus || run.localStatus || (run.synced ? "SYNCED" : "PENDING_SYNC"),
-      localRunId: run.localRunId || run.id || null,
-      remoteRunId: run.remoteRunId || null,
-      syncAttempts: Number(run.syncAttempts || 0),
-      lastSyncError: run.lastSyncError || null,
-      lastSyncedAt: run.lastSyncedAt || null,
-      schemaVersion: Number(run.schemaVersion || 1),
-      createdAt: run.createdAt || now,
-      updatedAt: now,
-      name: run.name || `${run.mode === "zones" ? "Captura por zonas" : "Corrida"} ${new Date(now).toLocaleString()}`,
-      effort: Number(run.effort ?? 5),
-      notes: run.notes || "",
-      tags: Array.isArray(run.tags) ? run.tags : [],
-      photoUri: run.photoUri || null,
-      mode: run.mode || run.type || "free",
-      zoneId: run.zoneId || null,
-      area: Number(run.area ?? 0),
-      zoneCoords: sanitizeCoordsArray(run.zoneCoords || run.zone?.coords || []),
-      color: run.color || run.zoneColor || run.territoryColor || "#00E676",
-      strokeColor: run.strokeColor || run.color || "#00E676",
-      fillOpacity: Number(run.fillOpacity ?? 0.22),
-      geometry: run.geometry || run.zoneGeometry || null,
-      routeGeometry: run.routeGeometry || null,
-      zoneCount: Number(run.zoneCount ?? (Array.isArray(run.zoneCoords) && run.zoneCoords.length >= 3 ? 1 : 0)),
-      visibility: run.visibility || "followers",
-      subscriberNotificationSent: !!run.subscriberNotificationSent,
-      subscriberNotificationSentAt: run.subscriberNotificationSentAt || null,
-    };
+    const normalized = normalizeLocalRunRecord(
+      {
+        ...run,
+        id: run.id || run.localRunId || uid(),
+        date: run.finishedAt || run.endedAt || run.date || now,
+        status: run.status || "completed",
+      },
+      { now }
+    );
+    if (!normalized) throw new Error("invalid_run");
+
     const sameZoneRunIndex =
       normalized.zoneId && (normalized.mode === "zones" || normalized.area > 0 || normalized.zoneCoords.length >= 3)
         ? existing.findIndex((item) => item?.zoneId === normalized.zoneId && (item?.mode === "zones" || Number(item?.area || 0) > 0))
         : -1;
-    const sameRunIndex = existing.findIndex((item) => item?.id === normalized.id);
+    const sameRunIndex = existing.findIndex((item) => hasSharedRunIdentity(item, normalized));
     const replaceIndex = sameZoneRunIndex >= 0 ? sameZoneRunIndex : sameRunIndex;
 
     const savedRecord =
       replaceIndex >= 0
-        ? {
-            ...existing[replaceIndex],
-            ...normalized,
-            id: existing[replaceIndex]?.id || normalized.id,
-            remoteRunId: normalized.remoteRunId || existing[replaceIndex]?.remoteRunId || null,
-          }
+        ? mergeLocalRunRecords(existing[replaceIndex], normalized)
         : normalized;
 
     const next =
@@ -337,8 +583,7 @@ export async function saveLocalRun(run = {}) {
         ? existing.map((item, index) => (index === replaceIndex ? savedRecord : item))
         : [savedRecord, ...existing];
 
-    const deduped = uniqueById(next);
-    deduped.sort((a, b) => (a.date < b.date ? 1 : -1));
+    const deduped = normalizeLocalRunsForHistory(uniqueById(next));
     await AsyncStorage.setItem(RUNS_KEY, safeStringify(deduped));
     return savedRecord;
   } catch (err) {
@@ -362,7 +607,9 @@ export async function deleteLocalRun(runId, options = {}) {
     if (!id) return { deleted: false, remoteDeleted: false };
 
     const existing = await loadLocalRuns();
-    const next = (Array.isArray(existing) ? existing : []).filter((run) => String(run?.id || "") !== id);
+    const next = (Array.isArray(existing) ? existing : []).filter((run) =>
+      !getRunIdentityCandidates(run).includes(id)
+    );
     await AsyncStorage.setItem(RUNS_KEY, safeStringify(next));
 
     let remoteDeleted = false;
@@ -865,7 +1112,7 @@ export async function syncRunsToFirestore() {
       } catch {}
     }
 
-    await AsyncStorage.setItem(RUNS_KEY, safeStringify(local));
+    await AsyncStorage.setItem(RUNS_KEY, safeStringify(normalizeLocalRunsForHistory(local)));
     await _setRetryMeta(RETRY_META_RUNS, { attempts: 0, nextAt: 0 });
   } catch (err) {
     logError(err, { fn: "syncRunsToFirestore" });
@@ -885,7 +1132,7 @@ export async function syncRunsToFirestore() {
             updatedAt: failedAt,
           };
         });
-        await AsyncStorage.setItem(RUNS_KEY, safeStringify(next));
+        await AsyncStorage.setItem(RUNS_KEY, safeStringify(normalizeLocalRunsForHistory(next)));
       }
     } catch (statusErr) {
       logError(statusErr, { fn: "syncRunsToFirestore.markFailed" });
@@ -1409,6 +1656,8 @@ export async function unregisterBackgroundSyncTask() {
 // ----------------- Exports -----------------
 export default {
   loadLocalRuns,
+  loadLocalRunHistory,
+  findLocalRunById,
   saveLocalRun,
   deleteLocalRun,
   loadLocalZones,

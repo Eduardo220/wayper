@@ -90,7 +90,7 @@ export default function DashboardScreen() {
       }
 
       const [loadedRuns, loadedZones] = await Promise.all([
-        sync.loadLocalRuns?.(),
+        sync.loadLocalRunHistory?.() || sync.loadLocalRuns?.(),
         sync.loadLocalZones?.(),
       ]);
 

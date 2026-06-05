@@ -100,6 +100,30 @@ Os testes nao usam GPS real, MapLibre, Firebase real ou rede. Eles devem cobrir:
 - Preservacao de `rawPath`, `trustedPath`, `renderPath` e `segments` em save/recovery/sync.
 - GeoJSON `LineString` para segmento unico e `MultiLineString` para multiplos segmentos.
 
+## Historico e detalhes local-first
+
+Checklist manual:
+
+- [ ] Finalizar corrida online e abrir historico.
+- [ ] Finalizar corrida offline e abrir historico sem religar internet.
+- [ ] Abrir detalhes da corrida offline por item do historico.
+- [ ] Voltar internet e confirmar que a corrida nao duplica apos sync.
+- [ ] Simular sync falho e confirmar que a corrida segue visivel com status de falha.
+- [ ] Abrir corrida livre e confirmar que nao aparece area falsa.
+- [ ] Abrir corrida por zonas e confirmar area/territorio quando existirem.
+- [ ] Conferir rota no detalhe usando pausas/gaps sem linha conectando trecho pausado.
+- [ ] Matar app depois de finalizar e reabrir historico.
+- [ ] Abrir detalhe por `localRunId` e por `remoteRunId`, quando disponiveis.
+
+Cobertura automatizada esperada:
+
+- Listagem local inclui `PENDING`, `FAILED`, `SYNCED` e `LOCAL_ONLY`.
+- Listagem local ignora `RUNNING`, `PAUSED`, `RECOVERING` e `FINISHING`.
+- Dedupe por `id`, `localRunId`, `remoteRunId`, `runId` e `legacyId`.
+- Detalhe consegue buscar a corrida por qualquer id conhecido.
+- `syncStatus`, `offlineStatus`, `remoteRunId`, path e `segments` sao preservados apos save/sync/retry.
+- Firestore falhando nao apaga nem esconde a corrida local.
+
 ## Casos ruins que precisam ser testados
 
 - Usuário nega localização.

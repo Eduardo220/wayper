@@ -131,6 +131,9 @@ Diretrizes:
 
 - Não gravar ponto a ponto no Firestore durante a corrida ativa.
 - Manter rota e resumo no histórico local até sincronizar.
+- Listar historico e abrir detalhes por `sync.loadLocalRunHistory()` / `sync.findLocalRunById()` antes de qualquer dependencia remota.
+- Deduplicar corridas por `id`, `localRunId`, `remoteRunId`, `runId` e `legacyId`.
+- Preservar `trustedPath`, `renderPath`, `rawPath`, `segments`, `syncStatus` e `offlineStatus` na copia local mesmo apos sync.
 - Tentar sincronização automática quando a conexão voltar.
 - Tratar escrita remota como idempotente para permitir retry.
 

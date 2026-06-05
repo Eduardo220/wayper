@@ -1019,8 +1019,8 @@ const MapScreen = ({ navigation, route }) => {
 
         // carregar dados locais sem bloquear UI
         try {
-          const [persistedRuns] = await Promise.all([sync.loadLocalRuns?.()]);
-          if (Array.isArray(persistedRuns) && persistedRuns.length > 0) setRunsList(persistedRuns.slice().reverse());
+          const [persistedRuns] = await Promise.all([sync.loadLocalRunHistory?.() || sync.loadLocalRuns?.()]);
+          if (Array.isArray(persistedRuns) && persistedRuns.length > 0) setRunsList(persistedRuns);
           // Zonas salvas continuam no histórico, mas o mapa inicial deve abrir limpo para a próxima corrida.
           setPolygons([]);
         } catch (e) {
@@ -2652,7 +2652,15 @@ const MapScreen = ({ navigation, route }) => {
   const openRunDetails = useCallback((run) => {
     if (!run) return;
     setShowRunsModal(false);
-    navigation?.navigate("Corridas", { screen: "RunDetail", params: { run } });
+    navigation?.navigate("Corridas", {
+      screen: "RunDetail",
+      params: {
+        run,
+        runId: run.id || run.localRunId || run.remoteRunId,
+        localRunId: run.localRunId || null,
+        remoteRunId: run.remoteRunId || null,
+      },
+    });
   }, [navigation]);
   const openStartModal = useCallback(() => setSelectModeVisible(true), []);
 
@@ -2675,7 +2683,15 @@ const MapScreen = ({ navigation, route }) => {
     setShowRunModal(false);
     setShowRunsModal(false);
     navigation?.closeDrawer?.();
-    navigation?.navigate("Corridas", { screen: "RunDetail", params: { run: lastSavedRun } });
+    navigation?.navigate("Corridas", {
+      screen: "RunDetail",
+      params: {
+        run: lastSavedRun,
+        runId: lastSavedRun.id || lastSavedRun.localRunId || lastSavedRun.remoteRunId,
+        localRunId: lastSavedRun.localRunId || null,
+        remoteRunId: lastSavedRun.remoteRunId || null,
+      },
+    });
   }, [lastSavedRun, navigation]);
 
   const replaySavedRun = useCallback(() => {
@@ -3196,7 +3212,7 @@ const MapScreen = ({ navigation, route }) => {
             <Text style={styles.modalTitle}>Suas Corridas</Text>
             <FlatList
               data={runsList}
-              keyExtractor={(item) => String(item.id || (item._tempId || (item._tempId = uid())))}
+              keyExtractor={(item) => String(item.localRunId || item.remoteRunId || item.id || (item._tempId || (item._tempId = uid())))}
               style={{ flex: 1 }}
               renderItem={({ item }) => (
                 <TouchableOpacity style={styles.runItem} onPress={() => openRunDetails(item)}>
@@ -3651,7 +3667,9 @@ const MapScreen = ({ navigation, route }) => {
               const seen = new Set();
               return [saved, ...(Array.isArray(prev) ? prev : [])].filter((item) => {
                 if (!item) return false;
-                const key = item.zoneId ? `zone:${item.zoneId}` : `run:${item.id || item.date}`;
+                const key = item.zoneId
+                  ? `zone:${item.zoneId}`
+                  : `run:${item.localRunId || item.remoteRunId || item.id || item.date}`;
                 if (seen.has(key)) return false;
                 seen.add(key);
                 return true;

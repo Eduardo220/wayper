@@ -124,3 +124,18 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Suavizacao/simplificacao ficam restritas ao `renderPath` e nao alteram distancia, XP, territorio ou sync.
 - Corrida livre, corrida por zonas, background, recovery, historico, replay e compartilhamento devem reaproveitar `trustedPath/renderPath/segments` em vez de criar logica paralela.
 - Testes automatizados cobrem timestamp, gaps, background ordenado, ponto pausado e GeoJSON `MultiLineString`; validacao final de qualidade visual ainda exige aparelho fisico em rua.
+
+## ADR-011: Historico e detalhes de corrida local-first
+
+**Status:** aceito
+**Contexto:** corridas finalizadas ja eram salvas localmente e sincronizadas depois, mas historico/detalhe ainda precisavam de uma regra explicita para abrir corridas offline, pendentes, com sync falho ou ja sincronizadas sem depender do Firestore.
+**Decisao:** a fonte local oficial do historico de corridas finalizadas e a chave `runs` do AsyncStorage, acessada por `sync.loadLocalRunHistory()` / `sync.findLocalRunById()`. `saveLocalRun()` normaliza e deduplica registros por `id`, `localRunId`, `remoteRunId`, `runId` e `legacyId`. A tela de detalhes prefere a copia local quando ela existe e usa o objeto da navegacao apenas como fallback.
+**Consequencias:**
+
+- Corrida salva localmente aparece no historico mesmo offline, pendente, com sync falho ou sincronizada.
+- Firestore continua destino de sincronizacao posterior, nao dependencia para listar ou abrir detalhe.
+- Corrida ativa, pausada, recovering ou `FINISHING` nao entra como corrida finalizada se cair por acidente na chave `runs`.
+- Quando local e remoto representam a mesma corrida, aparece uma unica vez, preservando `remoteRunId`, `localRunId`, `syncStatus`, `offlineStatus`, `trustedPath`, `renderPath`, `rawPath` e `segments`.
+- Detalhes abrem por `localRunId`, `remoteRunId`, `id` atual ou id legado.
+- Metricas exibidas priorizam distancia/duracao salvas; rota visual usa `renderPath`/`segments` quando disponiveis.
+- AsyncStorage segue aceitavel nesta etapa; se historico com rotas longas ficar pesado, migrar a interface local para SQLite sem mudar telas.

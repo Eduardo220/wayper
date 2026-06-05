@@ -50,6 +50,38 @@ Representa uma corrida registrada.
 | `status` | string | `completed`, `discarded`, `invalid`, etc. |
 | `createdAt` | timestamp | Criação do registro. |
 
+### runs locais
+
+No app, a fonte local do historico usa a chave `runs` do AsyncStorage via `sync.js`. Ela precisa preservar mais campos que o resumo remoto minimo:
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `id` | string | Chave estavel usada pela UI local. |
+| `localRunId` | string | ID local/idempotente da corrida, usado para dedupe e retry. |
+| `remoteRunId` | string/null | ID remoto quando a corrida ja sincronizou ou foi vinculada ao Firestore. |
+| `userId` | string | Dono local/remoto da corrida. |
+| `mode` | string | `free`, `zones` ou equivalente legado. |
+| `startedAt` | ISO string/null | Inicio da corrida. |
+| `finishedAt`/`endedAt` | ISO string/null | Finalizacao da corrida. |
+| `date` | ISO string | Data de ordenacao do historico, preferencialmente fim da corrida. |
+| `distance`/`distanceMeters` | number | Distancia oficial salva, baseada no `trustedPath`. |
+| `duration`/`durationSeconds` | number | Duracao oficial salva. |
+| `syncStatus` | string | `PENDING`, `SYNCING`, `SYNCED` ou `FAILED`. |
+| `offlineStatus` | string | `PENDING_SYNC`, `SYNCING`, `SYNCED`, `SYNC_FAILED` ou `LOCAL_ONLY`. |
+| `trustedPath` | array | Pontos aceitos para metricas. |
+| `renderPath` | array | Pontos preparados para visualizacao. |
+| `rawPath` | array | Pontos brutos/diagnostico. |
+| `segments`/`routeSegments` | array | Quebras de pausa/gap para mapa, replay e compartilhamento. |
+| `area`/`areaM2` | number | Area territorial quando `mode=zones`. |
+| `zoneCoords`/`geometry` | array/object | Dados territoriais quando existirem. |
+
+Regras locais:
+
+- Firestore nao e necessario para listar ou abrir detalhes de corrida salva localmente.
+- Dedupe considera `id`, `localRunId`, `remoteRunId`, `runId` e `legacyId`.
+- Registros `RUNNING`, `PAUSED`, `RECOVERING` ou `FINISHING` nao devem aparecer como finalizados.
+- Se uma corrida sincronizada reaparecer com `remoteRunId`, a copia local deve ser atualizada, nao duplicada.
+
 ## route point
 
 Formato sugerido para pontos de rota.
