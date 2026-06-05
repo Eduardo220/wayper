@@ -322,7 +322,12 @@ export async function saveLocalRun(run = {}) {
 
     const savedRecord =
       replaceIndex >= 0
-        ? { ...existing[replaceIndex], ...normalized, id: existing[replaceIndex]?.id || normalized.id }
+        ? {
+            ...existing[replaceIndex],
+            ...normalized,
+            id: existing[replaceIndex]?.id || normalized.id,
+            remoteRunId: normalized.remoteRunId || existing[replaceIndex]?.remoteRunId || null,
+          }
         : normalized;
 
     const next =

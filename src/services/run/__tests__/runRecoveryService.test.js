@@ -239,6 +239,37 @@ describe("runRecoveryService", () => {
     }));
   });
 
+  test("recovery repetido mantem mesmo localRunId sem duplicar migracao", async () => {
+    const legacyRun = {
+      localRunId: "legacy-repeat",
+      userId: "user-1",
+      mode: "free",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAt: BASE_RUN.startedAt,
+      updatedAt: BASE_RUN.lastUpdatedAt,
+      durationMs: 180000,
+      distanceMeters: 420,
+      points: BASE_RUN.trustedPath,
+      rawPoints: BASE_RUN.trustedPath,
+      segments: [{ index: 0, startedAt: BASE_RUN.startedAt, reason: "START" }],
+      syncStatus: "LOCAL_ONLY",
+      schemaVersion: 1,
+    };
+    storage.set(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(legacyRun));
+
+    const firstRecovery = await findRecoverableRunForUser("user-1");
+    const firstHydrated = await hydrateRecoverableRunCandidate(firstRecovery, {
+      userId: "user-1",
+      restartTracking: false,
+    });
+    const secondRecovery = await findRecoverableRunForUser("user-1");
+
+    expect(firstHydrated.snapshot.localRunId).toBe("legacy-repeat");
+    expect(secondRecovery.source).toBe(RUN_RECOVERY_SOURCE.TRACKING);
+    expect(secondRecovery.id).toBe("legacy-repeat");
+    expect(trackingService.hydrateActiveRunSnapshot).toHaveBeenCalledTimes(1);
+  });
+
   test("resolve conflito entre canonico e legado pelo checkpoint mais recente", async () => {
     currentSnapshot = {
       ...BASE_RUN,

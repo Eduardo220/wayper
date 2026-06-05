@@ -61,6 +61,7 @@ jest.unstable_mockModule("../../runOfflineStorageService.js", () => ({
 const {
   buildOfflineCheckpointFromTrackingSnapshot,
   checkpointOnLocationError,
+  forceCheckpointForAppState,
   startActiveRunAutoCheckpointing,
   stopActiveRunAutoCheckpointing,
 } = await import("../runAutoSaveService.js");
@@ -166,6 +167,21 @@ describe("runAutoSaveService", () => {
       localRunId: "run-autosave",
       appState: null,
     }));
+  });
+
+  test("AppState background e inactive gravam checkpoints explicitos", async () => {
+    await forceCheckpointForAppState("background");
+    await forceCheckpointForAppState("inactive");
+
+    expect(saveActiveRunSnapshot).toHaveBeenCalledTimes(2);
+    expect(saveActiveRunSnapshot.mock.calls[0][0]).toMatchObject({
+      localRunId: "run-autosave",
+      appState: "background",
+    });
+    expect(saveActiveRunSnapshot.mock.calls[1][0]).toMatchObject({
+      localRunId: "run-autosave",
+      appState: "inactive",
+    });
   });
 
   test("cleanup remove listeners e timer para evitar subscriptions duplicadas", async () => {
