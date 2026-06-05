@@ -75,6 +75,31 @@ npm test
 - [ ] Finalizar corrida.
 - [ ] Conferir zona/estatística gerada.
 
+### GPS/path em rua
+
+- [ ] Caminhar/correr em linha reta e comparar distancia aproximada.
+- [ ] Fazer curva em esquina e validar que a linha nao corta quadra de forma agressiva.
+- [ ] Dar volta em uma quadra e validar que o formato fecha de maneira plausivel.
+- [ ] Parar por 30 a 60 segundos e confirmar que jitter parado nao infla distancia.
+- [ ] Pausar, caminhar alguns metros, retomar e confirmar que o trecho pausado nao foi conectado.
+- [ ] Bloquear tela durante parte do trajeto e validar que os pontos de background nao duplicam nem voltam no tempo.
+- [ ] Passar por area com GPS ruim e confirmar que salto impossivel nao vira linha reta pela cidade.
+- [ ] Finalizar offline e conferir que `rawPath`, `trustedPath`, `renderPath` e `segments` aparecem no historico local.
+- [ ] Repetir em corrida livre e corrida por zonas.
+- [ ] Abrir historico/replay/compartilhamento, se disponiveis, e conferir que pausas/gaps continuam separados.
+
+## Cobertura automatizada de GPS/path
+
+Os testes nao usam GPS real, MapLibre, Firebase real ou rede. Eles devem cobrir:
+
+- Coordenadas invalidas, `0,0`, timestamp ausente, timestamp futuro, ponto antigo e ponto fora de ordem.
+- Duplicatas foreground/background e lote de background recebido invertido.
+- Accuracy ruim, velocidade impossivel, aceleracao alta, salto grande e jitter parado.
+- Distancia apenas com `trustedPath`, sem somar durante `PAUSED` e sem conectar segmentos.
+- Gap curto plausivel mantendo segmento; gap longo criando novo segmento.
+- Preservacao de `rawPath`, `trustedPath`, `renderPath` e `segments` em save/recovery/sync.
+- GeoJSON `LineString` para segmento unico e `MultiLineString` para multiplos segmentos.
+
 ## Casos ruins que precisam ser testados
 
 - Usuário nega localização.

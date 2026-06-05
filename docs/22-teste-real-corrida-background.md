@@ -87,6 +87,20 @@ O resultado esperado em todos os cenarios e preservar `localRunId`, status, temp
 4. Reabrir, finalizar e validar zona/historico.
 5. Repetir com internet desligada e confirmar pendencia de sync.
 
+## Cenario 5: qualidade do path GPS
+
+1. Iniciar corrida livre em area aberta e caminhar/correr em linha reta por pelo menos 200m.
+2. Fazer uma curva de esquina clara e validar que a rota acompanha a curva sem cortar quadra de forma absurda.
+3. Dar uma volta em uma quadra e confirmar que o desenho fica plausivel no mapa.
+4. Parar por 30 a 60 segundos sem pausar e confirmar que a distancia quase nao cresce.
+5. Pausar, caminhar alguns metros, retomar e confirmar que o deslocamento pausado nao foi somado nem conectado.
+6. Bloquear a tela por alguns minutos e confirmar, ao voltar, que pontos de background nao duplicaram a linha nem inverteram a ordem.
+7. Passar por area com GPS ruim, se possivel, e confirmar que salto impossivel vira gap/segmento, nao ponte reta pela cidade.
+8. Finalizar offline, abrir historico e validar que `rawPath`, `trustedPath`, `renderPath` e `segments` foram preservados.
+9. Repetir parte do fluxo em corrida por zonas e confirmar que a captura territorial usa a mesma rota base.
+
+Resultado esperado: distancia calculada somente com `trustedPath`, pausas e gaps preservados em `segments`, visualizacao via `renderPath` sem alterar metricas, e `LineString`/`MultiLineString` coerente no historico/replay.
+
 ## Limitacoes reais do Android
 
 - Se o usuario usar "Forcar parada" nas configuracoes do Android, o sistema pode impedir qualquer task ate o app ser aberto manualmente.

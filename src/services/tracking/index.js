@@ -8,6 +8,7 @@ export {
 } from "./trackingConfig.js";
 export {
   TRACKING_FILTER_ACTION,
+  TRACKING_POINT_CLASSIFICATION,
   TRACKING_POINT_SOURCE,
   TRACKING_REJECT_REASON,
 } from "./trackingTypes.js";

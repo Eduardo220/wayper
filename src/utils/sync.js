@@ -158,6 +158,8 @@ function sanitizeCoordsArray(coords = []) {
       }
 
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+      if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+      if (latitude === 0 && longitude === 0) return null;
       const timestamp = p.timestamp ?? p.time ?? p.t ?? null;
       const point = { latitude, longitude, timestamp: timestamp == null ? null : timestamp };
       [

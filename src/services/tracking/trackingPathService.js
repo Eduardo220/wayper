@@ -24,6 +24,10 @@ const reasonCounterMap = {
   [TRACKING_REJECT_REASON.gps_gap]: "gpsGapCount",
   [TRACKING_REJECT_REASON.too_much_acceleration]: "rejectedBySpeed",
   [TRACKING_REJECT_REASON.too_close]: "rejectedByDistance",
+  [TRACKING_REJECT_REASON.invalid_timestamp]: "rejectedByTimestamp",
+  [TRACKING_REJECT_REASON.future_timestamp]: "rejectedByTimestamp",
+  [TRACKING_REJECT_REASON.stale_point]: "rejectedByTimestamp",
+  [TRACKING_REJECT_REASON.out_of_order]: "rejectedByTimestamp",
   [TRACKING_REJECT_REASON.short_zigzag]: "rejectedByZigzag",
   [TRACKING_REJECT_REASON.duplicate_point]: "rejectedByDuplicate",
   [TRACKING_REJECT_REASON.warmup_bad_point]: "rejectedByWarmup",
@@ -40,7 +44,13 @@ function emptyQuality() {
     rejectedByDistance: 0,
     rejectedByZigzag: 0,
     rejectedByDuplicate: 0,
+    rejectedByTimestamp: 0,
     rejectedByWarmup: 0,
+    suspiciousPoints: 0,
+    lastRejectReason: null,
+    lastAccuracyMeters: null,
+    lastCalculatedSpeedMps: null,
+    lastCheckpointAt: null,
     averageAccuracy: null,
     maxAccuracy: null,
     poorAccuracyRatio: 0,
@@ -224,6 +234,7 @@ function hydrateStateFromSnapshot(state, snapshot = {}) {
 
 function incrementRejectCounter(pathQuality, reason) {
   pathQuality.rejectedPoints += 1;
+  pathQuality.lastRejectReason = reason || TRACKING_REJECT_REASON.unknown;
   const key = reasonCounterMap[reason];
   if (key) pathQuality[key] = (pathQuality[key] || 0) + 1;
 }
@@ -234,6 +245,7 @@ function createAcceptedPoint(point, verdict, segmentIndex) {
     segmentId: segmentIndex,
     accepted: true,
     rejectedReason: null,
+    classification: verdict.classification || "accepted",
     qualityScore: verdict.qualityScore,
     distanceFromPreviousMeters: verdict.distanceFromPreviousMeters ?? 0,
     timeFromPreviousMs: verdict.timeFromPreviousMs ?? 0,
@@ -554,6 +566,9 @@ export function createTrackingSession(options = {}) {
 
       const lastInSegment = currentSegment.trustedPath[currentSegment.trustedPath.length - 1] || null;
       acceptedPoint = createAcceptedPoint(rawWithSegment, verdict, segmentIndex);
+      if (acceptedPoint.classification === "suspicious") {
+        state.pathQuality.suspiciousPoints = (state.pathQuality.suspiciousPoints || 0) + 1;
+      }
       if (!lastInSegment) {
         acceptedPoint.distanceFromPreviousMeters = 0;
         acceptedPoint.timeFromPreviousMs = 0;
@@ -584,10 +599,13 @@ export function createTrackingSession(options = {}) {
     }
 
     updateQualityStats(state);
+    state.pathQuality.lastAccuracyMeters = Number.isFinite(Number(rawWithSegment.accuracy)) ? Number(rawWithSegment.accuracy) : null;
+    state.pathQuality.lastCalculatedSpeedMps = verdict.calculatedSpeedMps ?? null;
     const result = {
       accepted: verdict.accepted,
       reason: verdict.reason,
       action: verdict.action,
+      classification: verdict.classification,
       point: acceptedPoint,
       rawPoint: rawWithSegment,
       currentPositionChanged,

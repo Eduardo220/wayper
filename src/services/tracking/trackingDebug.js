@@ -21,7 +21,13 @@ export function buildTrackingDebugSnapshot(sessionState = {}) {
     rejectedByDistance: pathQuality.rejectedByDistance || 0,
     rejectedByZigzag: pathQuality.rejectedByZigzag || 0,
     rejectedByDuplicate: pathQuality.rejectedByDuplicate || 0,
+    rejectedByTimestamp: pathQuality.rejectedByTimestamp || 0,
     rejectedByWarmup: pathQuality.rejectedByWarmup || 0,
+    suspiciousPoints: pathQuality.suspiciousPoints || 0,
+    gpsGapCount: pathQuality.gpsGapCount || 0,
+    lastRejectReason: pathQuality.lastRejectReason || null,
+    lastAccuracyMeters: pathQuality.lastAccuracyMeters ?? null,
+    lastCalculatedSpeedMps: pathQuality.lastCalculatedSpeedMps ?? null,
     smoothingVersion: TRACKING_SMOOTHING_VERSION,
   };
 }

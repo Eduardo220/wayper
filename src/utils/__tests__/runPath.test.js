@@ -30,6 +30,7 @@ describe("normalizeRunPath", () => {
   test("removes invalid points without reordering valid points", () => {
     const result = normalizeRunPath([
       null,
+      { latitude: 0, longitude: 0 },
       { latitude: -23.56, longitude: -46.64 },
       { latitude: 120, longitude: -46.65 },
       { lat: -23.57, lon: -46.66 },

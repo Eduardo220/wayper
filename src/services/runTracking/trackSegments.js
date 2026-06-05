@@ -9,8 +9,7 @@ export function sanitizeRunPath(path = []) {
       if (!point) return null;
       const latitude = Number(point.latitude ?? point.lat ?? point.coords?.latitude);
       const longitude = Number(point.longitude ?? point.lng ?? point.lon ?? point.coords?.longitude);
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-      if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+      if (!isValidCoordinate({ latitude, longitude })) return null;
       return {
         ...point,
         latitude,

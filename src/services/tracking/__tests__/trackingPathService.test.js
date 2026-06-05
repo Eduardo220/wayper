@@ -101,9 +101,42 @@ describe("tracking pipeline", () => {
 
   test("coordenada invalida e rejeitada", () => {
     expect(normalizeLocationPoint({ latitude: 999, longitude: BASE_LNG })).toBeNull();
+    expect(normalizeLocationPoint({ latitude: 0, longitude: 0, timestamp: BASE_TIME })).toBeNull();
     expect(shouldAcceptPoint({ latitude: 999, longitude: BASE_LNG }, {}, "run").reason).toBe(
       TRACKING_REJECT_REASON.invalid_coordinate
     );
+  });
+
+  test("ponto sem timestamp e rejeitado sem inventar horario atual", () => {
+    const point = normalizeLocationPoint({ latitude: BASE_LAT, longitude: BASE_LNG });
+    expect(point).toMatchObject({ latitude: BASE_LAT, longitude: BASE_LNG, timestamp: null });
+
+    const verdict = shouldAcceptPoint({ latitude: BASE_LAT, longitude: BASE_LNG }, {}, "run");
+    expect(verdict.accepted).toBe(false);
+    expect(verdict.reason).toBe(TRACKING_REJECT_REASON.invalid_timestamp);
+    expect(verdict.classification).toBe("discarded");
+  });
+
+  test("ponto com timestamp futuro absurdo e rejeitado", () => {
+    const verdict = shouldAcceptPoint(
+      p(1, 5, 0, { timestamp: BASE_TIME + 5 * 60_000 }),
+      { trustedPath: [p(0)], nowMs: BASE_TIME },
+      "run"
+    );
+
+    expect(verdict.accepted).toBe(false);
+    expect(verdict.reason).toBe(TRACKING_REJECT_REASON.future_timestamp);
+  });
+
+  test("ponto antigo anterior ao inicio da corrida e rejeitado", () => {
+    const verdict = shouldAcceptPoint(
+      p(0, 0, 0, { timestamp: BASE_TIME - 60_000 }),
+      { startedAt: BASE_TIME, nowMs: BASE_TIME },
+      "run"
+    );
+
+    expect(verdict.accepted).toBe(false);
+    expect(verdict.reason).toBe(TRACKING_REJECT_REASON.stale_point);
   });
 
   test("ponto duplicado e rejeitado", () => {
@@ -111,6 +144,14 @@ describe("tracking pipeline", () => {
     const verdict = shouldAcceptPoint(p(0), state, "run");
     expect(verdict.accepted).toBe(false);
     expect(verdict.reason).toBe(TRACKING_REJECT_REASON.duplicate_point);
+  });
+
+  test("mesmo timestamp com coordenada diferente nao entra como velocidade zero", () => {
+    const candidate = p(0, 0, 12, { timestamp: BASE_TIME });
+    const verdict = shouldAcceptPoint(candidate, { trustedPath: [p(0)], previousSpeedMps: 0 }, "run");
+
+    expect(verdict.accepted).toBe(false);
+    expect(verdict.reason).toBe(TRACKING_REJECT_REASON.out_of_order);
   });
 
   test("ponto com accuracy acima de hardMaxAccuracyMeters e rejeitado", () => {
@@ -378,6 +419,29 @@ describe("tracking pipeline", () => {
     const badReturn = session.processLocationPoint(p(60, 0, 1000, { timestamp: BASE_TIME + 60_000, accuracy: 35 }));
     expect(badReturn.accepted).toBe(false);
     expect(badReturn.trustedPath).toHaveLength(1);
+  });
+
+  test("gap longo com retorno plausivel cria novo segmento sem somar ponte", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    session.processLocationPoint(p(0, 0, 0));
+    session.processLocationPoint(p(3, 0, 9));
+    const afterGap = session.processLocationPoint(p(25, 0, 180, { timestamp: BASE_TIME + 75_000, accuracy: 8 }));
+
+    expect(afterGap.accepted).toBe(true);
+    expect(afterGap.segments.filter((segment) => segment.trustedPath.length > 0)).toHaveLength(2);
+    expect(afterGap.stats.distanceMeters).toBeLessThan(20);
+    expect(afterGap.pathQuality.gpsGapCount).toBeGreaterThan(0);
+  });
+
+  test("perda curta de sinal nao fragmenta segmento quando deslocamento e plausivel", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    session.processLocationPoint(p(0, 0, 0));
+    session.processLocationPoint(p(3, 0, 9));
+    const afterShortGap = session.processLocationPoint(p(14, 0, 28, { timestamp: BASE_TIME + 28_000, accuracy: 8 }));
+
+    expect(afterShortGap.accepted).toBe(true);
+    expect(afterShortGap.segments.filter((segment) => segment.trustedPath.length > 0)).toHaveLength(1);
+    expect(afterShortGap.pathQuality.gpsGapCount).toBe(0);
   });
 
   test("smoothing nao atrasa demais a currentPosition", () => {

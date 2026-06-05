@@ -222,6 +222,34 @@ Riscos pendentes:
 - Medir AsyncStorage em corridas longas; migrar a interface de checkpoint para SQLite somente se houver gargalo real.
 - Garantir que telas fora de corrida ativa continuem tratando Firestore como sync posterior, nao dependencia obrigatoria.
 
+### GPS, path e renderizacao
+
+Desde 2026-06-05, a logica oficial de coleta tratada, validacao, segmentacao, distancia e render path fica em `src/services/tracking`.
+
+Responsabilidades:
+
+- `trackingFilters`: normaliza pontos de foreground/background/recovery, valida coordenada, timestamp, accuracy, duplicidade, velocidade, aceleracao, jitter e gaps.
+- `trackingPathService`: mantem a sessao incremental, `rawPath`, `trustedPath`, `renderPath`, `segments`, distancia e contadores de qualidade.
+- `trackingRenderPath` / `trackingSmoothing`: preparam a rota visual sem alterar distancia nem `trustedPath`.
+- `activeRunTrackingService`: alimenta a sessao canonica, ordena lotes de background por timestamp e ignora pontos em estados que nao aceitam tracking.
+- `trackSegments` / `trackGeojson`: sanitizam segmentos e produzem `LineString` ou `MultiLineString` para mapa, historico e replay.
+- `WayperMapLibre`: renderiza o GeoJSON recebido; nao deve decidir filtros de GPS nem recomputar distancia.
+
+Campos oficiais:
+
+- `rawPath` e diagnostico, podendo conter pontos normalizados que nao entraram nas metricas.
+- `trustedPath` e a fonte de distancia, pace, XP/territorio e sync.
+- `renderPath` e visual; simplificacao/suavizacao ficam aqui.
+- `segments` preserva pausas e gaps tecnicos. Corrida livre e corrida por zonas devem usar a mesma base de segmentos.
+
+Regra arquitetural:
+
+- Pontos brutos nao podem inflar distancia.
+- Suavizacao visual nao pode alterar metricas.
+- Background e foreground passam pelo mesmo pipeline.
+- Recovery deve hidratar `rawPath`, `trustedPath`, `renderPath` e `segments` sem recalcular uma rota paralela.
+- Firestore so recebe corrida depois do save local/fila de sync.
+
 ## Turf.js ou biblioteca geográfica
 
 Uma biblioteca geográfica pode ser usada para:

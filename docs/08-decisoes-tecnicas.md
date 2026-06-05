@@ -110,3 +110,17 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Finalizar pela notificacao fica fora do escopo porque exige confirmacao/resumo; finalizar permanece no app.
 - Firestore nao participa do controle da notificacao nem da preservacao da corrida ativa.
 - O comportamento real ainda precisa ser validado em aparelho Android fisico, Dev Client e release, especialmente com economia agressiva de bateria.
+
+## ADR-010: Pipeline canonico de GPS, path e renderizacao
+
+**Status:** aceito
+**Contexto:** a corrida ativa ja tinha snapshot local-first, autosave, recovery e notificacao, mas ainda precisava reduzir riscos de trajeto visual errado, distancia inflada por jitter, salto impossivel, ponto antigo fora de ordem e divergencia entre corrida livre e corrida por zonas.
+**Decisao:** manter `src/services/tracking` como pipeline canonico para normalizacao, validacao, classificacao, segmentacao, distancia e render path. `activeRunTrackingService` continua alimentando essa sessao; lotes de background sao ordenados por timestamp antes de entrar no pipeline. `trustedPath` e a fonte de metricas; `renderPath` e somente visual; `rawPath` fica para diagnostico; `segments` preserva pausa explicita e gap tecnico relevante.
+**Consequencias:**
+
+- Pontos sem timestamp valido, timestamp futuro absurdo, ponto antigo anterior ao inicio, coordenada invalida, `0,0`, duplicata e ponto fora de ordem nao entram como deslocamento valido.
+- Accuracy, velocidade, aceleracao, jitter e gaps usam thresholds centralizados em `trackingConfig.js`.
+- Gap curto com deslocamento plausivel nao fragmenta a rota; gap longo ou salto grande quebra segmento para nao desenhar ponte falsa nem somar distancia impossivel.
+- Suavizacao/simplificacao ficam restritas ao `renderPath` e nao alteram distancia, XP, territorio ou sync.
+- Corrida livre, corrida por zonas, background, recovery, historico, replay e compartilhamento devem reaproveitar `trustedPath/renderPath/segments` em vez de criar logica paralela.
+- Testes automatizados cobrem timestamp, gaps, background ordenado, ponto pausado e GeoJSON `MultiLineString`; validacao final de qualidade visual ainda exige aparelho fisico em rua.

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "@jest/globals";
 import {
   buildSummaryRenderPath,
+  buildRunLineGeoJson,
   calculateDistanceMeters,
   calculatePathDistanceMeters,
   calculateTurnAngle,
@@ -90,6 +91,22 @@ describe("runTracking central pipeline", () => {
     const finish = session.finishTrackingSession({ durationMs: 42000 });
     const segments = getDisplaySegmentsForRun(finish, "result");
     expect(segments).toHaveLength(2);
+  });
+
+  test("GeoJSON de rota usa MultiLineString para segmentos separados", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    const { first, second } = pauseAndResumeFarAway();
+    first.forEach((point) => session.processLocationPoint(point));
+    session.pause({ endedAt: BASE_TIME + 8000 });
+    session.resume({ startedAt: BASE_TIME + 12000 });
+    second.forEach((point) => session.processLocationPoint(point));
+
+    const finish = session.finishTrackingSession({ durationMs: 42000 });
+    const geojson = buildRunLineGeoJson(finish.routeSegments, "result");
+
+    expect(geojson.features).toHaveLength(1);
+    expect(geojson.features[0].geometry.type).toBe("MultiLineString");
+    expect(geojson.features[0].geometry.coordinates).toHaveLength(2);
   });
 
   test("nao conecta segmentos apos gap de GPS", () => {

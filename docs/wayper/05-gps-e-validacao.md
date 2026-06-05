@@ -116,6 +116,58 @@ Antes de gerar XP, ranking ou território, a rota deve passar por validação m�
 - Calcular distância com pontos válidos.
 - Marcar atividade como normal, parcial ou suspeita.
 
+## Pipeline oficial de path
+
+Desde 2026-06-05, a esteira oficial de GPS fica em `src/services/tracking` e deve ser reaproveitada por corrida livre, corrida por zonas, background/recovery, historico, replay e sync. `MapScreen` e componentes de mapa nao devem recalcular distancia nem decidir filtros de GPS.
+
+Papel dos campos:
+
+- `rawPath`: pontos brutos normalizados para diagnostico. Nao altera distancia sozinho.
+- `trustedPath`: pontos aceitos pela validacao. E a base de distancia, pace e metricas.
+- `renderPath`: pontos preparados para visualizacao. Pode ser simplificado/suavizado, mas nunca altera metricas.
+- `segments`: quebras reais de percurso, principalmente pausa explicita e gap tecnico relevante.
+
+Classificacao interna de pontos:
+
+- `accepted`: ponto bom para entrar no `trustedPath`.
+- `suspicious`: ponto aceito com cautela por qualidade intermediaria; pode entrar na rota, mas fica contabilizado em debug.
+- `discarded`: ponto rejeitado e fora de distancia/territorio.
+
+Motivos comuns de descarte: coordenada invalida, `0,0`, timestamp ausente, timestamp futuro acima de 120s, ponto antigo anterior ao inicio da corrida por mais de 30s, ponto fora de ordem, ponto duplicado, accuracy ruim, salto impossivel, velocidade/aceleracao incompativel, jitter parado, ponto em `PAUSED` ou ponto depois de finalizacao.
+
+Thresholds iniciais para corrida (`run`), centralizados em `trackingConfig.js`:
+
+- Accuracy ideal ate 15m, aceitavel ate 25m, cautelosa ate 35m e hard reject acima de 50m.
+- Delta minimo entre pontos: 700ms.
+- Distancia minima util em movimento: 3m; parado: 1.5m.
+- Velocidade maxima normal: 8.5 m/s; hard reject: 10.5 m/s.
+- Aceleracao maxima plausivel: 4.5 m/s2.
+- Gap tecnico: acima de 30s com pelo menos 30m, ou salto acima de 120m com intervalo maior que 10s.
+- Simplificacao visual live: 2.5m; resumo/historico: 5.5m.
+
+## Distancia, pausas e gaps
+
+A distancia oficial e calculada somente entre pontos do `trustedPath`, dentro do mesmo segmento. O app nunca deve somar:
+
+- ponto descartado;
+- jitter parado;
+- ponto recebido durante `PAUSED`;
+- ponte entre pausa e retomada;
+- ponte entre gap longo de GPS;
+- ponto antigo chegando depois de um ponto mais novo.
+
+Ao pausar, o segmento atual e fechado. Ao retomar, a corrida continua com os segmentos anteriores preservados e um novo trecho valido nasce sem conectar o deslocamento feito durante a pausa.
+
+Perdas curtas de sinal nao devem fragmentar a rota por si so. Gaps longos ou saltos impossiveis quebram a renderizacao em segmentos para evitar linha reta atravessando a cidade e para impedir distancia inflada.
+
+Lotes de background devem ser ordenados por timestamp antes de entrar no pipeline. Pontos duplicados entre foreground/background sao ignorados pelo mesmo filtro canonico.
+
+## Renderizacao visual
+
+Suavizacao e simplificacao sao apenas visuais e ficam no `renderPath`. Elas existem para reduzir tremedeira e peso de mapa, mas nao podem deslocar a rota para longe dos pontos reais, cortar pausas/gaps, nem modificar `rawPath`, `trustedPath`, distancia, XP ou territorio.
+
+Para rota com um segmento, a renderizacao usa `LineString`. Para multiplos segmentos, usa `MultiLineString`, preservando a ordem dos pontos e evitando conectar pausa/gap.
+
 ## Documentos relacionados
 
 - [[03-mecanica-territorios]]

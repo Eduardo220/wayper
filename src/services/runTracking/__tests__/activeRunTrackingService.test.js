@@ -12,6 +12,7 @@ const AsyncStorageMock = {
 };
 
 let locationStarted = false;
+let backgroundTaskHandler = null;
 const LocationMock = {
   Accuracy: {
     Balanced: 3,
@@ -31,6 +32,13 @@ const LocationMock = {
   }),
 };
 
+const TaskManagerMock = {
+  isTaskDefined: jest.fn(() => false),
+  defineTask: jest.fn((name, handler) => {
+    backgroundTaskHandler = handler;
+  }),
+};
+
 jest.unstable_mockModule("@react-native-async-storage/async-storage", () => ({
   default: AsyncStorageMock,
 }));
@@ -45,10 +53,7 @@ jest.unstable_mockModule("react-native", () => ({
 
 jest.unstable_mockModule("expo-location", () => LocationMock);
 
-jest.unstable_mockModule("expo-task-manager", () => ({
-  isTaskDefined: jest.fn(() => false),
-  defineTask: jest.fn(),
-}));
+jest.unstable_mockModule("expo-task-manager", () => TaskManagerMock);
 
 const service = await import("../activeRunTrackingService.js");
 const {
@@ -76,6 +81,7 @@ beforeEach(() => {
   storage.clear();
   locationStarted = false;
   jest.clearAllMocks();
+  TaskManagerMock.isTaskDefined.mockReturnValue(false);
   service.__resetActiveRunRuntimeForTests();
 });
 
@@ -115,6 +121,50 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(raw.source).toBe("background");
     expect(raw.trustedPath.length).toBeGreaterThanOrEqual(1);
     expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+  });
+
+  test("lote de background e ordenado por timestamp antes de atualizar o snapshot canonico", async () => {
+    const backgroundTask = backgroundTaskHandler;
+    expect(typeof backgroundTask).toBe("function");
+
+    await service.startActiveRun({
+      activeRunId: "run-background-ordered",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+
+    await backgroundTask({
+      data: {
+        locations: [
+          { coords: { ...nextPoint(2), accuracy: 8 }, timestamp: BASE_TIME + 4000 },
+          { coords: { ...nextPoint(1), accuracy: 8 }, timestamp: BASE_TIME + 2000 },
+        ],
+      },
+    });
+
+    const raw = JSON.parse(storage.get(ACTIVE_RUN_STORAGE_KEY));
+    expect(raw.activeRunId).toBe("run-background-ordered");
+    expect(raw.trustedPath.map((point) => point.timestamp)).toEqual([
+      BASE_TIME + 2000,
+      BASE_TIME + 4000,
+    ]);
+    expect(raw.trustedPath).toHaveLength(2);
+  });
+
+  test("ponto recebido em background durante PAUSED nao soma distancia", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-paused-background",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+    const paused = await service.pauseActiveRun({ endedAtMs: BASE_TIME + 5000 });
+
+    const ignored = await service.recordLocation(nextPoint(3), { source: "background" });
+
+    expect(ignored.status).toBe(ACTIVE_RUN_STATUS.PAUSED);
+    expect(ignored.trustedPath).toEqual(paused.trustedPath);
+    expect(ignored.distanceMeters).toBe(paused.distanceMeters);
   });
 
   test("restaura corrida RUNNING depois de runtime resetado sem criar nova sessao", async () => {

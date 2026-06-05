@@ -472,10 +472,19 @@ export async function cancelActiveRun(options = {}) {
 }
 
 async function handleBackgroundLocations(data = {}) {
-  const locations = Array.isArray(data.locations) ? data.locations : [];
+  const locations = (Array.isArray(data.locations) ? data.locations : [])
+    .filter((loc) => loc?.coords)
+    .slice()
+    .sort((a, b) => {
+      const left = Number(a?.timestamp);
+      const right = Number(b?.timestamp);
+      if (!Number.isFinite(left) && !Number.isFinite(right)) return 0;
+      if (!Number.isFinite(left)) return 1;
+      if (!Number.isFinite(right)) return -1;
+      return left - right;
+    });
   if (locations.length === 0) return;
   for (const loc of locations) {
-    if (!loc?.coords) continue;
     await recordLocation({
       latitude: loc.coords.latitude,
       longitude: loc.coords.longitude,
