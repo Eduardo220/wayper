@@ -11,6 +11,9 @@ const nativeModule = {
 
 let currentSnapshot = null;
 const listeners = new Set();
+const notificationPermissionCheck = jest.fn(async () => true);
+const notificationPermissionRequest = jest.fn(async () => "granted");
+const flushActiveRunCheckpoint = jest.fn(async () => ({ ok: true }));
 
 const trackingService = {
   getActiveRunSnapshot: jest.fn(async () => currentSnapshot),
@@ -50,8 +53,8 @@ await jest.unstable_mockModule("react-native", () => ({
       GRANTED: "granted",
       DENIED: "denied",
     },
-    check: jest.fn(async () => true),
-    request: jest.fn(async () => "granted"),
+    check: notificationPermissionCheck,
+    request: notificationPermissionRequest,
   },
   Platform: {
     OS: "android",
@@ -62,6 +65,10 @@ await jest.unstable_mockModule("react-native", () => ({
 await jest.unstable_mockModule("../../runTracking/activeRunTrackingService.js", () => ({
   default: trackingService,
   ...trackingService,
+}));
+
+await jest.unstable_mockModule("../runAutoSaveService.js", () => ({
+  flushActiveRunCheckpoint,
 }));
 
 const service = await import("../runNotificationService.js");
@@ -110,6 +117,12 @@ beforeEach(() => {
     if (typeof fn?.mockClear === "function") fn.mockClear();
   });
   trackingService.getActiveRunSnapshot.mockImplementation(async () => currentSnapshot);
+  notificationPermissionCheck.mockClear();
+  notificationPermissionCheck.mockResolvedValue(true);
+  notificationPermissionRequest.mockClear();
+  notificationPermissionRequest.mockResolvedValue("granted");
+  flushActiveRunCheckpoint.mockClear();
+  flushActiveRunCheckpoint.mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
@@ -117,7 +130,7 @@ afterEach(() => {
 });
 
 describe("run notification service", () => {
-  test("ao iniciar corrida, cria notificacao persistente com acao Parar", async () => {
+  test("ao iniciar corrida, cria notificacao persistente com acao Pausar", async () => {
     await service.startRunNotification({
       elapsedTimeSeconds: 503,
       distanceKm: 1.42,
@@ -127,8 +140,9 @@ describe("run notification service", () => {
     expect(nativeModule.startRunNotification).toHaveBeenCalledTimes(1);
     expect(nativeModule.startRunNotification.mock.calls[0][0]).toMatchObject({
       title: "Wayper",
-      text: "Corrida · 08:23 · 1,42 km",
-      actionLabel: "Parar",
+      text: "Correndo - 08:23 - 1,42 km",
+      statusLabel: "Correndo",
+      actionLabel: "Pausar",
       action: "pause",
     });
   });
@@ -148,12 +162,13 @@ describe("run notification service", () => {
     expect(nativeModule.startRunNotification).toHaveBeenCalledTimes(1);
     expect(nativeModule.updateRunNotification).toHaveBeenCalledTimes(1);
     expect(nativeModule.updateRunNotification.mock.calls[0][0]).toMatchObject({
-      text: "Corrida · 08:25 · 1,43 km",
-      actionLabel: "Parar",
+      text: "Correndo - 08:25 - 1,43 km",
+      statusLabel: "Correndo",
+      actionLabel: "Pausar",
     });
   });
 
-  test("ao pausar pelo app, notificacao muda para acao Iniciar", async () => {
+  test("ao pausar pelo app, notificacao muda para acao Retomar", async () => {
     await service.startRunNotification({
       elapsedTimeSeconds: 503,
       distanceKm: 1.42,
@@ -166,8 +181,9 @@ describe("run notification service", () => {
     });
 
     expect(nativeModule.updateRunNotification.mock.calls[0][0]).toMatchObject({
-      text: "Corrida pausada · 08:23 · 1,42 km",
-      actionLabel: "Iniciar",
+      text: "Pausada - 08:23 - 1,42 km",
+      statusLabel: "Pausada",
+      actionLabel: "Retomar",
       action: "resume",
     });
   });
@@ -189,8 +205,11 @@ describe("run notification service", () => {
     const payload = nativeModule.updateRunNotification.mock.calls.at(-1)[0];
     expect(payload).toMatchObject({
       isPaused: true,
-      actionLabel: "Iniciar",
+      actionLabel: "Retomar",
     });
+    expect(flushActiveRunCheckpoint).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "notification_pause",
+    }));
     expect(payload.elapsedTimeSeconds).toBeGreaterThan(0);
     expect(payload.distanceKm).toBeCloseTo(1.42);
   });
@@ -213,9 +232,38 @@ describe("run notification service", () => {
     const payload = nativeModule.updateRunNotification.mock.calls.at(-1)[0];
     expect(payload).toMatchObject({
       isPaused: false,
-      actionLabel: "Parar",
+      actionLabel: "Pausar",
     });
+    expect(flushActiveRunCheckpoint).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "notification_resume",
+    }));
     expect(payload.distanceKm).toBeCloseTo(1.42);
+  });
+
+  test("acao duplicada de pausar pela notificacao e idempotente", async () => {
+    currentSnapshot = runningSnapshot();
+
+    await service.pauseRunFromNotification();
+    await service.pauseRunFromNotification();
+
+    expect(trackingService.pauseActiveRun).toHaveBeenCalledTimes(1);
+    expect(flushActiveRunCheckpoint).toHaveBeenCalledTimes(1);
+    expect(currentSnapshot.status).toBe("PAUSED");
+  });
+
+  test("permissao de notificacao negada nao inicia foreground service", async () => {
+    notificationPermissionCheck.mockResolvedValue(false);
+    notificationPermissionRequest.mockResolvedValue("denied");
+
+    const started = await service.startRunNotification({
+      elapsedTimeSeconds: 10,
+      distanceKm: 0.1,
+      isPaused: false,
+    }, { scheduleTimer: false });
+
+    expect(started).toBe(false);
+    expect(notificationPermissionRequest).toHaveBeenCalledTimes(1);
+    expect(nativeModule.startRunNotification).not.toHaveBeenCalled();
   });
 
   test("ao finalizar corrida, notificacao e timer sao removidos", async () => {
@@ -256,6 +304,33 @@ describe("run notification service", () => {
     expect(nativeModule.updateRunNotification).toHaveBeenCalled();
   });
 
+  test("coordenador nao duplica listeners ao reentrar no app", async () => {
+    currentSnapshot = runningSnapshot("free");
+
+    const stopA = service.startRunNotificationCoordinator();
+    const stopB = service.startRunNotificationCoordinator();
+    await flushPromises();
+
+    expect(stopA).toBe(stopB);
+    expect(trackingService.onActiveRunSnapshot).toHaveBeenCalledTimes(1);
+    expect(listeners.size).toBe(1);
+  });
+
+  test("recovery de corrida pausada restaura notificacao pausada", async () => {
+    currentSnapshot = pausedSnapshot();
+
+    service.startRunNotificationCoordinator();
+    await flushPromises();
+
+    expect(nativeModule.startRunNotification).toHaveBeenCalledTimes(1);
+    expect(nativeModule.startRunNotification.mock.calls[0][0]).toMatchObject({
+      isPaused: true,
+      statusLabel: "Pausada",
+      action: "resume",
+      actionLabel: "Retomar",
+    });
+  });
+
   test("toque na notificacao abre deep link da corrida ativa sem criar rota nova", () => {
     const foregroundService = fs.readFileSync(
       path.join(process.cwd(), "android/app/src/main/java/com/wayper/app/run/RunNotificationForegroundService.kt"),
@@ -267,8 +342,30 @@ describe("run notification service", () => {
     );
 
     expect(foregroundService).toContain('ACTIVE_RUN_DEEP_LINK = "wayper://run/active"');
+    expect(foregroundService).toContain('EXTRA_STATUS_LABEL = "statusLabel"');
+    expect(foregroundService).toContain('EXTRA_ACTION_LABEL = "actionLabel"');
+    expect(foregroundService).toContain('"Pausar"');
+    expect(foregroundService).toContain('"Retomar"');
     expect(foregroundService).toContain("Intent.FLAG_ACTIVITY_REORDER_TO_FRONT");
     expect(mainActivity).toContain("override fun onNewIntent");
     expect(mainActivity).toContain("setIntent(intent)");
+  });
+
+  test("permissoes android necessarias para notificacao e background estao declaradas", () => {
+    const appConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), "app.json"), "utf8"));
+    const manifest = fs.readFileSync(
+      path.join(process.cwd(), "android/app/src/main/AndroidManifest.xml"),
+      "utf8"
+    );
+    const permissions = appConfig?.expo?.android?.permissions || [];
+
+    expect(permissions).toEqual(expect.arrayContaining([
+      "ACCESS_BACKGROUND_LOCATION",
+      "FOREGROUND_SERVICE",
+      "FOREGROUND_SERVICE_LOCATION",
+      "POST_NOTIFICATIONS",
+    ]));
+    expect(manifest).toContain("RunNotificationForegroundService");
+    expect(manifest).toContain("android:foregroundServiceType=\"location\"");
   });
 });

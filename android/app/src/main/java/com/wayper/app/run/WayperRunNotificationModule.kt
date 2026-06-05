@@ -29,7 +29,9 @@ class WayperRunNotificationModule(
         reactContext,
         elapsedSeconds(options),
         distanceKm(options),
-        isPaused(options)
+        isPaused(options),
+        statusLabel(options),
+        actionLabel(options)
       )
       promise.resolve(true)
     } catch (error: Exception) {
@@ -44,7 +46,9 @@ class WayperRunNotificationModule(
         reactContext,
         elapsedSeconds(options),
         distanceKm(options),
-        isPaused(options)
+        isPaused(options),
+        statusLabel(options),
+        actionLabel(options)
       )
       promise.resolve(true)
     } catch (error: Exception) {
@@ -84,5 +88,21 @@ class WayperRunNotificationModule(
 
   private fun isPaused(options: ReadableMap): Boolean {
     return options.hasKey("isPaused") && options.getBoolean("isPaused")
+  }
+
+  private fun statusLabel(options: ReadableMap): String? {
+    return if (options.hasKey("statusLabel") && !options.isNull("statusLabel")) {
+      options.getString("statusLabel")
+    } else {
+      null
+    }
+  }
+
+  private fun actionLabel(options: ReadableMap): String? {
+    return if (options.hasKey("actionLabel") && !options.isNull("actionLabel")) {
+      options.getString("actionLabel")
+    } else {
+      null
+    }
   }
 }

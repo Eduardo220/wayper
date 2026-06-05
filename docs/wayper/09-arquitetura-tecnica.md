@@ -184,9 +184,41 @@ Fluxo reforcado:
 
 `start -> checkpoint imediato -> checkpoints por snapshot/periodico -> pause checkpoint -> resume checkpoint -> AppState checkpoint -> recovery consolidado -> before_finish checkpoint -> finish canonico -> rascunho final -> saveLocalRun pending sync -> limpeza ativa -> sync idempotente`.
 
+### Notificacao persistente Android da corrida ativa
+
+Desde 2026-06-05, a corrida ativa usa uma notificacao persistente Android baseada no modulo nativo `WayperRunNotificationAndroid`, coordenada por `runNotificationService`.
+
+Papel de cada camada:
+
+- `runNotificationService`: cria payload da notificacao a partir do snapshot canonico, configura canal Android, inicia/atualiza/remove a notificacao, coordena timer leve e trata acoes de pausa/retomada.
+- `RunNotificationForegroundService`: foreground service Android com `foregroundServiceType="location"`, notificacao ongoing, botao contextual e deep link `wayper://run/active`.
+- `RunNotificationActionReceiver` / `RunNotificationActionService` / headless task `WayperRunNotificationAction`: recebem a acao nativa e chamam os mesmos services oficiais da corrida.
+- `activeRunTrackingService`: continua sendo a unica fonte de verdade da corrida ativa; a notificacao nunca cria uma corrida nova.
+- `runAutoSaveService`: recebe checkpoint forcado depois de acao de pausar/retomar pela notificacao.
+
+Comportamento esperado:
+
+- Ao iniciar ou recuperar uma corrida `RUNNING`, a notificacao mostra `Correndo`, tempo, distancia e acao `Pausar`.
+- Ao pausar, a notificacao mostra `Pausada`, preserva tempo/distancia e troca a acao para `Retomar`.
+- Ao retomar, a notificacao volta para `Correndo` e mantem os segmentos existentes.
+- Ao finalizar/cancelar/limpar o snapshot ativo, a notificacao e removida para evitar notificacao orfa.
+- Toque no corpo da notificacao reabre a tela de corrida ativa por deep link, sem empilhar nova rota.
+- Updates JS para o native module sao limitados por throttle; o foreground service continua atualizando visualmente o tempo enquanto a corrida esta rodando.
+
+Permissoes envolvidas:
+
+- Android: `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`, `POST_NOTIFICATIONS` e `WAKE_LOCK`.
+- Se `POST_NOTIFICATIONS` for negada, a corrida local-first continua funcionando, mas a experiencia de background fica limitada e deve ser comunicada ao usuario.
+- Se background location for negada, o app nao deve prometer coleta confiavel com tela bloqueada.
+
+Decisao de UX:
+
+- Finalizar pela notificacao nao foi implementado nesta etapa porque encerramento exige confirmacao/resumo. A notificacao oferece abrir o app, pausar e retomar; finalizar permanece dentro da UI principal.
+
 Riscos pendentes:
 
 - Validar em dispositivo real que background location e tela bloqueada continuam entregando pontos suficientes.
+- Validar a notificacao em Expo Dev Client Android e build release Android, pois foreground service, permissao de notificacao e restricoes de bateria variam por build/aparelho.
 - Medir AsyncStorage em corridas longas; migrar a interface de checkpoint para SQLite somente se houver gargalo real.
 - Garantir que telas fora de corrida ativa continuem tratando Firestore como sync posterior, nao dependencia obrigatoria.
 

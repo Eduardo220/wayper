@@ -5,14 +5,16 @@ Este roteiro valida o fluxo critico de corrida ativa, snapshot local, background
 ## Checklist obrigatorio de hardening
 
 1. Iniciar corrida, bloquear tela por alguns minutos e voltar pelo icone do app.
-2. Iniciar corrida, bloquear tela e voltar pela notificacao persistente, quando existir.
+2. Iniciar corrida, confirmar notificacao persistente e voltar pela notificacao.
 3. Iniciar corrida, colocar app em background e voltar.
 4. Iniciar corrida, pausar, matar app e reabrir.
 5. Iniciar corrida em andamento, matar app e reabrir.
 6. Finalizar corrida offline e confirmar que aparece localmente como pendente.
 7. Voltar internet e confirmar sync sem duplicata.
 8. Negar permissao de background e conferir mensagem clara.
-9. Confirmar que os botoes de pausar, retomar e finalizar continuam clicaveis ao retornar.
+9. Negar permissao de notificacao e confirmar aviso/estado seguro.
+10. Confirmar que os botoes de pausar, retomar e finalizar continuam clicaveis ao retornar.
+11. Pausar e retomar pela notificacao sem duplicar corrida.
 
 O resultado esperado em todos os cenarios e preservar `localRunId`, status, tempo, distancia, path, rawPath, renderPath e segments. Corrida finalizada ou em `FINISHING` nao pode voltar como ativa.
 
@@ -20,8 +22,9 @@ O resultado esperado em todos os cenarios e preservar `localRunId`, status, temp
 
 - Usar Android real com build dev e repetir em build release.
 - Conceder localizacao em primeiro plano e em segundo plano.
+- Conceder permissao de notificacao no Android 13+.
 - Manter GPS ligado e sair para area aberta.
-- Confirmar que o Android mostra a notificacao persistente: "Wayper registrando corrida".
+- Confirmar que o Android mostra notificacao persistente do Wayper com tempo, distancia, status e acao `Pausar`.
 - Em aparelhos com economia agressiva de bateria, orientar o usuario a remover o Wayper da otimizacao de bateria.
 
 ## Cenario 1: tela bloqueada
@@ -45,14 +48,16 @@ O resultado esperado em todos os cenarios e preservar `localRunId`, status, temp
 6. Desbloquear e voltar pelo icone do app.
 7. Confirmar que a tela volta para a corrida ativa sem modal bloqueando os controles.
 8. Confirmar que tempo, distancia, rota e notificacao continuam coerentes.
-9. Tocar em Pausar e confirmar que o botao responde.
-10. Tocar em Retomar e confirmar que o GPS continua acumulando pontos na mesma corrida.
+9. Tocar em Pausar no app e confirmar que a notificacao muda para `Pausada` / `Retomar`.
+10. Tocar em Retomar no app e confirmar que a notificacao volta para `Correndo` / `Pausar`.
 11. Bloquear a tela novamente por pelo menos 2 minutos.
 12. Voltar tocando na notificacao permanente do Wayper.
 13. Confirmar que o app foca a tela Mapa/corrida ativa sem empilhar outra tela.
-14. Pausar, retomar e finalizar.
-15. Salvar a corrida e confirmar que ela aparece no historico com a rota completa.
-16. Repetir com economia de bateria ligada e desligada quando o aparelho permitir.
+14. Pausar pela notificacao e confirmar que o app volta mostrando corrida pausada.
+15. Retomar pela notificacao e confirmar que tempo, distancia, path e segments continuam na mesma corrida.
+16. Abrir o app pela notificacao, finalizar e confirmar que a notificacao some.
+17. Salvar a corrida e confirmar que ela aparece no historico com a rota completa.
+18. Repetir com economia de bateria ligada e desligada quando o aparelho permitir.
 
 ## Cenario 2: sem internet
 
@@ -87,4 +92,6 @@ O resultado esperado em todos os cenarios e preservar `localRunId`, status, temp
 - Se o usuario usar "Forcar parada" nas configuracoes do Android, o sistema pode impedir qualquer task ate o app ser aberto manualmente.
 - Fabricantes com economia agressiva podem encerrar processos mesmo com foreground service. O Wayper deve preservar o ultimo snapshot salvo, mas nao pode garantir pontos depois que o processo foi morto pelo sistema.
 - Sem permissao de localizacao em segundo plano, o app bloqueia o inicio da corrida para evitar uma sessao quebrada.
+- Sem permissao de notificacao no Android 13+, a corrida local-first ainda deve ser preservada, mas o usuario perde a notificacao persistente e os controles de pausa/retomada fora do app.
+- Finalizar pela notificacao nao e suportado nesta etapa porque o encerramento precisa passar pela tela de resumo/confirmacao.
 - Testes em emulador nao validam completamente tela bloqueada, foreground service e restricoes agressivas de bateria; repetir em aparelho fisico antes de considerar o fluxo fechado.

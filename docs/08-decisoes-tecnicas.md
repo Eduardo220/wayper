@@ -96,3 +96,17 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Checkpoints antigos continuam bloqueados por `checkpointAtMs`.
 - Se o app cair durante finish, recovery nao ressuscita a corrida como ativa.
 - Firestore segue opcional para preservar e finalizar corrida localmente.
+
+## ADR-009: Notificacao persistente Android para corrida ativa
+
+**Status:** aceito
+**Contexto:** a corrida ativa ja tinha fonte canonica, autosave e recovery, mas ainda precisava de um ponto operacional confiavel para tela bloqueada/background e acoes basicas fora da UI.
+**Decisao:** usar o modulo nativo Android existente `WayperRunNotificationAndroid` e o foreground service `RunNotificationForegroundService`, coordenados por `runNotificationService`. A notificacao e alimentada somente pelo snapshot canonico `wayper:activeRun:v2`; pausar/retomar pela notificacao chama `activeRunTrackingService` e dispara checkpoint via `runAutoSaveService`. Nao usar `expo-notifications` nesta etapa porque o projeto ja possui modulo nativo proprio para foreground service de corrida.
+**Consequencias:**
+
+- A notificacao persistente mostra status, tempo e distancia da corrida ativa.
+- O botao da notificacao alterna entre `Pausar` e `Retomar` sem criar corrida nova.
+- Tocar na notificacao abre `wayper://run/active` e reentra na tela de corrida ativa.
+- Finalizar pela notificacao fica fora do escopo porque exige confirmacao/resumo; finalizar permanece no app.
+- Firestore nao participa do controle da notificacao nem da preservacao da corrida ativa.
+- O comportamento real ainda precisa ser validado em aparelho Android fisico, Dev Client e release, especialmente com economia agressiva de bateria.

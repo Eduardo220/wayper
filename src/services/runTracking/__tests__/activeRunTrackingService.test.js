@@ -98,6 +98,25 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(raw.trustedPath.length).toBeGreaterThanOrEqual(1);
   });
 
+  test("ponto em background atualiza o snapshot canonico sem duplicar watcher", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-background-point",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+
+    const updated = await service.recordLocation(nextPoint(1), { source: "background" });
+    const raw = JSON.parse(storage.get(ACTIVE_RUN_STORAGE_KEY));
+
+    expect(updated.activeRunId).toBe("run-background-point");
+    expect(updated.source).toBe("background");
+    expect(raw.activeRunId).toBe("run-background-point");
+    expect(raw.source).toBe("background");
+    expect(raw.trustedPath.length).toBeGreaterThanOrEqual(1);
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+  });
+
   test("restaura corrida RUNNING depois de runtime resetado sem criar nova sessao", async () => {
     await service.startActiveRun({
       activeRunId: "run-restart",

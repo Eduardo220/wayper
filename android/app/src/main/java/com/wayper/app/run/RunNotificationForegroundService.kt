@@ -22,6 +22,8 @@ class RunNotificationForegroundService : Service() {
   private var baseElapsedSeconds = 0L
   private var distanceKm = 0.0
   private var isPaused = false
+  private var statusLabel = "Correndo"
+  private var actionLabel = "Pausar"
   private var baseElapsedRealtime = 0L
   private var foregroundStarted = false
 
@@ -61,6 +63,10 @@ class RunNotificationForegroundService : Service() {
     baseElapsedSeconds = max(0L, intent.getLongExtra(EXTRA_ELAPSED_SECONDS, baseElapsedSeconds))
     distanceKm = max(0.0, intent.getDoubleExtra(EXTRA_DISTANCE_KM, distanceKm))
     isPaused = intent.getBooleanExtra(EXTRA_IS_PAUSED, isPaused)
+    statusLabel = intent.getStringExtra(EXTRA_STATUS_LABEL)?.takeIf { it.isNotBlank() }
+      ?: if (isPaused) "Pausada" else "Correndo"
+    actionLabel = intent.getStringExtra(EXTRA_ACTION_LABEL)?.takeIf { it.isNotBlank() }
+      ?: if (isPaused) "Retomar" else "Pausar"
     baseElapsedRealtime = SystemClock.elapsedRealtime()
   }
 
@@ -123,7 +129,7 @@ class RunNotificationForegroundService : Service() {
     }
 
     val buttonAction = if (isPaused) ACTION_RESUME else ACTION_PAUSE
-    val buttonLabel = if (isPaused) "Iniciar" else "Parar"
+    val buttonLabel = actionLabel.ifBlank { if (isPaused) "Retomar" else "Pausar" }
     val buttonIntent = Intent(this, RunNotificationActionReceiver::class.java).apply {
       action = ACTION_BUTTON
       putExtra(EXTRA_BUTTON_ACTION, buttonAction)
@@ -174,10 +180,10 @@ class RunNotificationForegroundService : Service() {
   }
 
   private fun formatContentText(): String {
-    val state = if (isPaused) "Corrida pausada" else "Corrida"
+    val state = statusLabel.ifBlank { if (isPaused) "Pausada" else "Correndo" }
     val elapsed = formatElapsedTime(displayElapsedSeconds())
     val distance = String.format(PT_BR, "%.2f km", distanceKm)
-    return "$state · $elapsed · ${distance.replace('.', ',')}"
+    return "$state - $elapsed - ${distance.replace('.', ',')}"
   }
 
   private fun formatElapsedTime(seconds: Long): String {
@@ -206,6 +212,8 @@ class RunNotificationForegroundService : Service() {
     const val EXTRA_ELAPSED_SECONDS = "elapsedTimeSeconds"
     const val EXTRA_DISTANCE_KM = "distanceKm"
     const val EXTRA_IS_PAUSED = "isPaused"
+    const val EXTRA_STATUS_LABEL = "statusLabel"
+    const val EXTRA_ACTION_LABEL = "actionLabel"
     const val EXTRA_BUTTON_ACTION = "runNotificationAction"
     const val EXTRA_OPEN_ACTIVE_RUN = "openActiveRun"
 
@@ -215,22 +223,40 @@ class RunNotificationForegroundService : Service() {
     private const val REQUEST_RESUME = 42172
     private val PT_BR = Locale("pt", "BR")
 
-    fun start(context: Context, elapsedSeconds: Long, distanceKm: Double, isPaused: Boolean) {
+    fun start(
+      context: Context,
+      elapsedSeconds: Long,
+      distanceKm: Double,
+      isPaused: Boolean,
+      statusLabel: String?,
+      actionLabel: String?
+    ) {
       val intent = Intent(context, RunNotificationForegroundService::class.java).apply {
         action = ACTION_START
         putExtra(EXTRA_ELAPSED_SECONDS, elapsedSeconds)
         putExtra(EXTRA_DISTANCE_KM, distanceKm)
         putExtra(EXTRA_IS_PAUSED, isPaused)
+        putExtra(EXTRA_STATUS_LABEL, statusLabel)
+        putExtra(EXTRA_ACTION_LABEL, actionLabel)
       }
       startForegroundServiceCompat(context, intent)
     }
 
-    fun update(context: Context, elapsedSeconds: Long, distanceKm: Double, isPaused: Boolean) {
+    fun update(
+      context: Context,
+      elapsedSeconds: Long,
+      distanceKm: Double,
+      isPaused: Boolean,
+      statusLabel: String?,
+      actionLabel: String?
+    ) {
       val intent = Intent(context, RunNotificationForegroundService::class.java).apply {
         action = ACTION_UPDATE
         putExtra(EXTRA_ELAPSED_SECONDS, elapsedSeconds)
         putExtra(EXTRA_DISTANCE_KM, distanceKm)
         putExtra(EXTRA_IS_PAUSED, isPaused)
+        putExtra(EXTRA_STATUS_LABEL, statusLabel)
+        putExtra(EXTRA_ACTION_LABEL, actionLabel)
       }
       startForegroundServiceCompat(context, intent)
     }

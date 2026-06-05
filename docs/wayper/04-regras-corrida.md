@@ -124,6 +124,20 @@ Politica de protecao:
 - Se Firestore falhar, a corrida permanece no historico local com status pendente ou falho de sync.
 - Perda temporaria de localizacao deve registrar lacuna/estado coerente; o app nao deve inventar trajeto falso.
 
+### Notificacao persistente e tela bloqueada
+
+Regras vigentes desde 2026-06-05 para Android:
+
+- Ao iniciar ou recuperar uma corrida ativa, o app deve manter uma notificacao persistente com tempo, distancia, status e acao contextual.
+- Corrida `RUNNING` mostra status `Correndo` e acao `Pausar`.
+- Corrida `PAUSED` mostra status `Pausada` e acao `Retomar`.
+- Pausar ou retomar pela notificacao deve chamar `activeRunTrackingService`, preservar `localRunId`, path e segments, e disparar checkpoint via `runAutoSaveService`.
+- A notificacao deve abrir o app na tela de corrida ativa por deep link, sem criar corrida nova e sem empilhar telas.
+- Ao finalizar, cancelar ou limpar o snapshot ativo, a notificacao deve ser removida.
+- Finalizar pela notificacao nao faz parte desta etapa; o usuario deve abrir o app para confirmar/salvar o resumo.
+- Sem permissao de notificacao, a corrida ainda deve funcionar local-first, mas o app precisa avisar que a experiencia em segundo plano pode ser limitada.
+- Sem permissao de localizacao em segundo plano, o app nao deve prometer coleta confiavel com tela bloqueada.
+
 ## Cancelamento
 
 O usuário pode cancelar uma atividade em andamento.

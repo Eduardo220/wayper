@@ -1,5 +1,6 @@
 import { NativeModules, PermissionsAndroid, Platform } from "react-native";
 import activeRunTrackingService from "../runTracking/activeRunTrackingService.js";
+import { flushActiveRunCheckpoint } from "./runAutoSaveService.js";
 import {
   ACTIVE_RUN_STATUS,
   calculateActiveRunDurationSeconds,
@@ -7,7 +8,8 @@ import {
 
 export const RUN_NOTIFICATION_CHANNEL_ID = "wayper_run_tracking";
 export const RUN_NOTIFICATION_ID = 4217;
-export const RUN_NOTIFICATION_UPDATE_INTERVAL_MS = 1000;
+export const RUN_NOTIFICATION_UPDATE_INTERVAL_MS = 5000;
+export const RUN_NOTIFICATION_NATIVE_UPDATE_MIN_INTERVAL_MS = 4000;
 export const RUN_NOTIFICATION_ACTION = {
   PAUSE: "pause",
   RESUME: "resume",
@@ -20,6 +22,8 @@ let nativeModuleOverride = null;
 let trackingServiceOverride = null;
 let notificationActive = false;
 let lastPayloadKey = "";
+let lastStatusKey = "";
+let lastNativeUpdateAt = 0;
 let updateTimer = null;
 let unsubscribeSnapshots = null;
 
@@ -49,10 +53,33 @@ export function formatDistanceKm(distanceKm = 0) {
   return `${value.toFixed(2).replace(".", ",")} km`;
 }
 
-export function formatRunNotificationText({ elapsedTime = 0, elapsedTimeSeconds, distanceKm = 0, isPaused = false } = {}) {
+export function normalizeRunNotificationStatusLabel({
+  status,
+  statusLabel,
+  isPaused = false,
+} = {}) {
+  if (typeof statusLabel === "string" && statusLabel.trim()) {
+    return statusLabel.trim();
+  }
+
+  const normalizedStatus = String(status || "").toUpperCase();
+  if (normalizedStatus === ACTIVE_RUN_STATUS.PAUSED || isPaused) return "Pausada";
+  if (normalizedStatus === "RECOVERING") return "Recuperando";
+  if (normalizedStatus === "FINISHING" || normalizedStatus === "SAVING") return "Salvando";
+  return "Correndo";
+}
+
+export function formatRunNotificationText({
+  elapsedTime = 0,
+  elapsedTimeSeconds,
+  distanceKm = 0,
+  isPaused = false,
+  status,
+  statusLabel,
+} = {}) {
   const seconds = elapsedTimeSeconds ?? elapsedTime;
-  const stateLabel = isPaused ? "Corrida pausada" : "Corrida";
-  return `${stateLabel} · ${formatElapsedTime(seconds)} · ${formatDistanceKm(distanceKm)}`;
+  const stateLabel = normalizeRunNotificationStatusLabel({ status, statusLabel, isPaused });
+  return `${stateLabel} - ${formatElapsedTime(seconds)} - ${formatDistanceKm(distanceKm)}`;
 }
 
 export function normalizeRunNotificationPayload(payload = {}) {
@@ -68,7 +95,21 @@ export function normalizeRunNotificationPayload(payload = {}) {
     )
   );
   const isPaused = Boolean(payload.isPaused);
-  const text = formatRunNotificationText({ elapsedTimeSeconds, distanceKm, isPaused });
+  const status = String(
+    payload.status || (isPaused ? ACTIVE_RUN_STATUS.PAUSED : ACTIVE_RUN_STATUS.RUNNING)
+  ).toUpperCase();
+  const statusLabel = normalizeRunNotificationStatusLabel({
+    status,
+    statusLabel: payload.statusLabel,
+    isPaused,
+  });
+  const text = formatRunNotificationText({
+    elapsedTimeSeconds,
+    distanceKm,
+    isPaused,
+    status,
+    statusLabel,
+  });
 
   return {
     notificationId: RUN_NOTIFICATION_ID,
@@ -78,8 +119,10 @@ export function normalizeRunNotificationPayload(payload = {}) {
     elapsedTimeSeconds,
     distanceKm,
     isPaused,
+    status,
+    statusLabel,
     action: isPaused ? RUN_NOTIFICATION_ACTION.RESUME : RUN_NOTIFICATION_ACTION.PAUSE,
-    actionLabel: isPaused ? "Iniciar" : "Parar",
+    actionLabel: isPaused ? "Retomar" : "Pausar",
   };
 }
 
@@ -89,6 +132,7 @@ export function buildRunNotificationPayloadFromSnapshot(snapshot = {}, nowMs = D
     elapsedTimeSeconds: calculateActiveRunDurationSeconds(snapshot, { nowMs }),
     distanceMeters: snapshot?.distanceMeters ?? snapshot?.distance ?? 0,
     isPaused: status === ACTIVE_RUN_STATUS.PAUSED,
+    status,
   });
 }
 
@@ -98,6 +142,28 @@ function getPayloadKey(payload = {}) {
     Math.round(toNumber(payload.distanceKm, 0) * 1000),
     payload.isPaused ? "paused" : "running",
   ].join(":");
+}
+
+function getStatusKey(payload = {}) {
+  return [
+    payload.status || "",
+    payload.statusLabel || "",
+    payload.isPaused ? "paused" : "running",
+    payload.action || "",
+  ].join(":");
+}
+
+function shouldThrottleNativeUpdate(payload = {}, key = "", options = {}) {
+  if (options.force || !notificationActive || key === lastPayloadKey) return false;
+
+  const statusKey = getStatusKey(payload);
+  if (statusKey !== lastStatusKey) return false;
+
+  const minIntervalMs = Math.max(
+    0,
+    toNumber(options.minIntervalMs, RUN_NOTIFICATION_NATIVE_UPDATE_MIN_INTERVAL_MS)
+  );
+  return minIntervalMs > 0 && Date.now() - lastNativeUpdateAt < minIntervalMs;
 }
 
 function clearUpdateTimer() {
@@ -192,6 +258,8 @@ export async function startRunNotification(payload = {}, options = {}) {
   await nativeModule[method](normalized);
   notificationActive = true;
   lastPayloadKey = getPayloadKey(normalized);
+  lastStatusKey = getStatusKey(normalized);
+  lastNativeUpdateAt = Date.now();
   if (options.scheduleTimer !== false) startUpdateTimer();
   return true;
 }
@@ -210,15 +278,23 @@ export async function updateRunNotification(payload = {}, options = {}) {
     return startRunNotification(normalized, options);
   }
 
+  if (shouldThrottleNativeUpdate(normalized, key, options)) {
+    return true;
+  }
+
   if (typeof nativeModule.updateRunNotification !== "function") return false;
   await nativeModule.updateRunNotification(normalized);
   lastPayloadKey = key;
+  lastStatusKey = getStatusKey(normalized);
+  lastNativeUpdateAt = Date.now();
   return true;
 }
 
 export async function stopRunNotification() {
   clearUpdateTimer();
   lastPayloadKey = "";
+  lastStatusKey = "";
+  lastNativeUpdateAt = 0;
   notificationActive = false;
 
   const nativeModule = getNativeModule();
@@ -251,6 +327,10 @@ export async function pauseRunFromNotification() {
     source: "notification",
   });
   if (paused) {
+    await flushActiveRunCheckpoint({
+      reason: "notification_pause",
+      checkpointAtMs: Date.now(),
+    });
     await updateRunNotification(buildRunNotificationPayloadFromSnapshot(paused), {
       force: true,
       requestPermission: false,
@@ -277,6 +357,10 @@ export async function resumeRunFromNotification() {
     source: "notification",
   });
   if (resumed) {
+    await flushActiveRunCheckpoint({
+      reason: "notification_resume",
+      checkpointAtMs: Date.now(),
+    });
     await updateRunNotification(buildRunNotificationPayloadFromSnapshot(resumed), {
       force: true,
       requestPermission: false,
@@ -345,6 +429,8 @@ export function __resetRunNotificationServiceForTests() {
   clearUpdateTimer();
   notificationActive = false;
   lastPayloadKey = "";
+  lastStatusKey = "";
+  lastNativeUpdateAt = 0;
   nativeModuleOverride = null;
   trackingServiceOverride = null;
 }
@@ -357,6 +443,8 @@ export default {
   RUN_NOTIFICATION_ACTION,
   RUN_NOTIFICATION_CHANNEL_ID,
   RUN_NOTIFICATION_ID,
+  RUN_NOTIFICATION_NATIVE_UPDATE_MIN_INTERVAL_MS,
+  RUN_NOTIFICATION_UPDATE_INTERVAL_MS,
   buildRunNotificationPayloadFromSnapshot,
   configureRunNotificationActions,
   ensureRunNotificationPermission,
@@ -367,6 +455,7 @@ export default {
   handleRunNotificationActionTask,
   isRunNotificationSupported,
   normalizeRunNotificationPayload,
+  normalizeRunNotificationStatusLabel,
   pauseRunFromNotification,
   resumeRunFromNotification,
   startRunNotification,
