@@ -110,12 +110,10 @@ import {
   getCellIdsForBbox,
   getLeaderCellsForViewport,
   getLeaderboardForCell,
-  loadLocalTerritories,
   processRunTerritoryCapture,
   routeToZoneGeometry,
-  saveLocalTerritory,
-  saveTerritoryRemote,
 } from "../services/territory";
+import territoryRepository from "../repositories/territoryRepository";
 import {
   checkBackgroundLocationPermission,
   checkLocationPermission,
@@ -690,7 +688,8 @@ const MapScreen = ({ navigation, route }) => {
       setTerritoryLoading(true);
       try {
         if (includeCache) {
-          const cached = await loadLocalTerritories();
+          const cachedResult = await territoryRepository.list({ status: "active" });
+          const cached = cachedResult.data || [];
           if (mountedRef.current && Array.isArray(cached)) {
             setTerritories((prev) => {
               const next = mergeTerritoriesForMap([], cached, viewportBbox);
@@ -859,11 +858,11 @@ const MapScreen = ({ navigation, route }) => {
     setZonesPanelLoading(true);
     try {
       const [cached, ranking] = await Promise.all([
-        loadLocalTerritories(),
+        territoryRepository.list({ status: "active" }),
         fetchAllRanking({ criterion: "area", limitTo: 50 }),
       ]);
       if (!mountedRef.current) return;
-      setTerritories((prev) => mergeTerritoriesForMap(prev, cached, null));
+      setTerritories((prev) => mergeTerritoriesForMap(prev, cached.data || [], null));
       setZonesRanking(Array.isArray(ranking) ? ranking : []);
     } catch (error) {
       logger.warn(LOG_CATEGORIES.MAP, "ZONES_PANEL_LOAD_FAILED", { error });
@@ -2434,6 +2433,10 @@ const MapScreen = ({ navigation, route }) => {
               runData.strokeColor = captured.strokeColor || captured.color || WayperTheme.colors.primary;
               runData.fillOpacity = Number(captured.fillOpacity ?? 0.24);
               runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
+              runData.areaM2 = runData.area;
+              runData.territorySummary = result.summary || null;
+              runData.territoryEvents = Array.isArray(result.events) ? result.events : [];
+              runData.capturedCells = Array.isArray(result.cellIds) ? result.cellIds : [];
               setTerritories((prev) => applyCaptureResultToTerritoryState(prev, result));
               if (Array.isArray(result.localLeaderboardUpdates) && result.localLeaderboardUpdates.length > 0) {
                 setLeaderCells((prev) => mergeLeaderCellsForMap(prev, result.localLeaderboardUpdates));
@@ -2448,34 +2451,19 @@ const MapScreen = ({ navigation, route }) => {
               }
             }
           } catch (e) {
-            debug("territory capture failed unexpectedly; using legacy zone fallback", e);
-            try {
-              if (path.length >= 6 && totalDistance > 1) {
-                const savedZone = await sync.createAndSaveZoneFromPath?.(path, {
-                  closeDistanceM: 32,
-                  maxCloseDistanceM: 48,
-                  requireClosedLoop: true,
-                  allowOpenFallback: false,
-                  minLoopPoints: 8,
-                  simplifyTolerance: 0.000015,
-                  smoothIterations: 1,
-                  maxPoints: 420,
-                  compressMax: 420,
-                });
-                if (savedZone) {
-                  runData.area = Number(savedZone.area || 0);
-                  runData.zoneId = savedZone.id || null;
-                  runData.zoneCoords = sanitizePath(savedZone.coords || []);
-                  runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
-                  runData.territoryCaptureFailedReason = "legacy_zone_fallback";
-                  runData.territoryCaptureMessage = "Corrida salva usando o modo legado de zonas.";
-                }
-              }
-            } catch (fallbackErr) {
-              debug("fallback zone save failed", fallbackErr);
-              runData.territoryCaptureFailedReason = "capture_unavailable";
-              runData.territoryCaptureMessage = "Corrida salva. A captura territorial ficou indisponivel neste momento.";
-            }
+            debug("territory capture failed unexpectedly; saving zone run without legacy zone fallback", e);
+            runData.area = 0;
+            runData.areaM2 = 0;
+            runData.zoneId = null;
+            runData.zoneCoords = [];
+            runData.zoneCount = 0;
+            runData.geometry = null;
+            runData.zoneGeometry = null;
+            runData.routeGeometry = null;
+            runData.territorySummary = null;
+            runData.territoryEvents = [];
+            runData.territoryCaptureFailedReason = "capture_unavailable";
+            runData.territoryCaptureMessage = "Corrida salva. A captura territorial ficou indisponivel neste momento.";
           }
         } else {
           setCaptureResult(null);
@@ -4129,8 +4117,10 @@ const MapScreen = ({ navigation, route }) => {
                       : zone
                   )
                 );
-                await saveLocalTerritory(territoryPatch, { preserveVersion: false });
-                saveTerritoryRemote(territoryPatch).catch(() => {});
+                await territoryRepository.save(territoryPatch, {
+                  preserveVersion: false,
+                  scheduleSync: true,
+                });
               }
             }
 

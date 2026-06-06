@@ -7,6 +7,11 @@ const loadLocalTerritoryEvents = jest.fn(async () => []);
 const loadLocalTerritoryLeaderboards = jest.fn(async () => []);
 const migrateLegacyZonesToTerritories = jest.fn(async () => ({ migrated: 0, skipped: 0 }));
 const loadLocalZones = jest.fn(async () => []);
+const saveLocalTerritoryEvent = jest.fn(async (event) => event);
+const saveLocalTerritoryLeaderboard = jest.fn(async (leaderboard) => leaderboard);
+const saveLocalTerritoryLeaderboards = jest.fn(async (leaderboards) => leaderboards);
+const scheduleTerritoriesSync = jest.fn();
+const scheduleTerritoryEventsSync = jest.fn();
 
 jest.unstable_mockModule("@react-native-async-storage/async-storage", () => ({
   default: {
@@ -18,6 +23,8 @@ jest.unstable_mockModule("@react-native-async-storage/async-storage", () => ({
 
 jest.unstable_mockModule("../../utils/sync.js", () => ({
   loadLocalZones,
+  scheduleTerritoriesSync,
+  scheduleTerritoryEventsSync,
 }));
 
 jest.unstable_mockModule("../../services/territory/index.js", () => ({
@@ -26,11 +33,26 @@ jest.unstable_mockModule("../../services/territory/index.js", () => ({
   saveLocalTerritories: jest.fn(async (items) => items),
   removeLocalTerritory: jest.fn(async (id) => ({ id, status: "deleted" })),
   loadLocalTerritoryEvents,
-  saveLocalTerritoryEvent: jest.fn(async (event) => event),
+  saveLocalTerritoryEvent,
   saveLocalTerritoryEvents: jest.fn(async (events) => events),
   loadLocalTerritoryLeaderboards,
-  saveLocalTerritoryLeaderboard: jest.fn(async (leaderboard) => leaderboard),
+  saveLocalTerritoryLeaderboard,
+  saveLocalTerritoryLeaderboards,
   migrateLegacyZonesToTerritories,
+  normalizeTerritoryPayload: jest.fn((territory) => ({
+    status: "active",
+    pendingSync: true,
+    synced: false,
+    version: 1,
+    ...territory,
+  })),
+  normalizeTerritoryEventPayload: jest.fn((event) => ({
+    type: "capture",
+    pendingSync: true,
+    synced: false,
+    version: 1,
+    ...event,
+  })),
 }));
 
 const repository = await import("../territoryRepository.js");
@@ -43,6 +65,8 @@ describe("territoryRepository", () => {
     loadLocalTerritoryEvents.mockResolvedValue([]);
     loadLocalTerritoryLeaderboards.mockResolvedValue([]);
     loadLocalZones.mockResolvedValue([]);
+    scheduleTerritoriesSync.mockClear();
+    scheduleTerritoryEventsSync.mockClear();
   });
 
   test("lista apenas o storage territorial atual", async () => {
@@ -82,12 +106,100 @@ describe("territoryRepository", () => {
 
     const result = await repository.save(territory);
 
-    expect(saveLocalTerritory).toHaveBeenCalledWith(territory, {});
+    expect(saveLocalTerritory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...territory,
+        localId: "territory-1",
+        syncStatus: "PENDING",
+        offlineStatus: "PENDING_SYNC",
+      }),
+      {}
+    );
     expect(result.data).toMatchObject({
       id: "territory-1",
       geometry: { type: "Polygon" },
       zoneCoords: [{ latitude: 1, longitude: 2 }],
       areaM2: 300,
+      localId: "territory-1",
+      syncStatus: "PENDING",
+      offlineStatus: "PENDING_SYNC",
+    });
+  });
+
+  test("atualiza territorio e agenda sync sem criar storage paralelo", async () => {
+    loadLocalTerritories.mockResolvedValue([
+      { id: "territory-1", geometry: { type: "Polygon" }, areaM2: 120, pendingSync: false, synced: true },
+    ]);
+
+    const result = await repository.update("territory-1", { areaM2: 180 });
+
+    expect(saveLocalTerritory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "territory-1",
+        areaM2: 180,
+        pendingSync: true,
+        synced: false,
+      }),
+      expect.objectContaining({ scheduleSync: true })
+    );
+    expect(scheduleTerritoriesSync).toHaveBeenCalled();
+    expect(result.data.areaM2).toBe(180);
+  });
+
+  test("lista e salva eventos territoriais com identidade local", async () => {
+    loadLocalTerritoryEvents.mockResolvedValue([
+      { id: "event-1", territoryId: "territory-1", type: "capture", runId: "run-1" },
+    ]);
+
+    const list = await repository.listTerritoryEvents();
+    const saved = await repository.saveTerritoryEvent({ id: "event-2", territoryId: "territory-1" }, { scheduleSync: true });
+
+    expect(list.data[0]).toMatchObject({
+      id: "event-1",
+      localId: "event-1",
+      runLocalId: "run-1",
+      syncStatus: "PENDING",
+    });
+    expect(saved.data).toMatchObject({
+      id: "event-2",
+      localId: "event-2",
+      territoryId: "territory-1",
+    });
+    expect(scheduleTerritoryEventsSync).toHaveBeenCalled();
+  });
+
+  test("lista e salva leaderboard cacheado", async () => {
+    loadLocalTerritoryLeaderboards.mockResolvedValue([{ cellId: "cell-1", leaderUserId: "user-1" }]);
+
+    const list = await repository.listLeaderboards();
+    const saved = await repository.saveLeaderboardCache({ cellId: "cell-2", leaderUserId: "user-2" });
+    const savedMany = await repository.saveLeaderboardCacheMany([{ cellId: "cell-3" }]);
+
+    expect(list.data).toEqual([{ cellId: "cell-1", leaderUserId: "user-1" }]);
+    expect(saved.data).toEqual({ cellId: "cell-2", leaderUserId: "user-2" });
+    expect(savedMany.data).toEqual([{ cellId: "cell-3" }]);
+  });
+
+  test("resumo local soma apenas territorios atuais ativos", async () => {
+    loadLocalTerritories.mockResolvedValue([
+      { id: "territory-1", ownerId: "user-1", status: "active", areaM2: 100, cellIds: ["a", "b"], pendingSync: true },
+      { id: "territory-2", ownerId: "user-1", status: "active", areaM2: 50, cellIds: ["b"], synced: true, pendingSync: false },
+      { id: "territory-3", ownerId: "user-2", status: "active", areaM2: 999, cellIds: ["c"] },
+      { id: "territory-4", ownerId: "user-1", status: "deleted", areaM2: 999, cellIds: ["d"] },
+    ]);
+    loadLocalTerritoryEvents.mockResolvedValue([{ id: "event-1" }]);
+    loadLocalTerritoryLeaderboards.mockResolvedValue([{ cellId: "a" }]);
+
+    const result = await repository.getLocalTerritorySummary({ userId: "user-1" });
+
+    expect(result.data).toMatchObject({
+      territoryCount: 2,
+      totalAreaM2: 150,
+      cellCount: 2,
+      eventCount: 1,
+      leaderboardCount: 1,
+      pendingSyncCount: 1,
+      source: "local",
     });
   });
 

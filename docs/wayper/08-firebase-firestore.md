@@ -179,6 +179,26 @@ Regra de falha:
 - Erro remoto em perfil/ranking deve virar cache, vazio controlado ou erro de repository identificado.
 - Mocks e demos precisam carregar `source: "demo"` ou equivalente, nunca serem tratados como dado real.
 
+## Territorios antes do Firestore
+
+A fonte local oficial de territorio atual fica fora do Firestore:
+
+| Dado | Storage local | Acesso oficial |
+| --- | --- | --- |
+| Territorios atuais | `wayper_territories_v1` | `TerritoryRepository` / `territoryStorageService` |
+| Eventos territoriais | `wayper_territory_events_v1` | `TerritoryRepository` / `territoryStorageService` |
+| Leaderboards/cache territoriais | `wayper_territory_leaderboards_v1` | `TerritoryRepository` / services de territorio |
+| Zonas legadas | `zones`, `@wayper_zones` | Somente migracao/compatibilidade explicita |
+
+Diretrizes:
+
+- Corrida por zonas conclui localmente mesmo offline.
+- A corrida finalizada preserva `area`, `areaM2`, `zoneCoords`, `geometry`, `routeGeometry`, `territorySummary`, `territoryEvents` e `capturedCells` quando a captura local existe.
+- Corrida livre nao envia nem preserva territorio falso.
+- `syncTerritoriesToFirestore()` e `syncTerritoryEventsToFirestore()` sao filas separadas do sync de runs.
+- Falha remota de territorio nao remove territorio local nem bloqueia historico/detalhe de corrida.
+- Feed/mapa/leaderboards territoriais devem usar local/cache/vazio controlado quando Firestore falhar.
+
 ## Coleção `territoryClaims`
 
 Proposta opcional, caso a estratégia territorial do MVP exija registro separado de conquistas:

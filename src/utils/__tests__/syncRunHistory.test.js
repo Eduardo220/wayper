@@ -472,6 +472,82 @@ describe("local run history source", () => {
     expect(rootWrite.payload.zoneCount).toBe(0);
   });
 
+  test("corrida livre nao preserva territorio falso no historico local", async () => {
+    await saveLocalRun({
+      id: "free-local",
+      localRunId: "free-local",
+      status: "completed",
+      syncStatus: "PENDING",
+      offlineStatus: "PENDING_SYNC",
+      mode: "free",
+      distance: 1000,
+      duration: 300,
+      date: "2026-06-05T10:00:00Z",
+      trustedPath: [point(1), point(2)],
+      area: 999,
+      areaM2: 999,
+      zoneCoords: [point(1), point(2), point(3)],
+      geometry: { type: "Polygon", coordinates: [] },
+      routeGeometry: { type: "LineString", coordinates: [[0, 0], [1, 1]] },
+      territorySummary: { capturedAreaM2: 999 },
+      territoryEvents: [{ id: "event-fake", type: "capture" }],
+    });
+
+    const [run] = await loadLocalRunHistory();
+
+    expect(run).toMatchObject({
+      id: "free-local",
+      mode: "free",
+      area: 0,
+      areaM2: 0,
+      geometry: null,
+      routeGeometry: null,
+      territorySummary: null,
+      zoneCount: 0,
+    });
+    expect(run.zoneCoords).toEqual([]);
+    expect(run.territoryEvents).toEqual([]);
+  });
+
+  test("corrida por zonas preserva dados territoriais no historico local", async () => {
+    const territoryEvents = [{ id: "event-zone", type: "capture", runLocalId: "zone-local" }];
+
+    await saveLocalRun({
+      id: "zone-local",
+      localRunId: "zone-local",
+      status: "completed",
+      syncStatus: "PENDING",
+      offlineStatus: "PENDING_SYNC",
+      mode: "zones",
+      distance: 1000,
+      duration: 300,
+      date: "2026-06-05T10:00:00Z",
+      trustedPath: [point(1), point(2)],
+      area: 42,
+      areaM2: 42,
+      zoneCoords: [point(1), point(2), point(3)],
+      geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] },
+      routeGeometry: { type: "LineString", coordinates: [[0, 0], [1, 1]] },
+      territorySummary: { capturedAreaM2: 42, newAreaM2: 42 },
+      territoryEvents,
+    });
+
+    const [run] = await loadLocalRunHistory();
+
+    expect(run).toMatchObject({
+      id: "zone-local",
+      mode: "zones",
+      area: 42,
+      areaM2: 42,
+      zoneCount: 1,
+      geometry: { type: "Polygon" },
+      routeGeometry: { type: "LineString" },
+      territorySummary: { capturedAreaM2: 42, newAreaM2: 42 },
+    });
+    expect(run.zoneCoords).toHaveLength(3);
+    expect(run.territoryEvents).toEqual(territoryEvents);
+  });
+
   test("saveLocalRun preserva remoteRunId e syncStatus mais novo contra payload antigo", async () => {
     await saveLocalRun({
       id: "newer-sync",

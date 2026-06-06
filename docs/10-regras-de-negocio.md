@@ -29,6 +29,17 @@ Regras a definir oficialmente:
 - Se existe expiração ou disputa por tempo.
 - Se zonas antigas podem ser atualizadas.
 
+Regras atuais obrigatorias:
+
+- Corrida livre nao gera zona/territorio e nao deve preservar `area`, `geometry`, `zoneCoords`, `territorySummary` ou eventos territoriais falsos.
+- Corrida por zonas so gera territorio quando `territoryCaptureService` retorna captura valida.
+- Captura territorial deve funcionar offline no nivel local e salvar em `wayper_territories_v1`.
+- Eventos territoriais locais ficam em `wayper_territory_events_v1`.
+- Leaderboards territoriais locais/cacheados ficam em `wayper_territory_leaderboards_v1`.
+- `zones` e `@wayper_zones` sao legado; novo fluxo nao grava neles.
+- A mesma corrida nao deve gerar captura duplicada.
+- Falha de Firestore nao pode apagar territorio local nem esconder corrida no historico/detalhes.
+
 ## Ranking
 
 - Ranking pode considerar área conquistada, quantidade de zonas e distância.

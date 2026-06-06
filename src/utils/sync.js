@@ -553,6 +553,8 @@ function normalizeLocalRunRecord(run = {}, { now = new Date().toISOString(), for
     run.runMode ||
     (Number(run.area ?? run.areaM2 ?? 0) > 0 || sanitizeCoordsArray(run.zoneCoords || run.zone?.coords || []).length >= 3 ? "zones" : "free")
   );
+  const isZoneRun = inferredMode === "zones";
+  const zoneCoords = isZoneRun ? sanitizeCoordsArray(run.zoneCoords || run.zone?.coords || []) : [];
 
   return {
     ...run,
@@ -613,18 +615,18 @@ function normalizeLocalRunRecord(run = {}, { now = new Date().toISOString(), for
     tags: Array.isArray(run.tags) ? run.tags : [],
     photoUri: run.photoUri || null,
     mode: inferredMode,
-    zoneId: run.zoneId || null,
-    area: Number(run.area ?? run.areaM2 ?? 0),
-    areaM2: Number(run.areaM2 ?? run.area ?? 0),
-    zoneCoords: sanitizeCoordsArray(run.zoneCoords || run.zone?.coords || []),
-    territorySummary: run.territorySummary || run.zoneSummary || null,
-    territoryEvents: Array.isArray(run.territoryEvents) ? run.territoryEvents : [],
-    color: run.color || run.zoneColor || run.territoryColor || "#00E676",
-    strokeColor: run.strokeColor || run.color || "#00E676",
-    fillOpacity: Number(run.fillOpacity ?? 0.22),
-    geometry: run.geometry || run.zoneGeometry || null,
-    routeGeometry: run.routeGeometry || null,
-    zoneCount: Number(run.zoneCount ?? (Array.isArray(run.zoneCoords) && run.zoneCoords.length >= 3 ? 1 : 0)),
+    zoneId: isZoneRun ? (run.zoneId || null) : null,
+    area: isZoneRun ? Number(run.area ?? run.areaM2 ?? 0) : 0,
+    areaM2: isZoneRun ? Number(run.areaM2 ?? run.area ?? 0) : 0,
+    zoneCoords,
+    territorySummary: isZoneRun ? (run.territorySummary || run.zoneSummary || null) : null,
+    territoryEvents: isZoneRun && Array.isArray(run.territoryEvents) ? run.territoryEvents : [],
+    color: isZoneRun ? (run.color || run.zoneColor || run.territoryColor || "#00E676") : null,
+    strokeColor: isZoneRun ? (run.strokeColor || run.color || "#00E676") : null,
+    fillOpacity: isZoneRun ? Number(run.fillOpacity ?? 0.22) : null,
+    geometry: isZoneRun ? (run.geometry || run.zoneGeometry || null) : null,
+    routeGeometry: isZoneRun ? (run.routeGeometry || null) : null,
+    zoneCount: isZoneRun ? Number(run.zoneCount ?? (zoneCoords.length >= 3 ? 1 : 0)) : 0,
     visibility: run.visibility || "followers",
     subscriberNotificationSent: !!run.subscriberNotificationSent,
     subscriberNotificationSentAt: run.subscriberNotificationSentAt || null,
@@ -1322,7 +1324,7 @@ function buildRunFirestorePayload(run = {}, { remoteRunId, uid, now = new Date()
     strokeColor: isZoneRun ? (run.strokeColor || run.color || "#00E676") : null,
     fillOpacity: isZoneRun ? Number(run.fillOpacity ?? 0.22) : null,
     geometry: isZoneRun ? (run.geometry || run.zoneGeometry || null) : null,
-    routeGeometry: run.routeGeometry || null,
+    routeGeometry: isZoneRun ? (run.routeGeometry || null) : null,
     zoneCount: isZoneRun ? Number(run.zoneCount || (zoneCoords.values.length >= 3 ? 1 : 0)) : 0,
     territorySummary: isZoneRun ? (run.territorySummary || run.zoneSummary || null) : null,
     territoryEvents: isZoneRun && Array.isArray(run.territoryEvents) ? run.territoryEvents : [],

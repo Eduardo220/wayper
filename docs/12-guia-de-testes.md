@@ -175,6 +175,35 @@ Checklist manual adicional:
 - [ ] Confirmar que ranking sem dados reais mostra estado vazio/cache identificado, nao mock real.
 - [ ] Confirmar que zonas legadas so aparecem onde o fluxo ainda chama leitura legada explicitamente.
 
+## Territorios e zonas local-first
+
+Checklist manual:
+
+- [ ] Iniciar corrida por zonas online e finalizar com captura valida.
+- [ ] Conferir no resumo `area`, `areaM2`, `zoneCoords`, `geometry`, `territorySummary` e eventos quando houver.
+- [ ] Abrir historico e detalhe da corrida por zonas sem depender do Firestore.
+- [ ] Iniciar corrida por zonas offline, finalizar e confirmar que territorio local fica salvo.
+- [ ] Abrir mapa sem Firestore funcional e confirmar que territorios locais aparecem.
+- [ ] Abrir dashboard/home sem Firestore e confirmar fallback local/cacheado ou vazio controlado.
+- [ ] Abrir feed territorial/home sem internet e confirmar que nao aparece atividade demo como real.
+- [ ] Abrir leaderboard territorial sem internet e confirmar cache/local/vazio controlado.
+- [ ] Voltar internet e confirmar que corrida e territorio nao duplicam.
+- [ ] Testar corrida livre e confirmar que nao aparece area, geometria, coords ou resumo territorial falso.
+- [ ] Testar com storage legado `zones`/`@wayper_zones` e confirmar que so entra por migracao/compatibilidade explicita.
+
+Cobertura automatizada esperada:
+
+- `TerritoryRepository` lista/salva/atualiza territorios locais atuais e nao usa `zones` como storage novo.
+- Normalizacao preserva `area`, `areaM2`, `geometry`, `zoneCoords`, `localId`, `remoteId`, `runLocalId`, `syncStatus` e `offlineStatus`.
+- Eventos territoriais listam/salvam com identidade local e status de sync.
+- Leaderboard cacheado lista/salva por `wayper_territory_leaderboards_v1`.
+- Migracao de legado roda uma vez, nao apaga dados e nao duplica territories.
+- Captura por zonas offline salva territorio/eventos locais e agenda sync futuro.
+- Mesma corrida nao deve duplicar captura territorial.
+- Corrida livre nao gera territorio e `saveLocalRun()` remove campos territoriais falsos localmente e no payload remoto.
+- Corrida por zonas preserva resumo territorial e eventos no historico local.
+- Feed/home usa territorios locais atuais quando Firestore falha e storage vazio retorna lista vazia controlada.
+
 ## Casos ruins que precisam ser testados
 
 - Usuário nega localização.

@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "../../firebaseConfig";
 import sync from "../../utils/sync";
+import { loadLocalTerritories } from "../territory/territoryStorageService.js";
 import { getMutedFeedAuthorIds } from "./feedPostActionsService";
 
 const FEED_CACHE_KEY = "wayper_home_feed_cache_v1";
@@ -26,57 +27,6 @@ const DEV_MOCK_FRIENDS = [
   { id: "mock-juliana", friendUid: "mock-juliana", name: "Juliana", avatar: "https://i.pravatar.cc/160?u=juliana-wayper", isActive: true },
   { id: "mock-pedro", friendUid: "mock-pedro", name: "Pedro", avatar: "https://i.pravatar.cc/160?u=pedro-wayper", isActive: false },
   { id: "mock-ana", friendUid: "mock-ana", name: "Ana", avatar: "https://i.pravatar.cc/160?u=ana-wayper", isActive: true },
-];
-
-const DEV_MOCK_ACTIVITIES = [
-  {
-    id: "mock-run-1",
-    type: "run",
-    userId: "mock-lucas",
-    userName: "Lucas",
-    userAvatar: "https://i.pravatar.cc/160?u=lucas-wayper",
-    createdAt: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
-    distanceKm: 8.42,
-    durationSeconds: 2672,
-    avgPaceSecondsPerKm: 317,
-    elevationMeters: 64,
-    areaM2: null,
-    path: [
-      { latitude: -23.561, longitude: -46.656 },
-      { latitude: -23.558, longitude: -46.651 },
-      { latitude: -23.555, longitude: -46.653 },
-      { latitude: -23.552, longitude: -46.648 },
-      { latitude: -23.549, longitude: -46.651 },
-    ],
-    polygon: null,
-    likesCount: 18,
-    commentsCount: 4,
-    isRecord: true,
-  },
-  {
-    id: "mock-zone-1",
-    type: "zone",
-    userId: "mock-marina",
-    userName: "Marina",
-    userAvatar: "https://i.pravatar.cc/160?u=marina-wayper",
-    createdAt: new Date(Date.now() - 1000 * 60 * 88).toISOString(),
-    distanceKm: 5.14,
-    durationSeconds: 1945,
-    avgPaceSecondsPerKm: 378,
-    elevationMeters: null,
-    areaM2: 7650,
-    path: null,
-    polygon: [
-      { latitude: -23.559, longitude: -46.662 },
-      { latitude: -23.554, longitude: -46.659 },
-      { latitude: -23.553, longitude: -46.653 },
-      { latitude: -23.558, longitude: -46.650 },
-      { latitude: -23.563, longitude: -46.655 },
-    ],
-    likesCount: 27,
-    commentsCount: 8,
-    isRecord: false,
-  },
 ];
 
 const safeDevWarn = (...args) => {
@@ -526,10 +476,23 @@ async function loadLocalFallback(maxItems = DEFAULT_LIMIT) {
       photoURL: user?.photoURL || null,
     };
     const profiles = new Map([[profile.uid, profile]]);
-    const [runs, zones] = await Promise.all([sync.loadLocalRuns?.(), sync.loadLocalZones?.()]);
+    const [runs, territories] = await Promise.all([sync.loadLocalRuns?.(), loadLocalTerritories()]);
     const rows = [
       ...(Array.isArray(runs) ? runs.map((item) => ({ ...item, type: "run", __userId: profile.uid })) : []),
-      ...(Array.isArray(zones) ? zones.map((item) => ({ ...item, type: "zone", __userId: profile.uid })) : []),
+      ...(Array.isArray(territories) ? territories.map((item) => {
+        const ownerId = item.ownerId || item.userId || profile.uid;
+        return {
+          ...item,
+          type: "zone",
+          __userId: ownerId,
+          userId: ownerId,
+          areaM2: Number(item.areaM2 ?? item.area ?? 0),
+          area: Number(item.area ?? item.areaM2 ?? 0),
+          polygon: Array.isArray(item.coordsPreview) ? item.coordsPreview : Array.isArray(item.zoneCoords) ? item.zoneCoords : [],
+          zoneCoords: Array.isArray(item.zoneCoords) ? item.zoneCoords : Array.isArray(item.coordsPreview) ? item.coordsPreview : [],
+          createdAt: item.capturedAt || item.createdAt || item.updatedAt,
+        };
+      }) : []),
     ];
     return rows
       .map((item) => normalizeActivity(item, profiles, user))
@@ -645,7 +608,7 @@ export async function loadActiveFriends(uid) {
     safeDevWarn("friends fallback", error?.message || error);
     const cached = await getJsonCache(FRIENDS_CACHE_KEY, []);
     if (cached.length) return cached;
-    return DEV_MOCK_FRIENDS;
+    return typeof __DEV__ !== "undefined" && __DEV__ ? DEV_MOCK_FRIENDS : [];
   }
 }
 
@@ -701,11 +664,6 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
 
   if (!activities.length) {
     activities = filterMutedAuthors(await loadLocalFallback(limit * 2)).slice(0, limit);
-    usedFallback = true;
-  }
-
-  if (!activities.length && typeof __DEV__ !== "undefined" && __DEV__) {
-    activities = filterMutedAuthors(DEV_MOCK_ACTIVITIES).slice(0, limit);
     usedFallback = true;
   }
 

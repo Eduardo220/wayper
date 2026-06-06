@@ -173,3 +173,18 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Perfil e ranking podem falhar remotamente sem quebrar a UI adaptada; mock/demo nao deve ser exibido como ranking real.
 - Firestore segue presente em services de sync, perfil, ranking, feed, amigos, grupos, notificacoes e territorio remoto, mas deixa de ser dependencia direta nas telas alteradas.
 - SQLite/Expo SQLite deve ser reavaliado apenas se medicao real mostrar parse/carregamento pesado de rotas longas no AsyncStorage.
+
+## ADR-014: Territorios e zonas local-first incrementais
+
+**Status:** aceito
+**Contexto:** corrida ativa, historico, detalhes, GPS/path e sync de runs ja estavam local-first. Territorio ainda tinha risco de tela ou fallback escrever em `zones` legado, perder `territorySummary` da corrida por zonas ou mostrar feed sem dados locais quando Firestore falhasse.
+**Decisao:** consolidar `TerritoryRepository` como facade local-first de territorio atual, mantendo `territoryStorageService`, `territoryCaptureService` e `sync.js` como services oficiais por baixo. O storage local atual de territorios e `wayper_territories_v1`; eventos usam `wayper_territory_events_v1`; leaderboards/cache usam `wayper_territory_leaderboards_v1`. `zones` e `@wayper_zones` continuam apenas como legado/migracao explicita. Corrida por zonas salva localmente area, geometria, coords, resumo, eventos e celulas capturadas quando a captura local sucede. Corrida livre e normalizada para nao preservar territorio falso. Firestore segue como melhor esforco e sync futuro; nao implementar sync territorial social completo nesta etapa. SQLite nao entra nesta etapa.
+**Consequencias:**
+
+- Mapa e dashboard passam a carregar territorios locais atuais via `TerritoryRepository`.
+- Feed da home usa territorios locais atuais como fallback quando Firestore falha e nao cria atividade demo quando remoto/cache/local estao vazios.
+- Fallback antigo de captura em `sync.createAndSaveZoneFromPath()` nao deve ser usado pelo fluxo novo de `MapScreen`.
+- `territoryCaptureService` continua responsavel por validacao, geometria, anti-fraude basico, eventos, leaderboards locais e persistencia local.
+- `syncTerritoriesToFirestore()` e `syncTerritoryEventsToFirestore()` continuam separados de runs. Falha remota territorial nao apaga territorio local nem quebra historico.
+- `zones` remoto ainda pode existir como espelho/compatibilidade em services de sync, mas nao e a fonte local nova.
+- AsyncStorage permanece suficiente para o volume atual. SQLite/Expo SQLite deve ser reavaliado com medicao real de quantidade de territorios, eventos e custo de parse/renderizacao no mapa.

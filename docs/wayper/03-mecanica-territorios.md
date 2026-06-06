@@ -1,5 +1,18 @@
 # Mecânica de territórios
 
+## Nota local-first atual
+
+Desde 2026-06-06, a captura territorial por zonas funciona localmente antes do Firestore:
+
+- Territorios atuais ficam em `wayper_territories_v1`.
+- Eventos territoriais ficam em `wayper_territory_events_v1`.
+- Leaderboards/cache territorial ficam em `wayper_territory_leaderboards_v1`.
+- `TerritoryRepository` e a facade preferencial para ler/salvar/atualizar territorios locais.
+- `zones` e `@wayper_zones` sao legado e so entram por migracao/compatibilidade explicita.
+- Corrida por zonas deve preservar `area`, `areaM2`, `zoneCoords`, `geometry`, `routeGeometry`, `territorySummary`, `territoryEvents` e `capturedCells`.
+- Corrida livre nao deve gerar nem preservar territorio falso.
+- Firestore e destino posterior de sync; falha remota nao deve apagar territorio local nem esconder corrida do historico.
+
 ## Ideia central
 
 A mecânica de territórios transforma deslocamentos reais em conquista no mapa. O usuário caminha ou corre com GPS ativo, e a Wayper converte partes válidas da rota em progresso territorial.

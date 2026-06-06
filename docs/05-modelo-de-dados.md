@@ -117,6 +117,44 @@ Representa uma zona conquistada.
 | `createdAt` | timestamp | Criação. |
 | `status` | string | `active`, `contested`, `removed`, etc. |
 
+## territories locais
+
+No app, territorios atuais nao usam `zones` como storage local novo. A fonte local oficial e `wayper_territories_v1`, acessada por `TerritoryRepository` e `territoryStorageService`.
+
+Campos locais esperados, preservando compatibilidade com dados antigos:
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `id` | string | ID estavel do territorio local. |
+| `localId` | string/null | Identidade local normalizada; por padrao usa `id`. |
+| `remoteId` | string/null | ID remoto quando houver sync territorial. |
+| `ownerId`/`userId` | string | Usuario dono do territorio. |
+| `runId`/`runLocalId` | string/null | Corrida local que gerou a captura. |
+| `runRemoteId` | string/null | Corrida remota relacionada, quando existir. |
+| `geometry` | object/null | GeoJSON `Polygon` ou `MultiPolygon` calculado pela captura. |
+| `routeGeometry` | object/null | GeoJSON da rota/segmentos usada para visualizacao/auditoria. |
+| `zoneCoords`/`coordsPreview` | array | Preview visual do poligono. |
+| `area`/`areaM2` | number | Area territorial calculada em metros quadrados. |
+| `cellIds` | array | Celulas afetadas para leaderboard/cache territorial. |
+| `territorySummary` | object/null | Resumo derivado da corrida por zonas quando salvo junto da run. |
+| `status` | string | `active`, `deleted`, `conquered` ou equivalente local. |
+| `syncStatus` | string | `PENDING`, `SYNCING`, `SYNCED` ou `FAILED`. |
+| `offlineStatus` | string | `PENDING_SYNC`, `SYNCING`, `SYNCED` ou `SYNC_FAILED`. |
+| `pendingSync`/`synced` | boolean | Compatibilidade com fila local atual. |
+| `schemaVersion`/`version` | number | Versao de schema/entidade. |
+| `createdAt`/`updatedAt` | ISO string | Datas locais preservadas pela normalizacao. |
+
+Eventos territoriais usam `wayper_territory_events_v1` e devem carregar `id/localId`, `territoryId`, `runId/runLocalId`, `actorId`, `targetId`, `type`, `affectedAreaM2`, `cellIds`, `syncStatus`, `offlineStatus`, `createdAt` e `schemaVersion` quando aplicavel.
+
+Leaderboards territoriais usam `wayper_territory_leaderboards_v1` como cache/local e nao devem ser mostrados como ranking remoto real sem origem identificada.
+
+Regras:
+
+- Corrida por zonas preserva `area`, `areaM2`, `zoneCoords`, `geometry`, `routeGeometry`, `territorySummary`, `territoryEvents` e `capturedCells` quando a captura local retorna sucesso.
+- Corrida livre normalizada localmente deve zerar/remover campos territoriais falsos.
+- `zones` e `@wayper_zones` so entram por migracao/compatibilidade explicita; novo codigo nao deve gravar neles.
+- Migracao local nao apaga legado nesta fase.
+
 ## rankings
 
 Representa rankings agregados.

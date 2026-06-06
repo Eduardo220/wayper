@@ -108,6 +108,21 @@ Firestore ainda existe em services de sync, perfil, ranking, feed, amigos, grupo
 
 SQLite nao foi adicionado nesta etapa. AsyncStorage segue aceitavel para a camada atual; SQLite/Expo SQLite deve ser reavaliado se historicos com rotas longas causarem custo perceptivel de parse/carregamento.
 
+## Territorios local-first
+
+Desde 2026-06-06, territorio por zonas tambem segue a arquitetura local-first incremental:
+
+- `wayper_territories_v1` e o storage local oficial de territorios atuais.
+- `wayper_territory_events_v1` e o storage local oficial de eventos territoriais.
+- `wayper_territory_leaderboards_v1` e o cache/local oficial de leaderboards territoriais.
+- `zones` e `@wayper_zones` sao legados. Novo codigo nao deve gravar nesses storages; leitura so por compatibilidade/migracao explicita.
+- `TerritoryRepository` e a facade preferencial para telas e services que precisam listar, buscar, salvar, atualizar ou resumir territorios locais.
+- Captura territorial de corrida por zonas usa `territoryCaptureService`, persiste localmente e agenda sync futuro por `sync.js`. Firestore e melhor esforco posterior.
+- Corrida livre nao deve carregar `area`, `areaM2`, `geometry`, `routeGeometry`, `zoneCoords`, `territorySummary` ou `territoryEvents` falsos.
+- Mapa, dashboard e feed devem carregar primeiro dado local/cacheado e tratar remoto indisponivel como estado vazio/controlado.
+
+Sync territorial remoto permanece separado do sync de runs. Falha territorial nao apaga territorio local e nao remove corrida do historico.
+
 ## Pontos que precisam ser definidos
 
 - Regra exata de transformação de rota em zona.

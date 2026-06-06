@@ -356,6 +356,14 @@ Desde 2026-06-06, a camada de acesso a dados passa a ter facades finas para redu
 - `src/repositories/rankingRepository.js`: encapsula ranking remoto/cache/local e identifica demo/vazio para nao mascarar ausencia de dado real.
 - `src/repositories/localMetadataRepository.js` e `src/services/storage/storageMigrationService.js`: registram schemaVersion, migrations executadas e storages legados sem apagar dados.
 
+Territorio local-first:
+
+- `TerritoryRepository` normaliza `localId`, `remoteId`, `runLocalId`, `runRemoteId`, `syncStatus`, `offlineStatus` e `schemaVersion` sem criar storage paralelo.
+- `MapScreen` deve preferir `TerritoryRepository.list({ status: "active" })` para cache local e so usar Firestore por services remotos como melhor esforco.
+- `DashboardScreen` e feed/home devem usar territorios atuais locais, nao `sync.loadLocalZones()`.
+- A captura territorial continua em `territoryCaptureService`; repository nao recalcula geometria nem reimplementa antifraude.
+- `zones` e `@wayper_zones` so aparecem em `listLegacyZones()` ou migracao explicita.
+
 Regra de evolucao:
 
 - Tela nova ou alterada deve depender de repository/service quando houver regra de dado, nao de Firestore direto.

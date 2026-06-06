@@ -13,6 +13,9 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import sync from "../../utils/sync";
+import runRepository from "../../repositories/runRepository";
+import runSyncQueueRepository from "../../repositories/runSyncQueueRepository";
+import territoryRepository from "../../repositories/territoryRepository";
 import { WPCard, WPScreen } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { calculatePaceSecondsPerKm, formatPaceFromSeconds } from "../../utils/pace";
@@ -89,13 +92,13 @@ export default function DashboardScreen() {
         }
       }
 
-      const [loadedRuns, loadedZones] = await Promise.all([
-        sync.loadLocalRunHistory?.() || sync.loadLocalRuns?.(),
-        sync.loadLocalZones?.(),
+      const [loadedRuns, loadedTerritories] = await Promise.all([
+        runRepository.list(),
+        territoryRepository.list({ status: "active" }),
       ]);
 
-      setRuns(Array.isArray(loadedRuns) ? loadedRuns : []);
-      setZones(Array.isArray(loadedZones) ? loadedZones : []);
+      setRuns(Array.isArray(loadedRuns.data) ? loadedRuns.data : []);
+      setZones(Array.isArray(loadedTerritories.data) ? loadedTerritories.data : []);
     } catch (error) {
       console.warn("[Dashboard] loadAll failed", error);
       Alert.alert("Erro", "Falha ao carregar dados do dashboard.");
@@ -111,11 +114,9 @@ export default function DashboardScreen() {
     (async () => {
       await loadAll();
       if (!mounted) return;
-      try {
-        sync.startAutoSync?.();
-      } catch (error) {
+      runSyncQueueRepository.startAutoSync?.().catch((error) => {
         console.warn("[Dashboard] startAutoSync failed", error);
-      }
+      });
     })();
 
     Animated.parallel([
@@ -135,7 +136,8 @@ export default function DashboardScreen() {
     return () => {
       mounted = false;
       try {
-        sync.stopAutoSync?.();
+        const stopResult = runSyncQueueRepository.stopAutoSync?.();
+        stopResult?.catch?.(() => {});
       } catch {}
     };
   }, [fadeAnim, loadAll, slideAnim]);
@@ -168,7 +170,7 @@ export default function DashboardScreen() {
     const monthlyMeters = cleanRuns
       .filter((run) => run.ts >= monthStart.getTime())
       .reduce((sum, run) => sum + run.distance, 0);
-    const zoneArea = cleanZones.reduce((sum, zone) => sum + safeNumber(zone.area), 0);
+    const zoneArea = cleanZones.reduce((sum, zone) => sum + safeNumber(zone.areaM2 ?? zone.area), 0);
 
     const bestDistance = [...cleanRuns]
       .filter((run) => run.distance > 0)

@@ -44,6 +44,10 @@ Quando responder sobre o Wayper:
 - Preservar a arquitetura local-first atual: corrida ativa em `wayper:activeRun:v2`, historico em `runs` via `sync.js`, sync de runs por `runSyncQueueService`.
 - Preferir repositories/facades existentes antes de chamar Firestore em telas.
 - Nao reativar `runService.js` legado nem `wayper_unsynced_runs_v2` como base nova.
+- Para territorios, usar `TerritoryRepository`/`territoryStorageService` e os storages atuais `wayper_territories_v1`, `wayper_territory_events_v1` e `wayper_territory_leaderboards_v1`.
+- Nao gravar novo dado territorial em `zones` ou `@wayper_zones`; esses storages sao legado/migracao explicita.
+- Corrida livre nao pode ganhar `area`, `geometry`, `zoneCoords`, `territorySummary` ou eventos territoriais falsos.
+- Corrida por zonas deve preservar `area`, `areaM2`, `geometry`, `zoneCoords`, `territorySummary`, `territoryEvents` e `capturedCells` quando a captura local existir.
 - Nao adicionar SQLite sem ADR, medicao e plano incremental.
 
 ## Estilo de implementação
