@@ -15,7 +15,9 @@ import {
   loadLocalTerritoryFeed,
   mergeRunsZonesAndTerritoryEvents,
 } from "../../services/territory";
-import sync from "../../utils/sync";
+import runRepository from "../../repositories/runRepository";
+import runSyncQueueRepository from "../../repositories/runSyncQueueRepository";
+import territoryRepository from "../../repositories/territoryRepository";
 import { getRenderablePathForRun, getRenderableSegmentsForRun } from "../../services/runTracking";
 
 const safeDate = (d) => {
@@ -80,14 +82,14 @@ function CorridasScreen({ navigation }) {
     try {
       const currentUserId = auth?.currentUser?.uid ?? null;
       const [rRaw, zRaw, localEventsRaw, remoteEventsRaw] = await Promise.allSettled([
-        sync.loadLocalRunHistory?.() || sync.loadLocalRuns(),
-        sync.loadLocalZones(),
+        runRepository.list(),
+        territoryRepository.listLegacyZones(),
         loadLocalTerritoryFeed({ currentUserId }),
         fetchTerritoryFeed({ scope: "public", userId: currentUserId, limitTo: 60 }),
       ]);
 
-      const r = rRaw.status === "fulfilled" && Array.isArray(rRaw.value) ? rRaw.value : [];
-      const z = zRaw.status === "fulfilled" && Array.isArray(zRaw.value) ? zRaw.value : [];
+      const r = rRaw.status === "fulfilled" && Array.isArray(rRaw.value?.data) ? rRaw.value.data : [];
+      const z = zRaw.status === "fulfilled" && Array.isArray(zRaw.value?.data) ? zRaw.value.data : [];
       const localEvents = localEventsRaw.status === "fulfilled" && Array.isArray(localEventsRaw.value) ? localEventsRaw.value : [];
       const remoteEvents = remoteEventsRaw.status === "fulfilled" && Array.isArray(remoteEventsRaw.value) ? remoteEventsRaw.value : [];
       const eventMap = new Map();
@@ -121,7 +123,7 @@ function CorridasScreen({ navigation }) {
         if (!mounted) return;
         await loadAll();
         try {
-          sync.startAutoSync?.();
+          await runSyncQueueRepository.startAutoSync?.();
         } catch (e) {
           console.warn("startAutoSync failed", e);
         }
@@ -129,7 +131,7 @@ function CorridasScreen({ navigation }) {
       return () => {
         mounted = false;
         try {
-          sync.stopAutoSync?.();
+          runSyncQueueRepository.stopAutoSync?.();
         } catch {}
       };
     }, [loadAll])

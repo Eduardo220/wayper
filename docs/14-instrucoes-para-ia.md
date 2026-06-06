@@ -41,6 +41,10 @@ Quando responder sobre o Wayper:
 - Usar Turf para geometrias quando fizer sentido.
 - Testar regras críticas de corrida, zona e ranking.
 - Cuidar de permissão de localização e falhas de GPS.
+- Preservar a arquitetura local-first atual: corrida ativa em `wayper:activeRun:v2`, historico em `runs` via `sync.js`, sync de runs por `runSyncQueueService`.
+- Preferir repositories/facades existentes antes de chamar Firestore em telas.
+- Nao reativar `runService.js` legado nem `wayper_unsynced_runs_v2` como base nova.
+- Nao adicionar SQLite sem ADR, medicao e plano incremental.
 
 ## Estilo de implementação
 

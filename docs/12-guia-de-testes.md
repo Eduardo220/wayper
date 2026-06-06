@@ -153,6 +153,28 @@ Cobertura automatizada esperada:
 - Sync antigo nao marca `SYNCED` se a copia local mudou durante o envio.
 - Falha de Firestore preserva corrida local como `SYNC_FAILED`.
 
+## Repositories local-first
+
+Os testes de repositories nao usam Firebase real, rede real, GPS real nem MapLibre. Eles devem validar a arquitetura de acesso a dados sem recriar regras de dominio ja existentes em services oficiais.
+
+Cobertura automatizada esperada:
+
+- `RunRepository` lista pela fonte local oficial (`sync.loadLocalRunHistory()`), busca por `localRunId`/`remoteRunId`, salva sem perder `remoteRunId`, preserva `syncStatus`, path, `renderPath`, `trustedPath` e `segments`.
+- `RunRepository` nao importa nem chama `runService.js` legado.
+- `RunSyncQueueRepository` encapsula `runSyncQueueService`/`sync.js`, nao usa `wayper_unsynced_runs_v2` e nao cria fila paralela.
+- `TerritoryRepository` le storage atual de territorios, preserva `geometry`, `zoneCoords` e `area`, trata storage vazio e separa `zones`/`@wayper_zones` como legado explicito.
+- `UserProfileRepository` retorna cache/local quando Firestore falha, nao transforma erro remoto em quebra de tela e nao inventa mock como perfil real.
+- `RankingRepository` diferencia `remote`, `cache`, `local`, `demo` e `empty`; Firestore falhando vira cache/estado vazio controlado.
+- `storageMigrationService` roda uma vez, atualiza schemaVersion, marca storages legados e nao apaga dados.
+- Telas adaptadas nao devem importar `firebase/firestore` diretamente quando houver repository/service correspondente.
+
+Checklist manual adicional:
+
+- [ ] Abrir o app com Firestore indisponivel e confirmar que home/perfil/ranking nao quebram.
+- [ ] Abrir historico e detalhes offline.
+- [ ] Confirmar que ranking sem dados reais mostra estado vazio/cache identificado, nao mock real.
+- [ ] Confirmar que zonas legadas so aparecem onde o fluxo ainda chama leitura legada explicitamente.
+
 ## Casos ruins que precisam ser testados
 
 - Usuário nega localização.

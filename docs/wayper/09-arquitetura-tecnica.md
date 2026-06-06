@@ -345,6 +345,28 @@ Relacao com territorios:
 - `syncTerritoriesToFirestore()` e `syncTerritoryEventsToFirestore()` continuam filas separadas.
 - Falha de territorio nao apaga corrida nem remove a corrida do historico.
 
+### Repositories local-first incrementais
+
+Desde 2026-06-06, a camada de acesso a dados passa a ter facades finas para reduzir Firestore direto nas telas sem trocar os services oficiais:
+
+- `src/repositories/runRepository.js`: encapsula historico local de runs por `sync.js`. A chave `runs` continua oficial.
+- `src/repositories/runSyncQueueRepository.js`: encapsula enfileiramento/retry/auto sync por `runSyncQueueService` e `sync.js`, sem storage proprio.
+- `src/repositories/territoryRepository.js`: encapsula territorios/eventos/leaderboards locais atuais; `zones` e `@wayper_zones` sao legados explicitos.
+- `src/repositories/userProfileRepository.js`: encapsula perfil local/cacheado por `profileService` e Firestore/Storage como melhor esforco.
+- `src/repositories/rankingRepository.js`: encapsula ranking remoto/cache/local e identifica demo/vazio para nao mascarar ausencia de dado real.
+- `src/repositories/localMetadataRepository.js` e `src/services/storage/storageMigrationService.js`: registram schemaVersion, migrations executadas e storages legados sem apagar dados.
+
+Regra de evolucao:
+
+- Tela nova ou alterada deve depender de repository/service quando houver regra de dado, nao de Firestore direto.
+- Repository deve chamar service existente quando ele ja for a fonte oficial; nao criar storage paralelo para melhorar aparencia da arquitetura.
+- Corrida ativa, GPS/path, notificacao/background e sync de runs nao devem ser reimplementados por repositories.
+- Firestore continua permitido dentro de services/repositories, tratado como remoto posterior ou melhor esforco.
+
+SQLite:
+
+- Nao foi adicionado nesta etapa. A decisao segue pendente de medicao de volume real de rotas, custo de parse do historico e impacto em Expo Dev Client/release Android.
+
 ## Turf.js ou biblioteca geográfica
 
 Uma biblioteca geográfica pode ser usada para:

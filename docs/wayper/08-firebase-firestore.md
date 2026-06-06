@@ -150,6 +150,35 @@ Regra atual da fila de runs:
 - Corrida livre nao envia territorio falso; corrida por zonas envia area/geometria/coords somente quando ja existem localmente.
 - Arrays de rota enviados ao Firestore podem ser limitados por `ROUTE_CAP`; a copia local permanece completa e o payload remoto registra `remoteRouteLimits`.
 
+## Camada local-first antes do Firestore
+
+Firestore e destino remoto ou fonte remota cacheavel, nao dependencia obrigatoria para os fluxos adaptados nesta etapa.
+
+Repositories atuais:
+
+- `RunRepository`: le/escreve historico local por `sync.js`; Firestore so entra no sync posterior.
+- `RunSyncQueueRepository`: agenda/processa fila oficial de runs por `runSyncQueueService`/`sync.js`.
+- `TerritoryRepository`: le/escreve storage local atual de territorios e separa zonas legadas de territorios atuais.
+- `UserProfileRepository`: retorna perfil local/cacheado quando remoto falha e tenta Firestore/Storage como melhor esforco.
+- `RankingRepository`: retorna ranking remoto quando existir, cache quando disponivel, local quando aplicavel ou estado vazio identificado; mock/demo nao pode ser apresentado como ranking real.
+
+Chamadas Firestore ainda existentes devem ficar em services/repositories ate serem desacopladas:
+
+- sync de runs e territorios;
+- perfil publico/avatar;
+- ranking remoto;
+- feed;
+- amigos;
+- grupos;
+- notificacoes;
+- XP/agregados quando o service exigir remoto.
+
+Regra de falha:
+
+- Falha de Firestore nao deve apagar dado local nem impedir leitura de historico/detalhe.
+- Erro remoto em perfil/ranking deve virar cache, vazio controlado ou erro de repository identificado.
+- Mocks e demos precisam carregar `source: "demo"` ou equivalente, nunca serem tratados como dado real.
+
 ## Coleção `territoryClaims`
 
 Proposta opcional, caso a estratégia territorial do MVP exija registro separado de conquistas:

@@ -9,8 +9,7 @@ import { createDrawerNavigator } from "@react-navigation/drawer";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 // FIREBASE
-import { auth, db } from "../firebaseConfig";
-import { doc, onSnapshot } from "firebase/firestore";
+import { auth } from "../firebaseConfig";
 import { signOut } from "firebase/auth";
 
 // SCREENS
@@ -41,9 +40,9 @@ import CustomDrawer from "../components/CustomDrawer";
 import { WayperTheme } from "../theme/wayperTheme";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
 import logger, { LOG_CATEGORIES } from "../utils/logger.js";
-
-// SYNC
-import * as sync from "../utils/sync";
+import { subscribeCurrentUserProfile } from "../repositories/userProfileRepository.js";
+import { runLocalMigrationsOnce } from "../services/storage/storageMigrationService.js";
+import runSyncQueueRepository from "../repositories/runSyncQueueRepository.js";
 
 const Drawer = createDrawerNavigator();
 const Stack = createNativeStackNavigator();
@@ -166,26 +165,36 @@ export default function MainNavigator() {
       return undefined;
     }
 
-    const unsubscribe = onSnapshot(
-      doc(db, "users", uid),
-      (snap) => {
-        setUserData(snap.exists() ? snap.data() : null);
-        setLoadingUser(false);
-      },
-      (err) => {
-        const code = String(err?.code || "");
+    const unsubscribe = subscribeCurrentUserProfile((result) => {
+      setUserData(result.data?.userDoc || null);
+      setLoadingUser(false);
+
+      if (result.error) {
+        const code = String(result.error?.code || "");
         if (code !== "unavailable") {
           logger.warn(LOG_CATEGORIES.FIREBASE, "USER_PROFILE_LOAD_FAILED", {
             code,
-            error: err,
+            error: result.error,
           });
         }
-        setUserData(null);
-        setLoadingUser(false);
       }
-    );
+    });
 
     return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    runLocalMigrationsOnce().catch((error) => {
+      if (!mounted) return;
+      logger.warn(LOG_CATEGORIES.STORAGE || LOG_CATEGORIES.SYNC, "LOCAL_STORAGE_MIGRATION_FAILED", {
+        error,
+      });
+    });
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -209,13 +218,9 @@ export default function MainNavigator() {
   useEffect(() => {
     if (!userData) return;
 
-    try {
-      if (typeof sync.startAutoSync === "function") {
-        sync.startAutoSync();
-      }
-    } catch (e) {
+    runSyncQueueRepository.startAutoSync?.().catch((e) => {
       logger.warn(LOG_CATEGORIES.SYNC, "START_AUTO_SYNC_FAILED", { error: e });
-    }
+    });
   }, [userData]);
 
   // ===========================

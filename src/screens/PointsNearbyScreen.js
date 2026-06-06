@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, FlatList, TouchableOpacity, StyleSheet } from "react-native";
 import * as Location from "expo-location";
-import { collection, getDocs, query } from "firebase/firestore";
-import { db } from "../firebaseConfig";
 import { checkLocationPermission } from "../services/permissions";
+import { loadCheckpoints } from "../services/checkpoints/checkpointService";
 
 export default function PointsNearbyScreen({ navigation }) {
   const [checkpoints, setCheckpoints] = useState([]);
@@ -24,10 +23,8 @@ export default function PointsNearbyScreen({ navigation }) {
         }
       }
 
-      const q = query(collection(db, "checkpoints"));
-      const snap = await getDocs(q);
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setCheckpoints(list);
+      const list = await loadCheckpoints();
+      setCheckpoints(Array.isArray(list) ? list : []);
     })();
   }, []);
 

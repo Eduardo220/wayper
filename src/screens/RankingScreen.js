@@ -14,35 +14,16 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { auth, db } from "../firebaseConfig";
-import { fetchAllRanking, fetchLocalLeadersRanking, fetchMonthlyRanking } from "../services/ranking";
+import { auth } from "../firebaseConfig";
 import { getMonthlyMedalForRank, getRankingMonthKey } from "../services/ranking/constants";
+import {
+  RANKING_SOURCE,
+  listRanking,
+  persistMyMonthlyPreview as persistMonthlyPreview,
+} from "../repositories/rankingRepository";
 import { WayperTheme } from "../theme/wayperTheme";
 
 const DEFAULT_AVATAR = "https://i.pravatar.cc/150?u=wayper";
-
-const makeMockRanking = (city = "Santa Maria", count = 40) =>
-  Array.from({ length: count }, (_, index) => {
-    const distance = Math.round((Math.random() * 220 + 5) * 1000);
-    const area = Math.round(Math.random() * 2_500_000 + 20_000);
-    return {
-      id: `mock-${index + 1}`,
-      name: `Atleta ${index + 1}`,
-      avatar: `https://i.pravatar.cc/150?img=${(index % 70) + 1}`,
-      city,
-      area,
-      distance,
-      monthlyArea: area * 0.35,
-      monthlyDistance: distance * 0.35,
-      totalRuns: Math.floor(Math.random() * 70),
-      level: Math.floor(Math.random() * 40) + 1,
-      xp: Math.floor(Math.random() * 25000),
-      totalStolenAreaM2: Math.round(Math.random() * 450000),
-      cellsLedCount: Math.floor(Math.random() * 12),
-      leaderAreaM2: Math.round(Math.random() * 600000),
-    };
-  });
 
 const safeNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -206,32 +187,19 @@ export default function RankingScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState([]);
+  const [rankingSource, setRankingSource] = useState(RANKING_SOURCE.EMPTY);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(18)).current;
 
   const persistMyMonthlyPreview = useCallback(
     async (ranking) => {
-      const uid = auth.currentUser?.uid;
-      if (!uid || period !== "monthly" || !["area", "distance"].includes(mode)) return;
-
-      const me = ranking.find((item) => item.id === uid);
-      if (!me?.rank) return;
-
-      const field = mode === "distance" ? "bestMonthlyRankDistance" : "bestMonthlyRankArea";
-      try {
-        await setDoc(
-          doc(db, "users", uid),
-          {
-            monthlyRankPreview: me.rank,
-            [field]: me.rank,
-            bestMonthlyRank: me.rank,
-            rankingMonth: getRankingMonthKey(),
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-      } catch (error) {
-        console.warn("Ranking preview persist failed:", error);
+      const result = await persistMonthlyPreview(ranking, {
+        uid: auth.currentUser?.uid,
+        period,
+        mode,
+      });
+      if (result.error) {
+        console.warn("Ranking preview persist failed:", result.error);
       }
     },
     [mode, period]
@@ -248,25 +216,24 @@ export default function RankingScreen({ route, navigation }) {
           limitTo: 300,
         };
 
-        const territoryAggregateMode = mode === "stolenArea" || mode === "cellsLed";
-        const remote = mode === "localLeaders"
-          ? await fetchLocalLeadersRanking({ limitTo: 300 })
-          : period === "monthly" && !territoryAggregateMode
-            ? await fetchMonthlyRanking(args)
-            : await fetchAllRanking(args);
-
-        const source = Array.isArray(remote) && remote.length
-          ? remote
-          : mode === "localLeaders"
-            ? []
-            : makeMockRanking(city);
-        const normalized = normalizeRanking(source, mode, period);
+        const result = await listRanking({
+          ...args,
+          mode,
+          period,
+          allowCache: true,
+        });
+        const normalized = normalizeRanking(result.data || [], mode, period);
+        setRankingSource(result.source || RANKING_SOURCE.EMPTY);
         setData(normalized);
         persistMyMonthlyPreview(normalized);
+        if (result.error) {
+          console.warn("Ranking load fallback:", result.error);
+        }
       } catch (error) {
         console.warn("Ranking load error:", error);
-        setData(mode === "localLeaders" ? [] : normalizeRanking(makeMockRanking(city), mode, period));
-        Alert.alert("Ranking", mode === "localLeaders" ? "Nao foi possivel carregar lideres locais agora." : "Usando dados locais de exemplo porque o ranking remoto falhou.");
+        setRankingSource(RANKING_SOURCE.EMPTY);
+        setData([]);
+        Alert.alert("Ranking", "Nao foi possivel carregar o ranking agora.");
       } finally {
         setLoading(false);
       }
@@ -328,7 +295,12 @@ export default function RankingScreen({ route, navigation }) {
   const myRank = useMemo(() => filtered.find((item) => item.id === currentUid) || null, [currentUid, filtered]);
   const maxValue = useMemo(() => Math.max(...filtered.map((item) => getMetricValue(item, mode, period)), 1), [filtered, mode, period]);
   const monthLabel = getRankingMonthKey();
-  const subtitle = `${period === "monthly" ? `Mensal ${monthLabel}` : "Geral"} • ${scope === "regional" ? city : "Global"}`;
+  const sourceLabel = rankingSource === RANKING_SOURCE.CACHE
+    ? "cache"
+    : rankingSource === RANKING_SOURCE.LOCAL
+      ? "local"
+      : null;
+  const subtitle = `${period === "monthly" ? `Mensal ${monthLabel}` : "Geral"} - ${scope === "regional" ? city : "Global"}${sourceLabel ? ` - ${sourceLabel}` : ""}`;
 
   const Header = useCallback(
     () => (

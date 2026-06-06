@@ -18,17 +18,18 @@ import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import ViewShot from "react-native-view-shot";
-import { auth, db, storage } from "../firebaseConfig";
-import { doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
-import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
+import { auth } from "../firebaseConfig";
 import MedalsWidget from "../components/MedalsWidget";
 import { WayperTheme } from "../theme/wayperTheme";
+import { DEFAULT_PROFILE } from "../services/profile/profileService";
 import {
-  DEFAULT_PROFILE,
-  fetchRemoteProfile,
-  loadProfile,
-  saveProfile,
-} from "../services/profile/profileService";
+  loadCurrentProfile,
+  subscribeCurrentUserProfile,
+  syncCurrentProfile,
+  updateCurrentUserProfile,
+  updatePrivacy as updateProfilePrivacy,
+  uploadAvatarImage,
+} from "../repositories/userProfileRepository";
 import { saveTempImageAsync } from "../utils/fileSystemLegacy";
 import { formatPaceFromSeconds } from "../utils/pace";
 import { sharePngFile } from "../utils/shareImage";
@@ -41,15 +42,6 @@ const SHARE_CAPTURE_OPTIONS = {
   quality: 1,
   result: "tmpfile",
 };
-
-async function uploadImageToFirebase(uri, storagePath) {
-  if (!uri) throw new Error("missing_image_uri");
-  const response = await fetch(uri);
-  const blob = await response.blob();
-  const ref = storageRef(storage, storagePath);
-  const snap = await uploadBytes(ref, blob, { contentType: blob.type || "image/jpeg" });
-  return getDownloadURL(snap.ref);
-}
 
 const safeNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -112,7 +104,9 @@ export default function ProfileScreen() {
   const loadAll = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const localProfile = await loadProfile();
+      const result = await loadCurrentProfile();
+      const localProfile = result.data?.profile || DEFAULT_PROFILE;
+      const remoteDoc = result.data?.userDoc || null;
       if (mountedRef.current) setProfile(localProfile);
 
       const current = auth.currentUser;
@@ -127,18 +121,22 @@ export default function ProfileScreen() {
         return;
       }
 
-      const snap = await getDoc(doc(db, "users", current.uid));
-      if (snap.exists() && mountedRef.current) {
-        const data = snap.data();
-        setUserDoc(data);
-        setName(data.name || "");
-        setBio(data.bio || "");
-        setAvatarUri(data.avatar || null);
-        setIsPrivate(!!data.isPrivate || data.profileVisibility === "private");
+      if (mountedRef.current) {
+        setUserDoc(remoteDoc);
+        setName(remoteDoc?.name || localProfile?.displayName || "");
+        setBio(remoteDoc?.bio || localProfile?.bio || "");
+        setAvatarUri(remoteDoc?.avatar || localProfile?.avatar || null);
+        setIsPrivate(!!remoteDoc?.isPrivate || remoteDoc?.profileVisibility === "private" || !!localProfile?.isPrivate);
+      }
+
+      if (result.error) {
+        console.warn("[Profile] remote profile unavailable; using local cache", result.error);
       }
     } catch (error) {
       console.warn("[Profile] loadAll failed", error);
-      Alert.alert("Erro", "Falha ao carregar perfil.");
+      if (mountedRef.current) {
+        setProfile(DEFAULT_PROFILE);
+      }
     } finally {
       if (mountedRef.current) {
         setLoading(false);
@@ -152,17 +150,20 @@ export default function ProfileScreen() {
     const uid = auth.currentUser?.uid;
 
     if (uid) {
-      unsubscribeRef.current = onSnapshot(doc(db, "users", uid), async (snap) => {
-        if (!mountedRef.current || !snap.exists()) return;
-        const data = snap.data();
+      unsubscribeRef.current = subscribeCurrentUserProfile((result) => {
+        if (!mountedRef.current) return;
+        const localProfile = result.data?.profile || DEFAULT_PROFILE;
+        const data = result.data?.userDoc || null;
+        setProfile(localProfile);
         setUserDoc(data);
-        setName(data.name || "");
-        setBio(data.bio || "");
-        setAvatarUri(data.avatar || null);
-        setIsPrivate(!!data.isPrivate || data.profileVisibility === "private");
+        setName(data?.name || localProfile?.displayName || "");
+        setBio(data?.bio || localProfile?.bio || "");
+        setAvatarUri(data?.avatar || localProfile?.avatar || null);
+        setIsPrivate(!!data?.isPrivate || data?.profileVisibility === "private" || !!localProfile?.isPrivate);
 
-        const localProfile = await loadProfile();
-        if (mountedRef.current) setProfile(localProfile);
+        if (result.error) {
+          console.warn("[Profile] subscribe fallback to local profile", result.error);
+        }
       });
     }
 
@@ -276,40 +277,47 @@ export default function ProfileScreen() {
       const isRemoteAvatar = /^https?:\/\//i.test(remoteAvatarUrl);
 
       if (avatarUri && !isRemoteAvatar) {
-        try {
-          remoteAvatarUrl = await uploadImageToFirebase(avatarUri, `avatars/${uid}_${Date.now()}.jpg`);
-        } catch (error) {
-          console.warn("[Profile] avatar upload failed", error);
+        const upload = await uploadAvatarImage(avatarUri, `avatars/${uid}_${Date.now()}.jpg`);
+        if (upload.data) {
+          remoteAvatarUrl = upload.data;
+        } else {
+          console.warn("[Profile] avatar upload failed", upload.error);
           Alert.alert("Aviso", "Nao consegui enviar o avatar. O restante do perfil sera salvo.");
         }
       }
 
-      const patch = {
+      const result = await updateCurrentUserProfile({
         name: trimmedName,
         bio: bio.trim(),
         avatar: remoteAvatarUrl,
         isPrivate,
         profileVisibility: isPrivate ? "private" : "public",
-        updatedAt: serverTimestamp(),
+      });
+
+      const updatedProfile = result.data?.profile || { ...(profile || DEFAULT_PROFILE), displayName: trimmedName };
+      const updatedUserDoc = result.data?.userDoc || {
+        ...(userDoc || {}),
+        name: trimmedName,
+        bio: bio.trim(),
+        avatar: remoteAvatarUrl,
+        isPrivate,
+        profileVisibility: isPrivate ? "private" : "public",
       };
-
-      setUserDoc((prev) => ({ ...(prev || {}), ...patch }));
-      await updateDoc(doc(db, "users", uid), patch);
-
-      const currentProfile = (await loadProfile()) || DEFAULT_PROFILE;
-      const updatedProfile = { ...currentProfile, displayName: trimmedName };
-      await saveProfile(updatedProfile);
+      setUserDoc((prev) => ({ ...(prev || {}), ...(updatedUserDoc || {}) }));
       setProfile(updatedProfile);
       setAvatarUri(remoteAvatarUrl);
       setEditing(false);
-      Alert.alert("Sucesso", "Perfil atualizado.");
+      Alert.alert(
+        result.error ? "Salvo localmente" : "Sucesso",
+        result.error ? "Perfil salvo no aparelho. O sync remoto sera tentado novamente depois." : "Perfil atualizado."
+      );
     } catch (error) {
       console.error("[Profile] saveChanges failed", error);
       Alert.alert("Erro", "Falha ao salvar o perfil. Tente novamente.");
     } finally {
       if (mountedRef.current) setSaving(false);
     }
-  }, [avatarUri, bio, isPrivate, name, userDoc]);
+  }, [avatarUri, bio, isPrivate, name, profile, userDoc]);
 
   const cancelEditing = useCallback(() => {
     setEditing(false);
@@ -322,12 +330,16 @@ export default function ProfileScreen() {
   const handleSyncProfile = useCallback(async () => {
     setSyncing(true);
     try {
-      const remote = await fetchRemoteProfile();
-      if (remote && mountedRef.current) {
-        setProfile(remote);
+      const result = await syncCurrentProfile();
+      const nextProfile = result.data?.profile || null;
+      if (nextProfile && mountedRef.current) {
+        setProfile(nextProfile);
+      }
+
+      if (result.source === "remote" && !result.error) {
         Alert.alert("Sincronizado", "Perfil sincronizado com o servidor.");
       } else {
-        Alert.alert("Sincronizacao", "Nenhuma alteracao remota encontrada.");
+        Alert.alert("Sincronizacao", "Perfil local mantido. Nenhuma atualizacao remota disponivel agora.");
       }
     } catch (error) {
       console.warn("[Profile] sync failed", error);
@@ -388,11 +400,12 @@ export default function ProfileScreen() {
     if (!uid) return;
 
     try {
-      await updateDoc(doc(db, "users", uid), {
-        isPrivate: value,
-        profileVisibility: value ? "private" : "public",
-        updatedAt: serverTimestamp(),
-      });
+      const result = await updateProfilePrivacy(value);
+      const nextProfile = result.data?.profile;
+      const nextUserDoc = result.data?.userDoc;
+      if (nextProfile) setProfile(nextProfile);
+      if (nextUserDoc) setUserDoc((prev) => ({ ...(prev || {}), ...nextUserDoc }));
+      if (result.error) throw result.error;
     } catch (error) {
       console.warn("[Profile] privacy update failed", error);
       Alert.alert("Erro", "Nao foi possivel atualizar a privacidade.");

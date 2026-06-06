@@ -93,6 +93,21 @@ Responsável por:
 - Firestore e destino posterior; falhas remotas deixam a corrida visivel como `SYNC_FAILED`.
 - Corridas por zonas preservam dados territoriais existentes; corridas livres nao recebem territorio falso.
 
+## Camada local-first incremental
+
+Desde 2026-06-06, os dominios principais passam a ter facades/repositories finos, sem trocar a fonte de verdade existente:
+
+- `RunRepository`: encapsula `sync.loadLocalRunHistory()`, `sync.findLocalRunById()`, `sync.saveLocalRun()` e `sync.deleteLocalRun()`. A chave local oficial continua sendo `runs`.
+- `RunSyncQueueRepository`: encapsula `runSyncQueueService` e agenda/processa sync por `sync.js`, sem criar fila paralela.
+- `TerritoryRepository`: encapsula `wayper_territories_v1`, eventos e leaderboards locais. `zones` e `@wayper_zones` ficam legados e so entram por chamada explicita.
+- `UserProfileRepository`: usa `wayper_profile_v3` como fallback local e trata Firestore/Storage como melhor esforco para dados publicos e avatar.
+- `RankingRepository`: diferencia ranking remoto, cache local e estado vazio. Ranking demo/mock nao deve aparecer como dado real.
+- `LocalMetadataRepository` e `storageMigrationService`: registram schemaVersion por dominio, migrations executadas e storages legados sem apagar dados.
+
+Firestore ainda existe em services de sync, perfil, ranking, feed, amigos, grupos, notificacoes e territorio remoto. A regra nova e mover chamadas diretas de tela para repository/service quando o fluxo for alterado, sem refatorar social/grupos de uma vez.
+
+SQLite nao foi adicionado nesta etapa. AsyncStorage segue aceitavel para a camada atual; SQLite/Expo SQLite deve ser reavaliado se historicos com rotas longas causarem custo perceptivel de parse/carregamento.
+
 ## Pontos que precisam ser definidos
 
 - Regra exata de transformação de rota em zona.

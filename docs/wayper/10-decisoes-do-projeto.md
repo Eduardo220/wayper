@@ -133,6 +133,39 @@ Impactos:
 - Territorio: corrida por zonas preserva dados existentes; falha de territorio nao apaga corrida.
 - Performance: rota local segue em AsyncStorage; se volume crescer, avaliar SQLite sem mudar a API das telas.
 
+### Camada local-first incremental por repositories
+
+Status: aprovada.
+
+Contexto:
+
+- Corrida ativa, historico e sync de runs ja estavam protegidos, mas telas de perfil/ranking e alguns fluxos ainda chamavam Firestore diretamente.
+- Uma migracao ampla para uma nova arquitetura poderia duplicar storage, reativar legado ou quebrar fluxo de corrida.
+
+Decisao:
+
+- Introduzir repositories/facades finos por dominio, reaproveitando services oficiais.
+- `RunRepository` chama `sync.js`; `RunSyncQueueRepository` chama `runSyncQueueService`/`sync.js`.
+- `TerritoryRepository` usa storage local atual de territorio e trata zones legado explicitamente.
+- `UserProfileRepository` protege perfil com cache/local.
+- `RankingRepository` separa remoto, cache, local, demo e vazio.
+- `LocalMetadataRepository` e `storageMigrationService` registram schemaVersion e storages legados sem apagar dados.
+- SQLite nao entra agora.
+
+Motivo:
+
+- Reduzir Firestore direto nas telas com risco baixo.
+- Preservar a fonte local oficial de runs e a fonte canonica da corrida ativa.
+- Preparar sync futuro sem criar arquitetura paralela.
+
+Impactos:
+
+- GPS: sem mudanca.
+- Mapa: sem mudanca estrutural; zonas legadas continuam leitura explicita.
+- Firestore: continua em services/repositories, nao como dependencia direta das telas adaptadas.
+- Performance: AsyncStorage continua; SQLite depende de medicao futura.
+- Experiencia do usuario: historico/detalhe seguem offline; perfil/ranking falham de forma mais controlada.
+
 ## Decisões pendentes
 
 ### Estratégia final de território

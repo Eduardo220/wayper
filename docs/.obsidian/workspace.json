@@ -6,7 +6,7 @@
       {
         "id": "83175927ce25b547",
         "type": "tabs",
-        "dimension": 52.43445692883895,
+        "dimension": 48.87640449438202,
         "children": [
           {
             "id": "79bd64723c582a25",
@@ -14,12 +14,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "wayper/00-index.md",
+                "file": "wayper/12-ideias-futuras.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "00-index"
+              "title": "12-ideias-futuras"
             }
           }
         ]
@@ -27,7 +27,7 @@
       {
         "id": "31112eda6bf5caf4",
         "type": "tabs",
-        "dimension": 47.565543071161045,
+        "dimension": 51.12359550561798,
         "children": [
           {
             "id": "3b4d653518ff2860",
@@ -202,15 +202,20 @@
   },
   "active": "3b4d653518ff2860",
   "lastOpenFiles": [
+    "wayper/12-ideias-futuras.md",
+    "22-teste-real-corrida-background.md",
+    "17-propostas-pendentes.md",
+    "16-ideias-de-melhoria.md",
+    "15-corrida-por-zonas.md",
+    "13-bugs-conhecidos.md",
+    "09-design-e-wireframes.md",
+    "10-regras-de-negocio.md",
+    "06-fluxos-de-usuario.md",
+    "07-padroes-de-codigo.md",
     "wayper/00-index.md",
     "21-exemplos-de-comandos-ia.md",
     "wayper/11-prompts-para-ia.md",
-    "15-corrida-por-zonas.md",
     "00-fontes-do-projeto.md",
-    "22-teste-real-corrida-background.md",
-    "13-bugs-conhecidos.md",
-    "17-propostas-pendentes.md",
-    "16-ideias-de-melhoria.md",
     "15-workflow-obsidian-ia.md",
     "11-plano-de-deploy.md",
     "08-decisoes-tecnicas.md",

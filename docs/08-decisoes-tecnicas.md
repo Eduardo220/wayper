@@ -157,3 +157,19 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - O payload remoto e sanitizado para remover `undefined`/funcoes e preservar metricas, modo, rota e campos territoriais existentes.
 - Para proteger tamanho de documento, paths remotos continuam limitados por `ROUTE_CAP`; a copia local nao e cortada e o payload registra contadores/truncamento em `remoteRouteLimits`.
 - Sync de runs e sync de territorios continuam separados; falha territorial nao apaga nem despublica a corrida local.
+
+## ADR-013: Camada incremental de repositories local-first
+
+**Status:** aceito
+**Contexto:** a corrida ativa, historico e fila de sync ja estavam local-first, mas algumas telas ainda acessavam Firestore diretamente e outros dominios misturavam UI, cache local e rede. Uma refatoracao grande demais aumentaria risco nos fluxos recem estabilizados.
+**Decisao:** introduzir repositories/facades finos por dominio, preservando as fontes oficiais existentes. `RunRepository` usa `sync.js` por baixo; `RunSyncQueueRepository` usa `runSyncQueueService`/`sync.js`; `TerritoryRepository` usa `territoryStorageService`; `UserProfileRepository` usa `profileService` com Firestore/Storage como melhor esforco; `RankingRepository` diferencia remoto, cache, local, demo e vazio. `LocalMetadataRepository` e `storageMigrationService` registram schemaVersion, migrations executadas e storages legados sem apagar dados. SQLite nao entra nesta etapa.
+**Consequencias:**
+
+- Telas adaptadas deixam de conhecer Firestore diretamente e passam a consumir repository/service.
+- `runs` continua sendo a fonte local oficial de corridas finalizadas.
+- `wayper:activeRun:v2` continua sendo a fonte canonica da corrida ativa.
+- `runService.js` e `wayper_unsynced_runs_v2` seguem legados, nao reativados.
+- `zones` e `@wayper_zones` ficam legados e so entram por leitura/migracao explicita.
+- Perfil e ranking podem falhar remotamente sem quebrar a UI adaptada; mock/demo nao deve ser exibido como ranking real.
+- Firestore segue presente em services de sync, perfil, ranking, feed, amigos, grupos, notificacoes e territorio remoto, mas deixa de ser dependencia direta nas telas alteradas.
+- SQLite/Expo SQLite deve ser reavaliado apenas se medicao real mostrar parse/carregamento pesado de rotas longas no AsyncStorage.

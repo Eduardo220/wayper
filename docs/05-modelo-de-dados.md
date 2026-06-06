@@ -129,6 +129,35 @@ Representa rankings agregados.
 | `entries` | array | Lista resumida de usuários e pontuações. |
 | `updatedAt` | timestamp | Última atualização. |
 
+## Metadados locais e repositories
+
+A camada local-first incremental usa `wayper:localMetadata:v1` para registrar schema version por dominio, migrations executadas uma vez e storages legados marcados como deprecated.
+
+Storages locais preservados:
+
+| Dominio | Storage | Status |
+| --- | --- | --- |
+| Corridas finalizadas | `runs` | Fonte oficial local via `sync.js`/`RunRepository`. |
+| Corrida ativa | `wayper:activeRun:v2` | Fonte canonica via `activeRunTrackingService`. |
+| Checkpoint ativo legado | `wayper_active_offline_run_v1` | Compatibilidade/recovery; nao e fonte nova. |
+| Territorios | `wayper_territories_v1` | Fonte local atual via `TerritoryRepository`. |
+| Eventos territoriais | `wayper_territory_events_v1` | Fonte local atual. |
+| Leaderboards territoriais | `wayper_territory_leaderboards_v1` | Cache/local atual para lideres locais. |
+| Perfil | `wayper_profile_v3` | Cache/local do perfil e agregados. |
+| Ranking | `wayper:rankingCache:v1:*` | Cache identificado; nao substitui ranking real. |
+
+Storages legados marcados:
+
+| Storage | Motivo | Substituto |
+| --- | --- | --- |
+| `wayper_unsynced_runs_v2` | Fila antiga de `runService.js`. | `runs` + `sync.js`/`runSyncQueueService`. |
+| `wayper_runs_cache_v2` | Cache antigo de `runService.js`. | `runs`. |
+| `wayper_active_run_v1` | Estado ativo antigo. | `wayper:activeRun:v2`. |
+| `zones` | Zonas antigas. | `wayper_territories_v1` apos migracao explicita. |
+| `@wayper_zones` | Storage antigo de `src/storage/zonesStorage.js`. | `wayper_territories_v1` apos migracao explicita. |
+
+Regra: migracoes locais nao apagam dados legados nesta fase. Elas apenas registram metadata e, quando chamadas explicitamente, podem copiar zonas antigas para territorios atuais.
+
 ## Cuidados
 
 - Não salvar dados sensíveis desnecessários.

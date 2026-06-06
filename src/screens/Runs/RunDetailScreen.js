@@ -20,7 +20,7 @@ import RunSummaryModal from "../../components/Runs/RunSummaryModal";
 import { WPButton } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { auth } from "../../firebaseConfig";
-import sync from "../../utils/sync";
+import runRepository from "../../repositories/runRepository";
 import {
   assertTraceHasEnoughPoints,
   captureRunShareImage,
@@ -300,7 +300,8 @@ function RunDetailScreenInner({ route, navigation }) {
 
       setLoadingRun(true);
       try {
-        const localRun = await sync.findLocalRunById?.(lookup);
+        const localResult = await runRepository.findById(lookup);
+        const localRun = localResult.data;
         if (!mounted) return;
         if (localRun) {
           setCurrentRun(localRun);
@@ -460,8 +461,8 @@ function RunDetailScreenInner({ route, navigation }) {
         updatedAt: new Date().toISOString(),
       };
 
-      const saved = await sync.saveLocalRun(updatedRun);
-      sync.scheduleRunsSync?.();
+      const savedResult = await runRepository.save(updatedRun, { scheduleSync: true });
+      const saved = savedResult.data || updatedRun;
       setCurrentRun(saved);
       navigation?.setParams?.({ run: saved });
       Alert.alert("Corrida atualizada", "As alteracoes foram salvas.");
@@ -474,8 +475,8 @@ function RunDetailScreenInner({ route, navigation }) {
 
     try {
       setDeleting(true);
-      const result = await sync.deleteLocalRun?.(run.id, { deleteRemote: true });
-      if (!result?.deleted) {
+      const result = await runRepository.remove(run.id, { deleteRemote: true });
+      if (!result.data?.deleted) {
         Alert.alert("Excluir corrida", "Nao foi possivel excluir esta corrida. Tente novamente.");
         return;
       }
@@ -517,7 +518,8 @@ function RunDetailScreenInner({ route, navigation }) {
     async function loadAveragePace() {
       if (!run) return;
       try {
-        const localRuns = await (sync.loadLocalRunHistory?.() || sync.loadLocalRuns());
+        const localRunsResult = await runRepository.list();
+        const localRuns = localRunsResult.data || [];
         if (!mounted) return;
         const currentIds = new Set(getRunIdentityCandidates(run));
         const comparable = (Array.isArray(localRuns) ? localRuns : []).filter(
