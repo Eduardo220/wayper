@@ -200,12 +200,12 @@ export function getCurrentDurationSeconds(nowMs = Date.now()) {
 
 export function getTrackingRuntimeStatus() {
   return {
+    ...summarizeRunSnapshot(activeSnapshot || {}),
     activeRunId: activeSnapshot?.activeRunId || null,
     status: activeSnapshot?.status || null,
     watcherStatus: backgroundStarted ? "background_started" : "unknown",
     backgroundStarted,
     taskName: ACTIVE_RUN_LOCATION_TASK,
-    ...summarizeRunSnapshot(activeSnapshot || {}),
   };
 }
 

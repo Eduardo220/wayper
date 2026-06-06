@@ -141,6 +141,27 @@ describe("diagnostics logging", () => {
     expect(logs.map((log) => log.event)).toEqual(["event-2", "event-3", "event-4"]);
   });
 
+  test("storage persiste logs frequentes em lote", async () => {
+    const writesBefore = AsyncStorageMock.setItem.mock.calls.length;
+    const writes = Array.from({ length: 10 }, (_, index) =>
+      storageService.appendLog({
+        id: `batch-${index}`,
+        timestamp: new Date(2000 + index).toISOString(),
+        level: "debug",
+        category: LOG_CATEGORIES.LOCATION,
+        event: "LOCATION_POINT_RECEIVED",
+      }, { flushDelayMs: 1000 })
+    );
+
+    await storageService.__flushLogWritesForTests();
+    await Promise.all(writes);
+
+    const writesAfter = AsyncStorageMock.setItem.mock.calls.length;
+    const logs = await storageService.getLogs();
+    expect(writesAfter - writesBefore).toBe(1);
+    expect(logs).toHaveLength(10);
+  });
+
   test("erro no storage nao quebra o app", async () => {
     failSetItem = true;
     await expect(storageService.appendLog({ id: "x", level: "error", category: "UNKNOWN", event: "fail" })).resolves.toBeNull();

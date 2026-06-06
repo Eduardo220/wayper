@@ -117,6 +117,12 @@ describe("activeRunTrackingService lifecycle", () => {
       startedAtMs: BASE_TIME,
     });
     expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+    expect(service.getTrackingRuntimeStatus()).toMatchObject({
+      activeRunId: "run-background-point",
+      watcherStatus: "background_started",
+      backgroundStarted: true,
+      taskName: service.ACTIVE_RUN_LOCATION_TASK,
+    });
 
     const updated = await service.recordLocation(nextPoint(1), { source: "background" });
     const raw = JSON.parse(storage.get(ACTIVE_RUN_STORAGE_KEY));

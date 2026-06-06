@@ -6,6 +6,12 @@ export const DIAGNOSTIC_LOGS_STORAGE_KEY = "wayper:diagnosticLogs:v1";
 let storage = AsyncStorage;
 let writeQueue = Promise.resolve();
 let lastStorageError = null;
+let pendingLogs = [];
+let pendingResolvers = [];
+let pendingMaxStoredLogs = null;
+let flushTimer = null;
+
+const DEFAULT_FLUSH_DELAY_MS = 250;
 
 function safeParseLogs(raw) {
   if (!raw) return [];
@@ -34,6 +40,16 @@ async function writeLogs(logs = []) {
     lastStorageError = error;
     return false;
   }
+}
+
+function resolvePendingResolvers(value) {
+  const resolvers = pendingResolvers;
+  pendingResolvers = [];
+  resolvers.forEach((resolve) => {
+    try {
+      resolve(value);
+    } catch {}
+  });
 }
 
 function normalizeLimit(limit, fallback) {
@@ -68,28 +84,80 @@ function matchesFilters(log = {}, filters = {}) {
 }
 
 export function appendLog(log = {}, options = {}) {
+  pendingLogs.push(log);
+  const config = getDiagnosticsConfig();
+  const maxStoredLogs = normalizeLimit(options.maxStoredLogs, config.maxStoredLogs || 1000);
+  pendingMaxStoredLogs = pendingMaxStoredLogs == null
+    ? maxStoredLogs
+    : Math.min(pendingMaxStoredLogs, maxStoredLogs);
+
+  const flushPromise = new Promise((resolve) => {
+    pendingResolvers.push(resolve);
+  });
+
+  const flushDelayMs = ["warn", "error", "fatal"].includes(log.level)
+    ? 0
+    : normalizeLimit(options.flushDelayMs, DEFAULT_FLUSH_DELAY_MS);
+
+  if (flushDelayMs === 0 && flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+    flushPendingLogs();
+  } else if (!flushTimer) {
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      flushPendingLogs();
+    }, flushDelayMs);
+  }
+
+  return flushPromise;
+}
+
+function flushPendingLogs() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+
+  const batch = pendingLogs;
+  const maxStoredLogs = pendingMaxStoredLogs;
+  pendingLogs = [];
+  pendingMaxStoredLogs = null;
+
+  if (batch.length === 0) {
+    resolvePendingResolvers(null);
+    return writeQueue;
+  }
+
   const task = async () => {
     try {
       const config = getDiagnosticsConfig();
-      const maxStoredLogs = normalizeLimit(options.maxStoredLogs, config.maxStoredLogs || 1000);
+      const effectiveMaxStoredLogs = normalizeLimit(maxStoredLogs, config.maxStoredLogs || 1000);
       const current = await readLogs();
-      const next = [...current, log].slice(-maxStoredLogs);
+      const next = [...current, ...batch].slice(-effectiveMaxStoredLogs);
       const saved = await writeLogs(next);
-      return saved ? log : null;
+      const result = saved ? batch[batch.length - 1] : null;
+      resolvePendingResolvers(result);
+      return result;
     } catch (error) {
       lastStorageError = error;
+      resolvePendingResolvers(null);
       return null;
     }
   };
 
   writeQueue = writeQueue.then(task, task).catch((error) => {
     lastStorageError = error;
+    resolvePendingResolvers(null);
     return null;
   });
   return writeQueue;
 }
 
 export async function getLogs(filters = {}) {
+  if (pendingLogs.length > 0) {
+    await flushPendingLogs();
+  }
   const logs = await readLogs();
   const filtered = logs.filter((log) => matchesFilters(log, filters));
   const limit = normalizeLimit(filters.limit, 0);
@@ -97,6 +165,13 @@ export async function getLogs(filters = {}) {
 }
 
 export async function clearLogs() {
+  pendingLogs = [];
+  pendingMaxStoredLogs = null;
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  resolvePendingResolvers(null);
   writeQueue = writeQueue.then(async () => {
     try {
       await storage.removeItem(DIAGNOSTIC_LOGS_STORAGE_KEY);
@@ -131,6 +206,9 @@ export function getErrorLogs() {
 }
 
 export async function getLogsSummary() {
+  if (pendingLogs.length > 0) {
+    await flushPendingLogs();
+  }
   const logs = await readLogs();
   const byLevel = logs.reduce((acc, log) => {
     acc[log.level] = (acc[log.level] || 0) + 1;
@@ -157,9 +235,19 @@ export function __resetLogStorageForTests() {
   storage = AsyncStorage;
   writeQueue = Promise.resolve();
   lastStorageError = null;
+  pendingLogs = [];
+  pendingResolvers = [];
+  pendingMaxStoredLogs = null;
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
 }
 
 export async function __flushLogWritesForTests() {
+  if (pendingLogs.length > 0) {
+    await flushPendingLogs();
+  }
   await writeQueue.catch(() => null);
 }
 
