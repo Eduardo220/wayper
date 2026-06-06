@@ -21,6 +21,8 @@ import {
   checkLocationPermission,
   requestLocationPermission as requestAppLocationPermission,
 } from "../permissions";
+import logger, { LOG_CATEGORIES } from "../../utils/logger.js";
+import { recordLocationPointEvent, recordRunEvent } from "../diagnostics/runDiagnosticsService.js";
 // no other side effects
 
 /* ===========================
@@ -54,7 +56,7 @@ let _cachedPermission = null; // 'granted' | 'denied' | 'undetermined' | null
    DEBUG
    =========================== */
 function debug(...args) {
-  if (_debug) console.log("[locationService]", ...args);
+  if (_debug) logger.debug(LOG_CATEGORIES.LOCATION, "locationService", { args });
 }
 
 /* ===========================
@@ -179,9 +181,20 @@ export async function requestLocationPermission({ force = false } = {}) {
     const granted = permission.granted;
     const status = permission.status;
     emitPermission({ granted, status });
+    recordRunEvent(granted ? "LOCATION_PERMISSION_GRANTED" : "LOCATION_PERMISSION_DENIED", {
+      permissionName: "locationForeground",
+      status,
+      source: "locationService",
+    });
     return { granted, status, canAskAgain: permission.canAskAgain };
   } catch (err) {
     debug("requestLocationPermission error", err);
+    recordRunEvent("LOCATION_PERMISSION_DENIED", {
+      permissionName: "locationForeground",
+      status: "error",
+      source: "locationService",
+      error: err,
+    });
     return { granted: false, status: "unknown", error: err };
   }
 }
@@ -210,6 +223,11 @@ export async function getCurrentPosition(opts = {}) {
 
   const perm = await checkLocationPermission();
   if (!perm.granted) {
+    recordRunEvent("LOCATION_PERMISSION_DENIED", {
+      permissionName: "locationForeground",
+      status: perm.status,
+      source: "locationService.getCurrentPosition",
+    });
     return { coords: null, raw: null, error: new Error("permission_denied") };
   }
 
@@ -226,6 +244,9 @@ export async function getCurrentPosition(opts = {}) {
       ]);
       const s = sanitizeLocationObj(p);
       if (!s) throw new Error("invalid_location");
+      recordLocationPointEvent("LOCATION_POINT_RECEIVED", s, {
+        source: "locationService.getCurrentPosition",
+      });
       // enrich: optionally compute accuracy/heading later
       return { coords: s, raw: p, error: null };
     } catch (err) {
@@ -256,6 +277,11 @@ export async function watchPosition(onChange, userOpts = {}) {
   const perm = await checkLocationPermission();
   if (!perm.granted) {
     debug("watchPosition: permission denied");
+    recordRunEvent("LOCATION_PERMISSION_DENIED", {
+      permissionName: "locationForeground",
+      status: perm.status,
+      source: "locationService.watchPosition",
+    });
     // return a no-op controller
     return {
       remove: () => {},
@@ -280,6 +306,9 @@ export async function watchPosition(onChange, userOpts = {}) {
     try {
       const p = sanitizeLocationObj(raw);
       if (!p) return;
+      recordLocationPointEvent("LOCATION_POINT_RECEIVED", p, {
+        source: "locationService.watchPosition",
+      });
 
       const now = nowTs();
 
@@ -393,8 +422,17 @@ export async function watchPosition(onChange, userOpts = {}) {
       }
       if (!subscription && lastError) throw lastError;
       debug("native watcher started");
+      recordRunEvent("LOCATION_WATCHER_STARTED", {
+        watcherStatus: "native_started",
+        source: "locationService",
+      });
     } catch (err) {
       debug("startNativeWatcher failed", err);
+      recordRunEvent("LOCATION_WATCHER_RESTARTED", {
+        watcherStatus: "native_start_failed",
+        source: "locationService",
+        error: err,
+      });
       subscription = null;
       // allow fallback to polling
     }
@@ -413,6 +451,11 @@ export async function watchPosition(onChange, userOpts = {}) {
           debug("poll failure", e);
         }
       }, Math.max(500, opts.timeInterval * (opts.pollingMultiplier || 1)));
+      recordRunEvent("LOCATION_WATCHER_STARTED", {
+        watcherStatus: "polling_started",
+        source: "locationService",
+        timeInterval: Math.max(500, opts.timeInterval * (opts.pollingMultiplier || 1)),
+      });
       return () => clearInterval(timer);
     } catch (e) {
       debug("startPolling catch", e);
@@ -448,6 +491,10 @@ export async function watchPosition(onChange, userOpts = {}) {
         pollingStopper = null;
         buffer = [];
         debug("watcher removed");
+        recordRunEvent("LOCATION_WATCHER_STOPPED", {
+          watcherStatus: "removed",
+          source: "locationService",
+        });
       } catch (e) {
         debug("controller.remove catch", e);
       }
@@ -471,6 +518,10 @@ export async function watchPosition(onChange, userOpts = {}) {
         subscription = null;
         pollingStopper = null;
         debug("watcher paused");
+        recordRunEvent("LOCATION_WATCHER_STOPPED", {
+          watcherStatus: "paused",
+          source: "locationService",
+        });
       } catch (e) {
         debug("controller.pause catch", e);
       }
@@ -485,6 +536,10 @@ export async function watchPosition(onChange, userOpts = {}) {
           pollingStopper = await startPolling();
         }
         debug("watcher resumed");
+        recordRunEvent("LOCATION_WATCHER_RESTARTED", {
+          watcherStatus: "resumed",
+          source: "locationService",
+        });
       } catch (e) {
         debug("controller.resume catch", e);
       }

@@ -15,6 +15,11 @@ import {
   normalizeActiveRunSnapshot,
 } from "../runTracking/activeRunState.js";
 import { buildSummaryRenderPath, sanitizeRunPath } from "../runTracking/index.js";
+import logger, { LOG_CATEGORIES } from "../../utils/logger.js";
+import {
+  recordRunEvent,
+  recordRunSnapshotEvent,
+} from "../diagnostics/runDiagnosticsService.js";
 
 export const RUN_RECOVERY_SOURCE = {
   TRACKING: "tracking",
@@ -39,9 +44,7 @@ const LOG_PREFIX = "[Wayper RunRecovery]";
 
 function logRecovery(event, payload = {}) {
   if (typeof __DEV__ === "undefined" || !__DEV__) return;
-  try {
-    console.log(`${LOG_PREFIX} ${event}`, payload);
-  } catch {}
+  logger.debug(LOG_CATEGORIES.RUN_RECOVERY, `${LOG_PREFIX} ${event}`, payload);
 }
 
 function toTimestampMs(value) {
@@ -385,6 +388,11 @@ export function resolveRecoveryConflict(candidates = [], options = {}) {
       source: candidate.source,
       reasons: candidate.validation?.reasons || ["not_recoverable"],
     });
+    recordRunEvent("RECOVERY_FAILED", {
+      source: candidate.source,
+      reasons: candidate.validation?.reasons || ["not_recoverable"],
+      level: "warn",
+    });
   }
 
   if (valid.length === 0) return null;
@@ -402,6 +410,13 @@ export function resolveRecoveryConflict(candidates = [], options = {}) {
         status: candidate.status,
         updatedAt: candidate.updatedAt,
       })),
+      reason: options.reason || "deterministic_resolution",
+    });
+    recordRunEvent("RECOVERY_MERGED_STATE", {
+      runId: selected.id,
+      source: selected.source,
+      status: selected.status,
+      alternativesCount: valid.length - 1,
       reason: options.reason || "deterministic_resolution",
     });
   }
@@ -466,6 +481,10 @@ export function buildActiveSnapshotFromOfflineRun(offlineRun = {}, options = {})
 }
 
 export async function findRecoverableRunForUser(userId, options = {}) {
+  recordRunEvent("RECOVERY_STARTED", {
+    userId: userId || "offline",
+    reason: options.reason || "find_recoverable_run",
+  });
   const activeSnapshot = options.activeSnapshot === undefined
     ? await getActiveRunSnapshot()
     : options.activeSnapshot;
@@ -510,6 +529,14 @@ export async function hydrateRecoverableRunCandidate(candidate = {}, options = {
       status: candidate?.status,
       reason: "not_live",
     });
+    recordRunEvent("RECOVERY_FAILED", {
+      runId: candidate?.id,
+      localRunId: candidate?.localRunId,
+      source: candidate?.source,
+      status: candidate?.status,
+      reason: "not_live",
+      level: "warn",
+    });
     return null;
   }
 
@@ -526,6 +553,9 @@ export async function hydrateRecoverableRunCandidate(candidate = {}, options = {
         status: snapshot?.status,
         points: snapshot?.trustedPath?.length || snapshot?.path?.length || 0,
       });
+      recordRunSnapshotEvent("RECOVERY_COMPLETED", snapshot, {
+        source: RUN_RECOVERY_SOURCE.TRACKING,
+      });
       return {
         candidate,
         snapshot,
@@ -541,6 +571,12 @@ export async function hydrateRecoverableRunCandidate(candidate = {}, options = {
       logRecovery("legacy_recovery_discarded", {
         id: candidate.id,
         status: candidate.status,
+        reason: "cannot_build_canonical_snapshot",
+      });
+      recordRunEvent("RECOVERY_FAILED", {
+        runId: candidate.id,
+        localRunId: candidate.localRunId,
+        source: candidate.source,
         reason: "cannot_build_canonical_snapshot",
       });
       return null;
@@ -560,6 +596,10 @@ export async function hydrateRecoverableRunCandidate(candidate = {}, options = {
       points: hydrated?.trustedPath?.length || 0,
       segments: hydrated?.segments?.length || 0,
     });
+    recordRunSnapshotEvent("RECOVERY_COMPLETED", hydrated || snapshot, {
+      source: RUN_RECOVERY_SOURCE.TRACKING,
+      migratedFrom: RUN_RECOVERY_SOURCE.OFFLINE,
+    });
 
     return {
       candidate: createRecoveryCandidate(RUN_RECOVERY_SOURCE.TRACKING, hydrated || snapshot, {
@@ -575,6 +615,12 @@ export async function hydrateRecoverableRunCandidate(candidate = {}, options = {
       id: candidate.id,
       error: error?.message || String(error),
     });
+    recordRunEvent("RECOVERY_FAILED", {
+      runId: candidate.id,
+      localRunId: candidate.localRunId,
+      source: candidate.source,
+      error,
+    });
     return null;
   }
 }
@@ -587,11 +633,19 @@ export async function persistFinishedRunDraft(runData = {}, options = {}) {
       status: saved?.status,
       syncStatus: saved?.syncStatus,
     });
+    recordRunSnapshotEvent("RUN_SAVED_LOCAL", saved, {
+      source: "recovery_finished_draft",
+    });
     return saved;
   } catch (error) {
     logRecovery("finished_run_draft_failed", {
       runId: runData?.id || runData?.localRunId,
       error: error?.message || String(error),
+    });
+    recordRunEvent("FINISH_FAILED", {
+      runId: runData?.id || runData?.localRunId,
+      source: "recovery_finished_draft",
+      error,
     });
     throw error;
   }
@@ -605,11 +659,20 @@ export async function markRecoveredRunLocallySaved(options = {}) {
     logRecovery("active_run_state_cleared_after_local_save", {
       reason: options.reason || "local_run_saved",
     });
+    recordRunEvent("RUN_SAVED_LOCAL", {
+      reason: options.reason || "local_run_saved",
+      source: "recovery_cleanup",
+    });
     return { ok: true };
   } catch (error) {
     logRecovery("active_run_state_clear_failed", {
       reason: options.reason || "local_run_saved",
       error: error?.message || String(error),
+    });
+    recordRunEvent("ACTIVE_RUN_SAVE_FAILED", {
+      reason: options.reason || "local_run_saved",
+      source: "recovery_cleanup",
+      error,
     });
     return { ok: false, error };
   }

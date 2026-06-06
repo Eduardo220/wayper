@@ -15,12 +15,18 @@ import {
   normalizeActiveRunSnapshot,
   nowIso,
 } from "./activeRunState.js";
+import logger, { LOG_CATEGORIES } from "../../utils/logger.js";
+import {
+  recordLocationPointEvent,
+  recordRunEvent,
+  recordRunSnapshotEvent,
+  summarizeRunSnapshot,
+} from "../diagnostics/runDiagnosticsService.js";
 
 export const ACTIVE_RUN_LOCATION_TASK = "WAYPER_ACTIVE_RUN_LOCATION";
 
 const NOTIFICATION_BODY = "Sua corrida esta sendo salva mesmo com a tela bloqueada.";
 const DEFAULT_NOTIFICATION_COLOR = "#00E676";
-const LOG_PREFIX = "[Wayper ActiveRun]";
 
 let activeSession = null;
 let activeSnapshot = null;
@@ -35,16 +41,13 @@ const listeners = {
 
 function log(event, payload = {}) {
   if (!debugEnabled) return;
-  try {
-    console.log(`${LOG_PREFIX} ${event}`, payload);
-  } catch {}
+  logger.debug(LOG_CATEGORIES.RUN_TRACKING, event, payload);
 }
 
 function devLog(prefix, message, payload = {}) {
   if (!debugEnabled) return;
-  try {
-    console.log(`[${prefix}] ${message}`, payload);
-  } catch {}
+  const category = prefix === "RunRecovery" ? LOG_CATEGORIES.RUN_RECOVERY : LOG_CATEGORIES.RUN_TRACKING;
+  logger.debug(category, message, payload);
 }
 
 function logRunRecovery(message, payload = {}) {
@@ -73,6 +76,10 @@ function emitSnapshot(snapshot, event = "snapshot") {
 
 function emitError(error, context = {}) {
   log("error", { ...context, error: error?.message || error });
+  logger.error(LOG_CATEGORIES.RUN_TRACKING, "ACTIVE_RUN_TRACKING_ERROR", {
+    ...context,
+    error,
+  });
   emit("error", { error, context });
 }
 
@@ -87,8 +94,19 @@ async function persistSnapshot(snapshot, event = "snapshot_saved") {
     ? mergeActiveRunSnapshots(activeSnapshot, incoming)
     : incoming;
   activeSnapshot = normalized;
-  await storage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(normalized));
+  try {
+    await storage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(normalized));
+  } catch (error) {
+    recordRunSnapshotEvent("ACTIVE_RUN_SAVE_FAILED", normalized, {
+      event,
+      error,
+    });
+    throw error;
+  }
   if (normalized?.meta?.ignoredEmptyGeometryOverwrite) {
+    recordRunSnapshotEvent("ACTIVE_RUN_EMPTY_OVERWRITE_BLOCKED", normalized, {
+      event,
+    });
     logRunGeometry("ignored empty segment overwrite", {
       activeRunId: normalized.activeRunId,
       event,
@@ -97,6 +115,9 @@ async function persistSnapshot(snapshot, event = "snapshot_saved") {
     });
   }
   if (normalized?.meta?.distancePreserved) {
+    recordRunSnapshotEvent("ACTIVE_RUN_DISTANCE_REGRESSION_BLOCKED", normalized, {
+      event,
+    });
     logRunGeometry("distance preserved", {
       activeRunId: normalized.activeRunId,
       event,
@@ -109,6 +130,9 @@ async function persistSnapshot(snapshot, event = "snapshot_saved") {
     points: normalized.trustedPath?.length || 0,
     source: normalized.source,
   });
+  recordRunSnapshotEvent("ACTIVE_RUN_SAVED", normalized, {
+    event,
+  });
   emitSnapshot(normalized, event);
   return normalized;
 }
@@ -117,7 +141,11 @@ async function loadPersistedSnapshot() {
   try {
     const raw = await storage.getItem(ACTIVE_RUN_STORAGE_KEY);
     if (!raw) return null;
-    return normalizeActiveRunSnapshot(JSON.parse(raw));
+    const snapshot = normalizeActiveRunSnapshot(JSON.parse(raw));
+    recordRunSnapshotEvent("RECOVERY_LOADED_ACTIVE_RUN", snapshot, {
+      source: "canonical_storage",
+    });
+    return snapshot;
   } catch (error) {
     emitError(error, { fn: "loadPersistedSnapshot" });
     return null;
@@ -170,6 +198,17 @@ export function getCurrentDurationSeconds(nowMs = Date.now()) {
   return calculateActiveRunDurationSeconds(snapshot, { nowMs });
 }
 
+export function getTrackingRuntimeStatus() {
+  return {
+    activeRunId: activeSnapshot?.activeRunId || null,
+    status: activeSnapshot?.status || null,
+    watcherStatus: backgroundStarted ? "background_started" : "unknown",
+    backgroundStarted,
+    taskName: ACTIVE_RUN_LOCATION_TASK,
+    ...summarizeRunSnapshot(activeSnapshot || {}),
+  };
+}
+
 export function onActiveRunSnapshot(listener) {
   listeners.snapshot.add(listener);
   return () => listeners.snapshot.delete(listener);
@@ -193,6 +232,10 @@ export async function startBackgroundLocationUpdates(options = {}) {
     const started = await Location.hasStartedLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK).catch(() => false);
     if (started && !options.force) {
       backgroundStarted = true;
+      recordRunSnapshotEvent("LOCATION_WATCHER_STARTED", snapshot, {
+        watcherStatus: "already_started",
+        backgroundTaskStatus: ACTIVE_RUN_LOCATION_TASK,
+      });
       logRunRecovery("watcher alive", {
         activeRunId: snapshot.activeRunId,
         task: ACTIVE_RUN_LOCATION_TASK,
@@ -201,6 +244,10 @@ export async function startBackgroundLocationUpdates(options = {}) {
     }
 
     if (!started) {
+      recordRunSnapshotEvent("LOCATION_WATCHER_RESTARTED", snapshot, {
+        watcherStatus: "restarting",
+        backgroundTaskStatus: ACTIVE_RUN_LOCATION_TASK,
+      });
       logRunRecovery("restarting watcher without clearing path", {
         activeRunId: snapshot.activeRunId,
         task: ACTIVE_RUN_LOCATION_TASK,
@@ -212,6 +259,10 @@ export async function startBackgroundLocationUpdates(options = {}) {
     );
     backgroundStarted = true;
     log("background_tracking_started", { activeRunId: snapshot.activeRunId });
+    recordRunSnapshotEvent("LOCATION_WATCHER_STARTED", snapshot, {
+      watcherStatus: "started",
+      backgroundTaskStatus: ACTIVE_RUN_LOCATION_TASK,
+    });
     return true;
   } catch (error) {
     backgroundStarted = false;
@@ -229,6 +280,11 @@ export async function stopBackgroundLocationUpdates(options = {}) {
     }
     backgroundStarted = false;
     log("background_tracking_stopped", { reason: options.reason || "manual" });
+    recordRunEvent("LOCATION_WATCHER_STOPPED", {
+      reason: options.reason || "manual",
+      watcherStatus: "stopped",
+      backgroundTaskStatus: ACTIVE_RUN_LOCATION_TASK,
+    });
     return true;
   } catch (error) {
     emitError(error, { fn: "stopBackgroundLocationUpdates", reason: options.reason || "manual" });
@@ -239,6 +295,12 @@ export async function stopBackgroundLocationUpdates(options = {}) {
 export async function startActiveRun(options = {}) {
   const nowMs = Number(options.startedAtMs || Date.now());
   const runId = options.activeRunId || options.id || createRunId(nowMs);
+  recordRunEvent("RUN_START_ATTEMPT", {
+    runId,
+    userId: options.userId || "offline",
+    mode: options.mode || "free",
+    startedAtMs: nowMs,
+  });
   const existing = activeSnapshot || (await loadPersistedSnapshot());
   if (
     existing?.activeRunId &&
@@ -263,6 +325,11 @@ export async function startActiveRun(options = {}) {
     activeSession = restored;
     activeSnapshot = protectedSnapshot;
     emitSnapshot(protectedSnapshot, "run_start_ignored_existing_active");
+    recordRunSnapshotEvent("RUN_START_FAILED", protectedSnapshot, {
+      reason: "existing_active_run",
+      incomingRunId: runId,
+      level: "warn",
+    });
     if (protectedSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) {
       await startBackgroundLocationUpdates({ force: false });
     }
@@ -298,10 +365,14 @@ export async function startActiveRun(options = {}) {
   });
   const saved = await persistSnapshot(snapshot, "run_started");
   await startBackgroundLocationUpdates({ force: true });
+  recordRunSnapshotEvent("RUN_STARTED", saved);
   return saved;
 }
 
 export async function restoreActiveRun(options = {}) {
+  recordRunEvent("RECOVERY_STARTED", {
+    source: options.snapshot ? "provided_snapshot" : "canonical_storage",
+  });
   if (options.snapshot) {
     return hydrateActiveRunSnapshot(options.snapshot, {
       ...options,
@@ -377,6 +448,11 @@ export async function hydrateActiveRunSnapshot(snapshot = {}, options = {}) {
       ? mergeActiveRunSnapshots(existing, normalized, options)
       : normalized;
 
+    recordRunSnapshotEvent("RECOVERY_MERGED_STATE", reconciled, {
+      existingSegments: existing?.segments?.length || 0,
+      incomingSegments: normalized.segments?.length || 0,
+    });
+
     logRunRecovery("segments after merge", {
       activeRunId: reconciled.activeRunId,
       segments: reconciled.segments?.length || 0,
@@ -398,8 +474,15 @@ export async function hydrateActiveRunSnapshot(snapshot = {}, options = {}) {
       await startBackgroundLocationUpdates({ force: false });
     }
 
+    recordRunSnapshotEvent("RECOVERY_COMPLETED", saved, {
+      event: options.event || "run_hydrated",
+    });
     return saved;
   } catch (error) {
+    recordRunEvent("RECOVERY_FAILED", {
+      fn: "hydrateActiveRunSnapshot",
+      error,
+    });
     emitError(error, { fn: "hydrateActiveRunSnapshot" });
     return null;
   }
@@ -412,6 +495,12 @@ export async function recordLocation(location = {}, options = {}) {
     if (activeSnapshot.status !== ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
 
     const source = options.source || location.source || "foreground";
+    recordLocationPointEvent("LOCATION_POINT_RECEIVED", location, {
+      ...summarizeRunSnapshot(activeSnapshot, {
+        watcherStatus: backgroundStarted ? "background_started" : "foreground",
+      }),
+      source,
+    });
     const result = session.processLocationPoint({
       ...location,
       source: source === "background" ? "expo-location" : location.source || source,
@@ -419,10 +508,25 @@ export async function recordLocation(location = {}, options = {}) {
 
     if (!result.accepted && !result.currentPositionChanged && !result.pathChanged) {
       log("point_ignored", { reason: result.reason, source });
+      recordLocationPointEvent("LOCATION_POINT_REJECTED", result.rawPoint || location, {
+        ...summarizeRunSnapshot(activeSnapshot),
+        reason: result.reason || "ignored",
+        action: result.action || "ignore",
+        source,
+      });
       return activeSnapshot;
     }
 
     if (result.accepted) {
+      recordLocationPointEvent("LOCATION_POINT_ACCEPTED", result.point || location, {
+        ...summarizeRunSnapshot(activeSnapshot),
+        reason: result.reason || null,
+        source,
+        rawPointsCount: result.rawPath?.length || result.rawPoints?.length || 0,
+        trustedPointsCount: result.trustedPath?.length || 0,
+        segmentsCount: result.segments?.length || 0,
+        distance: result.stats?.distanceMeters || 0,
+      });
       logRunGeometry("append point to segment", {
         activeRunId: activeSnapshot.activeRunId,
         segmentId: result.point?.segmentId ?? null,
@@ -458,8 +562,10 @@ export async function pauseActiveRun(options = {}) {
     });
     const saved = await persistSnapshot(snapshot, "run_paused");
     await stopBackgroundLocationUpdates({ reason: "pause" });
+    recordRunSnapshotEvent("PAUSE_SUCCESS", saved);
     return saved;
   } catch (error) {
+    recordRunEvent("PAUSE_FAILED", { error });
     emitError(error, { fn: "pauseActiveRun" });
     return activeSnapshot;
   }
@@ -480,8 +586,10 @@ export async function resumeActiveRun(options = {}) {
     });
     const saved = await persistSnapshot(snapshot, "run_resumed");
     await startBackgroundLocationUpdates({ force: true });
+    recordRunSnapshotEvent("RESUME_SUCCESS", saved);
     return saved;
   } catch (error) {
+    recordRunEvent("RESUME_FAILED", { error });
     emitError(error, { fn: "resumeActiveRun" });
     return activeSnapshot;
   }
@@ -512,8 +620,10 @@ export async function finishActiveRun(options = {}) {
     });
     const saved = await persistSnapshot(snapshot, "run_finished_snapshot_saved");
     await stopBackgroundLocationUpdates({ reason: "finish" });
+    recordRunSnapshotEvent("FINISH_SUCCESS", saved);
     return saved;
   } catch (error) {
+    recordRunEvent("FINISH_FAILED", { error });
     emitError(error, { fn: "finishActiveRun" });
     return activeSnapshot;
   }
@@ -531,6 +641,9 @@ export async function markActiveRunLocallySaved() {
     activeSession = null;
     activeSnapshot = null;
     log("active_snapshot_cleared", { reason: "local_run_saved" });
+    recordRunEvent("RUN_SAVED_LOCAL", {
+      reason: "local_run_saved",
+    });
     emitSnapshot(null, "active_snapshot_cleared");
     return true;
   } catch (error) {
@@ -546,6 +659,9 @@ export async function cancelActiveRun(options = {}) {
     activeSession = null;
     activeSnapshot = null;
     log("run_cancelled", { reason: options.reason || "cancel" });
+    recordRunEvent("RUN_CANCELLED", {
+      reason: options.reason || "cancel",
+    });
     emitSnapshot(null, "run_cancelled");
     return true;
   } catch (error) {
@@ -620,6 +736,7 @@ export default {
   finishActiveRun,
   getActiveRunSnapshot,
   getCurrentDurationSeconds,
+  getTrackingRuntimeStatus,
   hasActiveRunSnapshot,
   hydrateActiveRunSnapshot,
   markActiveRunLocallySaved,

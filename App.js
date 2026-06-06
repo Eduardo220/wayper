@@ -15,6 +15,8 @@ import {
   startActiveRunAutoCheckpointing,
   stopActiveRunAutoCheckpointing,
 } from "./src/services/run/runAutoSaveService.js";
+import { installGlobalErrorReporter } from "./src/services/diagnostics/errorReporter.js";
+import logger, { LOG_CATEGORIES } from "./src/utils/logger.js";
 import {
   startRunNotificationCoordinator,
   stopRunNotificationCoordinator,
@@ -101,7 +103,7 @@ export default function App() {
         setAuthChecked(true);
       },
       (error) => {
-        console.error("Auth error:", error);
+        logger.error(LOG_CATEGORIES.FIREBASE, "AUTH_STATE_ERROR", { error });
         setUser(null);
         setAuthChecked(true);
       }
@@ -112,6 +114,7 @@ export default function App() {
 
   useEffect(() => {
     installGlobalRunErrorHandlers();
+    installGlobalErrorReporter();
     startActiveRunAutoCheckpointing();
     startRunNotificationCoordinator();
     return () => {

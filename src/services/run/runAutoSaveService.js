@@ -7,6 +7,11 @@ import {
   saveActiveRunSnapshot,
   toAppRunMode,
 } from "../runOfflineStorageService.js";
+import logger, { LOG_CATEGORIES } from "../../utils/logger.js";
+import {
+  recordRunEvent,
+  recordRunSnapshotEvent,
+} from "../diagnostics/runDiagnosticsService.js";
 
 const LOG_PREFIX = "[Wayper RunAutoSave]";
 
@@ -24,9 +29,7 @@ const isDev = () => typeof __DEV__ !== "undefined" && __DEV__;
 
 function log(event, payload = {}) {
   if (!isDev()) return;
-  try {
-    console.log(`${LOG_PREFIX} ${event}`, payload);
-  } catch {}
+  logger.debug(LOG_CATEGORIES.STORAGE, `${LOG_PREFIX} ${event}`, payload);
 }
 
 function toOfflineMode(mode = "free") {
@@ -140,17 +143,31 @@ export async function flushActiveRunCheckpoint(context = {}) {
       points: saved?.points?.length || 0,
       reason: context.reason || "manual",
     });
+    recordRunSnapshotEvent("ACTIVE_RUN_SAVED", saved, {
+      source: "auto_checkpoint",
+      reason: context.reason || "manual",
+    });
     return saved;
   } catch (error) {
     log("checkpoint_flush_failed", {
       reason: context.reason || "manual",
       error: error?.message || String(error),
     });
+    recordRunEvent("ACTIVE_RUN_SAVE_FAILED", {
+      source: "auto_checkpoint",
+      reason: context.reason || "manual",
+      error,
+    });
     return null;
   }
 }
 
 export async function checkpointOnCaughtError(error, context = {}) {
+  recordRunEvent("ACTIVE_RUN_SAVE_FAILED", {
+    source: "caught_error_checkpoint",
+    reason: context.reason || "caught_js_error",
+    error,
+  });
   return flushActiveRunCheckpoint({
     ...context,
     reason: context.reason || "caught_js_error",
@@ -191,10 +208,16 @@ export function installGlobalRunErrorHandlers() {
   } catch {}
 
   log("error_handlers_installed");
+  logger.info(LOG_CATEGORIES.UNKNOWN, "RUN_ERROR_HANDLERS_INSTALLED", {
+    checkpointEnabled: true,
+  });
   return () => {};
 }
 
 export async function forceCheckpointForAppState(appState) {
+  recordRunEvent(appState === "active" ? "APP_ACTIVE" : "APP_BACKGROUND", {
+    appState,
+  });
   return flushActiveRunCheckpoint({
     reason: "app_state",
     appState,

@@ -38,6 +38,8 @@ import {
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundFetch from "expo-background-fetch";
 import { Platform } from "react-native";
+import logger, { LOG_CATEGORIES } from "./logger.js";
+import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
 
 // ----------------- Keys / Constants -----------------
 const RUNS_KEY = "runs";
@@ -100,10 +102,15 @@ const uid = () => String(Date.now()) + "-" + Math.floor(Math.random() * 1e6);
 
 const logError = (err, context = {}) => {
   try {
-    console.error("[sync:error]", err, context);
+    logger.error(LOG_CATEGORIES.SYNC, "SYNC_ERROR", {
+      ...context,
+      error: err,
+    });
   } catch (e) {
     try {
-      console.error("[sync:error:logging-failed]", e);
+      logger.error(LOG_CATEGORIES.SYNC, "SYNC_ERROR_LOGGING_FAILED", {
+        error: e,
+      });
     } catch {}
   }
 };
@@ -585,6 +592,15 @@ export async function saveLocalRun(run = {}) {
 
     const deduped = normalizeLocalRunsForHistory(uniqueById(next));
     await AsyncStorage.setItem(RUNS_KEY, safeStringify(deduped));
+    recordRunEvent("RUN_SAVED_LOCAL", {
+      runId: savedRecord.id,
+      localRunId: savedRecord.localRunId || savedRecord.id,
+      status: savedRecord.status,
+      syncStatus: savedRecord.syncStatus,
+      pointsCount: savedRecord.trustedPath?.length || savedRecord.path?.length || 0,
+      segmentsCount: savedRecord.routeSegments?.length || savedRecord.segments?.length || 0,
+      distance: savedRecord.distanceMeters ?? savedRecord.distance ?? 0,
+    });
     return savedRecord;
   } catch (err) {
     logError(err, { fn: "saveLocalRun" });
@@ -945,6 +961,10 @@ export async function syncRunsToFirestore() {
       isSyncingRuns = false;
       return;
     }
+    recordRunEvent("RUN_SYNC_QUEUED", {
+      count: unsynced.length,
+      runIds: unsynced.map((run) => run.id || run.localRunId).filter(Boolean).slice(0, 20),
+    });
 
     const batches = [];
     const pendingPostNotifications = [];
@@ -1114,8 +1134,18 @@ export async function syncRunsToFirestore() {
 
     await AsyncStorage.setItem(RUNS_KEY, safeStringify(normalizeLocalRunsForHistory(local)));
     await _setRetryMeta(RETRY_META_RUNS, { attempts: 0, nextAt: 0 });
+    recordRunEvent("RUN_SYNC_SUCCESS", {
+      count: unsynced.length,
+      runIds: unsynced.map((run) => run.id || run.localRunId).filter(Boolean).slice(0, 20),
+      syncedAt,
+    });
   } catch (err) {
     logError(err, { fn: "syncRunsToFirestore" });
+    recordRunEvent("RUN_SYNC_FAILED", {
+      count: syncingRunIds.size,
+      runIds: Array.from(syncingRunIds).slice(0, 20),
+      error: err,
+    });
     try {
       if (Array.isArray(localForFailure) && syncingRunIds.size > 0) {
         const failedAt = new Date().toISOString();
@@ -1156,6 +1186,10 @@ export async function syncRunsToFirestore() {
 
 export function scheduleRunsSync(delay = SYNC_DEBOUNCE_MS) {
   if (debounceRunsTimer) clearTimeout(debounceRunsTimer);
+  recordRunEvent("RUN_SYNC_QUEUED", {
+    delayMs: delay,
+    source: "scheduleRunsSync",
+  });
   debounceRunsTimer = setTimeout(() => {
     syncRunsToFirestore().catch((e) =>
       logError(e, { fn: "scheduleRunsSync.inner" })
@@ -1580,13 +1614,17 @@ try {
       });
     } catch (e) {
       // ignore if task already defined in the environment
-      console.debug("[sync] Task defineTask skipped or already defined.", e?.message || e);
+      logger.debug(LOG_CATEGORIES.SYNC, "BACKGROUND_SYNC_TASK_DEFINE_SKIPPED", {
+        error: e,
+      });
     }
   } else {
-    console.warn("[sync] TaskManager.defineTask not available in this environment.");
+    logger.warn(LOG_CATEGORIES.SYNC, "BACKGROUND_SYNC_TASK_MANAGER_UNAVAILABLE");
   }
 } catch (e) {
-  console.warn("[sync] error while attempting to define task:", e);
+  logger.warn(LOG_CATEGORIES.SYNC, "BACKGROUND_SYNC_TASK_DEFINE_FAILED", {
+    error: e,
+  });
 }
 
 /**
@@ -1597,13 +1635,13 @@ try {
 export async function registerBackgroundSyncTask(options = { minimumInterval: 15 * 60 }) {
   try {
     if (!TaskManager || !BackgroundFetch) {
-      console.warn("[sync] Background fetch not available in this environment.");
+      logger.warn(LOG_CATEGORIES.SYNC, "BACKGROUND_FETCH_UNAVAILABLE");
       return false;
     }
 
     // Ensure task was defined above (best-effort)
     if (!TaskManager || typeof TaskManager.defineTask !== "function") {
-      console.warn("[sync] TaskManager.defineTask not available; cannot register.");
+      logger.warn(LOG_CATEGORIES.SYNC, "BACKGROUND_SYNC_TASK_MANAGER_UNAVAILABLE");
       return false;
     }
 

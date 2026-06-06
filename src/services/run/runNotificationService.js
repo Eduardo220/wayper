@@ -5,6 +5,11 @@ import {
   ACTIVE_RUN_STATUS,
   calculateActiveRunDurationSeconds,
 } from "../runTracking/activeRunState.js";
+import logger, { LOG_CATEGORIES } from "../../utils/logger.js";
+import {
+  recordRunEvent,
+  recordRunSnapshotEvent,
+} from "../diagnostics/runDiagnosticsService.js";
 
 export const RUN_NOTIFICATION_CHANNEL_ID = "wayper_run_tracking";
 export const RUN_NOTIFICATION_ID = 4217;
@@ -203,26 +208,44 @@ function startUpdateTimer() {
 
 export async function ensureRunNotificationPermission({ request = false } = {}) {
   if (Platform.OS !== "android") {
+    logger.debug(LOG_CATEGORIES.NOTIFICATION, "NOTIFICATION_PERMISSION_UNAVAILABLE", {
+      platform: Platform.OS,
+    });
     return { granted: true, status: "unavailable" };
   }
 
   if (Number(Platform.Version || 0) < 33) {
+    logger.debug(LOG_CATEGORIES.NOTIFICATION, "NOTIFICATION_PERMISSION_IMPLICIT", {
+      platformVersion: Platform.Version,
+    });
     return { granted: true, status: "granted" };
   }
 
   const permission = PermissionsAndroid?.PERMISSIONS?.POST_NOTIFICATIONS;
   if (!permission || typeof PermissionsAndroid?.check !== "function") {
+    logger.warn(LOG_CATEGORIES.NOTIFICATION, "NOTIFICATION_PERMISSION_UNAVAILABLE", {
+      platformVersion: Platform.Version,
+    });
     return { granted: false, status: "unavailable" };
   }
 
   const granted = await PermissionsAndroid.check(permission);
   if (granted || !request || typeof PermissionsAndroid?.request !== "function") {
+    logger[granted ? "info" : "warn"](LOG_CATEGORIES.NOTIFICATION, "NOTIFICATION_PERMISSION_CHECKED", {
+      granted,
+      status: granted ? "granted" : "denied",
+      request,
+    });
     return { granted, status: granted ? "granted" : "denied" };
   }
 
   const response = await PermissionsAndroid.request(permission);
   const grantedStatus = PermissionsAndroid.RESULTS?.GRANTED || "granted";
   const nextGranted = response === grantedStatus;
+  logger[nextGranted ? "info" : "warn"](LOG_CATEGORIES.NOTIFICATION, "NOTIFICATION_PERMISSION_REQUESTED", {
+    granted: nextGranted,
+    status: nextGranted ? "granted" : response || "denied",
+  });
   return {
     granted: nextGranted,
     status: nextGranted ? "granted" : response || "denied",
@@ -243,10 +266,18 @@ export async function configureRunNotificationActions() {
 
 export async function startRunNotification(payload = {}, options = {}) {
   const nativeModule = getNativeModule();
-  if (!isRunNotificationSupported() || !nativeModule) return false;
+  if (!isRunNotificationSupported() || !nativeModule) {
+    logger.warn(LOG_CATEGORIES.NOTIFICATION, "RUN_NOTIFICATION_UNSUPPORTED", {
+      platform: Platform.OS,
+    });
+    return false;
+  }
 
   const permission = await ensureRunNotificationPermission({ request: options.requestPermission !== false });
-  if (!permission.granted) return false;
+  if (!permission.granted) {
+    logger.warn(LOG_CATEGORIES.NOTIFICATION, "RUN_NOTIFICATION_PERMISSION_DENIED", permission);
+    return false;
+  }
 
   await configureRunNotificationActions();
   const normalized = normalizeRunNotificationPayload(payload);
@@ -261,6 +292,13 @@ export async function startRunNotification(payload = {}, options = {}) {
   lastStatusKey = getStatusKey(normalized);
   lastNativeUpdateAt = Date.now();
   if (options.scheduleTimer !== false) startUpdateTimer();
+  logger.info(LOG_CATEGORIES.NOTIFICATION, "RUN_NOTIFICATION_STARTED", {
+    method,
+    status: normalized.status,
+    isPaused: normalized.isPaused,
+    elapsedTimeSeconds: normalized.elapsedTimeSeconds,
+    distanceKm: normalized.distanceKm,
+  });
   return true;
 }
 
@@ -287,6 +325,12 @@ export async function updateRunNotification(payload = {}, options = {}) {
   lastPayloadKey = key;
   lastStatusKey = getStatusKey(normalized);
   lastNativeUpdateAt = Date.now();
+  logger.debug(LOG_CATEGORIES.NOTIFICATION, "RUN_NOTIFICATION_UPDATED", {
+    status: normalized.status,
+    isPaused: normalized.isPaused,
+    elapsedTimeSeconds: normalized.elapsedTimeSeconds,
+    distanceKm: normalized.distanceKm,
+  });
   return true;
 }
 
@@ -306,6 +350,10 @@ export async function stopRunNotification() {
     channelId: RUN_NOTIFICATION_CHANNEL_ID,
     notificationId: RUN_NOTIFICATION_ID,
   });
+  logger.info(LOG_CATEGORIES.NOTIFICATION, "RUN_NOTIFICATION_STOPPED", {
+    channelId: RUN_NOTIFICATION_CHANNEL_ID,
+    notificationId: RUN_NOTIFICATION_ID,
+  });
   return true;
 }
 
@@ -322,6 +370,9 @@ export async function pauseRunFromNotification() {
     return snapshot || null;
   }
 
+  recordRunSnapshotEvent("PAUSE_PRESSED", snapshot, {
+    source: "notification",
+  });
   const paused = await trackingService.pauseActiveRun?.({
     endedAtMs: Date.now(),
     source: "notification",
@@ -334,6 +385,9 @@ export async function pauseRunFromNotification() {
     await updateRunNotification(buildRunNotificationPayloadFromSnapshot(paused), {
       force: true,
       requestPermission: false,
+    });
+    recordRunSnapshotEvent("PAUSE_SUCCESS", paused, {
+      source: "notification",
     });
   }
   return paused || snapshot;
@@ -352,6 +406,9 @@ export async function resumeRunFromNotification() {
     return snapshot || null;
   }
 
+  recordRunSnapshotEvent("RESUME_PRESSED", snapshot, {
+    source: "notification",
+  });
   const resumed = await trackingService.resumeActiveRun?.({
     startedAtMs: Date.now(),
     source: "notification",
@@ -365,12 +422,20 @@ export async function resumeRunFromNotification() {
       force: true,
       requestPermission: false,
     });
+    recordRunSnapshotEvent("RESUME_SUCCESS", resumed, {
+      source: "notification",
+    });
   }
   return resumed || snapshot;
 }
 
 export async function handleRunNotificationAction(action) {
   const normalized = String(action || "").toLowerCase();
+  recordRunEvent("RUN_NOTIFICATION_ACTION", {
+    action: normalized,
+  }, {
+    category: LOG_CATEGORIES.NOTIFICATION,
+  });
   if (normalized === RUN_NOTIFICATION_ACTION.PAUSE || normalized === "stop") {
     return pauseRunFromNotification();
   }

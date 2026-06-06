@@ -2,6 +2,8 @@ import { Linking, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
+import logger, { LOG_CATEGORIES } from "../utils/logger.js";
+import { recordRunEvent } from "./diagnostics/runDiagnosticsService.js";
 
 export const PermissionStatus = {
   GRANTED: "granted",
@@ -26,7 +28,7 @@ const isDev = () => typeof __DEV__ !== "undefined" && __DEV__;
 
 const permissionDebug = (event, payload = {}) => {
   if (isDev()) {
-    console.log(`[Wayper Permissions] ${event}`, payload);
+    logger.debug(LOG_CATEGORIES.PERMISSION, `[Wayper Permissions] ${event}`, payload);
   }
 };
 
@@ -133,14 +135,31 @@ export const checkLocationPermission = async () => {
 export const requestLocationPermission = async () => {
   return runSingleRequest(PermissionName.LOCATION_FOREGROUND, async () => {
     permissionDebug("request", { permissionName: PermissionName.LOCATION_FOREGROUND });
+    recordRunEvent("LOCATION_PERMISSION_REQUESTED", {
+      permissionName: PermissionName.LOCATION_FOREGROUND,
+    });
     try {
       await markPermissionRequested(PermissionName.LOCATION_FOREGROUND);
       const result = await Location.requestForegroundPermissionsAsync();
       const normalized = normalizePermission(PermissionName.LOCATION_FOREGROUND, result);
       permissionDebug("request_result", normalized);
+      recordRunEvent(
+        normalized.granted ? "LOCATION_PERMISSION_GRANTED" : "LOCATION_PERMISSION_DENIED",
+        {
+          permissionName: PermissionName.LOCATION_FOREGROUND,
+          status: normalized.status,
+          granted: normalized.granted,
+          canAskAgain: normalized.canAskAgain,
+        }
+      );
       return normalized;
     } catch (error) {
       permissionDebug("request_failed", { permissionName: PermissionName.LOCATION_FOREGROUND, error: error?.message || error });
+      recordRunEvent("LOCATION_PERMISSION_DENIED", {
+        permissionName: PermissionName.LOCATION_FOREGROUND,
+        status: "error",
+        error,
+      });
       return normalizePermission(PermissionName.LOCATION_FOREGROUND, null);
     }
   });
@@ -196,14 +215,31 @@ export const requestBackgroundLocationPermission = async () => {
     }
 
     permissionDebug("request", { permissionName: PermissionName.LOCATION_BACKGROUND });
+    recordRunEvent("LOCATION_PERMISSION_REQUESTED", {
+      permissionName: PermissionName.LOCATION_BACKGROUND,
+    });
     try {
       await markPermissionRequested(PermissionName.LOCATION_BACKGROUND);
       const result = await Location.requestBackgroundPermissionsAsync();
       const normalized = normalizePermission(PermissionName.LOCATION_BACKGROUND, result);
       permissionDebug("request_result", normalized);
+      recordRunEvent(
+        normalized.granted ? "LOCATION_PERMISSION_GRANTED" : "LOCATION_PERMISSION_DENIED",
+        {
+          permissionName: PermissionName.LOCATION_BACKGROUND,
+          status: normalized.status,
+          granted: normalized.granted,
+          canAskAgain: normalized.canAskAgain,
+        }
+      );
       return normalized;
     } catch (error) {
       permissionDebug("request_failed", { permissionName: PermissionName.LOCATION_BACKGROUND, error: error?.message || error });
+      recordRunEvent("LOCATION_PERMISSION_DENIED", {
+        permissionName: PermissionName.LOCATION_BACKGROUND,
+        status: "error",
+        error,
+      });
       return normalizePermission(PermissionName.LOCATION_BACKGROUND, null);
     }
   });

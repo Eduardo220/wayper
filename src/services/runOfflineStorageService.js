@@ -1,4 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import logger, { LOG_CATEGORIES } from "../utils/logger.js";
+import {
+  recordRunEvent,
+  recordRunSnapshotEvent,
+} from "./diagnostics/runDiagnosticsService.js";
 
 export const ACTIVE_RUN_STORAGE_KEY = "wayper_active_offline_run_v1";
 export const ACTIVE_RUN_SCHEMA_VERSION = 1;
@@ -33,9 +38,7 @@ function enqueueWrite(task) {
 
 function log(event, payload = {}) {
   if (typeof __DEV__ === "undefined" || !__DEV__) return;
-  try {
-    console.log(`${LOG_PREFIX} ${event}`, payload);
-  } catch {}
+  logger.debug(LOG_CATEGORIES.STORAGE, `${LOG_PREFIX} ${event}`, payload);
 }
 
 function nowIso() {
@@ -238,8 +241,18 @@ function buildBaseRun({
 export async function loadActiveRun() {
   try {
     const raw = await AsyncStorage.getItem(ACTIVE_RUN_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed?.localRunId) {
+      recordRunSnapshotEvent("RECOVERY_LOADED_ACTIVE_RUN", parsed, {
+        source: "offline_storage",
+      });
+    }
+    return parsed;
+  } catch (error) {
+    logger.error(LOG_CATEGORIES.STORAGE, "ACTIVE_RUN_LOAD_FAILED", {
+      error,
+      storageKey: ACTIVE_RUN_STORAGE_KEY,
+    });
     return null;
   }
 }
@@ -259,7 +272,18 @@ export async function saveActiveRun(run = {}) {
       schemaVersion: ACTIVE_RUN_SCHEMA_VERSION,
     };
 
-    await AsyncStorage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(normalized));
+    try {
+      await AsyncStorage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(normalized));
+      recordRunSnapshotEvent("ACTIVE_RUN_SAVED", normalized, {
+        source: "offline_storage",
+      });
+    } catch (error) {
+      recordRunSnapshotEvent("ACTIVE_RUN_SAVE_FAILED", normalized, {
+        source: "offline_storage",
+        error,
+      });
+      throw error;
+    }
     return normalized;
   });
 }
@@ -298,6 +322,12 @@ export async function updateActiveRun(patch = {}) {
         incomingCheckpointAtMs,
         status: incomingStatus,
       });
+      recordRunEvent("ACTIVE_RUN_STALE_CHECKPOINT_IGNORED", {
+        localRunId: existing.localRunId,
+        status: incomingStatus,
+        existingCheckpointAtMs,
+        incomingCheckpointAtMs,
+      });
       return existing;
     }
 
@@ -309,6 +339,14 @@ export async function updateActiveRun(patch = {}) {
         : patch.points !== undefined && basePoints.length > 0 && isLiveStatus(incomingStatus)
           ? basePoints
           : patchPoints || basePoints;
+    if (patch.points !== undefined && patchPoints?.length === 0 && basePoints.length > 0 && isLiveStatus(incomingStatus)) {
+      recordRunEvent("ACTIVE_RUN_EMPTY_OVERWRITE_BLOCKED", {
+        localRunId: incomingLocalRunId || base.localRunId,
+        status: incomingStatus,
+        field: "points",
+        preservedPointsCount: basePoints.length,
+      });
+    }
     const baseSegments = sanitizeSegments(base.segments, points);
     const patchSegments = patch.segments !== undefined ? sanitizeSegments(patch.segments, points) : null;
     const segments =
@@ -317,11 +355,28 @@ export async function updateActiveRun(patch = {}) {
         : patch.segments !== undefined && baseSegments.length > 0 && isLiveStatus(incomingStatus)
           ? baseSegments
           : patchSegments || baseSegments;
+    if (patch.segments !== undefined && patchSegments?.length === 0 && baseSegments.length > 0 && isLiveStatus(incomingStatus)) {
+      recordRunEvent("ACTIVE_RUN_EMPTY_OVERWRITE_BLOCKED", {
+        localRunId: incomingLocalRunId || base.localRunId,
+        status: incomingStatus,
+        field: "segments",
+        preservedSegmentsCount: baseSegments.length,
+      });
+    }
     const baseDistanceMeters = toFiniteNumber(base.distanceMeters, 0) ?? 0;
     const patchDistanceMeters = toFiniteNumber(patch.distanceMeters ?? patch.distance, baseDistanceMeters) ?? baseDistanceMeters;
     const distanceMeters = isLiveStatus(incomingStatus)
       ? Math.max(baseDistanceMeters, patchDistanceMeters)
       : patchDistanceMeters;
+    if (isLiveStatus(incomingStatus) && patchDistanceMeters < baseDistanceMeters) {
+      recordRunEvent("ACTIVE_RUN_DISTANCE_REGRESSION_BLOCKED", {
+        localRunId: incomingLocalRunId || base.localRunId,
+        status: incomingStatus,
+        previousDistanceMeters: baseDistanceMeters,
+        incomingDistanceMeters: patchDistanceMeters,
+        preservedDistanceMeters: distanceMeters,
+      });
+    }
     const checkpoint = normalizeCheckpointFields(patch);
 
     const next = {
@@ -339,7 +394,18 @@ export async function updateActiveRun(patch = {}) {
       schemaVersion: ACTIVE_RUN_SCHEMA_VERSION,
     };
 
-    await AsyncStorage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(next));
+    try {
+      await AsyncStorage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(next));
+      recordRunSnapshotEvent("ACTIVE_RUN_SAVED", next, {
+        source: "offline_storage",
+      });
+    } catch (error) {
+      recordRunSnapshotEvent("ACTIVE_RUN_SAVE_FAILED", next, {
+        source: "offline_storage",
+        error,
+      });
+      throw error;
+    }
     return next;
   });
 }
@@ -399,6 +465,9 @@ export async function finishActiveRun(runData = {}, options = {}) {
 export async function clearActiveRun() {
   return enqueueWrite(async () => {
     await AsyncStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
+    recordRunEvent("ACTIVE_RUN_CLEARED", {
+      source: "offline_storage",
+    });
   });
 }
 

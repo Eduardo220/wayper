@@ -2,6 +2,7 @@ import React from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { WayperTheme } from "../theme/wayperTheme";
 import { checkpointOnCaughtError } from "../services/run/runAutoSaveService.js";
+import { reportError } from "../services/diagnostics/errorReporter.js";
 
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -14,6 +15,12 @@ export default class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
+    reportError(error, {
+      event: "REACT_ERROR_BOUNDARY",
+      source: "ErrorBoundary",
+      screen: this.props.screen || null,
+      componentStack: info?.componentStack || null,
+    });
     checkpointOnCaughtError(error, {
       reason: "react_error_boundary",
       componentStack: info?.componentStack ? "captured" : null,

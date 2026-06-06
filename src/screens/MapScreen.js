@@ -127,6 +127,12 @@ import {
   ACTIVE_RUN_STATUS,
   ACTIVE_RUN_SYNC_STATUS,
 } from "../services/runOfflineStorageService";
+import logger, { LOG_CATEGORIES } from "../utils/logger.js";
+import {
+  recordLocationPointEvent,
+  recordRunEvent,
+  recordRunSnapshotEvent,
+} from "../services/diagnostics/runDiagnosticsService.js";
 
 /* Tunáveis */
 const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
@@ -172,14 +178,13 @@ const cancelReplayAnimationFrame = (handle) => {
 
 const debug = (...args) => {
   // habilite se precisar
-  // console.log("[MapScreen]", ...args);
+  // logger.debug(LOG_CATEGORIES.UNKNOWN, "MapScreen", { args });
 };
 
 const devLog = (prefix, message, payload = {}) => {
   if (typeof __DEV__ === "undefined" || !__DEV__) return;
-  try {
-    console.log(`[${prefix}] ${message}`, payload);
-  } catch {}
+  const category = prefix === "RunRecovery" ? LOG_CATEGORIES.RUN_RECOVERY : LOG_CATEGORIES.UNKNOWN;
+  logger.debug(category, message, payload);
 };
 
 const showRunShareFailure = (message, error) => {
@@ -592,6 +597,7 @@ const MapScreen = ({ navigation, route }) => {
   const restoreActiveRunForReentryRef = useRef(null);
   const restoringActiveRunRef = useRef(false);
   const lastNotificationOpenRequestRef = useRef(null);
+  const lastMapRouteDiagnosticRef = useRef("");
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
@@ -717,7 +723,7 @@ const MapScreen = ({ navigation, route }) => {
         });
       } catch (error) {
         lastTerritoryFetchRef.current = null;
-        console.warn("[Wayper] territory viewport load failed", error);
+        logger.warn(LOG_CATEGORIES.MAP, "TERRITORY_VIEWPORT_LOAD_FAILED", { error });
       } finally {
         if (mountedRef.current) setTerritoryLoading(false);
       }
@@ -782,7 +788,7 @@ const MapScreen = ({ navigation, route }) => {
           setSelectedTerritoryLeaderboard(leaderboard);
         }
       } catch (error) {
-        console.warn("[Wayper] territory leaderboard load failed", error);
+        logger.warn(LOG_CATEGORIES.MAP, "TERRITORY_LEADERBOARD_LOAD_FAILED", { error });
       }
     },
     [replaying, running, territories]
@@ -860,7 +866,7 @@ const MapScreen = ({ navigation, route }) => {
       setTerritories((prev) => mergeTerritoriesForMap(prev, cached, null));
       setZonesRanking(Array.isArray(ranking) ? ranking : []);
     } catch (error) {
-      console.warn("[Wayper] zones panel load failed", error);
+      logger.warn(LOG_CATEGORIES.MAP, "ZONES_PANEL_LOAD_FAILED", { error });
     } finally {
       if (mountedRef.current) setZonesPanelLoading(false);
     }
@@ -899,7 +905,7 @@ const MapScreen = ({ navigation, route }) => {
         setMapFollowEnabled(false);
       }
     } catch (error) {
-      console.warn("[Wayper] ranking user zones load failed", error);
+      logger.warn(LOG_CATEGORIES.MAP, "RANKING_USER_ZONES_LOAD_FAILED", { error });
     } finally {
       if (mountedRef.current) setZonesPanelLoading(false);
     }
@@ -996,11 +1002,23 @@ const MapScreen = ({ navigation, route }) => {
         appStateSub = AppState.addEventListener("change", (next) => {
           appStateRef.current = next;
           if (next !== "active" && currentRunIdRef.current) {
+            recordRunEvent("APP_BACKGROUND", {
+              runId: currentRunIdRef.current,
+              status: runStatusRef.current,
+              appState: next,
+              screen: "MapScreen",
+            });
             forceCheckpointForAppState(next).catch((error) => {
               debug("forceCheckpointForAppState failed", error);
             });
           }
           if (next === "active") {
+            recordRunEvent("APP_ACTIVE", {
+              runId: currentRunIdRef.current,
+              status: runStatusRef.current,
+              appState: next,
+              screen: "MapScreen",
+            });
             devLog("RunRecovery", "app became active", {
               activeRunId: currentRunIdRef.current,
               status: runStatusRef.current,
@@ -1221,6 +1239,13 @@ const MapScreen = ({ navigation, route }) => {
     (locObj = {}) => {
       try {
         if (locObj.source === "background" && appStateRef.current === "active" && watcherRef.current) {
+          recordLocationPointEvent("LOCATION_POINT_REJECTED", locObj, {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            reason: "background_point_ignored_foreground_watcher_alive",
+            appState: appStateRef.current,
+            screen: "MapScreen",
+          });
           return;
         }
 
@@ -1229,12 +1254,24 @@ const MapScreen = ({ navigation, route }) => {
             pointSession: locObj.runSessionId,
             currentSession: currentRunIdRef.current,
           });
+          recordLocationPointEvent("LOCATION_POINT_REJECTED", locObj, {
+            runId: currentRunIdRef.current,
+            reason: "stale_session",
+            pointSession: locObj.runSessionId,
+            currentSession: currentRunIdRef.current,
+            screen: "MapScreen",
+          });
           return;
         }
 
         const point = normalizeLocation(locObj);
         if (!point) {
           debugTracking("reject:normalize_failed", locObj);
+          recordLocationPointEvent("LOCATION_POINT_REJECTED", locObj, {
+            runId: currentRunIdRef.current,
+            reason: "invalid_coordinate",
+            screen: "MapScreen",
+          });
           return;
         }
 
@@ -1249,6 +1286,13 @@ const MapScreen = ({ navigation, route }) => {
             status: runStatusRef.current,
             source: locObj.source,
           });
+          recordLocationPointEvent("LOCATION_POINT_REJECTED", point, {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            reason: "inactive_run",
+            source: locObj.source,
+            screen: "MapScreen",
+          });
           return;
         }
 
@@ -1256,6 +1300,13 @@ const MapScreen = ({ navigation, route }) => {
           debugTracking("location_ignored_by_status", {
             status: runStatusRef.current,
             source: locObj.source,
+          });
+          recordLocationPointEvent("LOCATION_POINT_REJECTED", point, {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            reason: "invalid_run_status",
+            source: locObj.source,
+            screen: "MapScreen",
           });
           return;
         }
@@ -1295,6 +1346,17 @@ const MapScreen = ({ navigation, route }) => {
             rawPoints: result.pathQuality?.rawPoints,
             acceptedPoints: result.pathQuality?.acceptedPoints,
             segments: result.segments?.length || 0,
+          });
+          recordLocationPointEvent("LOCATION_POINT_REJECTED", result.rawPoint || point, {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            reason: result.reason,
+            action: result.action,
+            rawPointsCount: result.pathQuality?.rawPoints,
+            trustedPointsCount: result.pathQuality?.acceptedPoints,
+            segmentsCount: result.segments?.length || 0,
+            distance: distanceRef.current,
+            screen: "MapScreen",
           });
           return;
         }
@@ -1340,6 +1402,16 @@ const MapScreen = ({ navigation, route }) => {
             averageAccuracy: result.pathQuality?.averageAccuracy ?? null,
             maxAccuracy: result.pathQuality?.maxAccuracy ?? null,
           });
+          recordLocationPointEvent("LOCATION_POINT_ACCEPTED", result.point || point, {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            rawPointsCount: result.pathQuality?.rawPoints,
+            trustedPointsCount: result.pathQuality?.acceptedPoints,
+            displayPointsCount: livePath.length,
+            segmentsCount: displaySegmentsRef.current.length,
+            distance: distanceRef.current,
+            screen: "MapScreen",
+          });
           setRouteState(limitPathForRendering(trustedPath, ROUTE_CAP));
           setDisplayRouteState(livePath);
           setDisplayRouteSegments(displaySegmentsRef.current);
@@ -1349,6 +1421,13 @@ const MapScreen = ({ navigation, route }) => {
         }
       } catch (e) {
         debug("handleLocationUpdate", e);
+        recordRunEvent("LOCATION_POINT_REJECTED", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          reason: "handler_error",
+          error: e,
+          screen: "MapScreen",
+        });
         checkpointOnLocationError(e, {
           phase: "handle_location_update",
         }).catch((checkpointError) => {
@@ -1362,15 +1441,36 @@ const MapScreen = ({ navigation, route }) => {
   const stopBackgroundLocationService = useCallback(async () => {
     try {
       await activeRunTrackingService.stopBackgroundLocationUpdates?.({ reason: "map_control" });
+      recordRunEvent("LOCATION_WATCHER_STOPPED", {
+        runId: currentRunIdRef.current,
+        watcherStatus: "background_stop_requested",
+        reason: "map_control",
+        screen: "MapScreen",
+      });
     } catch (e) {
       debug("stopBackgroundLocationService", e);
+      recordRunEvent("LOCATION_WATCHER_STOPPED", {
+        runId: currentRunIdRef.current,
+        watcherStatus: "background_stop_failed",
+        reason: "map_control",
+        error: e,
+        screen: "MapScreen",
+      });
     }
   }, []);
 
   const startBackgroundLocationService = useCallback(async () => {
     try {
       const foreground = await checkLocationPermission();
-      if (!foreground.granted) return;
+      if (!foreground.granted) {
+        recordRunEvent("LOCATION_PERMISSION_DENIED", {
+          runId: currentRunIdRef.current,
+          permissionName: "locationForeground",
+          status: foreground.status,
+          screen: "MapScreen",
+        });
+        return;
+      }
 
       if (Platform.OS === "android") {
         const currentBackground = await checkBackgroundLocationPermission();
@@ -1379,6 +1479,13 @@ const MapScreen = ({ navigation, route }) => {
           : await requestBackgroundLocationPermission();
 
         if (!background.granted && !backgroundPermissionWarnedRef.current) {
+          recordRunEvent("LOCATION_PERMISSION_DENIED", {
+            runId: currentRunIdRef.current,
+            permissionName: "locationBackground",
+            status: background.status,
+            canAskAgain: background.canAskAgain,
+            screen: "MapScreen",
+          });
           backgroundPermissionWarnedRef.current = true;
           Alert.alert(
             "Corrida em segundo plano",
@@ -1396,8 +1503,19 @@ const MapScreen = ({ navigation, route }) => {
       }
 
       await activeRunTrackingService.startBackgroundLocationUpdates?.({ force: true });
+      recordRunEvent("LOCATION_WATCHER_STARTED", {
+        runId: currentRunIdRef.current,
+        watcherStatus: "background_start_requested",
+        screen: "MapScreen",
+      });
     } catch (e) {
       debug("startBackgroundLocationService", e);
+      recordRunEvent("LOCATION_WATCHER_RESTARTED", {
+        runId: currentRunIdRef.current,
+        watcherStatus: "background_start_failed",
+        error: e,
+        screen: "MapScreen",
+      });
       checkpointOnLocationError(e, {
         phase: "background_location_service",
       }).catch((checkpointError) => {
@@ -1408,10 +1526,20 @@ const MapScreen = ({ navigation, route }) => {
 
   const startLocationWatcher = useCallback(async () => {
     if (watcherRef.current) {
+      recordRunEvent("LOCATION_WATCHER_STARTED", {
+        runId: currentRunIdRef.current,
+        watcherStatus: "foreground_watcher_alive",
+        screen: "MapScreen",
+      });
       devLog("RunRecovery", "watcher alive", {
         activeRunId: currentRunIdRef.current,
       });
     } else if (currentRunIdRef.current) {
+      recordRunEvent("LOCATION_WATCHER_RESTARTED", {
+        runId: currentRunIdRef.current,
+        watcherStatus: "foreground_restarting",
+        screen: "MapScreen",
+      });
       devLog("RunRecovery", "restarting watcher without clearing path", {
         activeRunId: currentRunIdRef.current,
       });
@@ -1428,6 +1556,12 @@ const MapScreen = ({ navigation, route }) => {
         locationPermissionRef.current = permission;
         setPermissionDenied(true);
         setRunPermissionNoticeVisible(true);
+        recordRunEvent("LOCATION_PERMISSION_DENIED", {
+          runId: currentRunIdRef.current,
+          permissionName: "locationForeground",
+          status: permission.status,
+          screen: "MapScreen",
+        });
         return;
       }
 
@@ -1468,6 +1602,14 @@ const MapScreen = ({ navigation, route }) => {
             return;
           }
           debugTracking("watcher_accuracy_selected", { accuracy });
+          recordRunEvent("LOCATION_WATCHER_STARTED", {
+            runId: runSessionId,
+            watcherStatus: "foreground_started",
+            accuracy,
+            distanceInterval: WATCH_DISTANCE_INTERVAL,
+            timeInterval: WATCH_TIME_INTERVAL_MS,
+            screen: "MapScreen",
+          });
           break;
         } catch (watchError) {
           lastWatchError = watchError;
@@ -1528,6 +1670,12 @@ const MapScreen = ({ navigation, route }) => {
         return;
       }
       watcherRef.current = { pollingInterval: poll };
+      recordRunEvent("LOCATION_WATCHER_STARTED", {
+        runId: runSessionId,
+        watcherStatus: "fallback_polling_started",
+        timeInterval: WATCH_TIME_INTERVAL_MS,
+        screen: "MapScreen",
+      });
     }
   }, [handleLocationUpdate, stopWatcherAndPolling]);
 
@@ -1590,12 +1738,21 @@ const MapScreen = ({ navigation, route }) => {
         activeRunId: snapshot.activeRunId,
         previousPoints: previousTrustedPath.length,
       });
+      recordRunSnapshotEvent("ACTIVE_RUN_EMPTY_OVERWRITE_BLOCKED", snapshot, {
+        previousPoints: previousTrustedPath.length,
+        screen: "MapScreen",
+      });
     }
     if (status === ACTIVE_RUN_STATUS.RUNNING && incomingDistanceMeters < (distanceRef.current || 0)) {
       devLog("RunGeometry", "distance preserved", {
         activeRunId: snapshot.activeRunId,
         previousDistanceMeters: distanceRef.current,
         incomingDistanceMeters,
+      });
+      recordRunSnapshotEvent("ACTIVE_RUN_DISTANCE_REGRESSION_BLOCKED", snapshot, {
+        previousDistanceMeters: distanceRef.current,
+        incomingDistanceMeters,
+        screen: "MapScreen",
       });
     }
 
@@ -1631,6 +1788,13 @@ const MapScreen = ({ navigation, route }) => {
       points: trustedPath.length,
       segments: segmentSnapshot.length,
       status,
+    });
+    recordRunSnapshotEvent("MAP_ROUTE_HYDRATED", snapshot, {
+      routePointsCount: trustedPath.length,
+      routeSegmentsCount: segmentSnapshot.length,
+      displayPointsCount: livePath.length,
+      recovered: Boolean(options.recovered),
+      screen: "MapScreen",
     });
 
     if (status === ACTIVE_RUN_STATUS.RUNNING) {
@@ -1679,15 +1843,42 @@ const MapScreen = ({ navigation, route }) => {
   /* ===== Start / Pause / Stop run ===== */
   const startWithCountdown = useCallback(
     async (selectedMode = "free") => {
-      if (counting || running) return;
+      recordRunEvent("RUN_START_ATTEMPT", {
+        mode: selectedMode,
+        counting,
+        running,
+        screen: "MapScreen",
+      });
+      if (counting || running) {
+        recordRunEvent("RUN_START_FAILED", {
+          mode: selectedMode,
+          reason: "invalid_state",
+          counting,
+          running,
+          level: "warn",
+          screen: "MapScreen",
+        });
+        return;
+      }
       const permission = await ensureLocationForRun();
       setLocationPermission(permission);
       locationPermissionRef.current = permission;
       setPermissionDenied(!permission.granted);
       if (!permission.granted) {
+        recordRunEvent("LOCATION_PERMISSION_DENIED", {
+          permissionName: "locationForeground",
+          status: permission.status,
+          canAskAgain: permission.canAskAgain,
+          screen: "MapScreen",
+        });
         setRunPermissionNoticeVisible(true);
         return;
       }
+      recordRunEvent("LOCATION_PERMISSION_GRANTED", {
+        permissionName: "locationForeground",
+        status: permission.status,
+        screen: "MapScreen",
+      });
       if (Platform.OS !== "web") {
         const currentBackground = await checkBackgroundLocationPermission();
         const background = currentBackground.granted
@@ -1695,6 +1886,12 @@ const MapScreen = ({ navigation, route }) => {
           : await requestBackgroundLocationPermission();
 
         if (!background.granted) {
+          recordRunEvent("LOCATION_PERMISSION_DENIED", {
+            permissionName: "locationBackground",
+            status: background.status,
+            canAskAgain: background.canAskAgain,
+            screen: "MapScreen",
+          });
           setRunPermissionNoticeVisible(true);
           Alert.alert(
             "Localizacao em segundo plano",
@@ -1708,6 +1905,11 @@ const MapScreen = ({ navigation, route }) => {
           );
           return;
         }
+        recordRunEvent("LOCATION_PERMISSION_GRANTED", {
+          permissionName: "locationBackground",
+          status: background.status,
+          screen: "MapScreen",
+        });
       }
       if (Platform.OS === "android") {
         const notificationPermission = await ensureRunNotificationPermission({ request: true });
@@ -1773,13 +1975,31 @@ const MapScreen = ({ navigation, route }) => {
   const startRun = useCallback(
     async (selectedMode = "free") => {
       try {
-        if (runningRef.current || running) return;
+        recordRunEvent("RUN_START_ATTEMPT", {
+          mode: selectedMode,
+          running: runningRef.current || running,
+          screen: "MapScreen",
+        });
+        if (runningRef.current || running) {
+          recordRunEvent("RUN_START_FAILED", {
+            mode: selectedMode,
+            reason: "already_running",
+            level: "warn",
+            screen: "MapScreen",
+          });
+          return;
+        }
 
         const permission = await checkLocationPermission();
         setLocationPermission(permission);
         locationPermissionRef.current = permission;
         setPermissionDenied(!permission.granted);
         if (!permission.granted) {
+          recordRunEvent("LOCATION_PERMISSION_DENIED", {
+            permissionName: "locationForeground",
+            status: permission.status,
+            screen: "MapScreen",
+          });
           setRunPermissionNoticeVisible(true);
           setCounting(false);
           return;
@@ -1807,6 +2027,12 @@ const MapScreen = ({ navigation, route }) => {
         timeSecRef.current = 0;
         setTimeSec(0);
         debugTracking("session_started", { runSessionId: currentRunIdRef.current, mode: selectedMode });
+        recordRunEvent("RUN_STARTED", {
+          runId,
+          mode: selectedMode,
+          status: "RUNNING",
+          screen: "MapScreen",
+        });
         try {
           const activeSnapshot = await activeRunTrackingService.startActiveRun?.({
             activeRunId: runId,
@@ -1833,6 +2059,13 @@ const MapScreen = ({ navigation, route }) => {
           }
         } catch (activeRunError) {
           debug("startActiveRun service failed", activeRunError);
+          recordRunEvent("RUN_START_FAILED", {
+            runId,
+            mode: selectedMode,
+            source: "activeRunTrackingService",
+            error: activeRunError,
+            screen: "MapScreen",
+          });
         }
 
         startElapsedTimer();
@@ -1868,13 +2101,35 @@ const MapScreen = ({ navigation, route }) => {
         await startBackgroundLocationService();
       } catch (e) {
         debug("startRun catch", e);
+        recordRunEvent("RUN_START_FAILED", {
+          mode: selectedMode,
+          error: e,
+          screen: "MapScreen",
+        });
       }
     },
     [applyActiveRunSnapshotToUi, closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]
   );
 
   const pauseRun = useCallback(() => {
-    if (!running || paused) return;
+    recordRunEvent("PAUSE_PRESSED", {
+      runId: currentRunIdRef.current,
+      status: runStatusRef.current,
+      running,
+      paused,
+      screen: "MapScreen",
+    });
+    if (!running || paused) {
+      recordRunEvent("PAUSE_FAILED", {
+        runId: currentRunIdRef.current,
+        status: runStatusRef.current,
+        reason: "invalid_state",
+        running,
+        paused,
+        screen: "MapScreen",
+      });
+      return;
+    }
 
     runningRef.current = false;
     runStatusRef.current = "paused";
@@ -1888,14 +2143,45 @@ const MapScreen = ({ navigation, route }) => {
     });
     activeRunTrackingService.pauseActiveRun?.({ endedAtMs: Date.now() }).catch((error) => {
       debug("pauseActiveRun service failed", error);
+      recordRunEvent("PAUSE_FAILED", {
+        runId: currentRunIdRef.current,
+        status: runStatusRef.current,
+        source: "activeRunTrackingService",
+        error,
+        screen: "MapScreen",
+      });
     });
     stopWatcherAndPolling();
     stopBackgroundLocationService();
     stopElapsedTimer();
+    recordRunEvent("PAUSE_SUCCESS", {
+      runId: currentRunIdRef.current,
+      status: "PAUSED",
+      segmentsCount: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
+      distance: distanceRef.current,
+      screen: "MapScreen",
+    });
   }, [flushRouteBufferToState, paused, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
 
   const resumeRun = useCallback(async () => {
-    if (!running || !paused) return;
+    recordRunEvent("RESUME_PRESSED", {
+      runId: currentRunIdRef.current,
+      status: runStatusRef.current,
+      running,
+      paused,
+      screen: "MapScreen",
+    });
+    if (!running || !paused) {
+      recordRunEvent("RESUME_FAILED", {
+        runId: currentRunIdRef.current,
+        status: runStatusRef.current,
+        reason: "invalid_state",
+        running,
+        paused,
+        screen: "MapScreen",
+      });
+      return;
+    }
 
     try {
       const permission = await checkLocationPermission();
@@ -1904,6 +2190,13 @@ const MapScreen = ({ navigation, route }) => {
       setPermissionDenied(!permission.granted);
       if (!permission.granted) {
         setRunPermissionNoticeVisible(true);
+        recordRunEvent("RESUME_FAILED", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          reason: "location_permission_denied",
+          permissionStatus: permission.status,
+          screen: "MapScreen",
+        });
         return;
       }
 
@@ -1950,8 +2243,20 @@ const MapScreen = ({ navigation, route }) => {
 
       await startLocationWatcher();
       await startBackgroundLocationService();
+      recordRunEvent("RESUME_SUCCESS", {
+        runId: currentRunIdRef.current,
+        status: "RUNNING",
+        segmentsCount: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
+        screen: "MapScreen",
+      });
     } catch (e) {
       debug("resumeRun catch", e);
+      recordRunEvent("RESUME_FAILED", {
+        runId: currentRunIdRef.current,
+        status: runStatusRef.current,
+        error: e,
+        screen: "MapScreen",
+      });
     }
   }, [paused, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]);
 
@@ -1992,7 +2297,23 @@ const MapScreen = ({ navigation, route }) => {
   const stopRun = useCallback(
     async (opts = {}) => {
       try {
-        if (!running && !runningRef.current && !opts.force) return;
+        recordRunEvent("FINISH_PRESSED", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          running: running || runningRef.current,
+          force: Boolean(opts.force),
+          fromRecovery: Boolean(opts.fromRecovery),
+          screen: "MapScreen",
+        });
+        if (!running && !runningRef.current && !opts.force) {
+          recordRunEvent("FINISH_FAILED", {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            reason: "invalid_state",
+            screen: "MapScreen",
+          });
+          return;
+        }
 
         runningRef.current = false;
         runStatusRef.current = "finishing";
@@ -2168,6 +2489,13 @@ const MapScreen = ({ navigation, route }) => {
           });
         } catch (storageError) {
           debug("persistFinishedRunDraft failed", storageError);
+          recordRunEvent("RUN_SAVED_LOCAL", {
+            runId,
+            reason: "finished_draft_failed",
+            error: storageError,
+            level: "warn",
+            screen: "MapScreen",
+          });
         }
 
         let savedLocalRun = null;
@@ -2180,11 +2508,22 @@ const MapScreen = ({ navigation, route }) => {
             offlineStatus: "PENDING_SYNC",
           });
           sync.scheduleRunsSync?.();
+          recordRunSnapshotEvent("RUN_SYNC_QUEUED", savedLocalRun || runData, {
+            source: "finish",
+            screen: "MapScreen",
+          });
           if (savedLocalRun?.id === runData.id) {
             await markRecoveredRunLocallySaved({ reason: "finish_local_run_saved" });
           }
         } catch (saveLocalError) {
           debug("final local run save failed; keeping active snapshot", saveLocalError);
+          recordRunEvent("RUN_SAVED_LOCAL", {
+            runId,
+            reason: "save_local_failed",
+            error: saveLocalError,
+            level: "warn",
+            screen: "MapScreen",
+          });
         }
 
         await fadeOutRoute();
@@ -2228,8 +2567,18 @@ const MapScreen = ({ navigation, route }) => {
           averageAccuracy: runData.pathQuality?.averageAccuracy ?? null,
           maxAccuracy: runData.pathQuality?.maxAccuracy ?? null,
         });
+        recordRunSnapshotEvent("FINISH_SUCCESS", savedLocalRun || runData, {
+          source: "MapScreen",
+          screen: "MapScreen",
+        });
       } catch (e) {
         debug("stopRun catch", e);
+        recordRunEvent("FINISH_FAILED", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          error: e,
+          screen: "MapScreen",
+        });
       }
     },
     [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, flushRouteBufferToState, mode, territories]
@@ -2352,6 +2701,13 @@ const MapScreen = ({ navigation, route }) => {
 
   const handleContinueRecovery = useCallback(async () => {
     if (!pendingRecovery || isFinishedRecovery(pendingRecovery)) return;
+    recordRunEvent("RECOVERY_STARTED", {
+      runId: pendingRecovery.id,
+      localRunId: pendingRecovery.localRunId,
+      source: pendingRecovery.source,
+      action: "continue",
+      screen: "MapScreen",
+    });
     setRecoveryActionLoading(true);
     try {
       await restoreRecoveryCandidateToUi(pendingRecovery, {
@@ -2361,11 +2717,31 @@ const MapScreen = ({ navigation, route }) => {
       });
       setRecoveryModalVisible(false);
       setPendingRecovery(null);
+      recordRunEvent("RECOVERY_COMPLETED", {
+        runId: pendingRecovery.id,
+        localRunId: pendingRecovery.localRunId,
+        source: pendingRecovery.source,
+        action: "continue",
+        screen: "MapScreen",
+      });
     } catch (error) {
       debug("continue recovery failed", error);
+      recordRunEvent("RECOVERY_FAILED", {
+        runId: pendingRecovery.id,
+        localRunId: pendingRecovery.localRunId,
+        source: pendingRecovery.source,
+        action: "continue",
+        error,
+        screen: "MapScreen",
+      });
       Alert.alert("Recuperacao", "Nao foi possivel continuar a corrida recuperada.");
     } finally {
       setRecoveryActionLoading(false);
+      recordRunEvent("RECOVERY_ACTION_LOADING_RELEASED", {
+        runId: pendingRecovery.id,
+        action: "continue",
+        screen: "MapScreen",
+      });
     }
   }, [
     pendingRecovery,
@@ -2374,6 +2750,13 @@ const MapScreen = ({ navigation, route }) => {
 
   const handleFinishRecovery = useCallback(async () => {
     if (!pendingRecovery) return;
+    recordRunEvent("FINISH_PRESSED", {
+      runId: pendingRecovery.id,
+      localRunId: pendingRecovery.localRunId,
+      source: "recovery_modal",
+      status: pendingRecovery.status,
+      screen: "MapScreen",
+    });
     setRecoveryActionLoading(true);
     try {
       setRecoveryModalVisible(false);
@@ -2387,6 +2770,12 @@ const MapScreen = ({ navigation, route }) => {
         setCurrentRunData(saved || runData);
         setShowRunModal(true);
         setPendingRecovery(null);
+        recordRunEvent("FINISH_SUCCESS", {
+          runId: pendingRecovery.id,
+          localRunId: pendingRecovery.localRunId,
+          source: "recovery_modal_finished",
+          screen: "MapScreen",
+        });
         return;
       }
 
@@ -2401,9 +2790,21 @@ const MapScreen = ({ navigation, route }) => {
       setPendingRecovery(null);
     } catch (error) {
       debug("finish recovery failed", error);
+      recordRunEvent("FINISH_FAILED", {
+        runId: pendingRecovery.id,
+        localRunId: pendingRecovery.localRunId,
+        source: "recovery_modal",
+        error,
+        screen: "MapScreen",
+      });
       Alert.alert("Recuperacao", "Nao foi possivel finalizar a corrida recuperada.");
     } finally {
       setRecoveryActionLoading(false);
+      recordRunEvent("RECOVERY_ACTION_LOADING_RELEASED", {
+        runId: pendingRecovery.id,
+        action: "finish",
+        screen: "MapScreen",
+      });
     }
   }, [
     applyActiveRunSnapshotToUi,
@@ -2881,6 +3282,34 @@ const MapScreen = ({ navigation, route }) => {
       setShareLoading(null);
     }
   }, [getSavedShareContext, lastSavedRun, shareLoading]);
+
+  useEffect(() => {
+    const diagnosticRoutePath = running || paused ? displayRouteState : routeState;
+    const diagnosticRouteSegments = running || paused ? displayRouteSegments : splitPathIntoSegments(diagnosticRoutePath);
+    const routePointsCount = Array.isArray(diagnosticRoutePath) ? diagnosticRoutePath.length : 0;
+    const routeSegmentsCount = Array.isArray(diagnosticRouteSegments) ? diagnosticRouteSegments.length : 0;
+    const displayPointsCount = Array.isArray(displayRouteState) ? displayRouteState.length : 0;
+    const diagnosticKey = [
+      currentRunIdRef.current || "no-run",
+      routePointsCount,
+      routeSegmentsCount,
+      displayPointsCount,
+      running ? "running" : paused ? "paused" : replaying ? "replay" : "idle",
+    ].join(":");
+    if (diagnosticKey === lastMapRouteDiagnosticRef.current) return;
+    lastMapRouteDiagnosticRef.current = diagnosticKey;
+    if (routePointsCount === 0 && routeSegmentsCount === 0) return;
+
+    recordRunEvent("MAP_ROUTE_RENDERED", {
+      runId: currentRunIdRef.current,
+      status: runStatusRef.current,
+      routePointsCount,
+      routeSegmentsCount,
+      displayPointsCount,
+      lastValidRoutePointsCount: routeStateRef.current?.length || 0,
+      screen: "MapScreen",
+    });
+  }, [displayRouteSegments, displayRouteState, paused, replaying, routeState, running]);
 
   /* ============= RENDER GUARD (corrigido) ============= */
   // Não travar a UI apenas por falta de location. Se permissões negadas, mostrar mensagem/fallback.

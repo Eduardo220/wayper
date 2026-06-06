@@ -18,6 +18,7 @@ import MapScreen from "../screens/MapScreen";
 import HomeScreen from "../screens/HomeScreen";
 import RankingScreen from "../screens/RankingScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import DiagnosticsScreen from "../screens/DiagnosticsScreen";
 
 // FRIENDS
 import FriendsScreen from "../screens/Friends/FriendsScreen";
@@ -39,6 +40,7 @@ import DashboardScreen from "../screens/Runs/DashboardScreen";
 import CustomDrawer from "../components/CustomDrawer";
 import { WayperTheme } from "../theme/wayperTheme";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
+import logger, { LOG_CATEGORIES } from "../utils/logger.js";
 
 // SYNC
 import * as sync from "../utils/sync";
@@ -46,6 +48,7 @@ import * as sync from "../utils/sync";
 const Drawer = createDrawerNavigator();
 const Stack = createNativeStackNavigator();
 const BRAND_LOGO = require("../../assets/logo.png");
+const SHOW_DIAGNOSTICS = typeof __DEV__ !== "undefined" && __DEV__;
 
 function HeaderTitle({ title }) {
   return (
@@ -172,7 +175,10 @@ export default function MainNavigator() {
       (err) => {
         const code = String(err?.code || "");
         if (code !== "unavailable") {
-          console.warn("Erro ao carregar usuario:", err);
+          logger.warn(LOG_CATEGORIES.FIREBASE, "USER_PROFILE_LOAD_FAILED", {
+            code,
+            error: err,
+          });
         }
         setUserData(null);
         setLoadingUser(false);
@@ -208,7 +214,7 @@ export default function MainNavigator() {
         sync.startAutoSync();
       }
     } catch (e) {
-      console.warn("startAutoSync failed:", e);
+      logger.warn(LOG_CATEGORIES.SYNC, "START_AUTO_SYNC_FAILED", { error: e });
     }
   }, [userData]);
 
@@ -219,7 +225,7 @@ export default function MainNavigator() {
     try {
       await signOut(auth);
     } catch (e) {
-      console.log("Erro ao deslogar:", e);
+      logger.warn(LOG_CATEGORIES.FIREBASE, "SIGN_OUT_FAILED", { error: e });
     }
   }
 
@@ -302,6 +308,9 @@ export default function MainNavigator() {
       <Drawer.Screen name="Ranking" component={RankingScreen} options={{ title: "Ranking" }} />
       <Drawer.Screen name="Amigos" component={FriendsStack} options={{ title: "Amigos" }} />
       <Drawer.Screen name="Grupos" component={GroupStack} options={{ title: "Grupos" }} />
+      {SHOW_DIAGNOSTICS && (
+        <Drawer.Screen name="Diagnostico" component={DiagnosticsScreen} options={{ title: "Diagnostico" }} />
+      )}
     </Drawer.Navigator>
   );
 }

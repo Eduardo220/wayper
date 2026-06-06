@@ -60,6 +60,11 @@ const {
   ACTIVE_RUN_STATUS,
   ACTIVE_RUN_STORAGE_KEY,
 } = await import("../activeRunState.js");
+const {
+  clearLogs,
+  getLogs,
+  __flushLogWritesForTests,
+} = await import("../../diagnostics/logStorageService.js");
 
 const BASE_TIME = 1_700_000_000_000;
 const BASE_POINT = {
@@ -77,12 +82,13 @@ function nextPoint(index = 1) {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   storage.clear();
   locationStarted = false;
   jest.clearAllMocks();
   TaskManagerMock.isTaskDefined.mockReturnValue(false);
   service.__resetActiveRunRuntimeForTests();
+  await clearLogs();
 });
 
 describe("activeRunTrackingService lifecycle", () => {
@@ -257,6 +263,9 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(hydrated.trustedPath).toHaveLength(5);
     expect(hydrated.segments).toHaveLength(1);
     expect(hydrated.meta.ignoredEmptyGeometryOverwrite).toBe(true);
+    await __flushLogWritesForTests();
+    const logs = await getLogs({ runId: "run-safe-empty-overwrite" });
+    expect(logs.map((log) => log.event)).toContain("ACTIVE_RUN_EMPTY_OVERWRITE_BLOCKED");
   });
 
   test("distancia preservada quando recovery recebe geometria parcial menor", async () => {
@@ -287,6 +296,9 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(hydrated.distanceMeters).toBe(existing.distanceMeters);
     expect(hydrated.trustedPath).toHaveLength(existing.trustedPath.length);
     expect(hydrated.meta.distancePreserved).toBe(true);
+    await __flushLogWritesForTests();
+    const logs = await getLogs({ runId: "run-distance-preserved" });
+    expect(logs.map((log) => log.event)).toContain("ACTIVE_RUN_DISTANCE_REGRESSION_BLOCKED");
   });
 
   test("fechar e abrir app recupera todos os pontos e continua append", async () => {
@@ -416,5 +428,8 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(restored.activeRunId).toBe("run-hydrated");
     expect(restored.status).toBe(ACTIVE_RUN_STATUS.PAUSED);
     expect(restored.trustedPath).toHaveLength(2);
+    await __flushLogWritesForTests();
+    const logs = await getLogs({ runId: "run-hydrated" });
+    expect(logs.map((log) => log.event)).toContain("RECOVERY_COMPLETED");
   });
 });

@@ -9,6 +9,7 @@ import {
 } from "@maplibre/maplibre-react-native";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { beautifyRoutePath, buildRunLineGeoJson } from "../../services/runTracking";
+import { recordRunEvent } from "../../services/diagnostics/runDiagnosticsService.js";
 import {
   leaderCellsToFeatureCollection,
   territoriesToFeatureCollection,
@@ -675,6 +676,18 @@ function FinishMarker() {
   );
 }
 
+function countGeometryCoordinates(geometry = {}) {
+  if (!geometry) return 0;
+  if (geometry.type === "LineString") return Array.isArray(geometry.coordinates) ? geometry.coordinates.length : 0;
+  if (geometry.type === "MultiLineString") {
+    return (Array.isArray(geometry.coordinates) ? geometry.coordinates : []).reduce(
+      (total, segment) => total + (Array.isArray(segment) ? segment.length : 0),
+      0
+    );
+  }
+  return 0;
+}
+
 function WayperMapLibre({
   style,
   location,
@@ -724,6 +737,7 @@ function WayperMapLibre({
   const lastCameraMoveAtRef = useRef(0);
   const lastRecenterSignalRef = useRef(recenterSignal);
   const programmaticMoveUntilRef = useRef(0);
+  const lastRouteGeoJsonDiagnosticRef = useRef("");
 
   const routeCollection = useMemo(
     () => buildRunLineGeoJson(
@@ -806,6 +820,28 @@ function WayperMapLibre({
     () => (fitToContent ? buildBounds([leaderCellsCollection, territoriesCollection, zonesCollection, replayCollection, routeCollection]) : null),
     [fitToContent, leaderCellsCollection, territoriesCollection, zonesCollection, replayCollection, routeCollection]
   );
+
+  useEffect(() => {
+    const routeFeature = routeCollection.features?.[0] || null;
+    const routePointsCount = countGeometryCoordinates(routeFeature?.geometry);
+    const diagnosticKey = [
+      routeFeature?.geometry?.type || "none",
+      routePointsCount,
+      routeCollection.features?.length || 0,
+      routeMode,
+    ].join(":");
+    if (diagnosticKey === lastRouteGeoJsonDiagnosticRef.current) return;
+    lastRouteGeoJsonDiagnosticRef.current = diagnosticKey;
+    if (!routeFeature || routePointsCount === 0) return;
+
+    recordRunEvent("MAP_GEOJSON_REBUILT", {
+      geometryType: routeFeature.geometry?.type || null,
+      routeFeaturesCount: routeCollection.features.length,
+      routePointsCount,
+      routeMode,
+      preserveGeometry: true,
+    });
+  }, [routeCollection, routeMode]);
 
   const moveCameraTo = useCallback((center, zoom, duration) => {
     if (!center || !cameraRef.current?.setStop) return;
@@ -962,6 +998,9 @@ function WayperMapLibre({
         onDidFailLoadingMap={() => {
           setIsLoading(false);
           setHasError(true);
+          recordRunEvent("MAP_ERROR", {
+            reason: "did_fail_loading_map",
+          });
         }}
         onRegionWillChange={handleRegionWillChange}
         onRegionDidChange={handleRegionDidChange}
