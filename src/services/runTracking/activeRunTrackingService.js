@@ -11,6 +11,7 @@ import {
   createRunId,
   createSnapshotFromTrackingSession,
   createTrackingSessionFromSnapshot,
+  mergeActiveRunSnapshots,
   normalizeActiveRunSnapshot,
   nowIso,
 } from "./activeRunState.js";
@@ -39,6 +40,21 @@ function log(event, payload = {}) {
   } catch {}
 }
 
+function devLog(prefix, message, payload = {}) {
+  if (!debugEnabled) return;
+  try {
+    console.log(`[${prefix}] ${message}`, payload);
+  } catch {}
+}
+
+function logRunRecovery(message, payload = {}) {
+  devLog("RunRecovery", message, payload);
+}
+
+function logRunGeometry(message, payload = {}) {
+  devLog("RunGeometry", message, payload);
+}
+
 function emit(event, payload) {
   const set = listeners[event];
   if (!set) return;
@@ -61,9 +77,32 @@ function emitError(error, context = {}) {
 }
 
 async function persistSnapshot(snapshot, event = "snapshot_saved") {
-  const normalized = normalizeActiveRunSnapshot(snapshot);
+  const incoming = normalizeActiveRunSnapshot(snapshot);
+  const shouldMerge =
+    activeSnapshot?.activeRunId &&
+    incoming?.activeRunId &&
+    activeSnapshot.activeRunId === incoming.activeRunId &&
+    event !== "run_started";
+  const normalized = shouldMerge
+    ? mergeActiveRunSnapshots(activeSnapshot, incoming)
+    : incoming;
   activeSnapshot = normalized;
   await storage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(normalized));
+  if (normalized?.meta?.ignoredEmptyGeometryOverwrite) {
+    logRunGeometry("ignored empty segment overwrite", {
+      activeRunId: normalized.activeRunId,
+      event,
+      segments: normalized.segments?.length || 0,
+      points: normalized.trustedPath?.length || 0,
+    });
+  }
+  if (normalized?.meta?.distancePreserved) {
+    logRunGeometry("distance preserved", {
+      activeRunId: normalized.activeRunId,
+      event,
+      distanceMeters: normalized.distanceMeters,
+    });
+  }
   log(event, {
     activeRunId: normalized.activeRunId,
     status: normalized.status,
@@ -154,9 +193,19 @@ export async function startBackgroundLocationUpdates(options = {}) {
     const started = await Location.hasStartedLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK).catch(() => false);
     if (started && !options.force) {
       backgroundStarted = true;
+      logRunRecovery("watcher alive", {
+        activeRunId: snapshot.activeRunId,
+        task: ACTIVE_RUN_LOCATION_TASK,
+      });
       return true;
     }
 
+    if (!started) {
+      logRunRecovery("restarting watcher without clearing path", {
+        activeRunId: snapshot.activeRunId,
+        task: ACTIVE_RUN_LOCATION_TASK,
+      });
+    }
     await Location.startLocationUpdatesAsync(
       ACTIVE_RUN_LOCATION_TASK,
       getBackgroundOptions(snapshot.notificationBody || NOTIFICATION_BODY)
@@ -262,6 +311,12 @@ export async function restoreActiveRun(options = {}) {
 
   const snapshot = await loadPersistedSnapshot();
   if (!snapshot) return null;
+  logRunRecovery("loaded active run", {
+    activeRunId: snapshot.activeRunId,
+    status: snapshot.status,
+    segments: snapshot.segments?.length || 0,
+    points: snapshot.trustedPath?.length || 0,
+  });
 
   return hydrateActiveRunSnapshot({
     ...snapshot,
@@ -310,8 +365,27 @@ export async function hydrateActiveRunSnapshot(snapshot = {}, options = {}) {
       return protectedSnapshot;
     }
 
-    activeSession = createTrackingSessionFromSnapshot(normalized);
-    const saved = await persistSnapshot(normalized, options.event || "run_hydrated");
+    logRunRecovery("segments before merge", {
+      activeRunId: normalized.activeRunId,
+      existingSegments: existing?.segments?.length || 0,
+      incomingSegments: normalized.segments?.length || 0,
+      existingPoints: existing?.trustedPath?.length || existing?.path?.length || 0,
+      incomingPoints: normalized.trustedPath?.length || normalized.path?.length || 0,
+    });
+
+    const reconciled = existing?.activeRunId === normalized.activeRunId
+      ? mergeActiveRunSnapshots(existing, normalized, options)
+      : normalized;
+
+    logRunRecovery("segments after merge", {
+      activeRunId: reconciled.activeRunId,
+      segments: reconciled.segments?.length || 0,
+      points: reconciled.trustedPath?.length || 0,
+      distanceMeters: reconciled.distanceMeters,
+    });
+
+    activeSession = createTrackingSessionFromSnapshot(reconciled);
+    const saved = await persistSnapshot(reconciled, options.event || "run_hydrated");
 
     log("run_hydrated", {
       activeRunId: saved.activeRunId,
@@ -346,6 +420,15 @@ export async function recordLocation(location = {}, options = {}) {
     if (!result.accepted && !result.currentPositionChanged && !result.pathChanged) {
       log("point_ignored", { reason: result.reason, source });
       return activeSnapshot;
+    }
+
+    if (result.accepted) {
+      logRunGeometry("append point to segment", {
+        activeRunId: activeSnapshot.activeRunId,
+        segmentId: result.point?.segmentId ?? null,
+        points: result.trustedPath?.length || 0,
+        source,
+      });
     }
 
     const snapshot = createSnapshotFromTrackingSession(session, activeSnapshot, {

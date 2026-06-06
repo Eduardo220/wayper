@@ -8,6 +8,7 @@ import {
   createSnapshotFromTrackingSession,
   createTrackingSession,
   createTrackingSessionFromSnapshot,
+  mergeActiveRunSnapshots,
   normalizeActiveRunSnapshot,
 } from "../index.js";
 
@@ -130,8 +131,68 @@ describe("active run persistence state", () => {
     const cleanupEnd = mapScreen.indexOf("}, [refreshForegroundLocation]", cleanupStart);
     const cleanup = mapScreen.slice(cleanupStart, cleanupEnd);
     expect(cleanup).not.toContain("stopBackgroundLocationService()");
+    expect(cleanup).not.toContain("resetTrackingPipeline");
+    expect(cleanup).not.toContain("resetRunVisuals");
     expect(mapScreen).toContain("activeRunTrackingService.startActiveRun");
+    expect(mapScreen).toContain("restoreActiveRunForReentry");
     expect(mapScreen).toContain("checkpointOnLocationError");
     expect(mapScreen).toContain('reason: "before_finish"');
+    expect(mapScreen).toContain("hydrated route points count");
+  });
+
+  test("merge seguro nao sobrescreve segments reais com default vazio", () => {
+    const existing = makeRunningSnapshot();
+    const incomingEmpty = normalizeActiveRunSnapshot({
+      activeRunId: existing.activeRunId,
+      userId: existing.userId,
+      mode: existing.mode,
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAtMs: existing.startedAtMs,
+      lastUpdatedAtMs: existing.lastUpdatedAtMs + 1000,
+      points: [],
+      path: [],
+      trustedPath: [],
+      filteredPoints: [],
+      rawPath: [],
+      rawPoints: [],
+      liveRenderPath: [],
+      displayPoints: [],
+      segments: [],
+      routeSegments: [],
+      distanceMeters: 0,
+    });
+
+    const merged = mergeActiveRunSnapshots(existing, incomingEmpty);
+
+    expect(merged.trustedPath).toHaveLength(existing.trustedPath.length);
+    expect(merged.segments).toHaveLength(1);
+    expect(merged.segments[0].trustedPath).toHaveLength(existing.trustedPath.length);
+    expect(merged.meta.ignoredEmptyGeometryOverwrite).toBe(true);
+  });
+
+  test("distancia nao regride durante RUNNING com geometria parcial", () => {
+    const existing = {
+      ...makeRunningSnapshot(),
+      distanceMeters: 930,
+      distance: 930,
+    };
+    const incomingPartial = normalizeActiveRunSnapshot({
+      ...existing,
+      points: existing.trustedPath.slice(-1),
+      path: existing.trustedPath.slice(-1),
+      trustedPath: existing.trustedPath.slice(-1),
+      filteredPoints: existing.trustedPath.slice(-1),
+      segments: [],
+      routeSegments: [],
+      distanceMeters: 880,
+      distance: 880,
+      lastUpdatedAtMs: existing.lastUpdatedAtMs + 1000,
+    });
+
+    const merged = mergeActiveRunSnapshots(existing, incomingPartial);
+
+    expect(merged.distanceMeters).toBe(930);
+    expect(merged.trustedPath).toHaveLength(existing.trustedPath.length);
+    expect(merged.meta.distancePreserved).toBe(true);
   });
 });

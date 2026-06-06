@@ -141,6 +141,36 @@ describe("runOfflineStorageService", () => {
     expect(loaded.distanceMeters).toBe(120);
   });
 
+  test("checkpoint vivo parcial nao sobrescreve pontos, segments e distancia com vazio", async () => {
+    await createActiveRun({ localRunId: "run-empty-guard", userId: "user-1", mode: "free" });
+    await saveActiveRunSnapshot({
+      localRunId: "run-empty-guard",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      checkpointAtMs: 3000,
+      points: [
+        { latitude: -30, longitude: -51, timestamp: 1000, segmentId: 0 },
+        { latitude: -30.0005, longitude: -51, timestamp: 2000, segmentId: 0 },
+      ],
+      segments: [{ index: 0, startedAt: 1000, reason: "START" }],
+      durationMs: 20_000,
+      distanceMeters: 930,
+    });
+
+    const partial = await saveActiveRunSnapshot({
+      localRunId: "run-empty-guard",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      checkpointAtMs: 4000,
+      points: [],
+      segments: [],
+      durationMs: 22_000,
+      distanceMeters: 880,
+    });
+
+    expect(partial.points).toHaveLength(2);
+    expect(partial.segments).toHaveLength(1);
+    expect(partial.distanceMeters).toBe(930);
+  });
+
   test("dados locais corrompidos nao quebram o app", async () => {
     storage.set(ACTIVE_RUN_STORAGE_KEY, "{json-quebrado");
 

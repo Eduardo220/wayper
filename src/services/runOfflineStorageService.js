@@ -301,10 +301,27 @@ export async function updateActiveRun(patch = {}) {
       return existing;
     }
 
-    const points = patch.points ? sanitizePoints(patch.points) : sanitizePoints(base.points);
-    const segments = patch.segments
-      ? sanitizeSegments(patch.segments, points)
-      : sanitizeSegments(base.segments, points);
+    const basePoints = sanitizePoints(base.points);
+    const patchPoints = patch.points !== undefined ? sanitizePoints(patch.points) : null;
+    const points =
+      patchPoints && patchPoints.length > 0
+        ? patchPoints
+        : patch.points !== undefined && basePoints.length > 0 && isLiveStatus(incomingStatus)
+          ? basePoints
+          : patchPoints || basePoints;
+    const baseSegments = sanitizeSegments(base.segments, points);
+    const patchSegments = patch.segments !== undefined ? sanitizeSegments(patch.segments, points) : null;
+    const segments =
+      patchSegments && patchSegments.length > 0
+        ? patchSegments
+        : patch.segments !== undefined && baseSegments.length > 0 && isLiveStatus(incomingStatus)
+          ? baseSegments
+          : patchSegments || baseSegments;
+    const baseDistanceMeters = toFiniteNumber(base.distanceMeters, 0) ?? 0;
+    const patchDistanceMeters = toFiniteNumber(patch.distanceMeters ?? patch.distance, baseDistanceMeters) ?? baseDistanceMeters;
+    const distanceMeters = isLiveStatus(incomingStatus)
+      ? Math.max(baseDistanceMeters, patchDistanceMeters)
+      : patchDistanceMeters;
     const checkpoint = normalizeCheckpointFields(patch);
 
     const next = {
@@ -314,6 +331,7 @@ export async function updateActiveRun(patch = {}) {
       mode: normalizeOfflineMode(patch.mode || base.mode),
       points,
       segments,
+      distanceMeters,
       territoryData: patch.territoryData === undefined ? base.territoryData : patch.territoryData,
       updatedAt: nowIso(),
       checkpointAt: checkpoint.checkpointAt,

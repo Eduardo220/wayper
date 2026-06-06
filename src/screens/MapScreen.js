@@ -175,6 +175,13 @@ const debug = (...args) => {
   // console.log("[MapScreen]", ...args);
 };
 
+const devLog = (prefix, message, payload = {}) => {
+  if (typeof __DEV__ === "undefined" || !__DEV__) return;
+  try {
+    console.log(`[${prefix}] ${message}`, payload);
+  } catch {}
+};
+
 const showRunShareFailure = (message, error) => {
   const userMessage = getShareUnavailableMessage(error, message);
   if (error?.code === "TRACE_POINTS_INSUFFICIENT") {
@@ -994,6 +1001,10 @@ const MapScreen = ({ navigation, route }) => {
             });
           }
           if (next === "active") {
+            devLog("RunRecovery", "app became active", {
+              activeRunId: currentRunIdRef.current,
+              status: runStatusRef.current,
+            });
             const restoreForReentry = restoreActiveRunForReentryRef.current;
             if (typeof restoreForReentry === "function") {
               restoreForReentry({
@@ -1396,6 +1407,15 @@ const MapScreen = ({ navigation, route }) => {
   }, []);
 
   const startLocationWatcher = useCallback(async () => {
+    if (watcherRef.current) {
+      devLog("RunRecovery", "watcher alive", {
+        activeRunId: currentRunIdRef.current,
+      });
+    } else if (currentRunIdRef.current) {
+      devLog("RunRecovery", "restarting watcher without clearing path", {
+        activeRunId: currentRunIdRef.current,
+      });
+    }
     stopWatcherAndPolling();
     const runSessionId = currentRunIdRef.current;
     const startToken = watcherStartTokenRef.current + 1;
@@ -1540,10 +1560,15 @@ const MapScreen = ({ navigation, route }) => {
     const status = snapshot.status || ACTIVE_RUN_STATUS.RUNNING;
     const isPaused = status === ACTIVE_RUN_STATUS.PAUSED;
     const isLive = status === ACTIVE_RUN_STATUS.RUNNING || isPaused;
+    const previousSameRun = Boolean(currentRunIdRef.current && currentRunIdRef.current === snapshot.activeRunId);
     const session = createTrackingSessionFromSnapshot(snapshot);
     const trackingState = session.getState?.() || {};
-    const trustedPath = sanitizePath(trackingState.trustedPath || snapshot.trustedPath || snapshot.path || []);
-    const liveSegments = sanitizeSegmentPaths(trackingState.liveRenderSegments || snapshot.routeSegments || snapshot.segments || []);
+    const restoredTrustedPath = sanitizePath(trackingState.trustedPath || snapshot.trustedPath || snapshot.path || []);
+    const previousTrustedPath = previousSameRun ? sanitizePath(savedPathRef.current || routeStateRef.current || []) : [];
+    const trustedPath = restoredTrustedPath.length > 0 ? restoredTrustedPath : previousTrustedPath;
+    const restoredLiveSegments = sanitizeSegmentPaths(trackingState.liveRenderSegments || snapshot.routeSegments || snapshot.segments || []);
+    const previousLiveSegments = previousSameRun ? sanitizeSegmentPaths(displaySegmentsRef.current || []) : [];
+    const liveSegments = restoredLiveSegments.length > 0 ? restoredLiveSegments : previousLiveSegments;
     const livePath = limitPathForRendering(
       liveSegments.length > 0
         ? flattenSegmentPaths(liveSegments)
@@ -1552,10 +1577,27 @@ const MapScreen = ({ navigation, route }) => {
     );
     const segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
     const durationSeconds = calculateActiveRunDurationSeconds(snapshot);
-    const distanceMeters = Number(snapshot.distanceMeters ?? snapshot.distance ?? trackingState.stats?.distanceMeters ?? 0) || 0;
+    const incomingDistanceMeters = Number(snapshot.distanceMeters ?? snapshot.distance ?? trackingState.stats?.distanceMeters ?? 0) || 0;
+    const distanceMeters = status === ACTIVE_RUN_STATUS.RUNNING && previousSameRun
+      ? Math.max(distanceRef.current || 0, incomingDistanceMeters)
+      : incomingDistanceMeters;
     const previousRunStatus = runStatusRef.current;
     const shouldSyncControls = options.syncControls !== false;
     const forceSyncControls = options.forceSyncControls === true;
+
+    if (previousSameRun && restoredTrustedPath.length === 0 && previousTrustedPath.length > 0) {
+      devLog("RunGeometry", "ignored empty segment overwrite", {
+        activeRunId: snapshot.activeRunId,
+        previousPoints: previousTrustedPath.length,
+      });
+    }
+    if (status === ACTIVE_RUN_STATUS.RUNNING && incomingDistanceMeters < (distanceRef.current || 0)) {
+      devLog("RunGeometry", "distance preserved", {
+        activeRunId: snapshot.activeRunId,
+        previousDistanceMeters: distanceRef.current,
+        incomingDistanceMeters,
+      });
+    }
 
     trackingSessionRef.current = session;
     currentRunIdRef.current = snapshot.activeRunId;
@@ -1584,6 +1626,12 @@ const MapScreen = ({ navigation, route }) => {
     setTimeSec(durationSeconds);
     if (snapshot.currentLocation) setLocation(snapshot.currentLocation);
     setGpsQualityWarning(getGpsQualityWarning(snapshot.gpsQualitySummary || snapshot.pathQuality));
+    devLog("MapScreen", "hydrated route points count", {
+      activeRunId: snapshot.activeRunId,
+      points: trustedPath.length,
+      segments: segmentSnapshot.length,
+      status,
+    });
 
     if (status === ACTIVE_RUN_STATUS.RUNNING) {
       startElapsedTimer();

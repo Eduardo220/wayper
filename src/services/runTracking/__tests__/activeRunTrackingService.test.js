@@ -187,6 +187,151 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(afterRestorePoint.trustedPath.length).toBeGreaterThanOrEqual(restored.trustedPath.length);
   });
 
+  test("minimizar e voltar nao apaga rota nem cria segmento sem pausa", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-minimize-return",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    for (let index = 1; index <= 5; index += 1) {
+      await service.recordLocation(nextPoint(index), { source: "foreground" });
+    }
+
+    const before = await service.getActiveRunSnapshot();
+    const restored = await service.restoreActiveRun({ restartTracking: true });
+
+    expect(before.trustedPath).toHaveLength(5);
+    expect(restored.activeRunId).toBe("run-minimize-return");
+    expect(restored.trustedPath).toHaveLength(5);
+    expect(restored.segments).toHaveLength(before.segments.length);
+    expect(restored.segments).toHaveLength(1);
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+  });
+
+  test("novo ponto apos recovery entra no ultimo segmento existente", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-append-after-recovery",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    for (let index = 1; index <= 5; index += 1) {
+      await service.recordLocation(nextPoint(index), { source: "foreground" });
+    }
+
+    await service.restoreActiveRun({ restartTracking: true });
+    const updated = await service.recordLocation(nextPoint(6), { source: "foreground" });
+
+    expect(updated.trustedPath).toHaveLength(6);
+    expect(updated.segments).toHaveLength(1);
+    expect(updated.segments[0].trustedPath).toHaveLength(6);
+  });
+
+  test("hidratar snapshot parcial nao sobrescreve segments reais com vazio", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-safe-empty-overwrite",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    for (let index = 1; index <= 5; index += 1) {
+      await service.recordLocation(nextPoint(index), { source: "foreground" });
+    }
+
+    const hydrated = await service.hydrateActiveRunSnapshot({
+      activeRunId: "run-safe-empty-overwrite",
+      userId: "user-1",
+      mode: "free",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAtMs: BASE_TIME,
+      lastUpdatedAtMs: BASE_TIME + 20_000,
+      points: [],
+      path: [],
+      trustedPath: [],
+      filteredPoints: [],
+      rawPath: [],
+      rawPoints: [],
+      segments: [],
+      routeSegments: [],
+      distanceMeters: 0,
+    }, { restartTracking: false });
+
+    expect(hydrated.trustedPath).toHaveLength(5);
+    expect(hydrated.segments).toHaveLength(1);
+    expect(hydrated.meta.ignoredEmptyGeometryOverwrite).toBe(true);
+  });
+
+  test("distancia preservada quando recovery recebe geometria parcial menor", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-distance-preserved",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    for (let index = 1; index <= 5; index += 1) {
+      await service.recordLocation(nextPoint(index), { source: "foreground" });
+    }
+    const existing = await service.getActiveRunSnapshot();
+
+    const hydrated = await service.hydrateActiveRunSnapshot({
+      activeRunId: "run-distance-preserved",
+      userId: "user-1",
+      mode: "free",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAtMs: BASE_TIME,
+      lastUpdatedAtMs: BASE_TIME + 20_000,
+      trustedPath: existing.trustedPath.slice(-1),
+      rawPath: existing.rawPath.slice(-1),
+      segments: [],
+      routeSegments: [],
+      distanceMeters: Math.max(0, existing.distanceMeters - 50),
+    }, { restartTracking: false });
+
+    expect(hydrated.distanceMeters).toBe(existing.distanceMeters);
+    expect(hydrated.trustedPath).toHaveLength(existing.trustedPath.length);
+    expect(hydrated.meta.distancePreserved).toBe(true);
+  });
+
+  test("fechar e abrir app recupera todos os pontos e continua append", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-app-restart",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    for (let index = 1; index <= 5; index += 1) {
+      await service.recordLocation(nextPoint(index), { source: "foreground" });
+    }
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: true });
+    const updated = await service.recordLocation(nextPoint(6), { source: "foreground" });
+
+    expect(restored.trustedPath).toHaveLength(5);
+    expect(restored.segments).toHaveLength(1);
+    expect(updated.trustedPath).toHaveLength(6);
+    expect(updated.segments).toHaveLength(1);
+  });
+
+  test("pausa explicita permite novo segmento ao retomar, recovery nao cria outro", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-explicit-pause",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+    await service.recordLocation(nextPoint(2), { source: "foreground" });
+    await service.pauseActiveRun({ endedAtMs: BASE_TIME + 6000 });
+    await service.resumeActiveRun({ startedAtMs: BASE_TIME + 10_000 });
+    await service.recordLocation(nextPoint(6), { source: "foreground" });
+    await service.recordLocation(nextPoint(7), { source: "foreground" });
+
+    const beforeRestore = await service.getActiveRunSnapshot();
+    const restored = await service.restoreActiveRun({ restartTracking: true });
+    const updated = await service.recordLocation(nextPoint(8), { source: "foreground" });
+
+    expect(beforeRestore.segments).toHaveLength(2);
+    expect(restored.segments).toHaveLength(2);
+    expect(updated.segments).toHaveLength(2);
+    expect(updated.segments[1].trustedPath.length).toBeGreaterThan(restored.segments[1].trustedPath.length);
+  });
+
   test("retorno active nao duplica background watcher quando location task ja esta rodando", async () => {
     await service.startActiveRun({
       activeRunId: "run-no-duplicate-watchers",

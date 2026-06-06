@@ -1,22 +1,58 @@
 {
   "collapse-filter": true,
   "search": "",
-  "showTags": true,
-  "showAttachments": true,
-  "hideUnresolved": true,
+  "showTags": false,
+  "showAttachments": false,
+  "hideUnresolved": false,
   "showOrphans": true,
   "collapse-color-groups": true,
-  "colorGroups": [],
-  "collapse-display": true,
+  "colorGroups": [
+    {
+      "query": "file:arquitetura OR file:firebase OR file:modelo OR file:codigo OR file:debug OR file:deploy",
+      "color": {
+        "a": 1,
+        "rgb": 14701138
+      }
+    },
+    {
+      "query": "file:corrida OR file:gps OR file:zonas OR file:territorios OR file:ranking",
+      "color": {
+        "a": 1,
+        "rgb": 16769572
+      }
+    },
+    {
+      "query": "file:index OR file:visao OR file:mvp OR file:roadmap OR file:backlog OR file:decisoes",
+      "color": {
+        "a": 1,
+        "rgb": 8334078
+      }
+    },
+    {
+      "query": "file:ia OR file:prompt OR file:comandos OR file:workflow OR file:glossario",
+      "color": {
+        "a": 1,
+        "rgb": 5431378
+      }
+    },
+    {
+      "query": "path:templates OR file:template",
+      "color": {
+        "a": 1,
+        "rgb": 3690495
+      }
+    }
+  ],
+  "collapse-display": false,
   "showArrow": false,
-  "textFadeMultiplier": 0.5,
-  "nodeSizeMultiplier": 0.7890625,
-  "lineSizeMultiplier": 2.6265625,
-  "collapse-forces": false,
-  "centerStrength": 0.911458333333333,
-  "repelStrength": 5.3125,
-  "linkStrength": 0.65625,
-  "linkDistance": 255,
-  "scale": 0.9999999999999978,
+  "textFadeMultiplier": -0.8,
+  "nodeSizeMultiplier": 1.171875,
+  "lineSizeMultiplier": 0.7125,
+  "collapse-forces": true,
+  "centerStrength": 0.432291666666667,
+  "repelStrength": 14.4791666666667,
+  "linkStrength": 0.28125,
+  "linkDistance": 385,
+  "scale": 0.25883865621815955,
   "close": true
 }

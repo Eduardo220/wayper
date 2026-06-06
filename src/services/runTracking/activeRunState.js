@@ -1,5 +1,5 @@
 import { createTrackingSession } from "../tracking/trackingPathService.js";
-import { buildSummaryRenderPath } from "../tracking/trackingRenderPath.js";
+import { buildLiveRenderPath, buildSummaryRenderPath } from "../tracking/trackingRenderPath.js";
 import { calculatePathDistanceMeters } from "../tracking/trackingMath.js";
 import { summarizeGpsQuality } from "./gpsQuality.js";
 import { normalizeTrackSegments, sanitizeRunPath } from "./trackSegments.js";
@@ -38,6 +38,217 @@ function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+function pointKey(point = {}) {
+  const id = point.id || point.pointId || point.locationId;
+  if (id) return `id:${id}`;
+  const timestamp = point.timestamp ?? point.time ?? point.t ?? "";
+  const latitude = Number(point.latitude ?? point.lat);
+  const longitude = Number(point.longitude ?? point.lng ?? point.lon);
+  return [
+    timestamp,
+    Number.isFinite(latitude) ? latitude.toFixed(7) : "",
+    Number.isFinite(longitude) ? longitude.toFixed(7) : "",
+  ].join(":");
+}
+
+function dedupeRunPath(path = []) {
+  const seen = new Set();
+  const output = [];
+  for (const point of sanitizeRunPath(path)) {
+    const key = pointKey(point);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(point);
+  }
+  return output;
+}
+
+function mergeRunPaths(existingPath = [], incomingPath = []) {
+  const output = [];
+  const seen = new Set();
+  for (const point of [...sanitizeRunPath(existingPath), ...sanitizeRunPath(incomingPath)]) {
+    const key = pointKey(point);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(point);
+  }
+  return output;
+}
+
+function firstNonEmptyPath(...paths) {
+  for (const path of paths) {
+    const clean = dedupeRunPath(path);
+    if (clean.length > 0) return clean;
+  }
+  return [];
+}
+
+function flattenSegmentsPath(segments = [], key = "trustedPath") {
+  return dedupeRunPath(
+    (Array.isArray(segments) ? segments : []).flatMap((segment, index) => {
+      const segmentIndex = Number.isFinite(Number(segment?.index ?? segment?.segmentId))
+        ? Number(segment.index ?? segment.segmentId)
+        : index;
+      const path = segment?.[key] || segment?.filteredPoints || segment?.path || [];
+      return sanitizeRunPath(path).map((point) => ({
+        ...point,
+        segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : segmentIndex,
+      }));
+    })
+  );
+}
+
+function countSegmentPoints(segments = [], key = "trustedPath") {
+  return (Array.isArray(segments) ? segments : []).reduce((total, segment) => {
+    return total + sanitizeRunPath(segment?.[key] || segment?.filteredPoints || segment?.path || []).length;
+  }, 0);
+}
+
+function withSegmentId(path = [], segmentIndex = 0) {
+  return dedupeRunPath(path).map((point) => ({
+    ...point,
+    segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : segmentIndex,
+  }));
+}
+
+function buildSegmentsFromFlatPaths({
+  trustedPath = [],
+  rawPath = [],
+  liveRenderPath = [],
+  summaryRenderPath = [],
+  startedAtMs = Date.now(),
+} = {}) {
+  const source = dedupeRunPath(trustedPath.length > 0 ? trustedPath : rawPath.length > 0 ? rawPath : liveRenderPath);
+  if (source.length === 0) return [];
+
+  const segmentMap = new Map();
+  const ensureSegment = (segmentIndex, firstPoint = null) => {
+    if (!segmentMap.has(segmentIndex)) {
+      const startedAt = firstPoint?.timestamp ?? startedAtMs;
+      segmentMap.set(segmentIndex, {
+        id: `segment_${segmentIndex}`,
+        index: segmentIndex,
+        reason: segmentIndex === 0 ? "active" : "resume",
+        startedAt,
+        startTimestamp: startedAt,
+        endedAt: null,
+        endTimestamp: null,
+        endReason: null,
+        rawPath: [],
+        rawPoints: [],
+        trustedPath: [],
+        filteredPoints: [],
+        liveRenderPath: [],
+        summaryRenderPath: [],
+        displayPoints: [],
+      });
+    }
+    return segmentMap.get(segmentIndex);
+  };
+
+  const addToSegment = (point, key) => {
+    const segmentIndex = Number.isFinite(Number(point?.segmentId ?? point?.segmentIndex))
+      ? Number(point.segmentId ?? point.segmentIndex)
+      : 0;
+    const segment = ensureSegment(segmentIndex, point);
+    const normalized = {
+      ...point,
+      segmentId: segmentIndex,
+    };
+    segment[key].push(normalized);
+  };
+
+  for (const point of rawPath.length > 0 ? dedupeRunPath(rawPath) : source) addToSegment(point, "rawPath");
+  for (const point of trustedPath.length > 0 ? dedupeRunPath(trustedPath) : source) addToSegment(point, "trustedPath");
+  for (const point of liveRenderPath.length > 0 ? dedupeRunPath(liveRenderPath) : source) addToSegment(point, "liveRenderPath");
+  for (const point of summaryRenderPath.length > 0 ? dedupeRunPath(summaryRenderPath) : source) addToSegment(point, "summaryRenderPath");
+
+  return Array.from(segmentMap.values())
+    .sort((a, b) => a.index - b.index)
+    .map((segment) => {
+      const trusted = withSegmentId(segment.trustedPath, segment.index);
+      const raw = withSegmentId(segment.rawPath.length > 0 ? segment.rawPath : trusted, segment.index);
+      const live = withSegmentId(segment.liveRenderPath.length > 0 ? segment.liveRenderPath : trusted, segment.index);
+      const summary = withSegmentId(segment.summaryRenderPath.length > 0 ? segment.summaryRenderPath : trusted, segment.index);
+      return {
+        ...segment,
+        rawPath: raw,
+        rawPoints: raw,
+        trustedPath: trusted,
+        filteredPoints: trusted,
+        liveRenderPath: live,
+        summaryRenderPath: summary,
+        displayPoints: summary,
+      };
+    });
+}
+
+function mergeSegmentsPreservingGeometry(existingSegments = [], incomingSegments = [], mergedTrustedPath = [], mergedRawPath = []) {
+  const existing = normalizeSegments(existingSegments);
+  const incoming = normalizeSegments(incomingSegments);
+  const existingPoints = countSegmentPoints(existing);
+  const incomingPoints = countSegmentPoints(incoming);
+  const mergedPoints = dedupeRunPath(mergedTrustedPath).length;
+
+  if (incomingPoints > 0 && incomingPoints >= existingPoints && incomingPoints >= mergedPoints) {
+    return incoming;
+  }
+
+  if (incoming.length === 0 && existing.length > 0 && existingPoints > 0) {
+    return existing;
+  }
+
+  const base = existing.length > 0 ? clone(existing) : [];
+  if (base.length === 0) {
+    return buildSegmentsFromFlatPaths({
+      trustedPath: mergedTrustedPath,
+      rawPath: mergedRawPath,
+    });
+  }
+
+  const trustedKeys = new Set(flattenSegmentsPath(base, "trustedPath").map(pointKey));
+  const rawKeys = new Set(flattenSegmentsPath(base, "rawPath").map(pointKey));
+  let lastOpenIndex = -1;
+  for (let index = base.length - 1; index >= 0; index -= 1) {
+    if (!base[index]?.endedAt) {
+      lastOpenIndex = index;
+      break;
+    }
+  }
+  const fallbackIndex = lastOpenIndex >= 0 ? lastOpenIndex : base.length - 1;
+  const target = base[fallbackIndex] || base[base.length - 1];
+  const targetIndex = Number.isFinite(Number(target?.index)) ? Number(target.index) : fallbackIndex;
+
+  for (const point of dedupeRunPath(mergedRawPath)) {
+    const key = pointKey(point);
+    if (rawKeys.has(key)) continue;
+    rawKeys.add(key);
+    const normalized = {
+      ...point,
+      segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : targetIndex,
+    };
+    target.rawPath.push(normalized);
+    target.rawPoints = target.rawPath;
+  }
+
+  for (const point of dedupeRunPath(mergedTrustedPath)) {
+    const key = pointKey(point);
+    if (trustedKeys.has(key)) continue;
+    trustedKeys.add(key);
+    const normalized = {
+      ...point,
+      segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : targetIndex,
+    };
+    target.trustedPath.push(normalized);
+    target.filteredPoints = target.trustedPath;
+    target.liveRenderPath = target.trustedPath;
+    target.displayPoints = target.trustedPath;
+    target.summaryRenderPath = target.trustedPath;
+  }
+
+  return normalizeSegments(base);
+}
+
 function normalizeStatus(status) {
   const raw = String(status || "").toUpperCase();
   if (raw === "ACTIVE") return ACTIVE_RUN_STATUS.RUNNING;
@@ -50,9 +261,21 @@ function normalizeSegments(segments = []) {
   return normalizeTrackSegments(sourceSegments).map((segment, index) => {
     const source = sourceSegments[index] || {};
     const hasExplicitEnd = source.endedAt != null || source.endReason != null;
+    const segmentIndex = Number.isFinite(Number(segment.index)) ? Number(segment.index) : index;
+    const rawPath = withSegmentId(segment.rawPath || segment.rawPoints || [], segmentIndex);
+    const trustedPath = withSegmentId(segment.trustedPath || segment.filteredPoints || segment.path || [], segmentIndex);
+    const liveRenderPath = withSegmentId(segment.liveRenderPath || segment.displayPoints || trustedPath, segmentIndex);
+    const summaryRenderPath = withSegmentId(segment.summaryRenderPath || segment.displayPoints || trustedPath, segmentIndex);
     return {
       ...segment,
-      index: Number.isFinite(Number(segment.index)) ? Number(segment.index) : index,
+      index: segmentIndex,
+      rawPath,
+      rawPoints: rawPath,
+      trustedPath,
+      filteredPoints: trustedPath,
+      liveRenderPath,
+      summaryRenderPath,
+      displayPoints: summaryRenderPath,
       endedAt: hasExplicitEnd ? (source.endedAt ?? source.endTimestamp ?? segment.endedAt) : null,
       endTimestamp: hasExplicitEnd ? (source.endTimestamp ?? source.endedAt ?? segment.endTimestamp) : (source.endTimestamp ?? segment.endTimestamp),
     };
@@ -107,12 +330,28 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
   const runId = base.activeRunId || base.id || createRunId(nowMs);
   const status = normalizeStatus(options.status || base.status || ACTIVE_RUN_STATUS.RUNNING);
   const state = session?.getState?.() || {};
-  const trustedPath = sanitizeRunPath(state.trustedPath || state.filteredPoints || base.points || base.path || []);
-  const rawPath = sanitizeRunPath(state.rawPath || state.rawPoints || base.rawPoints || trustedPath);
-  const segments = normalizeSegments(state.segments || base.segments || []);
+  let segments = normalizeSegments(state.segments || base.segments || []);
+  let trustedPath = dedupeRunPath(state.trustedPath || state.filteredPoints || base.points || base.trustedPath || base.path || []);
+  if (trustedPath.length === 0 && segments.length > 0) trustedPath = flattenSegmentsPath(segments, "trustedPath");
+  let rawPath = dedupeRunPath(state.rawPath || state.rawPoints || base.rawPoints || base.rawPath || trustedPath);
+  if (rawPath.length === 0 && segments.length > 0) rawPath = flattenSegmentsPath(segments, "rawPath");
+  if (rawPath.length < trustedPath.length) rawPath = mergeRunPaths(rawPath, trustedPath);
+  if (segments.length === 0 && (trustedPath.length > 0 || rawPath.length > 0)) {
+    segments = buildSegmentsFromFlatPaths({
+      trustedPath,
+      rawPath,
+      liveRenderPath: state.liveRenderPath || base.liveRenderPath || trustedPath,
+      summaryRenderPath: base.summaryRenderPath || base.renderPath || base.displayPoints || trustedPath,
+      startedAtMs: base.startedAtMs || nowMs,
+    });
+  }
   const currentLocation = state.currentPosition || trustedPath[trustedPath.length - 1] || base.currentLocation || null;
-  const distance = Number(state.stats?.distanceMeters ?? state.distanceMeters ?? base.distanceMeters ?? base.distance ?? 0) ||
+  const baseDistance = Number(base.distanceMeters ?? base.distance ?? 0) || 0;
+  const measuredDistance = Number(state.stats?.distanceMeters ?? state.distanceMeters ?? 0) ||
     calculatePathDistanceMeters(trustedPath);
+  const distance = status === ACTIVE_RUN_STATUS.RUNNING
+    ? Math.max(baseDistance, measuredDistance)
+    : (measuredDistance || baseDistance);
   const durationSeconds = calculateActiveRunDurationSeconds(
     {
       ...base,
@@ -150,8 +389,8 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
     rawPoints: rawPath,
     segments,
     routeSegments: segments,
-    liveRenderPath: sanitizeRunPath(state.liveRenderPath || base.liveRenderPath || trustedPath),
-    displayPoints: sanitizeRunPath(state.displayPoints || state.liveRenderPath || base.displayPoints || trustedPath),
+    liveRenderPath: firstNonEmptyPath(state.liveRenderPath, base.liveRenderPath, trustedPath),
+    displayPoints: firstNonEmptyPath(state.displayPoints, state.liveRenderPath, base.displayPoints, trustedPath),
     currentLocation,
     distance,
     distanceMeters: distance,
@@ -179,11 +418,30 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
 export function normalizeActiveRunSnapshot(snapshot = {}) {
   if (!snapshot || typeof snapshot !== "object") return null;
   const status = normalizeStatus(snapshot.status);
-  const trustedPath = sanitizeRunPath(snapshot.points || snapshot.trustedPath || snapshot.filteredPoints || snapshot.path || []);
-  const rawPath = sanitizeRunPath(snapshot.rawPoints || snapshot.rawPath || trustedPath);
-  const segments = normalizeSegments(snapshot.segments || snapshot.routeSegments || []);
   const startedAtMs = toTimestampMs(snapshot.startedAtMs ?? snapshot.startedAt, Date.now());
   const runId = snapshot.activeRunId || snapshot.id || createRunId(startedAtMs);
+  let segments = normalizeSegments(snapshot.segments || snapshot.routeSegments || []);
+  let trustedPath = dedupeRunPath(snapshot.points || snapshot.trustedPath || snapshot.filteredPoints || snapshot.path || []);
+  if (trustedPath.length === 0 && segments.length > 0) trustedPath = flattenSegmentsPath(segments, "trustedPath");
+  let rawPath = dedupeRunPath(snapshot.rawPoints || snapshot.rawPath || trustedPath);
+  if (rawPath.length === 0 && segments.length > 0) rawPath = flattenSegmentsPath(segments, "rawPath");
+  if (rawPath.length < trustedPath.length) rawPath = mergeRunPaths(rawPath, trustedPath);
+  const liveRenderPath = firstNonEmptyPath(
+    snapshot.liveRenderPath,
+    snapshot.displayPoints,
+    flattenSegmentsPath(segments, "liveRenderPath"),
+    trustedPath
+  );
+  const displayPoints = firstNonEmptyPath(snapshot.displayPoints, liveRenderPath, trustedPath);
+  if (segments.length === 0 && (trustedPath.length > 0 || rawPath.length > 0 || liveRenderPath.length > 0)) {
+    segments = buildSegmentsFromFlatPaths({
+      trustedPath,
+      rawPath,
+      liveRenderPath,
+      summaryRenderPath: snapshot.summaryRenderPath || snapshot.renderPath || snapshot.displayPath || displayPoints,
+      startedAtMs,
+    });
+  }
   const finishedAtMs = snapshot.finishedAtMs || snapshot.finishedAt || snapshot.endedAt
     ? toTimestampMs(snapshot.finishedAtMs ?? snapshot.finishedAt ?? snapshot.endedAt, null)
     : null;
@@ -218,6 +476,8 @@ export function normalizeActiveRunSnapshot(snapshot = {}) {
     rawPoints: rawPath,
     segments,
     routeSegments: segments,
+    liveRenderPath,
+    displayPoints,
     currentLocation: snapshot.currentLocation || trustedPath[trustedPath.length - 1] || null,
     distance,
     distanceMeters: distance,
@@ -232,6 +492,85 @@ export function normalizeActiveRunSnapshot(snapshot = {}) {
     notificationBody: snapshot.notificationBody || DEFAULT_NOTIFICATION_BODY,
     meta: snapshot.meta || {},
   };
+}
+
+export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapshot = null, options = {}) {
+  const existing = normalizeActiveRunSnapshot(existingSnapshot);
+  const incoming = normalizeActiveRunSnapshot(incomingSnapshot);
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+  if (existing.activeRunId !== incoming.activeRunId && options.replaceExisting === true) return incoming;
+  if (existing.activeRunId !== incoming.activeRunId) return existing;
+
+  const status = normalizeStatus(incoming.status || existing.status);
+  const mergedTrustedPath = mergeRunPaths(existing.trustedPath || existing.path || [], incoming.trustedPath || incoming.path || []);
+  let mergedRawPath = mergeRunPaths(existing.rawPath || existing.rawPoints || mergedTrustedPath, incoming.rawPath || incoming.rawPoints || []);
+  if (mergedRawPath.length < mergedTrustedPath.length) mergedRawPath = mergeRunPaths(mergedRawPath, mergedTrustedPath);
+  const incomingHasEmptyGeometry =
+    countSegmentPoints(incoming.segments) === 0 &&
+    sanitizeRunPath(incoming.trustedPath || incoming.path || []).length === 0 &&
+    countSegmentPoints(existing.segments) > 0;
+  const segments = incomingHasEmptyGeometry
+    ? existing.segments
+    : mergeSegmentsPreservingGeometry(existing.segments, incoming.segments, mergedTrustedPath, mergedRawPath);
+  const previousDistance = Number(existing.distanceMeters ?? existing.distance ?? 0) || 0;
+  const incomingDistance = Number(incoming.distanceMeters ?? incoming.distance ?? 0) || 0;
+  const mergedDistance = calculatePathDistanceMeters(mergedTrustedPath);
+  const nextDistance = status === ACTIVE_RUN_STATUS.RUNNING
+    ? Math.max(previousDistance, incomingDistance, mergedDistance)
+    : Math.max(incomingDistance, mergedDistance);
+  const liveRenderPath = firstNonEmptyPath(
+    (incoming.liveRenderPath?.length || 0) >= (existing.liveRenderPath?.length || 0)
+      ? incoming.liveRenderPath
+      : existing.liveRenderPath,
+    existing.liveRenderPath,
+    incoming.liveRenderPath,
+    mergedTrustedPath
+  );
+  const displayPoints = firstNonEmptyPath(
+    (incoming.displayPoints?.length || 0) >= (existing.displayPoints?.length || 0)
+      ? incoming.displayPoints
+      : existing.displayPoints,
+    existing.displayPoints,
+    incoming.displayPoints,
+    liveRenderPath
+  );
+
+  return normalizeActiveRunSnapshot({
+    ...existing,
+    ...incoming,
+    status,
+    points: mergedTrustedPath,
+    path: mergedTrustedPath,
+    trustedPath: mergedTrustedPath,
+    filteredPoints: mergedTrustedPath,
+    rawPath: mergedRawPath,
+    rawPoints: mergedRawPath,
+    segments,
+    routeSegments: segments,
+    liveRenderPath: liveRenderPath.length > 0 ? liveRenderPath : buildLiveRenderPath(mergedTrustedPath),
+    displayPoints: displayPoints.length > 0 ? displayPoints : liveRenderPath,
+    currentLocation: incoming.currentLocation || mergedTrustedPath[mergedTrustedPath.length - 1] || existing.currentLocation || null,
+    distance: nextDistance,
+    distanceMeters: nextDistance,
+    meta: {
+      ...(existing.meta || {}),
+      ...(incoming.meta || {}),
+      ignoredEmptyGeometryOverwrite: Boolean(
+        incomingHasEmptyGeometry ||
+        existing.meta?.ignoredEmptyGeometryOverwrite ||
+        incoming.meta?.ignoredEmptyGeometryOverwrite
+      ),
+      distancePreserved: Boolean(
+        existing.meta?.distancePreserved ||
+        incoming.meta?.distancePreserved ||
+        (
+          status === ACTIVE_RUN_STATUS.RUNNING &&
+          (incomingDistance < previousDistance || mergedDistance < previousDistance)
+        )
+      ),
+    },
+  });
 }
 
 export function createTrackingSessionFromSnapshot(snapshot = {}) {
@@ -308,6 +647,7 @@ export default {
   createSnapshotFromTrackingSession,
   createTrackingSessionFromSnapshot,
   normalizeActiveRunSnapshot,
+  mergeActiveRunSnapshots,
   nowIso,
   toTimestampMs,
 };

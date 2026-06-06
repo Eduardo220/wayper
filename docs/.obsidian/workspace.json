@@ -6,7 +6,7 @@
       {
         "id": "83175927ce25b547",
         "type": "tabs",
-        "dimension": 47.55369928400954,
+        "dimension": 61.985018726591754,
         "children": [
           {
             "id": "79bd64723c582a25",
@@ -27,7 +27,7 @@
       {
         "id": "31112eda6bf5caf4",
         "type": "tabs",
-        "dimension": 52.44630071599046,
+        "dimension": 38.01498127340824,
         "children": [
           {
             "id": "3b4d653518ff2860",
@@ -198,14 +198,14 @@
       "bases:Criar nova base": false
     }
   },
-  "active": "79bd64723c582a25",
+  "active": "3b4d653518ff2860",
   "lastOpenFiles": [
+    "15-corrida-por-zonas.md",
     "00-fontes-do-projeto.md",
     "22-teste-real-corrida-background.md",
     "13-bugs-conhecidos.md",
     "17-propostas-pendentes.md",
     "16-ideias-de-melhoria.md",
-    "15-corrida-por-zonas.md",
     "15-workflow-obsidian-ia.md",
     "11-plano-de-deploy.md",
     "08-decisoes-tecnicas.md",
