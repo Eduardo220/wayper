@@ -71,6 +71,7 @@ const FirestoreMock = {
   }),
   getDocs: jest.fn(async () => ({ docs: [] })),
   query: jest.fn((...args) => args),
+  where: jest.fn((...args) => args),
   orderBy: jest.fn((...args) => args),
   limit: jest.fn((...args) => args),
   startAfter: jest.fn((...args) => args),
@@ -97,6 +98,9 @@ jest.unstable_mockModule("@react-native-community/netinfo", () => ({
 }));
 
 jest.unstable_mockModule("react-native", () => ({
+  AppState: {
+    addEventListener: jest.fn(() => ({ remove: jest.fn() })),
+  },
   NativeModules: {},
   Platform: {
     OS: "android",
@@ -380,7 +384,7 @@ describe("active run local-first integration", () => {
       syncStatus: "SYNCED",
       offlineStatus: "SYNCED",
     });
-    expect(firestoreSets.some((item) => item.ref.path.includes("runs/run-sync-success"))).toBe(true);
+    expect(firestoreSets.some((item) => item.ref.path.includes("runs/remote-existing"))).toBe(true);
   });
 
   test("falha de Firestore preserva corrida local como SYNC_FAILED para retry", async () => {

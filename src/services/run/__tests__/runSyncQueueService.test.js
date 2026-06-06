@@ -3,18 +3,23 @@ import { beforeEach, describe, expect, jest, test } from "@jest/globals";
 const saveLocalRun = jest.fn(async (run) => run);
 const scheduleRunsSync = jest.fn();
 const loadLocalRuns = jest.fn(async () => []);
+const loadLocalRunHistory = jest.fn(async () => []);
 const syncRunsToFirestore = jest.fn(async () => {});
+const isRunQueuedForSync = jest.fn((run) => run?.pendingSync === true);
 
 jest.unstable_mockModule("../../../utils/sync.js", () => ({
   saveLocalRun,
   scheduleRunsSync,
   loadLocalRuns,
+  loadLocalRunHistory,
   syncRunsToFirestore,
+  isRunQueuedForSync,
 }));
 
 const {
   RUN_SYNC_QUEUE_STATUS,
   enqueueFinishedRun,
+  loadPendingRuns,
 } = await import("../runSyncQueueService.js");
 
 describe("runSyncQueueService", () => {
@@ -22,7 +27,10 @@ describe("runSyncQueueService", () => {
     saveLocalRun.mockClear();
     scheduleRunsSync.mockClear();
     loadLocalRuns.mockClear();
+    loadLocalRunHistory.mockClear();
     syncRunsToFirestore.mockClear();
+    isRunQueuedForSync.mockClear();
+    loadLocalRunHistory.mockResolvedValue([]);
   });
 
   test("enfileira corrida finalizada mantendo runId idempotente", async () => {
@@ -63,5 +71,18 @@ describe("runSyncQueueService", () => {
       localRunId: "run-recovery-dedup",
       pendingSync: true,
     });
+  });
+
+  test("carrega pendentes usando a regra oficial do sync.js", async () => {
+    loadLocalRunHistory.mockResolvedValue([
+      { id: "pending", pendingSync: true },
+      { id: "synced", pendingSync: false, synced: true },
+    ]);
+
+    const pending = await loadPendingRuns();
+
+    expect(loadLocalRunHistory).toHaveBeenCalled();
+    expect(isRunQueuedForSync).toHaveBeenCalledTimes(2);
+    expect(pending.map((run) => run.id)).toEqual(["pending"]);
   });
 });

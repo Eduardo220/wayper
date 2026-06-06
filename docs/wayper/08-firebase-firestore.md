@@ -137,6 +137,19 @@ Diretrizes:
 - Tentar sincronização automática quando a conexão voltar.
 - Tratar escrita remota como idempotente para permitir retry.
 
+Regra atual da fila de runs:
+
+- A fila local parte da chave `runs` e nao de uma colecao paralela.
+- `remoteRunId` e usado como id do documento quando existir.
+- Sem `remoteRunId`, o app tenta localizar `runs` por `localRunId`; se nao encontrar, usa `localRunId` como id remoto deterministico.
+- O payload remoto inclui `localRunId` e `remoteRunId` para dedupe futuro.
+- O app escreve `runs/{remoteRunId}`, `users/{uid}/runs/{remoteRunId}` e `activities/run_{uid}_{remoteRunId}`.
+- `PENDING`, `PENDING_SYNC`, `LOCAL_ONLY`, `FAILED`, `SYNC_FAILED` e `SYNCING` podem entrar na fila; `SYNCED` sem `pendingSync` nao entra.
+- Falha de Firestore marca a copia local como `SYNC_FAILED`, registra `syncError`/`syncErrorType` e nao remove a corrida do historico.
+- O payload remoto remove `undefined`/funcoes antes da escrita.
+- Corrida livre nao envia territorio falso; corrida por zonas envia area/geometria/coords somente quando ja existem localmente.
+- Arrays de rota enviados ao Firestore podem ser limitados por `ROUTE_CAP`; a copia local permanece completa e o payload remoto registra `remoteRouteLimits`.
+
 ## Coleção `territoryClaims`
 
 Proposta opcional, caso a estratégia territorial do MVP exija registro separado de conquistas:

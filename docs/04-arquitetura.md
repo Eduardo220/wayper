@@ -80,9 +80,18 @@ Responsável por:
 6. App calcula métricas parciais.
 7. Usuário finaliza corrida.
 8. App valida a corrida.
-9. App salva corrida no Firestore.
-10. App calcula/atualiza zonas conquistadas.
-11. Ranking e histórico são atualizados.
+9. App salva a corrida finalizada localmente na chave `runs`.
+10. App enfileira sync remoto idempotente para Firestore.
+11. App calcula/preserva dados de zonas quando a corrida for por zonas.
+12. Ranking e histórico são atualizados a partir da base local e do sync posterior.
+
+## Sync local-first de corridas
+
+- A corrida ativa nao depende de Firestore.
+- Corridas finalizadas entram no historico local por `sync.saveLocalRun()`.
+- A fila de sync parte de `sync.loadLocalRunHistory()` e usa `localRunId`/`remoteRunId` para evitar duplicacao.
+- Firestore e destino posterior; falhas remotas deixam a corrida visivel como `SYNC_FAILED`.
+- Corridas por zonas preservam dados territoriais existentes; corridas livres nao recebem territorio falso.
 
 ## Pontos que precisam ser definidos
 

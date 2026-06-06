@@ -14,6 +14,10 @@
 - Pontos GPS com baixa precisão devem ser filtrados ou marcados.
 - Corridas com comportamento impossível devem ser invalidadas ou revisadas.
 
+- Depois de finalizada e salva localmente, a corrida deve permanecer visivel no historico mesmo se o sync remoto estiver `PENDING_SYNC` ou `SYNC_FAILED`.
+- Firestore e destino posterior de sincronizacao; falha remota nao pode apagar `localRunId`, rota, segmentos ou resumo territorial local.
+- Retry de sync deve ser idempotente por `localRunId`/`remoteRunId` e nao pode duplicar corrida remota.
+
 ## Zona conquistada
 
 Regras a definir oficialmente:

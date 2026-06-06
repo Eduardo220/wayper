@@ -118,11 +118,12 @@ describe("active run persistence state", () => {
 
   test("sync de corridas usa runId deterministico e merge idempotente", () => {
     const syncSource = fs.readFileSync(path.join(process.cwd(), "src/utils/sync.js"), "utf8");
-    expect(syncSource).toContain('batch.set(doc(db, "runs", run.id), payload, { merge: true })');
-    expect(syncSource).toContain('batch.set(doc(db, "users", uid, "runs", run.id), payload, { merge: true })');
+    expect(syncSource).toContain('batch.set(doc(db, "runs", remoteRunId), payload, { merge: true })');
+    expect(syncSource).toContain('batch.set(doc(db, "users", uid, "runs", remoteRunId), payload, { merge: true })');
+    expect(syncSource).toContain('return { remoteRunId: localRunId, source: "localRunId" }');
     expect(syncSource).toContain("uniqueById(next)");
-    expect(syncSource).toContain("run.remoteRunId = run.remoteRunId || run.id");
-    expect(syncSource).toContain('offlineStatus: "SYNC_FAILED"');
+    expect(syncSource).toContain("remoteRunId: remoteResult.remoteRunId");
+    expect(syncSource).toContain("RUN_OFFLINE_STATUS.SYNC_FAILED");
   });
 
   test("desmontar MapScreen nao para background tracking da corrida ativa", () => {

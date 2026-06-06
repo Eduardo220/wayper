@@ -68,6 +68,12 @@ No app, a fonte local do historico usa a chave `runs` do AsyncStorage via `sync.
 | `duration`/`durationSeconds` | number | Duracao oficial salva. |
 | `syncStatus` | string | `PENDING`, `SYNCING`, `SYNCED` ou `FAILED`. |
 | `offlineStatus` | string | `PENDING_SYNC`, `SYNCING`, `SYNCED`, `SYNC_FAILED` ou `LOCAL_ONLY`. |
+| `syncAttempts`/`retryCount` | number | Quantidade de tentativas de envio remoto. |
+| `lastSyncAttemptAt` | ISO string/null | Ultima tentativa de sync remoto. |
+| `lastSyncedAt`/`syncedAt` | ISO string/null | Momento do ultimo sucesso remoto. |
+| `lastSyncError`/`syncError` | string/null | Erro controlado de sync, sem apagar a corrida local. |
+| `syncErrorType` | string/null | Categoria do erro (`temporary`, `permission_denied`, `validation`, etc.). |
+| `syncErrorRecoverable` | boolean | Define se a fila deve tentar novamente automaticamente. |
 | `trustedPath` | array | Pontos aceitos para metricas. |
 | `renderPath` | array | Pontos preparados para visualizacao. |
 | `rawPath` | array | Pontos brutos/diagnostico. |
@@ -81,6 +87,9 @@ Regras locais:
 - Dedupe considera `id`, `localRunId`, `remoteRunId`, `runId` e `legacyId`.
 - Registros `RUNNING`, `PAUSED`, `RECOVERING` ou `FINISHING` nao devem aparecer como finalizados.
 - Se uma corrida sincronizada reaparecer com `remoteRunId`, a copia local deve ser atualizada, nao duplicada.
+- A fila local de sync parte da mesma lista `runs`; nao existe storage paralelo oficial para runs finalizadas.
+- `remoteRunId` define o documento remoto quando existir; sem ele, `localRunId` e usado como chave idempotente depois de uma busca remota por `localRunId`.
+- A copia local preserva path completo. O payload remoto pode limitar arrays por `ROUTE_CAP` e registrar `remoteRouteLimits`.
 
 ## route point
 

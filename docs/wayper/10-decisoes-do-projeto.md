@@ -108,6 +108,31 @@ Impactos:
 - Performance: AsyncStorage segue aceitavel nesta etapa; SQLite fica pendente de medicao real.
 - Experiencia do usuario: UX principal nao muda, mas recovery fica deterministico.
 
+### Fila de sync de corridas finalizadas deve ser local-first e idempotente
+
+Status: aprovada.
+
+Contexto:
+
+- Corridas finalizadas ja ficam na chave local `runs`, mas podem ser salvas offline, falhar no Firestore ou passar por retry depois de reabrir o app.
+- Uma fila paralela para runs aumentaria risco de duplicacao e divergencia entre historico, detalhes e Firestore.
+
+Decisao:
+
+- A fila oficial de sync de runs finalizadas parte de `sync.loadLocalRunHistory()` e atualiza a mesma copia por `sync.saveLocalRun()`.
+- `runSyncQueueService` permanece como wrapper de enfileiramento, sem criar storage proprio.
+- `remoteRunId` e a chave remota quando existir; sem ele, `localRunId` e usado como chave idempotente e vai para o payload remoto.
+- Antes de criar documento novo, o app pode buscar remoto por `localRunId`.
+- Sync de runs e sync de territorios continuam responsabilidades separadas.
+
+Impactos:
+
+- Historico: corridas `PENDING_SYNC`, `SYNC_FAILED`, `LOCAL_ONLY` e `SYNCED` continuam visiveis.
+- Detalhes: a copia local completa continua preferida antes/depois do sync.
+- Firestore: falhas nao apagam local e retry nao deve duplicar documento.
+- Territorio: corrida por zonas preserva dados existentes; falha de territorio nao apaga corrida.
+- Performance: rota local segue em AsyncStorage; se volume crescer, avaliar SQLite sem mudar a API das telas.
+
 ## Decisões pendentes
 
 ### Estratégia final de território

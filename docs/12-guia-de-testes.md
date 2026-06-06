@@ -124,6 +124,35 @@ Cobertura automatizada esperada:
 - `syncStatus`, `offlineStatus`, `remoteRunId`, path e `segments` sao preservados apos save/sync/retry.
 - Firestore falhando nao apaga nem esconde a corrida local.
 
+## Fila de sync local de corridas finalizadas
+
+Checklist manual:
+
+- [ ] Finalizar corrida online e confirmar que a corrida fica `SYNCED` com `remoteRunId`.
+- [ ] Finalizar corrida offline e confirmar `PENDING_SYNC` no historico.
+- [ ] Voltar internet e confirmar que a mesma corrida vira `SYNCED` sem duplicar.
+- [ ] Simular Firestore falhando e confirmar `SYNC_FAILED` visivel no historico.
+- [ ] Rodar retry e confirmar que usa o mesmo `remoteRunId`/`localRunId`.
+- [ ] Abrir historico durante sync.
+- [ ] Abrir detalhes durante sync.
+- [ ] Matar app durante sync, reabrir e confirmar retomada da fila.
+- [ ] Conferir que `trustedPath`, `renderPath`, `rawPath` e `segments` seguem no detalhe antes/depois do sync.
+- [ ] Testar corrida livre e confirmar que o payload remoto nao inclui territorio falso.
+- [ ] Testar corrida por zonas e confirmar `area`, `geometry`, `zoneCoords` e resumo territorial.
+- [ ] Simular falha de territorio e confirmar que a corrida continua localmente visivel.
+
+Cobertura automatizada esperada:
+
+- Normalizacao de `PENDING_SYNC`, `SYNC_FAILED`, `LOCAL_ONLY` e status ausente.
+- Offline nao chama Firestore.
+- Retry nao cria documento diferente quando `remoteRunId` existe.
+- Busca remota por `localRunId` antes de criar documento novo.
+- Payload Firestore sem `undefined`, com `localRunId`, `remoteRunId`, modo, path e dados territoriais existentes.
+- Corrida livre nao ganha `area`, `geometry` ou `zoneCoords` falsos no payload remoto.
+- Lock impede dois syncs simultaneos.
+- Sync antigo nao marca `SYNCED` se a copia local mudou durante o envio.
+- Falha de Firestore preserva corrida local como `SYNC_FAILED`.
+
 ## Casos ruins que precisam ser testados
 
 - Usuário nega localização.

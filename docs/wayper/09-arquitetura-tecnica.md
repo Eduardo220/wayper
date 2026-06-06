@@ -289,6 +289,62 @@ Limite atual:
 
 - A lista ainda usa AsyncStorage. O risco principal e volume de rota em historicos longos; migrar para SQLite/Expo SQLite se parse/carregamento de JSON ficar perceptivelmente pesado.
 
+### Fila local de sync de corridas finalizadas
+
+Desde 2026-06-06, a fila de sincronizacao remota de corridas finalizadas usa a mesma fonte local oficial do historico:
+
+- Fonte local: `sync.loadLocalRunHistory()` / `sync.loadLocalRuns()` lendo a chave `runs`.
+- Escrita local: `sync.saveLocalRun()`, com dedupe por `id`, `localRunId`, `remoteRunId`, `runId` e `legacyId`.
+- Entrada na fila: `runSyncQueueService.enqueueFinishedRun()` ou `sync.saveLocalRun()` com status pendente.
+- Processamento remoto: `sync.syncRunsToFirestore()`.
+
+Status consolidados:
+
+- `PENDING`, `PENDING_SYNC` e `LOCAL_ONLY` entram como pendentes.
+- `FAILED` e `SYNC_FAILED` entram como falha recuperavel, salvo quando o erro local marca `syncErrorRecoverable=false`.
+- `SYNCING` e tratado como retomavel depois de reabrir o app.
+- `SYNCED` com `pendingSync=false` nao entra na fila.
+- Status ausente em corrida sem `remoteRunId` vira pendente seguro; status ausente com `remoteRunId` e sem erro vira sincronizado.
+
+Identidade e idempotencia:
+
+- `localRunId` e a chave local principal e sempre vai para o documento remoto.
+- `remoteRunId` e a chave remota quando ja existir.
+- Se nao houver `remoteRunId`, o app tenta localizar uma corrida remota por `localRunId`.
+- Se nao encontrar remoto, o documento novo usa `localRunId` como id remoto deterministico.
+- `id`, `runId` e `legacyId` ficam como fallback de dedupe local, nao como preferencia remota.
+
+Fluxo operacional:
+
+1. Checar NetInfo; offline nao chama Firestore.
+2. Selecionar corridas finalizadas pendentes/falhas recuperaveis.
+3. Marcar item como `SYNCING` localmente com `lastSyncAttemptAt` e incremento de `syncAttempts`/`retryCount`.
+4. Sanitizar payload remoto e remover `undefined`, funcoes e campos territoriais falsos.
+5. Gravar `runs/{remoteRunId}`, `users/{uid}/runs/{remoteRunId}` e `activities/{activityId}` por item.
+6. Em sucesso, salvar `remoteRunId`, `SYNCED`, `syncedAt` e limpar `syncError`.
+7. Se a copia local mudou durante o envio, preservar `remoteRunId`, mas voltar para `PENDING_SYNC`.
+8. Em falha, salvar `SYNC_FAILED`, `syncError`, `syncErrorType` e manter a corrida visivel.
+
+Conectividade e retry:
+
+- `startAutoSync()` agenda tentativa inicial, tentativa ao voltar internet e tentativa ao voltar para AppState `active`.
+- Mudancas de rede/AppState usam debounce para evitar rajadas.
+- Um lock em memoria ignora sync concorrente; retry manual e automatico compartilham o mesmo worker.
+- Falhas recuperaveis agendam retry com backoff; falhas de validacao/permissao ficam registradas sem apagar local.
+
+Payload remoto:
+
+- Preserva `distance`, `duration`, `pace`, `startedAt`, `finishedAt`, `mode`, `localRunId`, `remoteRunId`, `trustedPath`, `renderPath`, `rawPath`, `segments` e `schemaVersion`.
+- Corrida por zonas envia `area`, `areaM2`, `zoneCoords`, `geometry`, `territorySummary` e eventos territoriais existentes.
+- Corrida livre envia `mode=free` e nao inventa `area`, `geometry`, `zoneCoords` ou `zoneCount`.
+- Para reduzir risco de limite de documento Firestore, arrays de rota enviados ao remoto seguem `ROUTE_CAP`; a copia local fica intacta e o payload registra `remoteRouteLimits`.
+
+Relacao com territorios:
+
+- Sync de runs nao recalcula territorio e nao cria captura nova.
+- `syncTerritoriesToFirestore()` e `syncTerritoryEventsToFirestore()` continuam filas separadas.
+- Falha de territorio nao apaga corrida nem remove a corrida do historico.
+
 ## Turf.js ou biblioteca geográfica
 
 Uma biblioteca geográfica pode ser usada para:

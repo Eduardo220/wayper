@@ -139,3 +139,21 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Detalhes abrem por `localRunId`, `remoteRunId`, `id` atual ou id legado.
 - Metricas exibidas priorizam distancia/duracao salvas; rota visual usa `renderPath`/`segments` quando disponiveis.
 - AsyncStorage segue aceitavel nesta etapa; se historico com rotas longas ficar pesado, migrar a interface local para SQLite sem mudar telas.
+
+## ADR-012: Fila local idempotente para sync de corridas finalizadas
+
+**Status:** aceito
+**Contexto:** depois da consolidacao local-first, corridas finalizadas podiam ficar pendentes, falhar no Firestore ou ser reprocessadas depois de reabrir o app. A fila precisava evitar duplicacao remota, preservar a copia local completa e continuar mostrando corridas com falha.
+**Decisao:** a fonte oficial da fila e o mesmo historico local `runs`, lido por `sync.loadLocalRunHistory()` e atualizado por `sync.saveLocalRun()`. `runSyncQueueService` permanece como wrapper de enfileiramento e passa a usar a regra de selecao exposta por `sync.js`. O sync de runs processa uma corrida por vez, usa `remoteRunId` quando existir, usa `localRunId` como fallback idempotente, tenta localizar remoto por `localRunId` antes de criar documento e grava `localRunId`/`remoteRunId` no payload remoto.
+**Consequencias:**
+
+- `PENDING`, `PENDING_SYNC`, `FAILED`, `SYNC_FAILED`, `LOCAL_ONLY` e `SYNCING` sao normalizados para a fila sem esconder a corrida do historico.
+- Corridas `SYNCED` sem alteracao pendente nao entram na fila.
+- Corridas `RUNNING`, `PAUSED`, `RECOVERING` e `FINISHING` continuam fora do historico finalizado e da fila.
+- Falha de uma corrida nao interrompe as demais; cada item fica `SYNCED` ou `SYNC_FAILED` localmente.
+- Firestore indisponivel, permissao negada, auth ausente, payload invalido ou doc id remoto invalido viram erro controlado sem apagar a copia local.
+- O lock em memoria impede dois syncs de runs simultaneos; NetInfo/AppState apenas agendam nova tentativa com debounce.
+- Se a copia local muda durante o envio, o sync antigo preserva `remoteRunId`, mas deixa a corrida pendente para novo envio em vez de marcar como `SYNCED`.
+- O payload remoto e sanitizado para remover `undefined`/funcoes e preservar metricas, modo, rota e campos territoriais existentes.
+- Para proteger tamanho de documento, paths remotos continuam limitados por `ROUTE_CAP`; a copia local nao e cortada e o payload registra contadores/truncamento em `remoteRouteLimits`.
+- Sync de runs e sync de territorios continuam separados; falha territorial nao apaga nem despublica a corrida local.

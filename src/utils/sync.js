@@ -15,6 +15,7 @@ import {
   doc,
   getDocs,
   query,
+  where,
   orderBy,
   limit as firestoreLimit,
   startAfter,
@@ -37,7 +38,7 @@ import {
 
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundFetch from "expo-background-fetch";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import logger, { LOG_CATEGORIES } from "./logger.js";
 import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
 
@@ -45,11 +46,19 @@ import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js
 const RUNS_KEY = "runs";
 const ZONES_KEY = "zones";
 const MEDALS_KEY = "medals"; // NEW
-const RUN_SYNC_STATUS = {
+export const RUN_SYNC_STATUS = {
   PENDING: "PENDING",
   SYNCING: "SYNCING",
   SYNCED: "SYNCED",
   FAILED: "FAILED",
+};
+
+export const RUN_OFFLINE_STATUS = {
+  LOCAL_ONLY: "LOCAL_ONLY",
+  PENDING_SYNC: "PENDING_SYNC",
+  SYNCING: "SYNCING",
+  SYNCED: "SYNCED",
+  SYNC_FAILED: "SYNC_FAILED",
 };
 
 const SYNC_DEBOUNCE_MS = 2500;
@@ -74,8 +83,10 @@ let debounceZonesTimer = null;
 let debounceMedalsTimer = null;
 let debounceTerritoriesTimer = null;
 let debounceTerritoryEventsTimer = null;
+let debounceAllTimer = null;
 let autoSyncTimer = null;
 let netInfoUnsubscribe = null;
+let appStateUnsubscribe = null;
 
 const RETRY_META_RUNS = "wayper:retry:runs";
 const RETRY_META_ZONES = "wayper:retry:zones";
@@ -146,6 +157,9 @@ const FINISHED_RUN_HISTORY_STATUSES = new Set([
   "COMPLETE",
   "FINISHED",
   "FINISHED_LOCAL",
+  "PENDING",
+  "FAILED",
+  "SYNCING",
   "PENDING_SYNC",
   "SYNC_FAILED",
   "SYNCED",
@@ -153,6 +167,18 @@ const FINISHED_RUN_HISTORY_STATUSES = new Set([
 ]);
 
 const SYNC_STATUS_VALUES = new Set(Object.values(RUN_SYNC_STATUS));
+const OFFLINE_STATUS_VALUES = new Set(Object.values(RUN_OFFLINE_STATUS));
+const QUEUEABLE_SYNC_STATUSES = new Set([
+  RUN_SYNC_STATUS.PENDING,
+  RUN_SYNC_STATUS.SYNCING,
+  RUN_SYNC_STATUS.FAILED,
+]);
+const QUEUEABLE_OFFLINE_STATUSES = new Set([
+  RUN_OFFLINE_STATUS.LOCAL_ONLY,
+  RUN_OFFLINE_STATUS.PENDING_SYNC,
+  RUN_OFFLINE_STATUS.SYNCING,
+  RUN_OFFLINE_STATUS.SYNC_FAILED,
+]);
 
 const normalizeStatusText = (value) => String(value || "").trim().toUpperCase();
 
@@ -213,32 +239,102 @@ function isFinishedHistoryRun(run = {}) {
   return Number(run.distance ?? run.distanceMeters ?? 0) > 0 || Number(run.duration ?? run.durationSeconds ?? 0) > 0;
 }
 
+function hasSyncError(run = {}) {
+  return Boolean(run.syncError || run.lastSyncError);
+}
+
+function normalizeRunMode(mode = "free") {
+  const raw = String(mode || "free").toLowerCase();
+  if (raw === "zones" || raw === "territory" || raw === "zone") return "zones";
+  return "free";
+}
+
 function normalizeRunSyncStatus(run = {}) {
   const syncStatus = normalizeStatusText(run.syncStatus);
+  if (run.pendingSync === true) {
+    if (syncStatus === RUN_SYNC_STATUS.SYNCING || syncStatus === RUN_OFFLINE_STATUS.SYNCING) {
+      return RUN_SYNC_STATUS.SYNCING;
+    }
+    if (syncStatus === RUN_SYNC_STATUS.FAILED || syncStatus === RUN_OFFLINE_STATUS.SYNC_FAILED) {
+      return RUN_SYNC_STATUS.FAILED;
+    }
+    return RUN_SYNC_STATUS.PENDING;
+  }
+  if (run.synced === false && syncStatus === RUN_SYNC_STATUS.SYNCED) {
+    return RUN_SYNC_STATUS.PENDING;
+  }
   if (SYNC_STATUS_VALUES.has(syncStatus)) return syncStatus;
+  if (syncStatus === RUN_OFFLINE_STATUS.PENDING_SYNC || syncStatus === RUN_OFFLINE_STATUS.LOCAL_ONLY) {
+    return RUN_SYNC_STATUS.PENDING;
+  }
+  if (syncStatus === RUN_OFFLINE_STATUS.SYNC_FAILED) return RUN_SYNC_STATUS.FAILED;
+
   const offlineStatus = normalizeStatusText(run.offlineStatus || run.localStatus);
-  if (offlineStatus === "SYNCED") return RUN_SYNC_STATUS.SYNCED;
-  if (offlineStatus === "SYNC_FAILED") return RUN_SYNC_STATUS.FAILED;
-  if (offlineStatus === "SYNCING") return RUN_SYNC_STATUS.SYNCING;
+  if (offlineStatus === RUN_OFFLINE_STATUS.SYNCED) return RUN_SYNC_STATUS.SYNCED;
+  if (offlineStatus === RUN_OFFLINE_STATUS.SYNC_FAILED) return RUN_SYNC_STATUS.FAILED;
+  if (offlineStatus === RUN_OFFLINE_STATUS.SYNCING) return RUN_SYNC_STATUS.SYNCING;
+  if (offlineStatus === RUN_OFFLINE_STATUS.PENDING_SYNC || offlineStatus === RUN_OFFLINE_STATUS.LOCAL_ONLY) {
+    return RUN_SYNC_STATUS.PENDING;
+  }
+
+  if (run.synced === false) return RUN_SYNC_STATUS.PENDING;
   if (run.synced) return RUN_SYNC_STATUS.SYNCED;
+  if (run.remoteRunId && !hasSyncError(run)) return RUN_SYNC_STATUS.SYNCED;
   return RUN_SYNC_STATUS.PENDING;
 }
 
 function normalizeRunOfflineStatus(run = {}, syncStatus = normalizeRunSyncStatus(run)) {
   const offlineStatus = normalizeStatusText(run.offlineStatus || run.localStatus);
-  if (["PENDING_SYNC", "SYNCING", "SYNC_FAILED", "SYNCED", "LOCAL_ONLY"].includes(offlineStatus)) {
+  if (OFFLINE_STATUS_VALUES.has(offlineStatus)) {
+    if (offlineStatus === RUN_OFFLINE_STATUS.SYNCED && syncStatus !== RUN_SYNC_STATUS.SYNCED) {
+      return syncStatus === RUN_SYNC_STATUS.FAILED
+        ? RUN_OFFLINE_STATUS.SYNC_FAILED
+        : RUN_OFFLINE_STATUS.PENDING_SYNC;
+    }
     return offlineStatus;
   }
-  if (syncStatus === RUN_SYNC_STATUS.SYNCED) return "SYNCED";
-  if (syncStatus === RUN_SYNC_STATUS.SYNCING) return "SYNCING";
-  if (syncStatus === RUN_SYNC_STATUS.FAILED) return "SYNC_FAILED";
-  return "PENDING_SYNC";
+  if (syncStatus === RUN_SYNC_STATUS.SYNCED) return RUN_OFFLINE_STATUS.SYNCED;
+  if (syncStatus === RUN_SYNC_STATUS.SYNCING) return RUN_OFFLINE_STATUS.SYNCING;
+  if (syncStatus === RUN_SYNC_STATUS.FAILED) return RUN_OFFLINE_STATUS.SYNC_FAILED;
+  return RUN_OFFLINE_STATUS.PENDING_SYNC;
 }
 
 function preferArray(primary = [], fallback = []) {
   const left = Array.isArray(primary) ? primary : [];
   const right = Array.isArray(fallback) ? fallback : [];
   return left.length > 0 ? left : right;
+}
+
+function syncMetadataMs(run = {}) {
+  return Math.max(
+    dateMs(run.lastSyncAttemptAt),
+    dateMs(run.lastSyncedAt),
+    dateMs(run.syncedAt),
+    dateMs(run.syncUpdatedAt)
+  );
+}
+
+function hasExplicitPendingSyncIntent(run = {}) {
+  const syncStatus = normalizeRunSyncStatus(run);
+  const offlineStatus = normalizeRunOfflineStatus(run, syncStatus);
+  return (
+    run.pendingSync === true ||
+    run.synced === false ||
+    QUEUEABLE_SYNC_STATUSES.has(syncStatus) ||
+    QUEUEABLE_OFFLINE_STATUSES.has(offlineStatus)
+  );
+}
+
+function shouldPreserveExistingSyncFields(existing = {}, incoming = {}) {
+  const existingSyncMs = syncMetadataMs(existing);
+  const incomingSyncMs = syncMetadataMs(incoming);
+  if (!existingSyncMs || incomingSyncMs >= existingSyncMs) return false;
+
+  const incomingUpdatedMs = dateMs(incoming.updatedAt);
+  if (incomingUpdatedMs > existingSyncMs && hasExplicitPendingSyncIntent(incoming)) {
+    return false;
+  }
+  return true;
 }
 
 function runCompletenessScore(run = {}) {
@@ -255,24 +351,32 @@ function runCompletenessScore(run = {}) {
 }
 
 function mergeLocalRunRecords(existing = {}, incoming = {}) {
-  const trustedPath = preferArray(incoming.trustedPath || incoming.path, existing.trustedPath || existing.path);
-  const renderPath = preferArray(incoming.renderPath || incoming.displayPath, existing.renderPath || existing.displayPath);
-  const rawPath = preferArray(incoming.rawPath || incoming.rawPoints, existing.rawPath || existing.rawPoints);
-  const filteredPoints = preferArray(incoming.filteredPoints, existing.filteredPoints || trustedPath);
-  const displayPath = preferArray(incoming.displayPath, existing.displayPath || renderPath || trustedPath);
-  const displayPoints = preferArray(incoming.displayPoints, existing.displayPoints || displayPath);
-  const segments = preferArray(incoming.segments || incoming.routeSegments, existing.segments || existing.routeSegments);
+  const incomingIsContentNewer = dateMs(incoming.updatedAt) >= dateMs(existing.updatedAt);
+  const primary = incomingIsContentNewer ? incoming : existing;
+  const fallback = incomingIsContentNewer ? existing : incoming;
+  const trustedPath = preferArray(primary.trustedPath || primary.path, fallback.trustedPath || fallback.path);
+  const renderPath = preferArray(primary.renderPath || primary.displayPath, fallback.renderPath || fallback.displayPath);
+  const rawPath = preferArray(primary.rawPath || primary.rawPoints, fallback.rawPath || fallback.rawPoints);
+  const filteredPoints = preferArray(primary.filteredPoints, fallback.filteredPoints || trustedPath);
+  const displayPath = preferArray(primary.displayPath, fallback.displayPath || renderPath || trustedPath);
+  const displayPoints = preferArray(primary.displayPoints, fallback.displayPoints || displayPath);
+  const segments = preferArray(primary.segments || primary.routeSegments, fallback.segments || fallback.routeSegments);
   const createdAt = existing.createdAt || incoming.createdAt || incoming.date || existing.date || new Date().toISOString();
   const updatedAt = dateMs(incoming.updatedAt) >= dateMs(existing.updatedAt)
     ? incoming.updatedAt || existing.updatedAt
     : existing.updatedAt || incoming.updatedAt;
+  const preserveExistingSync = shouldPreserveExistingSyncFields(existing, incoming);
+  const syncSource = preserveExistingSync ? existing : incoming;
+  const syncStatus = normalizeRunSyncStatus(syncSource);
+  const offlineStatus = normalizeRunOfflineStatus(syncSource, syncStatus);
+  const remoteRunId = incoming.remoteRunId || existing.remoteRunId || null;
 
   return {
-    ...existing,
-    ...incoming,
+    ...fallback,
+    ...primary,
     id: incoming.localRunId || existing.localRunId || existing.id || incoming.id || incoming.remoteRunId || existing.remoteRunId,
     localRunId: incoming.localRunId || existing.localRunId || existing.id || incoming.id || null,
-    remoteRunId: incoming.remoteRunId || existing.remoteRunId || null,
+    remoteRunId,
     trustedPath,
     path: trustedPath,
     filteredPoints,
@@ -283,6 +387,26 @@ function mergeLocalRunRecords(existing = {}, incoming = {}) {
     rawPoints: rawPath,
     segments,
     routeSegments: segments,
+    synced: syncStatus === RUN_SYNC_STATUS.SYNCED,
+    pendingSync:
+      syncSource.pendingSync !== undefined
+        ? !!syncSource.pendingSync
+        : syncStatus !== RUN_SYNC_STATUS.SYNCED || QUEUEABLE_OFFLINE_STATUSES.has(offlineStatus),
+    syncStatus,
+    offlineStatus,
+    syncAttempts: Number(syncSource.syncAttempts ?? syncSource.retryCount ?? incoming.syncAttempts ?? existing.syncAttempts ?? 0),
+    retryCount: Number(syncSource.retryCount ?? syncSource.syncAttempts ?? incoming.retryCount ?? existing.retryCount ?? 0),
+    lastSyncAttemptAt: syncSource.lastSyncAttemptAt || null,
+    lastSyncedAt: syncSource.lastSyncedAt || syncSource.syncedAt || null,
+    syncedAt: syncSource.syncedAt || syncSource.lastSyncedAt || null,
+    lastSyncError: syncStatus === RUN_SYNC_STATUS.SYNCED ? null : (syncSource.lastSyncError || syncSource.syncError || null),
+    syncError: syncStatus === RUN_SYNC_STATUS.SYNCED ? null : (syncSource.syncError || syncSource.lastSyncError || null),
+    syncErrorType: syncStatus === RUN_SYNC_STATUS.SYNCED ? null : (syncSource.syncErrorType || null),
+    syncErrorRecoverable: syncStatus === RUN_SYNC_STATUS.SYNCED
+      ? true
+      : syncSource.syncErrorRecoverable !== undefined
+        ? !!syncSource.syncErrorRecoverable
+        : true,
     createdAt,
     updatedAt: updatedAt || new Date().toISOString(),
   };
@@ -416,15 +540,19 @@ function normalizeLocalRunRecord(run = {}, { now = new Date().toISOString(), for
   const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
   const syncStatus = normalizeRunSyncStatus(run);
   const offlineStatus = normalizeRunOfflineStatus(run, syncStatus);
+  const pendingSync = run.pendingSync !== undefined
+    ? !!run.pendingSync
+    : syncStatus !== RUN_SYNC_STATUS.SYNCED || QUEUEABLE_OFFLINE_STATUSES.has(offlineStatus);
   const finishedAt = toIsoString(run.finishedAt || run.endedAt || run.date, null);
   const createdAt = toIsoString(run.createdAt || run.startedAt || run.date, now);
   const updatedAt = toIsoString(run.updatedAt, now);
   const date = finishedAt || toIsoString(run.date || run.createdAt || run.updatedAt, now);
-  const inferredMode =
+  const inferredMode = normalizeRunMode(
     run.mode ||
     run.type ||
     run.runMode ||
-    (Number(run.area ?? run.areaM2 ?? 0) > 0 || Array.isArray(run.zoneCoords || run.zone?.coords) ? "zones" : "free");
+    (Number(run.area ?? run.areaM2 ?? 0) > 0 || sanitizeCoordsArray(run.zoneCoords || run.zone?.coords || []).length >= 3 ? "zones" : "free")
+  );
 
   return {
     ...run,
@@ -463,12 +591,18 @@ function normalizeLocalRunRecord(run = {}, { now = new Date().toISOString(), for
     pausedDurationSeconds: run.pausedDurationSeconds ?? null,
     status: run.status && !ACTIVE_RUN_HISTORY_STATUSES.has(normalizeStatusText(run.status)) ? run.status : "completed",
     synced: syncStatus === RUN_SYNC_STATUS.SYNCED,
-    pendingSync: run.pendingSync !== undefined ? !!run.pendingSync : syncStatus !== RUN_SYNC_STATUS.SYNCED,
+    pendingSync,
     syncStatus,
     offlineStatus,
-    syncAttempts: Number(run.syncAttempts || 0),
-    lastSyncError: run.lastSyncError || null,
-    lastSyncedAt: run.lastSyncedAt || null,
+    syncAttempts: Number(run.syncAttempts ?? run.retryCount ?? 0),
+    retryCount: Number(run.retryCount ?? run.syncAttempts ?? 0),
+    lastSyncAttemptAt: toIsoString(run.lastSyncAttemptAt, null),
+    lastSyncError: syncStatus === RUN_SYNC_STATUS.SYNCED ? null : (run.lastSyncError || run.syncError || null),
+    syncError: syncStatus === RUN_SYNC_STATUS.SYNCED ? null : (run.syncError || run.lastSyncError || null),
+    syncErrorType: syncStatus === RUN_SYNC_STATUS.SYNCED ? null : (run.syncErrorType || null),
+    syncErrorRecoverable: run.syncErrorRecoverable !== undefined ? !!run.syncErrorRecoverable : true,
+    lastSyncedAt: toIsoString(run.lastSyncedAt || run.syncedAt, null),
+    syncedAt: toIsoString(run.syncedAt || run.lastSyncedAt, null),
     schemaVersion: Number(run.schemaVersion || 1),
     createdAt,
     updatedAt,
@@ -936,249 +1070,587 @@ export function scheduleZonesSync(delay = SYNC_DEBOUNCE_MS) {
   }, delay);
 }
 
+function logRunSync(event, context = {}, level = "debug") {
+  try {
+    const method = logger[level] || logger.debug;
+    method(LOG_CATEGORIES.SYNC, event, context);
+  } catch {}
+}
+
+function getLocalRunId(run = {}) {
+  const id = run.localRunId || run.id || run.runId || run.legacyId || null;
+  return id == null ? null : String(id).trim();
+}
+
+function isValidFirestoreDocId(value) {
+  const id = String(value || "").trim();
+  return Boolean(id) && id.length <= 500 && !id.includes("/") && !/^__.*__$/.test(id);
+}
+
+function getRunQueueDecision(run = {}) {
+  const normalized = normalizeLocalRunRecord(run, { forHistory: true }) || run;
+  const syncStatus = normalizeRunSyncStatus(normalized);
+  const offlineStatus = normalizeRunOfflineStatus(normalized, syncStatus);
+  const localRunId = getLocalRunId(normalized);
+  const mode = normalizeRunMode(normalized.mode);
+  const pathCount = sanitizeCoordsArray(normalized.trustedPath || normalized.path || []).length;
+  const renderPathCount = sanitizeCoordsArray(normalized.renderPath || normalized.displayPath || []).length;
+  const segmentCount = sanitizeRunSegments(normalized.routeSegments || normalized.segments || []).length;
+  const zoneCoordsCount = mode === "zones" ? sanitizeCoordsArray(normalized.zoneCoords || []).length : 0;
+  const hasTerritory = mode === "zones" && (
+    Number(normalized.area ?? normalized.areaM2 ?? 0) > 0 ||
+    zoneCoordsCount >= 3 ||
+    Boolean(normalized.geometry)
+  );
+  const hasMinimumPayload =
+    pathCount > 0 ||
+    renderPathCount > 0 ||
+    segmentCount > 0 ||
+    Number(normalized.distance ?? normalized.distanceMeters ?? 0) > 0 ||
+    Number(normalized.duration ?? normalized.durationSeconds ?? 0) > 0 ||
+    hasTerritory;
+
+  if (!localRunId) return { queue: false, reason: "missing_local_run_id", run: normalized };
+  if (!isFinishedHistoryRun(normalized)) return { queue: false, reason: "not_finished_history_run", run: normalized };
+  if (!hasMinimumPayload) return { queue: false, reason: "missing_minimum_payload", run: normalized };
+  if (normalized.syncErrorRecoverable === false) return { queue: false, reason: "sync_error_not_recoverable", run: normalized };
+  if (syncStatus === RUN_SYNC_STATUS.SYNCED && offlineStatus === RUN_OFFLINE_STATUS.SYNCED && normalized.pendingSync !== true) {
+    return { queue: false, reason: "already_synced", run: normalized };
+  }
+  if (
+    normalized.pendingSync === true ||
+    normalized.synced === false ||
+    QUEUEABLE_SYNC_STATUSES.has(syncStatus) ||
+    QUEUEABLE_OFFLINE_STATUSES.has(offlineStatus)
+  ) {
+    return { queue: true, reason: `${syncStatus}:${offlineStatus}`, run: normalized };
+  }
+  return { queue: false, reason: "not_queueable_status", run: normalized };
+}
+
+export function isRunQueuedForSync(run = {}) {
+  return getRunQueueDecision(run).queue;
+}
+
+function sanitizeFirestoreValue(value, depth = 0) {
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") return undefined;
+  if (value === null) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
+  if (typeof value !== "object") return value;
+  if (typeof value?.toDate === "function" && Number.isFinite(Number(value?.seconds))) return value;
+  if (depth > 8) return undefined;
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeFirestoreValue(item, depth + 1))
+      .filter((item) => item !== undefined);
+  }
+
+  const output = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const sanitized = sanitizeFirestoreValue(entry, depth + 1);
+    if (sanitized !== undefined) output[key] = sanitized;
+  }
+  return output;
+}
+
+function capRemoteArray(values = [], cap = ROUTE_CAP) {
+  const list = Array.isArray(values) ? values : [];
+  return {
+    values: list.slice(0, cap),
+    originalCount: list.length,
+    truncated: list.length > cap,
+  };
+}
+
+function classifyRunSyncError(error = {}) {
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || error || "sync_error");
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes("invalid_remote_run_id") ||
+    lower.includes("missing_local_run_id") ||
+    lower.includes("missing_minimum_payload") ||
+    lower.includes("invalid_run_payload") ||
+    lower.includes("too large") ||
+    lower.includes("document size") ||
+    lower.includes("payload")
+  ) {
+    return { type: "validation", recoverable: false, message };
+  }
+  if (code.includes("permission-denied") || lower.includes("permission")) {
+    return { type: "permission_denied", recoverable: false, message };
+  }
+  if (lower.includes("auth_required") || lower.includes("not-authenticated")) {
+    return { type: "auth_required", recoverable: true, message };
+  }
+  if (
+    code.includes("unavailable") ||
+    code.includes("deadline-exceeded") ||
+    code.includes("resource-exhausted") ||
+    lower.includes("unavailable") ||
+    lower.includes("timeout") ||
+    lower.includes("network") ||
+    lower.includes("offline")
+  ) {
+    return { type: "temporary", recoverable: true, message };
+  }
+  return { type: code || "unknown", recoverable: true, message };
+}
+
+async function findRemoteRunIdByLocalRunId(localRunId, uid) {
+  if (!localRunId || !uid || uid === "offline") return null;
+  try {
+    const snap = await getDocs(query(
+      collection(db, "runs"),
+      where("localRunId", "==", String(localRunId)),
+      firestoreLimit(1)
+    ));
+    const docSnap = snap?.docs?.[0] || null;
+    if (!docSnap) return null;
+    const data = typeof docSnap.data === "function" ? docSnap.data() : {};
+    const remoteRunId = data?.remoteRunId || data?.id || docSnap.id || null;
+    if (!remoteRunId || !isValidFirestoreDocId(remoteRunId)) return null;
+    logRunSync("RUN_SYNC_REMOTE_DEDUPE_FOUND", {
+      localRunId,
+      remoteRunId,
+      source: "localRunId_lookup",
+    });
+    return String(remoteRunId);
+  } catch (error) {
+    logRunSync("RUN_SYNC_REMOTE_DEDUPE_LOOKUP_SKIPPED", {
+      localRunId,
+      errorType: classifyRunSyncError(error).type,
+    }, "warn");
+    return null;
+  }
+}
+
+async function resolveRemoteRunDocumentId(run = {}, uid) {
+  const localRunId = getLocalRunId(run);
+  if (!localRunId) throw new Error("missing_local_run_id");
+
+  if (run.remoteRunId) {
+    const remoteRunId = String(run.remoteRunId).trim();
+    if (!isValidFirestoreDocId(remoteRunId)) throw new Error("invalid_remote_run_id");
+    return { remoteRunId, source: "remoteRunId" };
+  }
+
+  const dedupedRemoteRunId = await findRemoteRunIdByLocalRunId(localRunId, uid);
+  if (dedupedRemoteRunId) return { remoteRunId: dedupedRemoteRunId, source: "localRunId_lookup" };
+
+  if (!isValidFirestoreDocId(localRunId)) throw new Error("invalid_local_run_id");
+  return { remoteRunId: localRunId, source: "localRunId" };
+}
+
+function buildRunFirestorePayload(run = {}, { remoteRunId, uid, now = new Date().toISOString() } = {}) {
+  const localRunId = getLocalRunId(run);
+  if (!localRunId || !remoteRunId) throw new Error("invalid_run_payload");
+
+  const mode = normalizeRunMode(run.mode);
+  const isZoneRun = mode === "zones";
+  const path = capRemoteArray(sanitizeCoordsArray(run.trustedPath || run.path || []));
+  const rawPath = capRemoteArray(sanitizeCoordsArray(run.rawPath || run.rawPoints || []));
+  const renderPath = capRemoteArray(sanitizeCoordsArray(run.renderPath || run.displayPath || path.values));
+  const displayPath = capRemoteArray(sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath.values));
+  const filteredPoints = capRemoteArray(sanitizeCoordsArray(run.filteredPoints || path.values));
+  const displayPoints = capRemoteArray(sanitizeCoordsArray(run.displayPoints || run.displayPath || run.renderPath || displayPath.values));
+  const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
+  const zoneCoords = isZoneRun ? capRemoteArray(sanitizeCoordsArray(run.zoneCoords || []), 5000) : { values: [], originalCount: 0, truncated: false };
+  const routeLimit = {
+    routePointLimit: ROUTE_CAP,
+    trustedPathOriginalCount: path.originalCount,
+    trustedPathTruncated: path.truncated,
+    rawPathOriginalCount: rawPath.originalCount,
+    rawPathTruncated: rawPath.truncated,
+    renderPathOriginalCount: renderPath.originalCount,
+    renderPathTruncated: renderPath.truncated,
+    zoneCoordsOriginalCount: zoneCoords.originalCount,
+    zoneCoordsTruncated: zoneCoords.truncated,
+  };
+
+  if (Object.values(routeLimit).some((value) => value === true)) {
+    logRunSync("RUN_SYNC_REMOTE_PAYLOAD_TRUNCATED", {
+      localRunId,
+      remoteRunId,
+      trustedPathOriginalCount: routeLimit.trustedPathOriginalCount,
+      rawPathOriginalCount: routeLimit.rawPathOriginalCount,
+      renderPathOriginalCount: routeLimit.renderPathOriginalCount,
+      zoneCoordsOriginalCount: routeLimit.zoneCoordsOriginalCount,
+    }, "warn");
+  }
+
+  const payload = {
+    id: remoteRunId,
+    localRunId,
+    remoteRunId,
+    runId: localRunId,
+    legacyId: run.legacyId || run.runId || null,
+    userId: uid,
+    path: path.values,
+    trustedPath: path.values,
+    filteredPoints: filteredPoints.values,
+    rawPath: rawPath.values,
+    rawPoints: rawPath.values,
+    segments,
+    routeSegments: segments,
+    renderPath: renderPath.values,
+    displayPath: displayPath.values,
+    displayPoints: displayPoints.values,
+    pathQuality: run.pathQuality || null,
+    gpsQualitySummary: run.gpsQualitySummary || run.pathQuality || null,
+    lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
+    smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
+    filterVersion: run.filterVersion || run.pathQuality?.filterVersion || run.gpsQualitySummary?.filterVersion || null,
+    distance: Number(run.distance ?? run.distanceMeters ?? 0),
+    distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
+    duration: Number(run.duration ?? run.durationSeconds ?? 0),
+    durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
+    pace: Number(run.pace ?? run.avgPace ?? 0),
+    avgSpeed: Number(run.avgSpeed ?? run.averageSpeed ?? 0),
+    averageSpeed: Number(run.averageSpeed ?? run.avgSpeed ?? 0),
+    maxSpeed: Number(run.maxSpeed || 0),
+    avgPace: Number(run.avgPace ?? run.pace ?? 0),
+    averagePace: Number(run.averagePace ?? run.avgPace ?? run.pace ?? 0),
+    area: isZoneRun ? Number(run.area ?? run.areaM2 ?? 0) : 0,
+    areaM2: isZoneRun ? Number(run.areaM2 ?? run.area ?? 0) : 0,
+    mode,
+    zoneId: isZoneRun ? (run.zoneId || null) : null,
+    zoneCoords: zoneCoords.values,
+    color: isZoneRun ? (run.color || run.zoneColor || "#00E676") : null,
+    strokeColor: isZoneRun ? (run.strokeColor || run.color || "#00E676") : null,
+    fillOpacity: isZoneRun ? Number(run.fillOpacity ?? 0.22) : null,
+    geometry: isZoneRun ? (run.geometry || run.zoneGeometry || null) : null,
+    routeGeometry: run.routeGeometry || null,
+    zoneCount: isZoneRun ? Number(run.zoneCount || (zoneCoords.values.length >= 3 ? 1 : 0)) : 0,
+    territorySummary: isZoneRun ? (run.territorySummary || run.zoneSummary || null) : null,
+    territoryEvents: isZoneRun && Array.isArray(run.territoryEvents) ? run.territoryEvents : [],
+    name: run.name || "Corrida",
+    title: run.title || run.name || null,
+    effort: Number(run.effort || 0),
+    notes: run.notes || "",
+    tags: Array.isArray(run.tags) ? run.tags : [],
+    photoUri: run.photoUri || null,
+    visibility: run.visibility || "followers",
+    date: toIsoString(run.date || run.finishedAt || run.endedAt || now, now),
+    startedAt: toIsoString(run.startedAt, null),
+    finishedAt: toIsoString(run.finishedAt || run.endedAt || run.date, null),
+    endedAt: toIsoString(run.endedAt || run.finishedAt || run.date, null),
+    pausedDurationSeconds: run.pausedDurationSeconds ?? null,
+    status: getRemoteRunStatus(run.status),
+    schemaVersion: Number(run.schemaVersion || 1),
+    createdAt: toIsoString(run.createdAt || run.date, now),
+    updatedAt: now,
+    syncedAt: now,
+    lastSyncAttemptAt: run.lastSyncAttemptAt || now,
+    remoteRouteLimits: routeLimit,
+  };
+
+  return sanitizeFirestoreValue(payload);
+}
+
+async function commitRunToFirestore(run = {}, { attemptAt = new Date().toISOString() } = {}) {
+  const uid = auth?.currentUser?.uid || null;
+  if (!uid || uid === "offline") throw new Error("auth_required_for_run_sync");
+
+  const { remoteRunId, source } = await resolveRemoteRunDocumentId(run, uid);
+  const payload = buildRunFirestorePayload(run, { remoteRunId, uid, now: attemptAt });
+  const batch = writeBatch(db);
+  batch.set(doc(db, "runs", remoteRunId), payload, { merge: true });
+  batch.set(doc(db, "users", uid, "runs", remoteRunId), payload, { merge: true });
+
+  const isZoneActivity = payload.mode === "zones" && (Number(payload.area || 0) > 0 || (Array.isArray(payload.zoneCoords) && payload.zoneCoords.length >= 3));
+  const activityId = `run_${uid}_${remoteRunId}`;
+  const activityType = isZoneActivity ? "zone" : "run";
+  batch.set(
+    doc(db, "activities", activityId),
+    sanitizeFirestoreValue({
+      id: activityId,
+      type: activityType,
+      userId: uid,
+      runId: remoteRunId,
+      localRunId: payload.localRunId,
+      remoteRunId,
+      distance: Number(payload.distance || 0),
+      duration: Number(payload.duration || 0),
+      area: isZoneActivity ? Number(payload.area || 0) : 0,
+      mode: payload.mode,
+      zoneCount: isZoneActivity ? Number(payload.zoneCount || 0) : 0,
+      name: payload.name || "Corrida",
+      description: isZoneActivity
+        ? `capturou uma area e correu ${(Number(payload.distance || 0) / 1000).toFixed(2)} km`
+        : `correu ${(Number(payload.distance || 0) / 1000).toFixed(2)} km`,
+      visibility: payload.visibility || "followers",
+      createdAt: attemptAt,
+      timestamp: attemptAt,
+    }),
+    { merge: true }
+  );
+
+  await batch.commit();
+  return {
+    remoteRunId,
+    remoteIdSource: source,
+    uid,
+    activityId,
+    activityType,
+    payload,
+  };
+}
+
 // ----------------- Sync Runs to Firestore -----------------
 export async function syncRunsToFirestore() {
-  if (isSyncingRuns) return;
-  isSyncingRuns = true;
-  let localForFailure = null;
-  const syncingRunIds = new Set();
-  try {
-    const local = await loadLocalRuns();
-    localForFailure = local;
-    if (!Array.isArray(local) || local.length === 0) {
-      isSyncingRuns = false;
-      return;
-    }
+  if (isSyncingRuns) {
+    logRunSync("RUN_SYNC_CONCURRENT_IGNORED", { source: "syncRunsToFirestore" });
+    recordRunEvent("RUN_SYNC_QUEUED", {
+      source: "syncRunsToFirestore",
+      reason: "already_syncing",
+    });
+    return { skipped: true, reason: "already_syncing" };
+  }
 
+  isSyncingRuns = true;
+  const summary = {
+    attempted: 0,
+    synced: 0,
+    failed: 0,
+    recoverableFailures: 0,
+    skipped: 0,
+    offline: false,
+    runIds: [],
+  };
+
+  try {
     const online = await hasNetworkConnection();
     if (!online) {
-      isSyncingRuns = false;
-      return;
+      summary.offline = true;
+      logRunSync("RUN_SYNC_SKIPPED_OFFLINE", { source: "syncRunsToFirestore" });
+      return summary;
     }
 
-    const unsynced = local.filter((r) => !r.synced || r.syncStatus !== RUN_SYNC_STATUS.SYNCED);
-    if (unsynced.length === 0) {
-      isSyncingRuns = false;
-      return;
+    const local = await loadLocalRuns();
+    if (!Array.isArray(local) || local.length === 0) return summary;
+
+    const queued = [];
+    for (const run of local) {
+      const decision = getRunQueueDecision(run);
+      if (decision.queue) {
+        queued.push(decision.run);
+      } else {
+        summary.skipped += 1;
+        logRunSync("RUN_SYNC_ITEM_SKIPPED", {
+          localRunId: getLocalRunId(decision.run || run),
+          remoteRunId: decision.run?.remoteRunId || run?.remoteRunId || null,
+          reason: decision.reason,
+        });
+      }
     }
+
+    if (queued.length === 0) return summary;
+
     recordRunEvent("RUN_SYNC_QUEUED", {
-      count: unsynced.length,
-      runIds: unsynced.map((run) => run.id || run.localRunId).filter(Boolean).slice(0, 20),
+      count: queued.length,
+      runIds: queued.map((run) => run.id || run.localRunId).filter(Boolean).slice(0, 20),
     });
+    logRunSync("RUN_SYNC_STARTED", {
+      count: queued.length,
+      runIds: queued.map((run) => run.id || run.localRunId).filter(Boolean).slice(0, 20),
+    }, "info");
 
-    const batches = [];
-    const pendingPostNotifications = [];
-    let batch = writeBatch(db);
-    let opsInBatch = 0;
-
-    for (const run of unsynced) {
-      if (!run?.id) continue;
-      syncingRunIds.add(String(run.id));
-      run.pendingSync = true;
-      run.syncStatus = RUN_SYNC_STATUS.SYNCING;
-      run.offlineStatus = "SYNCING";
-      run.syncAttempts = Number(run.syncAttempts || 0) + 1;
-      run.lastSyncError = null;
-      run.updatedAt = new Date().toISOString();
-
-      const path = sanitizeCoordsArray(run.trustedPath || run.path || []).slice(0, ROUTE_CAP);
-      const rawPath = sanitizeCoordsArray(run.rawPoints || run.rawPath || []).slice(0, ROUTE_CAP);
-      const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
-      const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || path).slice(0, ROUTE_CAP);
-      const displayPath = sanitizeCoordsArray(run.displayPath || run.renderPath || renderPath).slice(0, ROUTE_CAP);
-
-      const uid = auth?.currentUser?.uid || "offline";
-      const payload = {
-        id: run.id,
-        userId: uid,
-        path,
-        trustedPath: path,
-        filteredPoints: sanitizeCoordsArray(run.filteredPoints || path).slice(0, ROUTE_CAP),
-        rawPath,
-        rawPoints: rawPath,
-        segments,
-        routeSegments: segments,
-        renderPath,
-        displayPath,
-        displayPoints: sanitizeCoordsArray(run.displayPoints || run.displayPath || run.renderPath || displayPath).slice(0, ROUTE_CAP),
-        pathQuality: run.pathQuality || null,
-        gpsQualitySummary: run.gpsQualitySummary || run.pathQuality || null,
-        lowConfidenceSegments: Array.isArray(run.lowConfidenceSegments) ? run.lowConfidenceSegments : [],
-        smoothingVersion: run.smoothingVersion || run.pathQuality?.smoothingVersion || null,
-        filterVersion: run.filterVersion || run.pathQuality?.filterVersion || run.gpsQualitySummary?.filterVersion || null,
-        distance: Number(run.distance || 0),
-        distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
-        duration: Number(run.duration || 0),
-        durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
-        avgSpeed: Number(run.avgSpeed || 0),
-        maxSpeed: Number(run.maxSpeed || 0),
-        avgPace: Number(run.avgPace || 0),
-        area: Number(run.area || 0),
-        mode: run.mode || "free",
-        zoneId: run.zoneId || null,
-        zoneCoords: sanitizeCoordsArray(run.zoneCoords || []).slice(0, 5000),
-        color: run.color || run.zoneColor || "#00E676",
-        strokeColor: run.strokeColor || run.color || "#00E676",
-        fillOpacity: Number(run.fillOpacity ?? 0.22),
-        geometry: run.geometry || run.zoneGeometry || null,
-        routeGeometry: run.routeGeometry || null,
-        zoneCount: Number(run.zoneCount || 0),
-        name: run.name || "Corrida",
-        effort: Number(run.effort || 0),
-        notes: run.notes || "",
-        tags: Array.isArray(run.tags) ? run.tags : [],
-        photoUri: run.photoUri || null,
-        visibility: run.visibility || "followers",
-        date: run.date || new Date().toISOString(),
-        startedAt: run.startedAt || null,
-        endedAt: run.endedAt || run.date || null,
-        pausedDurationSeconds: run.pausedDurationSeconds ?? null,
-        status: getRemoteRunStatus(run.status),
-        localRunId: run.localRunId || run.id,
-        schemaVersion: Number(run.schemaVersion || 1),
-        createdAt: Timestamp.now(),
+    for (const queuedRun of queued) {
+      const lookup = {
+        id: queuedRun.id,
+        localRunId: queuedRun.localRunId,
+        remoteRunId: queuedRun.remoteRunId,
+        runId: queuedRun.runId,
+        legacyId: queuedRun.legacyId,
       };
+      const attemptAt = new Date().toISOString();
+      let currentRun = null;
+      let syncingRun = null;
 
-      batch.set(doc(db, "runs", run.id), payload, { merge: true });
-      opsInBatch++;
-
-      if (uid !== "offline") {
-        const activityId = `run_${uid}_${run.id}`;
-        const activityType = run.mode === "zones" && Number(run.area || 0) > 0 ? "zone" : "run";
-        batch.set(doc(db, "users", uid, "runs", run.id), payload, { merge: true });
-        batch.set(
-          doc(db, "activities", activityId),
-          {
-            id: activityId,
-            type: activityType,
-            userId: uid,
-            runId: run.id,
-            distance: Number(run.distance || 0),
-            duration: Number(run.duration || 0),
-            area: Number(run.area || 0),
-            mode: run.mode || "free",
-            zoneCount: Number(run.zoneCount || 0),
-            name: run.name || "Corrida",
-            description:
-              run.mode === "zones" && Number(run.area || 0) > 0
-                ? `capturou uma area e correu ${(Number(run.distance || 0) / 1000).toFixed(2)} km`
-                : `correu ${(Number(run.distance || 0) / 1000).toFixed(2)} km`,
-            visibility: run.visibility || "followers",
-            createdAt: Timestamp.now(),
-            timestamp: Timestamp.now(),
-          },
-          { merge: true }
-        );
-        opsInBatch += 2;
-
-        if (!run.subscriberNotificationSent) {
-          pendingPostNotifications.push({
-            run,
-            activityId,
-            activityType,
-            authorUid: uid,
-            authorName: auth?.currentUser?.displayName || auth?.currentUser?.email?.split("@")?.[0] || "Atleta Wayper",
-          });
-        }
-      }
-
-      if (opsInBatch >= MAX_BATCH_WRITE - 4) {
-        batches.push(batch);
-        batch = writeBatch(db);
-        opsInBatch = 0;
-      }
-    }
-
-    if (opsInBatch > 0) batches.push(batch);
-
-    for (const b of batches) {
-      let attempts = 0;
-      while (attempts <= MAX_RETRY_ATTEMPTS) {
-        try {
-          await b.commit();
-          break;
-        } catch (err) {
-          attempts++;
-          const backoff = Math.min(2 ** attempts * 1000, MAX_BACKOFF_MS);
-          logError(err, {
-            fn: "syncRunsToFirestore.batch.commit",
-            attempts,
-            backoff,
-          });
-          await new Promise((r) => setTimeout(r, backoff));
-          if (attempts > MAX_RETRY_ATTEMPTS) throw err;
-        }
-      }
-    }
-
-    const syncedAt = new Date().toISOString();
-    for (const run of unsynced) {
-      if (!run?.id || !syncingRunIds.has(String(run.id))) continue;
-      run.synced = true;
-      run.pendingSync = false;
-      run.syncStatus = RUN_SYNC_STATUS.SYNCED;
-      run.offlineStatus = "SYNCED";
-      run.remoteRunId = run.remoteRunId || run.id;
-      run.lastSyncError = null;
-      run.lastSyncedAt = syncedAt;
-      run.updatedAt = syncedAt;
-    }
-
-    for (const item of pendingPostNotifications) {
       try {
-        await notifyActivitySubscribers(item);
-        item.run.subscriberNotificationSent = true;
-        item.run.subscriberNotificationSentAt = new Date().toISOString();
-      } catch {}
+        currentRun = (await findLocalRunById(lookup)) || queuedRun;
+        const decision = getRunQueueDecision(currentRun);
+        if (!decision.queue) {
+          summary.skipped += 1;
+          logRunSync("RUN_SYNC_ITEM_SKIPPED", {
+            localRunId: getLocalRunId(currentRun),
+            remoteRunId: currentRun?.remoteRunId || null,
+            reason: decision.reason,
+          });
+          continue;
+        }
+
+        const attempts = Number(currentRun.syncAttempts ?? currentRun.retryCount ?? 0) + 1;
+        syncingRun = await saveLocalRun({
+          ...currentRun,
+          synced: false,
+          pendingSync: true,
+          syncStatus: RUN_SYNC_STATUS.SYNCING,
+          offlineStatus: RUN_OFFLINE_STATUS.SYNCING,
+          syncAttempts: attempts,
+          retryCount: attempts,
+          lastSyncAttemptAt: attemptAt,
+          lastSyncError: null,
+          syncError: null,
+          syncErrorType: null,
+          syncErrorRecoverable: true,
+          updatedAt: attemptAt,
+        });
+
+        summary.attempted += 1;
+        summary.runIds.push(syncingRun.id || syncingRun.localRunId);
+        logRunSync("RUN_SYNC_ITEM_STARTED", {
+          localRunId: syncingRun.localRunId,
+          remoteRunId: syncingRun.remoteRunId || null,
+          syncAttempts: attempts,
+        });
+
+        const remoteResult = await commitRunToFirestore(syncingRun, { attemptAt });
+        const syncedAt = new Date().toISOString();
+        const latest = (await findLocalRunById({
+          ...lookup,
+          localRunId: syncingRun.localRunId,
+          remoteRunId: remoteResult.remoteRunId,
+        })) || syncingRun;
+        const localChangedAfterAttempt =
+          dateMs(latest.updatedAt) > dateMs(attemptAt);
+
+        const saved = await saveLocalRun({
+          ...latest,
+          remoteRunId: remoteResult.remoteRunId,
+          synced: !localChangedAfterAttempt,
+          pendingSync: localChangedAfterAttempt,
+          syncStatus: localChangedAfterAttempt ? RUN_SYNC_STATUS.PENDING : RUN_SYNC_STATUS.SYNCED,
+          offlineStatus: localChangedAfterAttempt ? RUN_OFFLINE_STATUS.PENDING_SYNC : RUN_OFFLINE_STATUS.SYNCED,
+          lastSyncError: null,
+          syncError: null,
+          syncErrorType: null,
+          syncErrorRecoverable: true,
+          lastSyncedAt: syncedAt,
+          syncedAt,
+          updatedAt: localChangedAfterAttempt ? latest.updatedAt : syncedAt,
+        });
+
+        if (!localChangedAfterAttempt && !saved.subscriberNotificationSent) {
+          try {
+            await notifyActivitySubscribers({
+              run: saved,
+              activityId: remoteResult.activityId,
+              activityType: remoteResult.activityType,
+              authorUid: remoteResult.uid,
+              authorName: auth?.currentUser?.displayName || auth?.currentUser?.email?.split("@")?.[0] || "Atleta Wayper",
+            });
+            await saveLocalRun({
+              ...saved,
+              subscriberNotificationSent: true,
+              subscriberNotificationSentAt: new Date().toISOString(),
+            });
+          } catch (notificationError) {
+            logRunSync("RUN_SYNC_NOTIFICATION_SKIPPED", {
+              localRunId: saved.localRunId,
+              remoteRunId: saved.remoteRunId,
+              errorType: classifyRunSyncError(notificationError).type,
+            }, "warn");
+          }
+        }
+
+        summary.synced += 1;
+        logRunSync("RUN_SYNC_ITEM_SUCCESS", {
+          localRunId: saved.localRunId,
+          remoteRunId: saved.remoteRunId,
+          remoteIdSource: remoteResult.remoteIdSource,
+          pendingLocalChanges: localChangedAfterAttempt,
+        }, "info");
+      } catch (error) {
+        const failedAt = new Date().toISOString();
+        const failure = classifyRunSyncError(error);
+        const failedRun = syncingRun || currentRun || queuedRun;
+        summary.failed += 1;
+        if (failure.recoverable) summary.recoverableFailures += 1;
+        logError(error, {
+          fn: "syncRunsToFirestore.item",
+          localRunId: getLocalRunId(failedRun),
+          remoteRunId: failedRun?.remoteRunId || null,
+          errorType: failure.type,
+          recoverable: failure.recoverable,
+        });
+        recordRunEvent("RUN_SYNC_FAILED", {
+          runId: failedRun?.id || null,
+          localRunId: getLocalRunId(failedRun),
+          remoteRunId: failedRun?.remoteRunId || null,
+          errorType: failure.type,
+          recoverable: failure.recoverable,
+          error,
+        });
+
+        try {
+          await saveLocalRun({
+            ...failedRun,
+            synced: false,
+            pendingSync: failure.recoverable,
+            syncStatus: RUN_SYNC_STATUS.FAILED,
+            offlineStatus: RUN_OFFLINE_STATUS.SYNC_FAILED,
+            lastSyncError: failure.message,
+            syncError: failure.message,
+            syncErrorType: failure.type,
+            syncErrorRecoverable: failure.recoverable,
+            updatedAt: failedAt,
+          });
+        } catch (statusError) {
+          logError(statusError, {
+            fn: "syncRunsToFirestore.markItemFailed",
+            localRunId: getLocalRunId(failedRun),
+          });
+        }
+      }
     }
 
-    await AsyncStorage.setItem(RUNS_KEY, safeStringify(normalizeLocalRunsForHistory(local)));
-    await _setRetryMeta(RETRY_META_RUNS, { attempts: 0, nextAt: 0 });
-    recordRunEvent("RUN_SYNC_SUCCESS", {
-      count: unsynced.length,
-      runIds: unsynced.map((run) => run.id || run.localRunId).filter(Boolean).slice(0, 20),
-      syncedAt,
+    if (summary.recoverableFailures > 0) {
+      const meta = (await _getRetryMeta(RETRY_META_RUNS)) || { attempts: 0 };
+      const attempts = (meta.attempts || 0) + 1;
+      const backoff = Math.min(2 ** attempts * 1000, MAX_BACKOFF_MS);
+      await _setRetryMeta(RETRY_META_RUNS, {
+        attempts,
+        nextAt: Date.now() + backoff,
+      });
+      logRunSync("RUN_SYNC_RETRY_SCHEDULED", {
+        attempts,
+        backoffMs: backoff,
+        recoverableFailures: summary.recoverableFailures,
+      });
+      setTimeout(() => {
+        syncRunsToFirestore().catch((e) =>
+          logError(e, { fn: "syncRunsToFirestore.retry" })
+        );
+      }, backoff);
+    } else {
+      await _setRetryMeta(RETRY_META_RUNS, { attempts: 0, nextAt: 0 });
+    }
+
+    recordRunEvent(summary.failed > 0 ? "RUN_SYNC_FAILED" : "RUN_SYNC_SUCCESS", {
+      count: summary.attempted,
+      synced: summary.synced,
+      failed: summary.failed,
+      recoverableFailures: summary.recoverableFailures,
+      runIds: summary.runIds.slice(0, 20),
     });
+
+    return summary;
   } catch (err) {
     logError(err, { fn: "syncRunsToFirestore" });
     recordRunEvent("RUN_SYNC_FAILED", {
-      count: syncingRunIds.size,
-      runIds: Array.from(syncingRunIds).slice(0, 20),
+      count: summary.attempted,
+      synced: summary.synced,
+      failed: summary.failed,
       error: err,
     });
-    try {
-      if (Array.isArray(localForFailure) && syncingRunIds.size > 0) {
-        const failedAt = new Date().toISOString();
-        const message = err?.message || String(err);
-        const next = localForFailure.map((run) => {
-          if (!run?.id || !syncingRunIds.has(String(run.id))) return run;
-          return {
-            ...run,
-            synced: false,
-            pendingSync: true,
-            syncStatus: RUN_SYNC_STATUS.FAILED,
-            offlineStatus: "SYNC_FAILED",
-            lastSyncError: message,
-            updatedAt: failedAt,
-          };
-        });
-        await AsyncStorage.setItem(RUNS_KEY, safeStringify(normalizeLocalRunsForHistory(next)));
-      }
-    } catch (statusErr) {
-      logError(statusErr, { fn: "syncRunsToFirestore.markFailed" });
-    }
-    const meta = (await _getRetryMeta(RETRY_META_RUNS)) || { attempts: 0 };
-    const attempts = (meta.attempts || 0) + 1;
-    const backoff = Math.min(2 ** attempts * 1000, MAX_BACKOFF_MS);
-    await _setRetryMeta(RETRY_META_RUNS, {
-      attempts,
-      nextAt: Date.now() + backoff,
-    });
-    setTimeout(() => {
-      syncRunsToFirestore().catch((e) =>
-        logError(e, { fn: "syncRunsToFirestore.retry" })
-      );
-    }, backoff);
+    return {
+      ...summary,
+      error: err,
+    };
   } finally {
     isSyncingRuns = false;
   }
@@ -1564,23 +2036,47 @@ export async function syncNow() {
   return syncAll();
 }
 
+function scheduleAllSync(delay = SYNC_DEBOUNCE_MS, source = "scheduleAllSync") {
+  if (debounceAllTimer) clearTimeout(debounceAllTimer);
+  logRunSync("SYNC_ALL_QUEUED", { delayMs: delay, source });
+  debounceAllTimer = setTimeout(() => {
+    syncAll().catch((e) => logError(e, { fn: source }));
+  }, delay);
+}
+
 export function startAutoSync(intervalMs = AUTO_SYNC_INTERVAL_MS) {
   if (!netInfoUnsubscribe) {
     netInfoUnsubscribe = NetInfo.addEventListener((state) => {
       if (state.isConnected && state.isInternetReachable !== false) {
-        syncAll().catch((e) => logError(e, { fn: "startAutoSync.netInfo" }));
+        scheduleAllSync(SYNC_DEBOUNCE_MS, "startAutoSync.netInfo");
       }
     });
   }
 
+  if (!appStateUnsubscribe && AppState?.addEventListener) {
+    try {
+      appStateUnsubscribe = AppState.addEventListener("change", (state) => {
+        if (state === "active") {
+          scheduleAllSync(SYNC_DEBOUNCE_MS, "startAutoSync.appState");
+        }
+      });
+    } catch (error) {
+      logError(error, { fn: "startAutoSync.appState" });
+    }
+  }
+
   if (autoSyncTimer) return;
-  syncAll().catch((e) => logError(e, { fn: "startAutoSync.initial" }));
+  scheduleAllSync(0, "startAutoSync.initial");
   autoSyncTimer = setInterval(() => {
     syncAll().catch((e) => logError(e, { fn: "startAutoSync.tick" }));
   }, intervalMs);
 }
 
 export function stopAutoSync() {
+  if (debounceAllTimer) {
+    clearTimeout(debounceAllTimer);
+    debounceAllTimer = null;
+  }
   if (autoSyncTimer) {
     clearInterval(autoSyncTimer);
     autoSyncTimer = null;
@@ -1590,6 +2086,13 @@ export function stopAutoSync() {
       netInfoUnsubscribe();
     } catch {}
     netInfoUnsubscribe = null;
+  }
+  if (appStateUnsubscribe) {
+    try {
+      appStateUnsubscribe.remove?.();
+      if (typeof appStateUnsubscribe === "function") appStateUnsubscribe();
+    } catch {}
+    appStateUnsubscribe = null;
   }
 }
 
@@ -1702,6 +2205,7 @@ export default {
   saveLocalZone,
   createAndSaveZoneFromPath,
   syncRunsToFirestore,
+  isRunQueuedForSync,
   syncZonesToFirestore,
   scheduleRunsSync,
   scheduleZonesSync,

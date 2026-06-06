@@ -1,8 +1,11 @@
 export const RUN_SYNC_QUEUE_STATUS = {
+  LOCAL_ONLY: "LOCAL_ONLY",
   PENDING: "PENDING",
+  PENDING_SYNC: "PENDING_SYNC",
   SYNCING: "SYNCING",
   SYNCED: "SYNCED",
   FAILED: "FAILED",
+  SYNC_FAILED: "SYNC_FAILED",
 };
 
 function normalizeRunForQueue(runData = {}, options = {}) {
@@ -49,7 +52,10 @@ export async function schedulePendingRunsSync(delayMs = 0) {
 
 export async function loadPendingRuns() {
   const sync = await getSyncModule();
-  const runs = await sync.loadLocalRuns?.();
+  const runs = await (sync.loadLocalRunHistory?.() || sync.loadLocalRuns?.());
+  if (typeof sync.isRunQueuedForSync === "function") {
+    return (Array.isArray(runs) ? runs : []).filter((run) => sync.isRunQueuedForSync(run));
+  }
   return (Array.isArray(runs) ? runs : []).filter((run) => run && (run.pendingSync || !run.synced));
 }
 
