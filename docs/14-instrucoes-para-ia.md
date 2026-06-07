@@ -48,6 +48,9 @@ Quando responder sobre o Wayper:
 - Nao gravar novo dado territorial em `zones` ou `@wayper_zones`; esses storages sao legado/migracao explicita.
 - Corrida livre nao pode ganhar `area`, `geometry`, `zoneCoords`, `territorySummary` ou eventos territoriais falsos.
 - Corrida por zonas deve preservar `area`, `areaM2`, `geometry`, `zoneCoords`, `territorySummary`, `territoryEvents` e `capturedCells` quando a captura local existir.
+- Para XP/progresso/conquistas, usar `ProgressionRepository` e `AchievementRepository` com os storages `wayper_user_progress_v1`, `wayper_xp_events_v1`, `wayper_achievements_v1` e `wayper_achievement_progress_v1`.
+- Nao usar `xpService`, `MedalsWidget`, `medals` ou `@wayper:medals_awarded_v1` como fonte de progresso real sem migracao explicita.
+- XP so deve ser aplicado apos corrida finalizada salva localmente; corrida ativa ou `FINISHING` nao gera XP.
 - Nao adicionar SQLite sem ADR, medicao e plano incremental.
 
 ## Estilo de implementação

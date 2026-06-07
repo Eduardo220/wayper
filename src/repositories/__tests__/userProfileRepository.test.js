@@ -65,6 +65,21 @@ jest.unstable_mockModule("../../services/profile/profileService.js", () => ({
   saveProfile,
 }));
 
+jest.unstable_mockModule("../progressionRepository.js", () => ({
+  getUserProgress: jest.fn(async () => ({
+    userId: "user-1",
+    totalXp: 110,
+    xp: 10,
+    level: 2,
+    nextLevelXp: 150,
+    totalRuns: 1,
+    totalDistanceMeters: 1000,
+    totalDurationSeconds: 600,
+    totalTerritoryAreaM2: 0,
+    territoryCaptures: 0,
+  })),
+}));
+
 const repository = await import("../userProfileRepository.js");
 
 describe("userProfileRepository", () => {
@@ -135,6 +150,7 @@ describe("userProfileRepository", () => {
     const received = [];
 
     const unsubscribe = repository.subscribeCurrentUserProfile((result) => received.push(result));
+    await Promise.resolve();
     await Promise.resolve();
 
     unsubscribe();

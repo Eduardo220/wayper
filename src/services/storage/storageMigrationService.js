@@ -57,6 +57,8 @@ export async function runLocalMigrationsOnce() {
     ["territory", 1, { source: "wayper_territories_v1", repository: "TerritoryRepository" }],
     ["profile", 3, { source: "wayper_profile_v3", repository: "UserProfileRepository" }],
     ["ranking", 1, { source: "remote-or-cache", repository: "RankingRepository" }],
+    ["progression", 1, { source: "wayper_user_progress_v1", repository: "ProgressionRepository" }],
+    ["achievements", 1, { source: "wayper_achievements_v1", repository: "AchievementRepository" }],
   ];
 
   for (const [domain, version, patch] of domains) {

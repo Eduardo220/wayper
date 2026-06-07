@@ -204,6 +204,33 @@ Cobertura automatizada esperada:
 - Corrida por zonas preserva resumo territorial e eventos no historico local.
 - Feed/home usa territorios locais atuais quando Firestore falha e storage vazio retorna lista vazia controlada.
 
+## XP, progresso e conquistas local-first
+
+Checklist manual:
+
+- [ ] Finalizar a primeira corrida livre valida e conferir XP, nivel e conquista "Primeira corrida".
+- [ ] Finalizar segunda corrida e confirmar que XP soma sem duplicar a primeira.
+- [ ] Matar o app e reabrir, confirmando que XP/progresso/conquistas foram preservados.
+- [ ] Finalizar corrida offline e confirmar progresso local sem Firestore.
+- [ ] Voltar internet e confirmar que sync de runs nao duplica XP.
+- [ ] Finalizar corrida por zonas com captura valida e confirmar XP territorial.
+- [ ] Finalizar corrida livre com payload sem territorio e confirmar que nao aparece XP territorial falso.
+- [ ] Abrir perfil e dashboard com Firestore falhando e confirmar progresso local.
+- [ ] Limpar storage em dev e confirmar estado inicial controlado.
+
+Cobertura automatizada esperada:
+
+- `ProgressionRepository` cria progresso inicial, calcula nivel, salva progresso e preserva `syncStatus`.
+- Corrida finalizada valida gera eventos de XP locais com `localId`, `sourceRunId` e `type`.
+- Corrida ativa, `FINISHING`, invalida ou curta nao gera XP.
+- Mesma corrida/retry de sync nao duplica XP.
+- Corrida livre nao recebe XP territorial.
+- Corrida por zonas recebe XP territorial apenas com dados validos.
+- Eventos corrompidos/storage vazio retornam estado controlado sem quebrar o app.
+- `AchievementRepository` lista catalogo, salva progresso parcial, desbloqueia conquistas e nao duplica desbloqueios.
+- Conquistas iniciais cobrem primeira corrida, distancia acumulada, primeira corrida por zonas, primeira area conquistada, 3 corridas e 30 minutos totais.
+- Perfil/dashboard conseguem consumir progresso local sem Firebase real, rede real, GPS real ou MapLibre.
+
 ## Casos ruins que precisam ser testados
 
 - Usuário nega localização.

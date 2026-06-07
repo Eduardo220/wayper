@@ -188,3 +188,19 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - `syncTerritoriesToFirestore()` e `syncTerritoryEventsToFirestore()` continuam separados de runs. Falha remota territorial nao apaga territorio local nem quebra historico.
 - `zones` remoto ainda pode existir como espelho/compatibilidade em services de sync, mas nao e a fonte local nova.
 - AsyncStorage permanece suficiente para o volume atual. SQLite/Expo SQLite deve ser reavaliado com medicao real de quantidade de territorios, eventos e custo de parse/renderizacao no mapa.
+
+## ADR-015: XP, progresso e conquistas local-first
+
+**Status:** aceito
+**Contexto:** o app ja tinha corrida ativa, historico, sync de runs e territorios locais consolidados. A base antiga de XP (`xpService`) atualizava perfil/Firestore e `MedalsWidget` mantinha medalhas visuais, mas isso nao garantia progresso offline, idempotencia por corrida nem separacao clara entre dado real e demo/legado.
+**Decisao:** criar uma camada local-first especifica para gamificacao. `ProgressionRepository` passa a ser a fonte local de XP, nivel, progresso agregado e eventos de XP usando `wayper_user_progress_v1` e `wayper_xp_events_v1`. `AchievementRepository` passa a ser a fonte local de catalogo, progresso parcial e conquistas desbloqueadas usando `wayper_achievements_v1` e `wayper_achievement_progress_v1`. A integracao ocorre apenas depois que a corrida finalizada foi salva localmente. Firestore fica fora do caminho critico e o sync remoto de XP/conquistas fica preparado por metadata, mas nao implementado nesta etapa.
+**Consequencias:**
+
+- Corrida finalizada valida gera XP local mesmo offline.
+- Corrida ativa, `FINISHING`, descartada, invalida ou suspeita nao gera XP.
+- Eventos usam ID deterministico por `userId`, `sourceRunId/localRunId` e `type`, evitando duplicacao em reabertura, retry de sync ou sync remoto futuro.
+- Corrida livre nao recebe XP territorial falso; corrida por zonas pode receber XP territorial apenas quando area/captura/celulas validas ja existem.
+- Perfil e dashboard podem consumir progresso local sem depender de Firestore.
+- `xpService`, `territoryXp`, `MedalsWidget`, storage `medals` e `@wayper:medals_awarded_v1` ficam como legado/visual ate uma migracao explicita; nao sao fonte de progresso real.
+- Recalculo completo a partir de `runs` existe como operacao segura/idempotente, mas nao apaga progresso local nem eventos antigos por padrao.
+- SQLite nao entra nesta etapa; se volume de eventos/progresso crescer, medir antes de migrar storage.

@@ -83,7 +83,8 @@ Responsável por:
 9. App salva a corrida finalizada localmente na chave `runs`.
 10. App enfileira sync remoto idempotente para Firestore.
 11. App calcula/preserva dados de zonas quando a corrida for por zonas.
-12. Ranking e histórico são atualizados a partir da base local e do sync posterior.
+12. App aplica XP e conquistas locais a partir da corrida finalizada salva.
+13. Perfil, dashboard, ranking futuro e histórico são atualizados a partir da base local e do sync posterior.
 
 ## Sync local-first de corridas
 
@@ -102,6 +103,8 @@ Desde 2026-06-06, os dominios principais passam a ter facades/repositories finos
 - `TerritoryRepository`: encapsula `wayper_territories_v1`, eventos e leaderboards locais. `zones` e `@wayper_zones` ficam legados e so entram por chamada explicita.
 - `UserProfileRepository`: usa `wayper_profile_v3` como fallback local e trata Firestore/Storage como melhor esforco para dados publicos e avatar.
 - `RankingRepository`: diferencia ranking remoto, cache local e estado vazio. Ranking demo/mock nao deve aparecer como dado real.
+- `ProgressionRepository`: encapsula XP, nivel, progresso agregado e eventos locais de XP em `wayper_user_progress_v1` e `wayper_xp_events_v1`.
+- `AchievementRepository`: encapsula catalogo, progresso e desbloqueios locais de conquistas em `wayper_achievements_v1` e `wayper_achievement_progress_v1`.
 - `LocalMetadataRepository` e `storageMigrationService`: registram schemaVersion por dominio, migrations executadas e storages legados sem apagar dados.
 
 Firestore ainda existe em services de sync, perfil, ranking, feed, amigos, grupos, notificacoes e territorio remoto. A regra nova e mover chamadas diretas de tela para repository/service quando o fluxo for alterado, sem refatorar social/grupos de uma vez.
@@ -123,6 +126,20 @@ Desde 2026-06-06, territorio por zonas tambem segue a arquitetura local-first in
 
 Sync territorial remoto permanece separado do sync de runs. Falha territorial nao apaga territorio local e nao remove corrida do historico.
 
+## Gamificacao local-first
+
+A base de XP, nivel e conquistas e local-first e nao depende obrigatoriamente de Firestore:
+
+- XP so e calculado depois que uma corrida finalizada valida foi salva localmente em `runs`.
+- Corrida ativa, pausada, recovering ou `FINISHING` nao gera XP.
+- `ProgressionRepository` e a fonte local de `totalXp`, `level`, progresso para proximo nivel, totais de corrida e eventos de XP.
+- `AchievementRepository` e a fonte local de conquistas desbloqueadas e progresso parcial.
+- Eventos de XP usam `sourceRunId`/`localRunId` e `type` para idempotencia; retry de sync ou reabertura do app nao deve duplicar XP.
+- Corrida livre nunca recebe XP territorial mesmo que payload legado traga area falsa.
+- Corrida por zonas pode gerar XP territorial quando houver area/captura/celulas validas ja salvas pela corrida.
+- Perfil e dashboard podem ler progresso local mesmo com Firestore indisponivel.
+- `src/services/xp/xpService.js`, `src/services/xp/territoryXp.js`, `MedalsWidget`, storage `medals` e `@wayper:medals_awarded_v1` ficam como legado/visual ate migracao explicita; nao sao a fonte oficial de progresso real.
+
 ## Pontos que precisam ser definidos
 
 - Regra exata de transformação de rota em zona.
@@ -130,4 +147,4 @@ Sync territorial remoto permanece separado do sync de runs. Falha territorial na
 - Estratégia antifraude.
 - Modelo definitivo do Firestore.
 - Se haverá Cloud Functions ou apenas lógica client-side no início.
-- Política de cache/offline.
+- Politica final de sync remoto para XP e conquistas.

@@ -155,6 +155,107 @@ Regras:
 - `zones` e `@wayper_zones` so entram por migracao/compatibilidade explicita; novo codigo nao deve gravar neles.
 - Migracao local nao apaga legado nesta fase.
 
+## progresso, XP e conquistas locais
+
+A gamificacao local-first usa AsyncStorage e repositories dedicados. Firestore e destino futuro/melhor esforco, nao requisito para calcular progresso local.
+
+### `wayper_user_progress_v1`
+
+Representa o agregado local de progresso do usuario.
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `localId` | string | ID local estavel, por padrao `progress:{userId}`. |
+| `remoteId` | string/null | ID remoto futuro, quando houver sync. |
+| `userId` | string | Usuario dono do progresso; `offline` pode ser usado sem Auth. |
+| `source` | string | Origem do agregado, normalmente `local`. |
+| `totalXp` | number | XP total acumulado por eventos locais validos. |
+| `level` | number | Nivel derivado de `totalXp`. |
+| `xp` | number | XP dentro do nivel atual. |
+| `nextLevelXp` | number | XP necessario dentro do nivel atual para subir. |
+| `progressToNextLevel` | number | Progresso decimal de 0 a 1. |
+| `totalRuns` | number | Corridas validas processadas para XP. |
+| `totalDistanceMeters` | number | Distancia total de corridas validas. |
+| `totalDurationSeconds` | number | Duracao total de corridas validas. |
+| `freeRuns`/`zoneRuns` | number | Totais por modo. |
+| `territoryCaptures` | number | Corridas por zonas com XP territorial valido. |
+| `totalTerritoryAreaM2` | number | Area territorial valida usada para progresso. |
+| `totalCapturedCells` | number | Celulas capturadas usadas para progresso. |
+| `processedRunIds` | array | Runs ja processadas. |
+| `processedRunEventTypes` | object | Dedupe fino por `runId:eventType`. |
+| `syncStatus` | string | `PENDING`, `SYNCED` ou `FAILED`. |
+| `offlineStatus` | string | `LOCAL_ONLY`, `PENDING_SYNC`, `SYNCED` ou `SYNC_FAILED`. |
+| `schemaVersion` | number | Versao do schema local. |
+| `createdAt`/`updatedAt` | ISO string | Datas locais. |
+| `lastSyncAttemptAt`/`lastSyncedAt` | ISO string/null | Controle de sync futuro. |
+| `syncError` | string/null | Erro controlado de sync futuro. |
+
+### `wayper_xp_events_v1`
+
+Representa eventos locais auditaveis de XP.
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `id`/`localId` | string | ID deterministico `xp:{userId}:{runId}:{type}`. |
+| `remoteId` | string/null | ID remoto futuro. |
+| `userId` | string | Usuario dono. |
+| `type` | string | `RUN_COMPLETED`, `DISTANCE_RUN`, `DURATION_RUN`, `FIRST_RUN`, `ZONE_RUN_COMPLETED` ou `TERRITORY_CAPTURED`. |
+| `source` | string | Origem, normalmente `run`. |
+| `sourceRunId`/`localRunId` | string | Corrida local que gerou o evento. |
+| `xpAmount` | number | XP aplicado pelo evento. |
+| `metadata` | object | Metricas seguras usadas no calculo. |
+| `syncStatus` | string | `PENDING`, `SYNCED` ou `FAILED`. |
+| `offlineStatus` | string | `LOCAL_ONLY`, `PENDING_SYNC`, `SYNCED` ou `SYNC_FAILED`. |
+| `schemaVersion` | number | Versao do schema local. |
+| `createdAt`/`updatedAt` | ISO string | Datas locais. |
+| `lastSyncAttemptAt`/`syncError` | ISO string/string/null | Controle de sync futuro. |
+
+### `wayper_achievements_v1`
+
+Representa conquistas desbloqueadas. O catalogo inicial fica no codigo em `AchievementRepository`.
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `id` | string | ID da conquista do catalogo. |
+| `localId` | string | ID local da conquista desbloqueada. |
+| `remoteId` | string/null | ID remoto futuro. |
+| `userId` | string | Usuario dono. |
+| `type` | string | Tipo de conquista (`run`, `distance`, `zone_run`, `territory`, `duration`). |
+| `source` | string | Origem, normalmente `local`. |
+| `progress` | number | Progresso no momento do desbloqueio. |
+| `target` | number | Alvo do catalogo. |
+| `unlockedAt` | ISO string | Momento do desbloqueio local. |
+| `syncStatus` | string | `PENDING`, `SYNCED` ou `FAILED`. |
+| `offlineStatus` | string | `PENDING_SYNC`, `SYNCED` ou `SYNC_FAILED`. |
+| `schemaVersion` | number | Versao do schema local. |
+| `createdAt`/`updatedAt` | ISO string | Datas locais. |
+| `lastSyncAttemptAt`/`syncError` | ISO string/string/null | Controle de sync futuro. |
+
+### `wayper_achievement_progress_v1`
+
+Representa progresso parcial por conquista, mesmo sem desbloqueio.
+As entradas devem ser chaveadas por `userId:achievementId` para evitar mistura de progresso entre usuarios no mesmo aparelho; leituras podem aceitar entrada legada por `achievementId` somente quando ela nao tiver outro `userId`.
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `id`/`localId` | string | ID da conquista. |
+| `userId` | string | Usuario dono. |
+| `progress` | number | Valor atual da metrica. |
+| `target` | number | Alvo da conquista. |
+| `unlocked` | boolean | Indicador derivado/preservado quando aplicavel. |
+| `syncStatus`/`offlineStatus` | string | Controle local para sync futuro. |
+| `schemaVersion` | number | Versao do schema local. |
+| `createdAt`/`updatedAt` | ISO string | Datas locais. |
+
+Regras:
+
+- Corrida finalizada valida pode gerar XP; corrida ativa, `FINISHING`, descartada, invalida ou suspeita nao gera XP.
+- XP e idempotente por `sourceRunId/localRunId` e tipo de evento.
+- Conquista desbloqueada e idempotente por `userId + id`.
+- Storage corrompido deve retornar estado inicial controlado e nao quebrar o app.
+- Dados demo/mock nao entram no progresso real.
+- `medals`, `@wayper:medals_awarded_v1` e colecao remota `medals` sao legado visual; nao substituem `wayper_achievements_v1`.
+
 ## rankings
 
 Representa rankings agregados.
@@ -183,6 +284,10 @@ Storages locais preservados:
 | Leaderboards territoriais | `wayper_territory_leaderboards_v1` | Cache/local atual para lideres locais. |
 | Perfil | `wayper_profile_v3` | Cache/local do perfil e agregados. |
 | Ranking | `wayper:rankingCache:v1:*` | Cache identificado; nao substitui ranking real. |
+| Progresso/XP | `wayper_user_progress_v1` | Fonte local atual via `ProgressionRepository`. |
+| Eventos de XP | `wayper_xp_events_v1` | Auditoria local/idempotencia de XP. |
+| Conquistas desbloqueadas | `wayper_achievements_v1` | Fonte local atual via `AchievementRepository`. |
+| Progresso de conquistas | `wayper_achievement_progress_v1` | Progresso parcial local por conquista. |
 
 Storages legados marcados:
 
@@ -193,6 +298,8 @@ Storages legados marcados:
 | `wayper_active_run_v1` | Estado ativo antigo. | `wayper:activeRun:v2`. |
 | `zones` | Zonas antigas. | `wayper_territories_v1` apos migracao explicita. |
 | `@wayper_zones` | Storage antigo de `src/storage/zonesStorage.js`. | `wayper_territories_v1` apos migracao explicita. |
+| `medals` | Medalhas antigas sincronizadas por `sync.js`. | `wayper_achievements_v1` apos migracao explicita, se aprovada. |
+| `@wayper:medals_awarded_v1` | Estado visual antigo do `MedalsWidget`. | Nao migrar automaticamente para conquista real. |
 
 Regra: migracoes locais nao apagam dados legados nesta fase. Elas apenas registram metadata e, quando chamadas explicitamente, podem copiar zonas antigas para territorios atuais.
 

@@ -18,6 +18,39 @@
 - Firestore e destino posterior de sincronizacao; falha remota nao pode apagar `localRunId`, rota, segmentos ou resumo territorial local.
 - Retry de sync deve ser idempotente por `localRunId`/`remoteRunId` e nao pode duplicar corrida remota.
 
+## XP, progresso e conquistas
+
+Regras atuais obrigatorias:
+
+- XP so pode ser aplicado depois que uma corrida finalizada valida foi salva localmente.
+- Corrida ativa, `RUNNING`, `PAUSED`, `RECOVERING` ou `FINISHING` nao gera XP.
+- Corrida descartada, cancelada, invalida, removida ou marcada como suspeita nao gera XP.
+- A mesma corrida nao pode gerar o mesmo evento de XP duas vezes.
+- A mesma conquista nao pode ser desbloqueada duas vezes para o mesmo usuario.
+- Firestore indisponivel nao bloqueia XP, nivel ou conquistas locais.
+- Dados demo/mock/medalhas visuais nao entram no progresso real.
+- Corrida livre nao gera XP territorial, mesmo que payload legado tenha `area` ou campos territoriais.
+- Corrida por zonas pode gerar XP territorial somente quando houver area/captura/celulas validas ja salvas pela corrida.
+- Falha de territorio nao remove o XP basico da corrida valida.
+
+Regra inicial de XP:
+
+- Corrida valida concluida: 5 XP.
+- Distancia: 1 XP a cada 100 m completos.
+- Duracao: 1 XP a cada 10 min completos.
+- Primeira corrida valida: +10 XP.
+- Corrida por zonas valida: +5 XP.
+- Territorio valido em corrida por zonas: `floor(areaM2 / 100) + 2 XP por celula capturada`, limitado a 500 XP por corrida.
+
+Nivel:
+
+- Nivel 1 inicia em 0 XP.
+- Nivel 2 em 100 XP.
+- Nivel 3 em 250 XP.
+- Nivel 4 em 500 XP.
+- Nivel 5 em 900 XP.
+- Apos o nivel 5, o delta entre niveis cresce pelo fator 1.55.
+
 ## Zona conquistada
 
 Regras a definir oficialmente:

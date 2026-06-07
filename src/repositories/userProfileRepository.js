@@ -7,6 +7,7 @@ import {
   loadProfile,
   saveProfile,
 } from "../services/profile/profileService.js";
+import { getUserProgress } from "./progressionRepository.js";
 
 export const USER_PROFILE_SOURCE = {
   LOCAL: "local",
@@ -56,6 +57,43 @@ function normalizeUserDoc(uid, data = {}) {
   };
 }
 
+function progressToProfilePatch(progress = {}, profile = {}) {
+  const hasProgress = Number(progress.totalRuns || 0) > 0 || Number(progress.totalXp || 0) > 0;
+  if (!hasProgress) return {};
+
+  return {
+    progress,
+    totalXp: Number(progress.totalXp || 0),
+    xp: Number(progress.xp || 0),
+    level: Number(progress.level || 1),
+    nextLevelXp: Number(progress.nextLevelXp || DEFAULT_PROFILE.nextLevelXp || 1000),
+    progressToNextLevel: Number(progress.progressToNextLevel || 0),
+    progressToNextLevelPct: Number(progress.progressToNextLevelPct || 0),
+    totalRuns: Number(progress.totalRuns || 0),
+    totalDistance: Number(progress.totalDistanceMeters || 0),
+    totalTime: Number(progress.totalDurationSeconds || 0),
+    totalArea: Number(progress.totalTerritoryAreaM2 || 0),
+    totalZones: Number(progress.territoryCaptures || 0),
+    localFirstProgress: true,
+    lastUpdate: progress.updatedAt || profile.lastUpdate || null,
+  };
+}
+
+function mergeProgressIntoProfile(profile = {}, progress = {}) {
+  return {
+    ...profile,
+    ...progressToProfilePatch(progress, profile),
+  };
+}
+
+function mergeProgressIntoUserDoc(userDoc, progress = {}) {
+  if (!userDoc) return userDoc;
+  return {
+    ...userDoc,
+    ...progressToProfilePatch(progress, userDoc),
+  };
+}
+
 function buildData(profile, userDoc) {
   return {
     profile: profile || { ...DEFAULT_PROFILE },
@@ -73,18 +111,20 @@ async function getRemoteUserDoc(uid) {
 export async function loadCurrentProfile() {
   const localProfile = await loadProfile();
   const user = auth.currentUser;
+  const progress = await getUserProgress({ userId: user?.uid || localProfile?.uid || "offline" });
+  const mergedProfile = mergeProgressIntoProfile(localProfile, progress);
 
   if (!user?.uid) {
-    return ok(buildData(localProfile, null), { source: USER_PROFILE_SOURCE.LOCAL });
+    return ok(buildData(mergedProfile, null), { source: USER_PROFILE_SOURCE.LOCAL });
   }
 
   try {
-    const userDoc = await getRemoteUserDoc(user.uid);
-    return ok(buildData(localProfile, userDoc), {
+    const userDoc = mergeProgressIntoUserDoc(await getRemoteUserDoc(user.uid), progress);
+    return ok(buildData(mergedProfile, userDoc), {
       source: userDoc ? USER_PROFILE_SOURCE.REMOTE : USER_PROFILE_SOURCE.LOCAL,
     });
   } catch (error) {
-    return fail(error, buildData(localProfile, null), {
+    return fail(error, buildData(mergedProfile, null), {
       source: USER_PROFILE_SOURCE.LOCAL,
     });
   }
@@ -96,10 +136,12 @@ export function subscribeCurrentUserProfile(callback) {
 
   const emitLocal = async (error = null) => {
     const localProfile = await loadProfile();
+    const localProgress = await getUserProgress({ userId: user?.uid || localProfile?.uid || "offline" });
+    const mergedProfile = mergeProgressIntoProfile(localProfile, localProgress);
     if (!active) return;
     callback({
-      data: buildData(localProfile, null),
-      profile: localProfile,
+      data: buildData(mergedProfile, null),
+      profile: mergedProfile,
       userDoc: null,
       source: USER_PROFILE_SOURCE.LOCAL,
       loading: false,
@@ -119,11 +161,15 @@ export function subscribeCurrentUserProfile(callback) {
       doc(db, "users", user.uid),
       async (snap) => {
         const localProfile = await loadProfile();
+        const localProgress = await getUserProgress({ userId: user.uid || localProfile?.uid || "offline" });
+        const mergedProfile = mergeProgressIntoProfile(localProfile, localProgress);
         if (!active) return;
-        const userDoc = snap.exists() ? normalizeUserDoc(snap.id || user.uid, snap.data()) : null;
+        const userDoc = snap.exists()
+          ? mergeProgressIntoUserDoc(normalizeUserDoc(snap.id || user.uid, snap.data()), localProgress)
+          : null;
         callback({
-          data: buildData(localProfile, userDoc),
-          profile: localProfile,
+          data: buildData(mergedProfile, userDoc),
+          profile: mergedProfile,
           userDoc,
           source: userDoc ? USER_PROFILE_SOURCE.REMOTE : USER_PROFILE_SOURCE.LOCAL,
           loading: false,
@@ -220,21 +266,23 @@ export async function uploadAvatarImage(uri, storagePath) {
 export async function syncCurrentProfile() {
   try {
     const remoteProfile = await fetchRemoteProfile();
+    const progress = await getUserProgress({ userId: auth.currentUser?.uid || remoteProfile?.uid || "offline" });
     if (remoteProfile) {
-      return ok(buildData(remoteProfile, null), {
+      return ok(buildData(mergeProgressIntoProfile(remoteProfile, progress), null), {
         source: USER_PROFILE_SOURCE.REMOTE,
         syncStatus: "SYNCED",
       });
     }
 
     const localProfile = await loadProfile();
-    return ok(buildData(localProfile, null), {
+    return ok(buildData(mergeProgressIntoProfile(localProfile, progress), null), {
       source: USER_PROFILE_SOURCE.LOCAL,
       syncStatus: "LOCAL_ONLY",
     });
   } catch (error) {
     const localProfile = await loadProfile();
-    return fail(error, buildData(localProfile, null), {
+    const progress = await getUserProgress({ userId: auth.currentUser?.uid || localProfile?.uid || "offline" });
+    return fail(error, buildData(mergeProgressIntoProfile(localProfile, progress), null), {
       source: USER_PROFILE_SOURCE.LOCAL,
       syncStatus: "SYNC_FAILED",
     });

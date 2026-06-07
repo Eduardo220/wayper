@@ -16,6 +16,7 @@ import sync from "../../utils/sync";
 import runRepository from "../../repositories/runRepository";
 import runSyncQueueRepository from "../../repositories/runSyncQueueRepository";
 import territoryRepository from "../../repositories/territoryRepository";
+import { getProgressSummary } from "../../repositories/progressionRepository";
 import { WPCard, WPScreen } from "../../components/ui";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { calculatePaceSecondsPerKm, formatPaceFromSeconds } from "../../utils/pace";
@@ -70,6 +71,7 @@ const getWeekKey = (ts) => Math.floor(ts / MS_IN_WEEK) * MS_IN_WEEK;
 export default function DashboardScreen() {
   const [runs, setRuns] = useState([]);
   const [zones, setZones] = useState([]);
+  const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -92,13 +94,15 @@ export default function DashboardScreen() {
         }
       }
 
-      const [loadedRuns, loadedTerritories] = await Promise.all([
+      const [loadedRuns, loadedTerritories, loadedProgress] = await Promise.all([
         runRepository.list(),
         territoryRepository.list({ status: "active" }),
+        getProgressSummary(),
       ]);
 
       setRuns(Array.isArray(loadedRuns.data) ? loadedRuns.data : []);
       setZones(Array.isArray(loadedTerritories.data) ? loadedTerritories.data : []);
+      setProgress(loadedProgress || null);
     } catch (error) {
       console.warn("[Dashboard] loadAll failed", error);
       Alert.alert("Erro", "Falha ao carregar dados do dashboard.");
@@ -215,8 +219,12 @@ export default function DashboardScreen() {
       avgPace,
       weeks,
       maxWeekMeters: Math.max(...weeks.map((week) => week.meters), 1),
+      totalXp: safeNumber(progress?.totalXp),
+      level: safeNumber(progress?.level, 1),
+      achievementsUnlocked: safeNumber(progress?.achievementsUnlocked),
+      achievementsTotal: safeNumber(progress?.achievementsTotal),
     };
-  }, [runs, zones]);
+  }, [progress, runs, zones]);
 
   if (loading) {
     return (
@@ -277,6 +285,7 @@ export default function DashboardScreen() {
             <MetricTile label="Esta semana" value={formatKm(stats.weeklyMeters)} icon="calendar-outline" />
             <MetricTile label="Este mes" value={formatKm(stats.monthlyMeters)} icon="trending-up-outline" accent="cyan" />
             <MetricTile label="Zonas" value={String(stats.totalZones)} sub={`${Math.round(stats.zoneArea)} m2`} icon="map-outline" accent="cyan" />
+            <MetricTile label="XP" value={String(Math.round(stats.totalXp))} sub={`Nivel ${stats.level} - ${stats.achievementsUnlocked}/${stats.achievementsTotal} conquistas`} icon="sparkles-outline" />
           </View>
 
           <SectionCard

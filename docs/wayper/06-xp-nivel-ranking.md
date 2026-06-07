@@ -6,24 +6,35 @@ XP, nível e ranking devem aumentar motivação sem tornar o MVP complexo. A pri
 
 ## XP no MVP
 
-Regra inicial proposta:
+Regra inicial implementada local-first:
 
-- XP principal por distância válida.
-- Bônus pequeno por território novo.
-- Bônus pequeno por concluir atividade válida.
+- XP principal por distancia valida.
+- Bonus pequeno por territorio real em corrida por zonas.
+- Bonus pequeno por concluir atividade valida.
+- Bonus pequeno de primeira corrida.
 - Nenhum bônus por velocidade no MVP.
 
 Essa regra evita incentivar comportamento perigoso ou fraude por velocidade.
 
-## Fórmula inicial sugerida
+## Formula inicial
 
-Proposta simples:
+Fonte de verdade local:
 
-- 10 XP por quilômetro válido.
-- 5 XP por atividade válida concluída.
-- 1 XP por unidade simples de território novo, se a mecânica territorial permitir.
+- Progresso agregado: `wayper_user_progress_v1`.
+- Eventos auditaveis: `wayper_xp_events_v1`.
+- Conquistas desbloqueadas: `wayper_achievements_v1`.
+- Progresso parcial de conquistas: `wayper_achievement_progress_v1`.
 
-Os valores são placeholders de balanceamento. Devem ser ajustados após testes reais.
+Regra aplicada por `ProgressionRepository`:
+
+- 5 XP por atividade valida concluida.
+- 1 XP a cada 100 m completos, equivalente a 10 XP por km.
+- 1 XP a cada 10 min completos.
+- +10 XP na primeira corrida valida.
+- +5 XP para corrida valida no modo zonas.
+- XP territorial em corrida por zonas: `floor(areaM2 / 100) + 2 XP por celula capturada`, limitado a 500 XP por corrida.
+
+Os valores ainda podem ser balanceados apos testes reais, mas ja sao regra oficial local da etapa atual.
 
 ## Atividade válida para XP
 
@@ -33,8 +44,25 @@ Uma atividade deve gerar XP somente se:
 - Possui distância válida acima do mínimo definido.
 - Possui duração compatível com caminhada ou corrida.
 - Não foi marcada como claramente suspeita.
+- Foi salva localmente como corrida finalizada.
+- Nao esta em `RUNNING`, `PAUSED`, `RECOVERING` ou `FINISHING`.
 
 Atividades com problemas parciais podem gerar XP reduzido no futuro. Para o MVP, a regra deve ser binária sempre que possível.
+
+Limites atuais:
+
+- Distancia minima para XP: 100 m.
+- Duracao minima para XP: 60 s.
+- Corrida livre nao recebe XP territorial.
+- Corrida por zonas recebe XP territorial somente com area/captura/celulas validas.
+
+## Idempotencia
+
+- Cada evento de XP usa ID deterministico `xp:{userId}:{runId}:{type}`.
+- O progresso guarda `processedRunIds` e `processedRunEventTypes`.
+- Reabrir o app, recalcular de `runs` ou retry de sync nao deve duplicar XP.
+- Conquistas desbloqueadas sao deduplicadas por `userId + id`.
+- Firestore nao participa do caminho critico; sync remoto de XP/conquistas fica para etapa futura.
 
 ## Níveis
 
@@ -49,6 +77,34 @@ Regra inicial sugerida:
 - Nível 5: 900 XP.
 
 Após o MVP, a curva pode ser ajustada. O importante é que o nível não dependa de cálculos ocultos difíceis de migrar.
+
+Apos o nivel 5, o delta entre niveis cresce por fator 1.55. A formula fica centralizada em `ProgressionRepository.getLevelInfo()`.
+
+## Conquistas iniciais
+
+Catalogo local inicial:
+
+- `first_run_completed`: primeira corrida valida.
+- `total_distance_1k`: 1 km acumulado.
+- `total_distance_5k`: 5 km acumulados.
+- `total_distance_10k`: 10 km acumulados.
+- `first_zone_run`: primeira corrida por zonas.
+- `first_territory_capture`: primeira area conquistada.
+- `completed_runs_3`: 3 corridas validas.
+- `total_duration_30min`: 30 minutos totais em movimento.
+
+Conquistas dependem apenas de metricas locais reais. Nao dependem de amigos, grupos, ranking global ou Firestore.
+
+## Sync futuro
+
+O sync remoto completo de XP/conquistas ainda nao foi implementado. A estrutura local ja guarda `remoteId`, `syncStatus`, `offlineStatus`, `lastSyncAttemptAt`, `lastSyncedAt`, `syncError` e `schemaVersion`.
+
+Estrategia futura:
+
+- Enviar eventos de XP por `localId/sourceRunId/type`.
+- Enviar conquistas desbloqueadas por `userId + achievementId`.
+- Mesclar remoto/local por identidade deterministica.
+- Nunca recalcular destrutivamente sobre o progresso local sem backup/migracao explicita.
 
 ## Ranking
 
@@ -73,11 +129,12 @@ Ranking não deve definir posse competitiva de território no MVP.
 
 ## Pontos pendentes
 
-- Distância mínima para XP.
+- Balanceamento da distancia minima para XP apos testes reais.
 - Tratamento de atividades suspeitas.
-- Curva final de nível.
+- Curva final de nivel.
 - Métrica oficial de ranking.
-- Se XP deve ser recalculável a partir das atividades salvas.
+- Sync remoto de eventos XP e conquistas.
+- Migracao, se um dia fizer sentido, de medalhas visuais legadas para conquistas reais.
 
 ## Documentos relacionados
 

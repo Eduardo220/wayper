@@ -19,9 +19,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import ViewShot from "react-native-view-shot";
 import { auth } from "../firebaseConfig";
-import MedalsWidget from "../components/MedalsWidget";
 import { WayperTheme } from "../theme/wayperTheme";
 import { DEFAULT_PROFILE } from "../services/profile/profileService";
+import { listAchievements } from "../repositories/achievementRepository";
 import {
   loadCurrentProfile,
   subscribeCurrentUserProfile,
@@ -94,6 +94,7 @@ export default function ProfileScreen() {
   const [isPrivate, setIsPrivate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [achievements, setAchievements] = useState([]);
 
   const mountedRef = useRef(true);
   const unsubscribeRef = useRef(null);
@@ -107,9 +108,12 @@ export default function ProfileScreen() {
       const result = await loadCurrentProfile();
       const localProfile = result.data?.profile || DEFAULT_PROFILE;
       const remoteDoc = result.data?.userDoc || null;
+      const current = auth.currentUser;
+      const loadedAchievements = await listAchievements({
+        userId: current?.uid || localProfile?.uid || "offline",
+      });
       if (mountedRef.current) setProfile(localProfile);
 
-      const current = auth.currentUser;
       if (!current) {
         if (mountedRef.current) {
           setUserDoc(null);
@@ -117,6 +121,7 @@ export default function ProfileScreen() {
           setBio("");
           setAvatarUri(null);
           setIsPrivate(false);
+          setAchievements(loadedAchievements);
         }
         return;
       }
@@ -127,6 +132,7 @@ export default function ProfileScreen() {
         setBio(remoteDoc?.bio || localProfile?.bio || "");
         setAvatarUri(remoteDoc?.avatar || localProfile?.avatar || null);
         setIsPrivate(!!remoteDoc?.isPrivate || remoteDoc?.profileVisibility === "private" || !!localProfile?.isPrivate);
+        setAchievements(loadedAchievements);
       }
 
       if (result.error) {
@@ -160,6 +166,13 @@ export default function ProfileScreen() {
         setBio(data?.bio || localProfile?.bio || "");
         setAvatarUri(data?.avatar || localProfile?.avatar || null);
         setIsPrivate(!!data?.isPrivate || data?.profileVisibility === "private" || !!localProfile?.isPrivate);
+        listAchievements({ userId: uid || localProfile?.uid || "offline" })
+          .then((items) => {
+            if (mountedRef.current) setAchievements(items);
+          })
+          .catch((error) => {
+            console.warn("[Profile] achievements load failed", error);
+          });
 
         if (result.error) {
           console.warn("[Profile] subscribe fallback to local profile", result.error);
@@ -216,8 +229,10 @@ export default function ProfileScreen() {
       monthlyPoints: safeNumber(p.monthlyPoints),
       globalPoints: safeNumber(p.globalPoints),
       lastUpdate: p.lastUpdate || null,
+      achievementsUnlocked: achievements.filter((item) => item.unlocked).length,
+      achievementsTotal: achievements.length,
     };
-  }, [profile]);
+  }, [achievements, profile]);
 
   const profileName = userDoc?.name || profile?.displayName || "Usuario";
   const username = userDoc?.username || auth.currentUser?.email?.split("@")[0] || "wayper";
@@ -629,8 +644,14 @@ export default function ProfileScreen() {
           <InfoLine label="Ultima atualizacao" value={formatDate(stats.lastUpdate)} />
         </SectionCard>
 
-        <SectionCard title="Medalhas" icon="medal-outline">
-          <MedalsWidget user={userDoc || {}} compact={false} onAward={() => {}} autoSaveToFirestore />
+        <SectionCard title="Conquistas" icon="medal-outline">
+          {achievements.length ? (
+            achievements.map((achievement) => (
+              <AchievementRow key={achievement.id} achievement={achievement} />
+            ))
+          ) : (
+            <Text style={styles.emptyAchievementText}>Nenhuma conquista local carregada.</Text>
+          )}
         </SectionCard>
       </Animated.View>
     </ScrollView>
@@ -690,6 +711,35 @@ function RecordRow({ icon, label, value, accent = "green" }) {
       </View>
       <Text style={styles.recordLabel}>{label}</Text>
       <Text style={[styles.recordValue, { color }]}>{value}</Text>
+    </View>
+  );
+}
+
+function AchievementRow({ achievement }) {
+  const unlocked = !!achievement?.unlocked;
+  const target = Math.max(1, safeNumber(achievement?.target, 1));
+  const progress = Math.min(target, safeNumber(achievement?.progress));
+  const pct = Math.max(0, Math.min(100, Math.round((progress / target) * 100)));
+
+  return (
+    <View style={styles.achievementRow}>
+      <View style={[styles.achievementIcon, unlocked && styles.achievementIconUnlocked]}>
+        <Ionicons
+          name={unlocked ? "checkmark-circle" : "lock-closed-outline"}
+          size={18}
+          color={unlocked ? WayperTheme.colors.textInverse : WayperTheme.colors.primary}
+        />
+      </View>
+      <View style={styles.achievementBody}>
+        <View style={styles.achievementHeader}>
+          <Text style={styles.achievementTitle} numberOfLines={1}>{achievement.title}</Text>
+          <Text style={styles.achievementValue}>{Math.round(progress)} / {Math.round(target)}</Text>
+        </View>
+        <Text style={styles.achievementDescription} numberOfLines={2}>{achievement.description}</Text>
+        <View style={styles.achievementTrack}>
+          <View style={[styles.achievementFill, { width: `${pct}%` }]} />
+        </View>
+      </View>
     </View>
   );
 }
@@ -1070,6 +1120,73 @@ const styles = StyleSheet.create({
     color: WayperTheme.colors.text,
     fontSize: 14,
     fontWeight: "900",
+  },
+  achievementRow: {
+    minHeight: 78,
+    flexDirection: "row",
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: WayperTheme.colors.border,
+    paddingVertical: WayperTheme.spacing.sm,
+  },
+  achievementIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    marginRight: WayperTheme.spacing.md,
+  },
+  achievementIconUnlocked: {
+    backgroundColor: WayperTheme.colors.primary,
+    borderColor: WayperTheme.colors.primaryLight,
+  },
+  achievementBody: {
+    flex: 1,
+  },
+  achievementHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: WayperTheme.spacing.md,
+  },
+  achievementTitle: {
+    flex: 1,
+    color: WayperTheme.colors.text,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  achievementValue: {
+    color: WayperTheme.colors.primary,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  achievementDescription: {
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  achievementTrack: {
+    height: 7,
+    marginTop: WayperTheme.spacing.sm,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    overflow: "hidden",
+  },
+  achievementFill: {
+    height: "100%",
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primary,
+  },
+  emptyAchievementText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
   },
   pointsRow: {
     flexDirection: "row",

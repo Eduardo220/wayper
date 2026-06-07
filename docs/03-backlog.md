@@ -21,7 +21,7 @@ Backlog inicial de funcionalidades, melhorias e pendências. Use issues do GitHu
 | Ranking semanal/mensal | Feature | A fazer | Ajuda retenção. |
 | Perfil de usuário | Feature | A fazer | Base social. |
 | Sistema de amigos | Feature | A fazer | Para competição entre conhecidos. |
-| Conquistas | Gamificação | A fazer | Metas e badges. |
+| Conquistas | Gamificação | Implementação inicial | Base local-first de XP, progresso e conquistas; sync remoto futuro pendente. |
 | Modo offline parcial | Técnica | Implementação inicial | Corrida ativa offline-first com histórico pendente; validar em teste real de rua. |
 | Cache de mapa/dados | Técnica | A avaliar | Melhorar experiência. |
 

@@ -166,7 +166,7 @@ export default function MainNavigator() {
     }
 
     const unsubscribe = subscribeCurrentUserProfile((result) => {
-      setUserData(result.data?.userDoc || null);
+      setUserData(result.data?.userDoc || result.data?.profile || null);
       setLoadingUser(false);
 
       if (result.error) {
