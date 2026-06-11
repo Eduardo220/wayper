@@ -26,7 +26,7 @@ const DRAWER_ICONS = {
   Ranking: "podium-outline",
   Amigos: "people-outline",
   Grupos: "chatbubbles-outline",
-  Diagnostico: "bug-outline",
+  Configuracoes: "settings-outline",
 };
 
 export default memo(function CustomDrawer(props) {

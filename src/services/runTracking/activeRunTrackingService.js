@@ -22,6 +22,10 @@ import {
   recordRunSnapshotEvent,
   summarizeRunSnapshot,
 } from "../diagnostics/runDiagnosticsService.js";
+import {
+  evaluateGpsShadowPoint,
+  resetGpsShadowRun,
+} from "../diagnostics/gpsDebugShadowService.js";
 
 export const ACTIVE_RUN_LOCATION_TASK = "WAYPER_ACTIVE_RUN_LOCATION";
 export const ACTIVE_RUN_BACKUP_STORAGE_KEY = `${ACTIVE_RUN_STORAGE_KEY}:backup`;
@@ -780,6 +784,38 @@ export function setRunRuntimeSurfaceState(patch = {}) {
   return updateRuntimeState(patch);
 }
 
+export async function getBackgroundLocationTaskStatus() {
+  if (Platform.OS === "web") {
+    return {
+      taskName: ACTIVE_RUN_LOCATION_TASK,
+      started: false,
+      status: "unsupported",
+      checkedAt: nowIso(),
+    };
+  }
+  try {
+    const started = await Location.hasStartedLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK);
+    backgroundStarted = Boolean(started);
+    updateRuntimeState({
+      backgroundTaskStatus: started ? "started" : "stopped",
+    });
+    return {
+      taskName: ACTIVE_RUN_LOCATION_TASK,
+      started: Boolean(started),
+      status: started ? "started" : "stopped",
+      checkedAt: nowIso(),
+    };
+  } catch (error) {
+    return {
+      taskName: ACTIVE_RUN_LOCATION_TASK,
+      started: backgroundStarted,
+      status: "probe_failed",
+      checkedAt: nowIso(),
+      error: error?.message || String(error),
+    };
+  }
+}
+
 function summarizeStoredSnapshot(raw, source) {
   if (!raw) {
     return {
@@ -967,6 +1003,7 @@ export async function startBackgroundLocationUpdates(options = {}) {
 export async function stopBackgroundLocationUpdates(options = {}) {
   try {
     if (Platform.OS === "web") return false;
+    const runId = activeSnapshot?.activeRunId || null;
     const started = await Location.hasStartedLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK).catch(() => backgroundStarted);
     if (started) {
       await Location.stopLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK);
@@ -977,11 +1014,13 @@ export async function stopBackgroundLocationUpdates(options = {}) {
     });
     log("background_tracking_stopped", { reason: options.reason || "manual" });
     recordRunEvent("LOCATION_WATCHER_STOPPED", {
+      runId,
       reason: options.reason || "manual",
       watcherStatus: "stopped",
       backgroundTaskStatus: ACTIVE_RUN_LOCATION_TASK,
     });
     recordRunEvent("RUN_BACKGROUND_TASK_CANCELLED_OR_STOPPED", {
+      runId,
       reason: options.reason || "manual",
       backgroundTaskStatus: "stopped",
       taskName: ACTIVE_RUN_LOCATION_TASK,
@@ -1217,6 +1256,24 @@ export async function recordLocation(location = {}, options = {}) {
       ...location,
       source: source === "background" ? "expo-location" : location.source || source,
     });
+    const shadow = evaluateGpsShadowPoint(result.rawPoint || location, {
+      runId: activeSnapshot.activeRunId,
+      mode: activeSnapshot.mode || "run",
+      startedAt: activeSnapshot.startedAtMs || activeSnapshot.startedAt,
+      nowMs: Date.now(),
+    });
+    const filterMetrics = {
+      distanceFromPreviousMeters: result.distanceFromPreviousMeters ?? result.point?.distanceFromPreviousMeters ?? null,
+      elapsedFromPreviousMs: result.timeFromPreviousMs ?? result.point?.timeFromPreviousMs ?? null,
+      calculatedSpeedMps: result.calculatedSpeedMps ?? result.point?.calculatedSpeedMps ?? null,
+      accelerationMps2: result.accelerationMps2 ?? result.point?.accelerationMps2 ?? null,
+      qualityScore: result.qualityScore ?? result.point?.qualityScore ?? null,
+      acceptedByRelaxedFilter: shadow.acceptedByRelaxedFilter,
+      relaxedRejectReason: shadow.relaxedRejectReason,
+      relaxedAction: shadow.relaxedAction,
+      relaxedAcceptedPoints: shadow.relaxedAcceptedPoints,
+      runStatus: activeSnapshot.status,
+    };
 
     if (!result.accepted && !result.currentPositionChanged && !result.pathChanged) {
       log("point_ignored", { reason: result.reason, source });
@@ -1225,6 +1282,7 @@ export async function recordLocation(location = {}, options = {}) {
         reason: result.reason || "ignored",
         action: result.action || "ignore",
         source,
+        ...filterMetrics,
       });
       recordRunEvent("RUN_POINT_REJECTED_SUMMARY", {
         runId: activeSnapshot.activeRunId,
@@ -1246,6 +1304,7 @@ export async function recordLocation(location = {}, options = {}) {
         trustedPointsCount: result.trustedPath?.length || 0,
         segmentsCount: result.segments?.length || 0,
         distance: result.stats?.distanceMeters || 0,
+        ...filterMetrics,
       });
       recordLocationPointEvent("RUN_POINT_ACCEPTED", result.point || location, {
         ...summarizeRunSnapshot(activeSnapshot),
@@ -1347,6 +1406,7 @@ export async function finishActiveRun(options = {}) {
     });
     const saved = await persistSnapshot(snapshot, "run_finished_snapshot_saved");
     await stopBackgroundLocationUpdates({ reason: "finish" });
+    resetGpsShadowRun(saved?.activeRunId || snapshot?.activeRunId);
     recordRunSnapshotEvent("FINISH_SUCCESS", saved);
     return saved;
   } catch (error) {
@@ -1418,6 +1478,7 @@ export async function cancelActiveRun(options = {}) {
     recordRunEvent("RUN_ACTIVE_CLEARED", {
       reason: options.reason || "cancel",
     });
+    resetGpsShadowRun(activeRunId);
     emitSnapshot(null, "run_cancelled");
     return true;
   } catch (error) {
@@ -1542,6 +1603,7 @@ export default {
   buildFinishedRunData,
   cancelActiveRun,
   finishActiveRun,
+  getBackgroundLocationTaskStatus,
   getActiveRunSnapshot,
   getActiveRunStorageDiagnostics,
   getCurrentDurationSeconds,

@@ -155,10 +155,10 @@ export function createLogEvent(level, category, event, context = {}, options = {
   };
 }
 
-function shouldEmit(level, category, config) {
+function shouldEmit(level, category, config, options = {}) {
   if (!config.enabled) return false;
   if (!LOG_LEVEL_PRIORITY[level]) return false;
-  if (!isLogLevelEnabled(level, config.minLevel)) return false;
+  if (!options.forcePersist && !isLogLevelEnabled(level, config.minLevel)) return false;
   return isCategoryEnabled(category, config);
 }
 
@@ -174,15 +174,16 @@ export function log(level, category, event, context = {}, options = {}) {
   const config = getDiagnosticsConfig();
   const normalizedLevel = LOG_LEVELS[level] || LOG_LEVELS.info;
   const normalizedCategory = normalizeCategory(category);
-  if (!shouldEmit(normalizedLevel, normalizedCategory, config)) return null;
+  if (!shouldEmit(normalizedLevel, normalizedCategory, config, options)) return null;
 
   const logEvent = createLogEvent(normalizedLevel, normalizedCategory, event, context, options);
 
-  if (config.consoleEnabled) writeToConsole(logEvent);
+  if (config.consoleEnabled && isLogLevelEnabled(normalizedLevel, config.minLevel)) writeToConsole(logEvent);
 
   const shouldPersist =
     config.persistEnabled &&
     (
+      options.forcePersist === true ||
       LOG_LEVEL_PRIORITY[normalizedLevel] >= LOG_LEVEL_PRIORITY.warn ||
       normalizedLevel !== LOG_LEVELS.debug ||
       config.minLevel === LOG_LEVELS.debug

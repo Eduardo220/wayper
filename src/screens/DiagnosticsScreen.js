@@ -4,25 +4,34 @@ import {
   Alert,
   AppState,
   ScrollView,
+  Switch,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-import * as Clipboard from "expo-clipboard";
-import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { Ionicons } from "@expo/vector-icons";
 import { WayperTheme } from "../theme/wayperTheme";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService.js";
 import {
-  clearLogs,
+  clearOldLogs,
+  getDiagnosticStorageHealth,
   getLogs,
 } from "../services/diagnostics/logStorageService.js";
 import {
-  exportDiagnosticsBundle,
   summarizeRunSnapshot,
 } from "../services/diagnostics/runDiagnosticsService.js";
+import {
+  createDiagnosticsArchive,
+  DIAGNOSTIC_EXPORT_SCOPE,
+} from "../services/diagnostics/diagnosticExportService.js";
+import {
+  isDiagnosticUploadConfigured,
+  uploadDiagnosticsArchive,
+} from "../services/diagnostics/diagnosticUploadService.js";
+import { getDiagnosticsConfig } from "../config/diagnosticsConfig.js";
+import { setPreciseLocationDiagnosticsEnabled } from "../services/diagnostics/diagnosticsPreferencesService.js";
 import { LOG_CATEGORIES } from "../utils/logger.js";
 
 const LEVELS = ["ALL", "debug", "info", "warn", "error", "fatal"];
@@ -69,6 +78,10 @@ export default function DiagnosticsScreen() {
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [appState, setAppState] = useState(AppState.currentState);
   const [busyAction, setBusyAction] = useState(null);
+  const [diagnosticStorage, setDiagnosticStorage] = useState({});
+  const [preciseLocationEnabled, setPreciseLocationEnabled] = useState(
+    getDiagnosticsConfig().allowPreciseLocationLogs === true
+  );
 
   const filters = useMemo(() => ({
     limit: 150,
@@ -77,13 +90,15 @@ export default function DiagnosticsScreen() {
   }), [categoryFilter, levelFilter]);
 
   const refresh = useCallback(async () => {
-    const [snapshot, recentLogs] = await Promise.all([
+    const [snapshot, recentLogs, storageHealth] = await Promise.all([
       activeRunTrackingService.getActiveRunSnapshot?.().catch(() => null),
       getLogs(filters).catch(() => []),
+      getDiagnosticStorageHealth().catch(() => ({})),
     ]);
     setActiveRun(snapshot || null);
     setRuntime(activeRunTrackingService.getTrackingRuntimeStatus?.() || {});
     setLogs(recentLogs.slice(-150).reverse());
+    setDiagnosticStorage(storageHealth);
     setLoading(false);
   }, [filters]);
 
@@ -104,59 +119,79 @@ export default function DiagnosticsScreen() {
   });
   const lastPoint = getLastPoint(activeRun || {});
 
-  const copyBundle = useCallback(async () => {
-    setBusyAction("copy");
+  const exportArchive = useCallback(async (scope, actionName) => {
+    setBusyAction(actionName);
     try {
-      const bundle = await exportDiagnosticsBundle({ limit: 300 });
-      await Clipboard.setStringAsync(JSON.stringify(bundle, null, 2));
-      Alert.alert("Diagnostico copiado", "O JSON de diagnostico foi copiado para a area de transferencia.");
-    } catch {
-      Alert.alert("Diagnostico", "Nao foi possivel copiar os logs.");
-    } finally {
-      setBusyAction(null);
-    }
-  }, []);
-
-  const exportBundle = useCallback(async () => {
-    setBusyAction("export");
-    try {
-      const bundle = await exportDiagnosticsBundle({ limit: 500 });
-      const json = JSON.stringify(bundle, null, 2);
-      const fileName = "wayper-last-run-diagnostics.json";
-      const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || "";
-      if (!baseDir || typeof FileSystem.writeAsStringAsync !== "function") {
-        await Clipboard.setStringAsync(json);
-        Alert.alert("Diagnostico copiado", "Arquivo indisponivel; o JSON foi copiado.");
-        return;
-      }
-      const uri = `${baseDir}${fileName}`;
-
-      await FileSystem.writeAsStringAsync(uri, json, { encoding: FileSystem.EncodingType.UTF8 });
+      const archive = await createDiagnosticsArchive({ scope });
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/json",
+        await Sharing.shareAsync(archive.uri, {
+          mimeType: "application/zip",
           dialogTitle: "Exportar diagnostico Wayper",
         });
       } else {
-        await Clipboard.setStringAsync(json);
-        Alert.alert("Diagnostico copiado", "Compartilhamento indisponivel; o JSON foi copiado.");
+        Alert.alert("Diagnostico salvo", `Arquivo criado em:\n${archive.uri}`);
       }
-    } catch {
-      Alert.alert("Diagnostico", "Nao foi possivel exportar os logs.");
+    } catch (error) {
+      Alert.alert("Diagnostico", `Nao foi possivel exportar os logs.\n${error?.message || ""}`);
     } finally {
       setBusyAction(null);
     }
   }, []);
 
-  const clearAllLogs = useCallback(async () => {
+  const clearExpiredLogs = useCallback(async () => {
     setBusyAction("clear");
     try {
-      await clearLogs();
+      const result = await clearOldLogs({ maxAgeDays: 14, keepRecentRuns: 3 });
       await refresh();
+      Alert.alert("Logs antigos", `${result.removed || 0} conjunto(s) removido(s).`);
     } finally {
       setBusyAction(null);
     }
   }, [refresh]);
+
+  const sendLastRun = useCallback(async () => {
+    if (!isDiagnosticUploadConfigured()) {
+      Alert.alert(
+        "Envio nao configurado",
+        "O backend de diagnostico nao esta habilitado. A exportacao local continua disponivel."
+      );
+      return;
+    }
+    setBusyAction("send");
+    try {
+      const archive = await createDiagnosticsArchive({ scope: DIAGNOSTIC_EXPORT_SCOPE.LAST_RUN });
+      await uploadDiagnosticsArchive(archive);
+      Alert.alert("Diagnostico enviado", "O arquivo foi enviado e o resumo foi registrado.");
+    } catch (error) {
+      Alert.alert("Falha no envio", error?.message || "Nao foi possivel enviar o diagnostico.");
+    } finally {
+      setBusyAction(null);
+    }
+  }, []);
+
+  const updatePreciseLocation = useCallback((enabled) => {
+    if (!enabled) {
+      setPreciseLocationDiagnosticsEnabled(false)
+        .then(setPreciseLocationEnabled)
+        .catch(() => {});
+      return;
+    }
+    Alert.alert(
+      "Coordenadas exatas",
+      "Ative somente para uma corrida de teste. O arquivo exportado podera revelar seu trajeto exato.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Ativar",
+          onPress: () => {
+            setPreciseLocationDiagnosticsEnabled(true)
+              .then(setPreciseLocationEnabled)
+              .catch(() => {});
+          },
+        },
+      ]
+    );
+  }, []);
 
   if (loading) {
     return (
@@ -185,28 +220,65 @@ export default function DiagnosticsScreen() {
         <StatRow label="distance" value={`${formatNumber(summary.distance, 1)} m`} />
         <StatRow label="elapsed" value={`${Math.round(Number(summary.elapsedMs || 0) / 1000)} s`} />
         <StatRow label="last location" value={summary.lastLocationAt || "-"} />
-        <StatRow
-          label="last point"
-          value={lastPoint ? `${formatNumber(lastPoint.latitude, 3)}, ${formatNumber(lastPoint.longitude, 3)}` : "-"}
-        />
+        <StatRow label="last point accuracy" value={lastPoint ? `${formatNumber(lastPoint.accuracy, 1)} m` : "-"} />
         <StatRow label="last local save" value={activeRun?.lastUpdatedAt || activeRun?.checkpointAt || "-"} />
         <StatRow label="watcher" value={runtime.watcherStatus || "-"} />
         <StatRow label="background task" value={runtime.taskName || "-"} />
         <StatRow label="appState" value={appState || "-"} />
+        <StatRow label="log backend" value={diagnosticStorage.backend || "-"} />
+        <StatRow label="pending log buffer" value={diagnosticStorage.pendingLogs || 0} />
+      </View>
+
+      <View style={styles.panel}>
+        <View style={styles.preferenceRow}>
+          <View style={styles.preferenceBody}>
+            <Text style={styles.panelTitle}>Coordenadas exatas</Text>
+            <Text style={styles.preferenceText}>Desligado por padrao. Ative antes de uma corrida de teste.</Text>
+          </View>
+          <Switch
+            value={preciseLocationEnabled}
+            onValueChange={updatePreciseLocation}
+            trackColor={{
+              false: WayperTheme.colors.surfaceSoft,
+              true: WayperTheme.colors.primarySoft,
+            }}
+            thumbColor={preciseLocationEnabled ? WayperTheme.colors.primary : WayperTheme.colors.textMuted}
+          />
+        </View>
       </View>
 
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.actionButton} onPress={copyBundle} disabled={Boolean(busyAction)}>
-          <Ionicons name="copy-outline" size={18} color={WayperTheme.colors.textInverse} />
-          <Text style={styles.actionText}>{busyAction === "copy" ? "Copiando" : "Copiar"}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton} onPress={exportBundle} disabled={Boolean(busyAction)}>
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => exportArchive(DIAGNOSTIC_EXPORT_SCOPE.LAST_RUN, "last")}
+          disabled={Boolean(busyAction)}
+        >
           <Ionicons name="share-outline" size={18} color={WayperTheme.colors.textInverse} />
-          <Text style={styles.actionText}>{busyAction === "export" ? "Exportando" : "Exportar JSON"}</Text>
+          <Text style={styles.actionText}>{busyAction === "last" ? "Exportando" : "Exportar ultima corrida"}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.actionButton, styles.clearButton]} onPress={clearAllLogs} disabled={Boolean(busyAction)}>
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => exportArchive(DIAGNOSTIC_EXPORT_SCOPE.ACTIVE_RUN, "active")}
+          disabled={Boolean(busyAction)}
+        >
+          <Ionicons name="share-outline" size={18} color={WayperTheme.colors.textInverse} />
+          <Text style={styles.actionText}>{busyAction === "active" ? "Exportando" : "Exportar corrida ativa"}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={() => exportArchive(DIAGNOSTIC_EXPORT_SCOPE.RECENT, "recent")}
+          disabled={Boolean(busyAction)}
+        >
+          <Ionicons name="albums-outline" size={18} color={WayperTheme.colors.textInverse} />
+          <Text style={styles.actionText}>{busyAction === "recent" ? "Exportando" : "Exportar logs recentes"}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionButton} onPress={sendLastRun} disabled={Boolean(busyAction)}>
+          <Ionicons name="cloud-upload-outline" size={18} color={WayperTheme.colors.textInverse} />
+          <Text style={styles.actionText}>{busyAction === "send" ? "Enviando" : "Enviar ultima corrida"}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.actionButton, styles.clearButton]} onPress={clearExpiredLogs} disabled={Boolean(busyAction)}>
           <Ionicons name="trash-outline" size={18} color={WayperTheme.colors.text} />
-          <Text style={[styles.actionText, styles.clearText]}>{busyAction === "clear" ? "Limpando" : "Limpar"}</Text>
+          <Text style={[styles.actionText, styles.clearText]}>{busyAction === "clear" ? "Limpando" : "Limpar logs antigos"}</Text>
         </TouchableOpacity>
       </View>
 
@@ -312,8 +384,7 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   actions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
+    flexDirection: "column",
     gap: WayperTheme.spacing.sm,
   },
   actionButton: {
@@ -333,12 +404,28 @@ const styles = StyleSheet.create({
     borderColor: WayperTheme.colors.dangerBorder,
   },
   actionText: {
+    flex: 1,
     color: WayperTheme.colors.textInverse,
     fontSize: 13,
     fontWeight: "900",
   },
   clearText: {
     color: WayperTheme.colors.text,
+  },
+  preferenceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.md,
+  },
+  preferenceBody: {
+    flex: 1,
+    gap: WayperTheme.spacing.xs,
+  },
+  preferenceText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "600",
   },
   filterRow: {
     gap: WayperTheme.spacing.sm,

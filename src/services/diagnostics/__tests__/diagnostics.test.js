@@ -56,6 +56,7 @@ const config = await import("../../../config/diagnosticsConfig.js");
 const loggerModule = await import("../../../utils/logger.js");
 const storageService = await import("../logStorageService.js");
 const diagnostics = await import("../runDiagnosticsService.js");
+const gpsShadow = await import("../gpsDebugShadowService.js");
 
 const { logger, LOG_CATEGORIES, sanitizeLogContext } = loggerModule;
 
@@ -73,6 +74,7 @@ describe("diagnostics logging", () => {
       locationPrecisionMode: "masked",
     });
     storageService.__resetLogStorageForTests();
+    gpsShadow.__resetGpsShadowForTests();
     await storageService.clearLogs();
   });
 
@@ -197,6 +199,107 @@ describe("diagnostics logging", () => {
       category: LOG_CATEGORIES.RUN_SESSION,
       event: "RUN_STARTED",
     });
+  });
+
+  test("eventos GPS criticos persistem em prod mesmo abaixo do nivel minimo", async () => {
+    config.updateDiagnosticsConfig({ minLevel: "warn" });
+
+    diagnostics.recordLocationPointEvent("LOCATION_POINT_RECEIVED", {
+      latitude: -30.123456,
+      longitude: -51.123456,
+      accuracy: 12,
+      timestamp: 10_000,
+    }, {
+      runId: "run-prod",
+      source: "background",
+    });
+    await storageService.__flushLogWritesForTests();
+
+    const logs = await storageService.getLogs({ runId: "run-prod" });
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: "debug",
+      event: "LOCATION_POINT_RECEIVED",
+    });
+  });
+
+  test("gpsFilterReport compara filtro atual com shadow relaxado", () => {
+    const makeLog = (event, timestamp, context = {}) => ({
+      event,
+      timestamp: new Date(timestamp).toISOString(),
+      context: {
+        timestamp,
+        ...context,
+      },
+    });
+    const logs = [
+      makeLog("LOCATION_POINT_RECEIVED", 1_000, { accuracy: 10, point: { speed: 1.4 } }),
+      makeLog("LOCATION_POINT_ACCEPTED", 1_000, {
+        acceptedByRelaxedFilter: true,
+        distanceFromPreviousMeters: 0,
+      }),
+      makeLog("LOCATION_POINT_RECEIVED", 3_000, { accuracy: 55, point: { speed: 1.6 } }),
+      makeLog("LOCATION_POINT_REJECTED", 3_000, {
+        reason: "bad_accuracy",
+        acceptedByRelaxedFilter: true,
+        distanceFromPreviousMeters: 4,
+      }),
+      makeLog("LOCATION_POINT_RECEIVED", 8_000, { accuracy: 14, point: { speed: 1.8 } }),
+      makeLog("LOCATION_POINT_ACCEPTED", 8_000, {
+        acceptedByRelaxedFilter: true,
+        distanceFromPreviousMeters: 9,
+      }),
+      makeLog("LOCATION_POINT_RECEIVED", 12_000, { accuracy: 11, point: { speed: 0 } }),
+      makeLog("LOCATION_POINT_REJECTED", 12_000, {
+        reason: "duplicate_point",
+        acceptedByRelaxedFilter: false,
+        distanceFromPreviousMeters: 0.2,
+      }),
+    ];
+
+    const report = diagnostics.buildGpsFilterReport(logs, { nowMs: 15_000 });
+
+    expect(report).toMatchObject({
+      rawPoints: 4,
+      acceptedByCurrentFilter: 2,
+      rejectedByCurrentFilter: 2,
+      acceptedByRelaxedFilter: 3,
+      longestGapBetweenAcceptedPointsMs: 7_000,
+      longestGapBetweenRawPointsMs: 5_000,
+      timeSinceLastAcceptedPointMs: 7_000,
+      topRejectReasons: {
+        bad_accuracy: 1,
+        duplicate_point: 1,
+      },
+    });
+    expect(report.accuracyStats).toMatchObject({ min: 10, max: 55, avg: 22.5 });
+  });
+
+  test("shadow relaxado aceita accuracy moderada rejeitada pelo filtro oficial", () => {
+    const first = gpsShadow.evaluateGpsShadowPoint({
+      latitude: -30,
+      longitude: -51,
+      accuracy: 8,
+      timestamp: 1_000,
+    }, {
+      runId: "shadow-run",
+      startedAt: 1_000,
+      nowMs: 1_000,
+    });
+    const moderate = gpsShadow.evaluateGpsShadowPoint({
+      latitude: -30,
+      longitude: -50.99994,
+      accuracy: 55,
+      timestamp: 4_000,
+    }, {
+      runId: "shadow-run",
+      startedAt: 1_000,
+      nowMs: 4_000,
+    });
+
+    expect(first.acceptedByRelaxedFilter).toBe(true);
+    expect(moderate.acceptedByRelaxedFilter).toBe(true);
+    expect(moderate.relaxedAcceptedPoints).toBe(2);
   });
 
   test("exportDiagnosticsBundle remove dados sensiveis", async () => {

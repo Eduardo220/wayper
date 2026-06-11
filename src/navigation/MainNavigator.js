@@ -18,6 +18,7 @@ import HomeScreen from "../screens/HomeScreen";
 import RankingScreen from "../screens/RankingScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import DiagnosticsScreen from "../screens/DiagnosticsScreen";
+import SettingsScreen from "../screens/SettingsScreen";
 
 // FRIENDS
 import FriendsScreen from "../screens/Friends/FriendsScreen";
@@ -51,7 +52,6 @@ import runSyncQueueRepository from "../repositories/runSyncQueueRepository.js";
 const Drawer = createDrawerNavigator();
 const Stack = createNativeStackNavigator();
 const BRAND_LOGO = require("../../assets/logo.png");
-const SHOW_DIAGNOSTICS = typeof __DEV__ !== "undefined" && __DEV__;
 
 function HeaderTitle({ title }) {
   return (
@@ -146,6 +146,21 @@ function HomeStack() {
         component={RunDetailScreen}
         options={{ title: "Detalhes da atividade" }}
       />
+    </Stack.Navigator>
+  );
+}
+
+function SettingsStack() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: WayperTheme.colors.background },
+        headerTintColor: WayperTheme.colors.text,
+        headerTitleStyle: { fontWeight: "900", fontSize: 20 },
+      }}
+    >
+      <Stack.Screen name="SettingsHome" component={SettingsScreen} options={{ title: "Configuracoes" }} />
+      <Stack.Screen name="Diagnostico" component={DiagnosticsScreen} options={{ title: "Diagnostico" }} />
     </Stack.Navigator>
   );
 }
@@ -322,9 +337,7 @@ export default function MainNavigator() {
       <Drawer.Screen name="Ranking" component={RankingScreen} options={{ title: "Ranking" }} />
       <Drawer.Screen name="Amigos" component={FriendsStack} options={{ title: "Amigos" }} />
       <Drawer.Screen name="Grupos" component={GroupStack} options={{ title: "Grupos" }} />
-      {SHOW_DIAGNOSTICS && (
-        <Drawer.Screen name="Diagnostico" component={DiagnosticsScreen} options={{ title: "Diagnostico" }} />
-      )}
+      <Drawer.Screen name="Configuracoes" component={SettingsStack} options={{ title: "Configuracoes" }} />
     </Drawer.Navigator>
   );
 }

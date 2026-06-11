@@ -1,7 +1,9 @@
 import logger, { LOG_CATEGORIES, sanitizeLogContext } from "../../utils/logger.js";
 import { getDiagnosticsConfig } from "../../config/diagnosticsConfig.js";
 import {
+  getDiagnosticStorageHealth,
   getErrorLogs,
+  getLogs,
   getLogsSummary,
   getRecentLogs,
 } from "./logStorageService.js";
@@ -134,7 +136,11 @@ export function recordRunEvent(event, context = {}, options = {}) {
     runEvent: name,
     ...context,
   });
-  return logger[level]?.(category, name, payload, options) || logger.info(category, name, payload, options);
+  const logOptions = {
+    ...options,
+    forcePersist: options.forcePersist !== false,
+  };
+  return logger[level]?.(category, name, payload, logOptions) || logger.info(category, name, payload, logOptions);
 }
 
 export function recordRunSnapshotEvent(event, snapshot = {}, context = {}, options = {}) {
@@ -193,9 +199,13 @@ async function safeStorageSummary() {
     const trackingService = tracking.default || tracking;
     const activeRun = await offline.loadActiveRun?.();
     const canonical = await trackingService.getActiveRunStorageDiagnostics?.();
-    const logs = await getLogsSummary();
+    const [logs, diagnosticFiles] = await Promise.all([
+      getLogsSummary(),
+      getDiagnosticStorageHealth(),
+    ]);
     return sanitizeLogContext({
       logs,
+      diagnosticFiles,
       canonical,
       activeRun: activeRun
         ? {
@@ -224,24 +234,118 @@ async function safeWatcherSummary() {
   }
 }
 
+function numericStats(values = []) {
+  const numbers = values.map(Number).filter(Number.isFinite);
+  if (numbers.length === 0) {
+    return { count: 0, min: null, max: null, avg: null };
+  }
+  const sum = numbers.reduce((total, value) => total + value, 0);
+  return {
+    count: numbers.length,
+    min: Math.min(...numbers),
+    max: Math.max(...numbers),
+    avg: sum / numbers.length,
+  };
+}
+
+function pointTimestampMs(log = {}) {
+  const value =
+    log.context?.timestamp ??
+    log.context?.point?.timestamp ??
+    log.context?.receivedAt ??
+    log.timestamp;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function longestGapMs(logs = []) {
+  const timestamps = logs
+    .map(pointTimestampMs)
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
+  let longest = 0;
+  for (let index = 1; index < timestamps.length; index += 1) {
+    longest = Math.max(longest, timestamps[index] - timestamps[index - 1]);
+  }
+  return longest;
+}
+
+export function buildGpsFilterReport(logs = [], options = {}) {
+  const rawEvents = logs.filter((log) => log.event === "LOCATION_POINT_RECEIVED");
+  const acceptedEvents = logs.filter((log) => log.event === "LOCATION_POINT_ACCEPTED");
+  const rejectedEvents = logs.filter((log) => log.event === "LOCATION_POINT_REJECTED");
+  const decisions = [...acceptedEvents, ...rejectedEvents];
+  const topRejectReasons = rejectedEvents.reduce((acc, log) => {
+    const reason = String(log.context?.reason || "unknown");
+    acc[reason] = (acc[reason] || 0) + 1;
+    return acc;
+  }, {});
+  const acceptedByRelaxedFilter = decisions.filter((log) => (
+    log.event === "LOCATION_POINT_ACCEPTED" ||
+    log.context?.acceptedByRelaxedFilter === true
+  )).length;
+  const lastRawPointAtMs = rawEvents.map(pointTimestampMs).filter(Number.isFinite).sort((a, b) => b - a)[0] || null;
+  const lastAcceptedPointAtMs = acceptedEvents.map(pointTimestampMs).filter(Number.isFinite).sort((a, b) => b - a)[0] || null;
+  const nowMs = Number(options.nowMs || Date.now());
+
+  return {
+    rawPoints: rawEvents.length,
+    rawGpsPointsReceived: rawEvents.length,
+    acceptedByCurrentFilter: acceptedEvents.length,
+    acceptedGpsPoints: acceptedEvents.length,
+    rejectedByCurrentFilter: rejectedEvents.length,
+    rejectedGpsPoints: rejectedEvents.length,
+    acceptedByRelaxedFilter,
+    topRejectReasons,
+    longestGapBetweenAcceptedPointsMs: longestGapMs(acceptedEvents),
+    longestGapBetweenRawPointsMs: longestGapMs(rawEvents),
+    lastAcceptedPointAt: lastAcceptedPointAtMs ? new Date(lastAcceptedPointAtMs).toISOString() : null,
+    lastRawPointAt: lastRawPointAtMs ? new Date(lastRawPointAtMs).toISOString() : null,
+    timeSinceLastAcceptedPointMs: lastAcceptedPointAtMs ? Math.max(0, nowMs - lastAcceptedPointAtMs) : null,
+    accuracyStats: numericStats(rawEvents.map((log) => log.context?.accuracy ?? log.context?.point?.accuracy)),
+    speedStats: numericStats(rawEvents.map((log) => log.context?.point?.speed)),
+    calculatedSpeedStats: numericStats(decisions.map((log) => log.context?.calculatedSpeedMps)),
+    distanceFromPreviousStats: numericStats(decisions.map((log) => log.context?.distanceFromPreviousMeters)),
+    elapsedFromPreviousStats: numericStats(decisions.map((log) => log.context?.elapsedFromPreviousMs)),
+  };
+}
+
+function selectEvents(logs = [], matcher) {
+  return logs.filter((log) => matcher(log)).map((log) => ({
+    timestamp: log.timestamp,
+    level: log.level,
+    category: log.category,
+    event: log.event,
+    context: log.context,
+  }));
+}
+
 export async function exportDiagnosticsBundle(options = {}) {
   const limit = Number(options.limit || 300);
   const diagnosticsConfig = getDiagnosticsConfig();
   const [logs, errorLogs, activeRun, storage, permissions, watcher] = await Promise.all([
-    getRecentLogs(limit),
-    getErrorLogs(),
+    options.runId
+      ? getLogs({ runId: options.runId, limit })
+      : getRecentLogs(limit),
+    options.runId
+      ? getLogs({ runId: options.runId, minLevel: "error" })
+      : getErrorLogs(),
     safeActiveRunSummary(),
     safeStorageSummary(),
     safePermissionSummary(),
     safeWatcherSummary(),
   ]);
 
+  const gpsFilterReport = buildGpsFilterReport(logs);
   return sanitizeLogContext({
     metadata: {
       app: "Wayper",
       timestamp: new Date().toISOString(),
       environment: typeof __DEV__ === "undefined" || __DEV__ ? "dev" : "prod",
-      bundleVersion: 1,
+      bundleVersion: 2,
+      requestedRunId: options.runId || null,
       preciseLocationLogsEnabled: diagnosticsConfig.allowPreciseLocationLogs === true,
       locationPrecisionMode: diagnosticsConfig.locationPrecisionMode,
     },
@@ -253,6 +357,8 @@ export async function exportDiagnosticsBundle(options = {}) {
     storage,
     permissions,
     watcher,
+    appState: watcher?.appState || activeRun?.appState || null,
+    screenFocusState: watcher?.screenFocusState || activeRun?.screenFocusState || null,
     backgroundTask: watcher?.backgroundTaskStatus || watcher?.backgroundStarted || null,
     foregroundWatcher: watcher?.foregroundWatcherStatus || null,
     notification: watcher?.notificationStatus || null,
@@ -260,9 +366,42 @@ export async function exportDiagnosticsBundle(options = {}) {
     lastDeepLinkReceived: watcher?.lastDeepLinkReceived || null,
     lastNotificationActionReceived: watcher?.lastNotificationActionReceived || null,
     rejectionSummary: {
-      rejectedPointsCount: activeRun?.rejectedPointsCount || watcher?.rejectedPointsCount || 0,
-      acceptedPointsCount: activeRun?.acceptedPointsCount || watcher?.acceptedPointsCount || 0,
+      rejectedPointsCount: gpsFilterReport.rejectedGpsPoints || activeRun?.rejectedPointsCount || watcher?.rejectedPointsCount || 0,
+      acceptedPointsCount: gpsFilterReport.acceptedGpsPoints || activeRun?.acceptedPointsCount || watcher?.acceptedPointsCount || 0,
     },
+    rawGpsPointsReceived: gpsFilterReport.rawGpsPointsReceived,
+    acceptedGpsPoints: gpsFilterReport.acceptedGpsPoints,
+    rejectedGpsPoints: gpsFilterReport.rejectedGpsPoints,
+    topRejectReasons: gpsFilterReport.topRejectReasons,
+    lastAcceptedPointAt: gpsFilterReport.lastAcceptedPointAt,
+    lastRawPointAt: gpsFilterReport.lastRawPointAt,
+    timeSinceLastAcceptedPointMs: gpsFilterReport.timeSinceLastAcceptedPointMs,
+    accuracyStats: gpsFilterReport.accuracyStats,
+    speedStats: gpsFilterReport.speedStats,
+    distanceFromPreviousStats: gpsFilterReport.distanceFromPreviousStats,
+    gpsFilterReport,
+    backgroundTaskEvents: selectEvents(logs, (log) => (
+      log.category === LOG_CATEGORIES.BACKGROUND ||
+      log.event.includes("BACKGROUND_TASK") ||
+      log.event.includes("WATCHER")
+    )),
+    taskCancelledOrRestartedEvents: selectEvents(logs, (log) => (
+      log.event.includes("CANCELLED_OR_STOPPED") ||
+      log.event.includes("WATCHER_RESTARTED") ||
+      log.event.includes("WATCHER_STARTED")
+    )),
+    routeChunkEvents: selectEvents(logs, (log) => log.event.includes("ROUTE_CHUNK")),
+    uiRenderEvents: selectEvents(logs, (log) => (
+      log.event === "MAP_ROUTE_RENDERED" ||
+      log.event === "MAP_GEOJSON_REBUILT" ||
+      log.event.includes("UI_RENDER")
+    )),
+    freezeEvents: selectEvents(logs, (log) => (
+      log.category === LOG_CATEGORIES.PERFORMANCE ||
+      log.event.includes("ANR") ||
+      log.event.includes("STALL") ||
+      log.event.includes("SKIPPED_FRAME")
+    )),
     routeChunks: {
       chunksCount: activeRun?.routeChunksCount || watcher?.routeChunksCount || storage?.canonical?.routeChunks?.chunksCount || storage?.canonical?.meta?.routeChunksCount || 0,
       routeChunksIndex: activeRun?.routeChunksIndex || watcher?.routeChunksIndex || null,

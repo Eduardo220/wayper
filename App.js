@@ -16,6 +16,11 @@ import {
   stopActiveRunAutoCheckpointing,
 } from "./src/services/run/runAutoSaveService.js";
 import { installGlobalErrorReporter } from "./src/services/diagnostics/errorReporter.js";
+import {
+  startPerformanceDiagnostics,
+  stopPerformanceDiagnostics,
+} from "./src/services/diagnostics/performanceDiagnosticsService.js";
+import { initializeDiagnosticsPreferences } from "./src/services/diagnostics/diagnosticsPreferencesService.js";
 import logger, { LOG_CATEGORIES } from "./src/utils/logger.js";
 import {
   startRunNotificationCoordinator,
@@ -113,13 +118,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    initializeDiagnosticsPreferences().catch(() => false);
     installGlobalRunErrorHandlers();
     installGlobalErrorReporter();
+    startPerformanceDiagnostics();
     startActiveRunAutoCheckpointing();
     startRunNotificationCoordinator();
     return () => {
       stopRunNotificationCoordinator();
       stopActiveRunAutoCheckpointing();
+      stopPerformanceDiagnostics();
     };
   }, []);
 

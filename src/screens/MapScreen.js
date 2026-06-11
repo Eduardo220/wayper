@@ -603,6 +603,7 @@ const MapScreen = ({ navigation, route }) => {
   const runtimeHydrationInFlightRef = useRef(false);
   const lastNotificationOpenRequestRef = useRef(null);
   const lastMapRouteDiagnosticRef = useRef("");
+  const lastMapRouteRenderAtRef = useRef(0);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
@@ -3508,6 +3509,11 @@ const MapScreen = ({ navigation, route }) => {
     if (diagnosticKey === lastMapRouteDiagnosticRef.current) return;
     lastMapRouteDiagnosticRef.current = diagnosticKey;
     if (routePointsCount === 0 && routeSegmentsCount === 0) return;
+    const renderedAt = Date.now();
+    const renderIntervalMs = lastMapRouteRenderAtRef.current
+      ? renderedAt - lastMapRouteRenderAtRef.current
+      : null;
+    lastMapRouteRenderAtRef.current = renderedAt;
 
     recordRunEvent("MAP_ROUTE_RENDERED", {
       runId: currentRunIdRef.current,
@@ -3516,6 +3522,9 @@ const MapScreen = ({ navigation, route }) => {
       routeSegmentsCount,
       displayPointsCount,
       lastValidRoutePointsCount: routeStateRef.current?.length || 0,
+      renderIntervalMs,
+      routeBufferFlushIntervalMs: FLUSH_INTERVAL_MS,
+      pendingRouteBufferPoints: routeBufferRef.current?.length || 0,
       screen: "MapScreen",
     });
   }, [displayRouteSegments, displayRouteState, paused, replaying, routeState, running]);

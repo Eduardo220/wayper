@@ -1,0 +1,171 @@
+import JSZip from "jszip";
+import * as FileSystem from "expo-file-system/legacy";
+import { sanitizeLogContext } from "../../utils/logger.js";
+import activeRunRuntimeService from "../runTracking/activeRunRuntimeService.js";
+import {
+  getDiagnosticNdjson,
+  getDiagnosticStorageHealth,
+  getLastDiagnosticRunId,
+  getRecentDiagnosticRunIds,
+} from "./logStorageService.js";
+import { exportDiagnosticsBundle } from "./runDiagnosticsService.js";
+
+export const DIAGNOSTIC_EXPORT_SCOPE = Object.freeze({
+  LAST_RUN: "last_run",
+  ACTIVE_RUN: "active_run",
+  RECENT: "recent",
+});
+
+function safeFilenamePart(value) {
+  return String(value || "unknown").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80);
+}
+
+function lightActiveRunSnapshot(runtime = {}) {
+  return sanitizeLogContext({
+    activeRunId: runtime.activeRunId || runtime.runId || null,
+    localRunId: runtime.localRunId || null,
+    status: runtime.status || null,
+    startedAt: runtime.startedAt || null,
+    updatedAt: runtime.updatedAt || null,
+    lastPersistedAt: runtime.lastPersistedAt || null,
+    elapsedMs: runtime.elapsedMs || 0,
+    totalPausedMs: runtime.totalPausedMs || 0,
+    distanceMeters: runtime.distanceMeters || 0,
+    acceptedPointsCount: runtime.acceptedPointsCount || 0,
+    rejectedPointsCount: runtime.rejectedPointsCount || 0,
+    routeChunksCount: runtime.routeChunksCount || 0,
+    lastRawPointReceivedAt: runtime.lastRawPointReceivedAt || null,
+    foregroundWatcherStatus: runtime.foregroundWatcherStatus || null,
+    backgroundTaskStatus: runtime.backgroundTaskStatus || null,
+    notificationStatus: runtime.notificationStatus || null,
+    appState: runtime.appState || null,
+    screenFocusState: runtime.screenFocusState || null,
+    recoveryReason: runtime.recoveryReason || null,
+    reconciliationStatus: runtime.reconciliationStatus || null,
+    storageHealth: runtime.storageHealth || null,
+    pendingFlushCount: runtime.pendingFlushCount || 0,
+    pendingSync: runtime.pendingSync || false,
+  });
+}
+
+async function resolveExportContext(scope) {
+  const runtime = await activeRunRuntimeService
+    .getActiveRunRuntimeSnapshot?.("diagnostics_archive")
+    .catch(() => ({}));
+  const isLive = ["STARTING", "RUNNING", "PAUSED", "RECOVERING", "ERROR_RECOVERABLE"]
+    .includes(String(runtime?.status || "").toUpperCase());
+  if (scope === DIAGNOSTIC_EXPORT_SCOPE.ACTIVE_RUN) {
+    const activeRunId = isLive ? (runtime?.activeRunId || runtime?.runId || null) : null;
+    if (!activeRunId) throw new Error("no_active_run_for_diagnostics");
+    return {
+      runtime: runtime || {},
+      runId: activeRunId,
+      includeAllRecent: false,
+    };
+  }
+  if (scope === DIAGNOSTIC_EXPORT_SCOPE.RECENT) {
+    return {
+      runtime: runtime || {},
+      runId: null,
+      includeAllRecent: true,
+    };
+  }
+  const activeRunId = isLive ? (runtime?.activeRunId || runtime?.runId || null) : null;
+  const recentRunIds = await getRecentDiagnosticRunIds();
+  const lastRunId = recentRunIds.find((runId) => String(runId) !== String(activeRunId || "")) || null;
+  if (!lastRunId) throw new Error("no_previous_run_diagnostics");
+  return {
+    runtime: runtime || {},
+    runId: lastRunId || await getLastDiagnosticRunId(),
+    includeAllRecent: false,
+  };
+}
+
+function addJson(zip, filename, value) {
+  zip.file(filename, JSON.stringify(sanitizeLogContext(value || {}), null, 2));
+}
+
+export async function createDiagnosticsArchive(options = {}) {
+  const scope = options.scope || DIAGNOSTIC_EXPORT_SCOPE.LAST_RUN;
+  const context = await resolveExportContext(scope);
+  const [bundle, ndjsonFiles, diagnosticStorage] = await Promise.all([
+    exportDiagnosticsBundle({
+      limit: scope === DIAGNOSTIC_EXPORT_SCOPE.RECENT ? 5000 : 2500,
+      runId: context.runId,
+    }),
+    getDiagnosticNdjson({
+      runId: context.runId,
+      includeAllRecent: context.includeAllRecent,
+    }),
+    getDiagnosticStorageHealth(),
+  ]);
+
+  const zip = new JSZip();
+  addJson(zip, "wayper-last-run-diagnostics.json", bundle);
+  Object.entries(ndjsonFiles).forEach(([filename, contents]) => {
+    zip.file(filename, contents || "");
+  });
+  addJson(zip, "routeChunks-metadata.json", bundle.routeChunks || {});
+  addJson(zip, "activeRun-snapshot-light.json", lightActiveRunSnapshot(context.runtime));
+  addJson(zip, "storageHealth.json", {
+    diagnostics: diagnosticStorage,
+    activeRun: bundle.storage?.canonical?.storageHealth || context.runtime?.storageHealth || null,
+    canonical: bundle.storage?.canonical || null,
+  });
+  addJson(zip, "nativeNotificationState.json", bundle.nativeNotificationState || {});
+  addJson(zip, "backgroundTaskStatus.json", {
+    status: bundle.backgroundTask,
+    events: bundle.backgroundTaskEvents || [],
+    cancelledOrRestarted: bundle.taskCancelledOrRestartedEvents || [],
+  });
+  addJson(zip, "foregroundWatcherStatus.json", {
+    status: bundle.foregroundWatcher,
+  });
+  addJson(zip, "runtime-state.json", {
+    appState: bundle.appState,
+    screenFocusState: bundle.screenFocusState,
+    notificationStatus: bundle.notification,
+    lastDeepLinkReceived: bundle.lastDeepLinkReceived,
+    lastNotificationActionReceived: bundle.lastNotificationActionReceived,
+  });
+  addJson(zip, "gpsFilterReport.json", bundle.gpsFilterReport || {});
+  addJson(zip, "manifest.json", {
+    format: "wayper-diagnostics-archive",
+    version: 1,
+    createdAt: new Date().toISOString(),
+    scope,
+    runId: context.runId,
+    preciseCoordinatesIncluded: bundle.metadata?.preciseLocationLogsEnabled === true,
+    files: Object.keys(zip.files),
+  });
+
+  const base64 = await zip.generateAsync({
+    type: "base64",
+    compression: "DEFLATE",
+    compressionOptions: { level: 2 },
+  });
+  const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+  if (!baseDir) throw new Error("diagnostic_export_directory_unavailable");
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `wayper-diagnostics-${safeFilenamePart(scope)}-${timestamp}.zip`;
+  const uri = `${baseDir}${filename}`;
+  await FileSystem.writeAsStringAsync(uri, base64, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+
+  const info = await FileSystem.getInfoAsync(uri, { size: true });
+  return {
+    uri,
+    filename,
+    size: Number(info?.size || 0),
+    scope,
+    runId: context.runId,
+    bundle,
+  };
+}
+
+export default {
+  DIAGNOSTIC_EXPORT_SCOPE,
+  createDiagnosticsArchive,
+};

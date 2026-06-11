@@ -56,7 +56,9 @@ Nao envie payload bruto de usuario, Firebase Auth ou documentos completos do Fir
 
 ## Tela de Diagnostico
 
-Em dev, abra pelo menu lateral: `Diagnostico`.
+Em builds dev e prod, abra:
+
+`Menu lateral > Configuracoes > Diagnostico`
 
 A tela mostra:
 
@@ -69,15 +71,47 @@ A tela mostra:
 - appState atual;
 - ultimos logs com filtros por nivel e categoria.
 
+## Armazenamento local
+
+Os logs de alta frequencia nao usam AsyncStorage. Eles sao gravados em arquivos NDJSON com buffer em:
+
+`FileSystem.documentDirectory/wayper-diagnostics/`
+
+Cada corrida recebe um diretorio proprio em `runs/<runId>/`. Os arquivos atuais sao rotacionados ao atingir 4 MB e as corridas recentes sao mantidas para exportacao posterior.
+
+Arquivos:
+
+- `events.ndjson`: timeline completa;
+- `gps.ndjson`: pontos raw e decisoes accepted/rejected;
+- `storage.ndjson`: checkpoints, chunks, flushes e falhas;
+- `lifecycle.ndjson`: app state, background task, watcher e recovery;
+- `notification.ndjson`: estado e acoes da notificacao.
+
 ## Exportacao
 
 Na tela `Diagnostico`:
 
-- `Copiar`: copia o bundle JSON para a area de transferencia;
-- `Exportar JSON`: tenta compartilhar um arquivo `.json`;
-- `Limpar`: remove logs locais.
+- `Exportar ultima corrida`;
+- `Exportar corrida ativa`;
+- `Exportar logs recentes`;
+- `Enviar ultima corrida`;
+- `Limpar logs antigos`.
 
-O bundle inclui metadata, logs recentes, erros, resumo da corrida ativa, storage, permissoes e watcher/background. Dados sensiveis sao removidos.
+Cada exportacao gera um ZIP compartilhavel pelo Android. O ZIP inclui:
+
+- `wayper-last-run-diagnostics.json`;
+- os cinco arquivos NDJSON;
+- `gpsFilterReport.json`;
+- `routeChunks-metadata.json`;
+- `activeRun-snapshot-light.json`;
+- `storageHealth.json`;
+- `nativeNotificationState.json`;
+- `backgroundTaskStatus.json`;
+- `foregroundWatcherStatus.json`;
+- `runtime-state.json`;
+- `manifest.json`.
+
+Coordenadas exatas ficam desligadas por padrao. O opt-in deve ser ativado explicitamente na tela antes de uma corrida de teste. Sem opt-in, coordenadas sao mascaradas.
 
 Tambem e possivel usar:
 
@@ -86,6 +120,34 @@ import { exportDiagnosticsBundle } from "../services/diagnostics/runDiagnosticsS
 
 const bundle = await exportDiagnosticsBundle();
 ```
+
+## Upload opcional
+
+O export local sempre funciona. O envio remoto so e habilitado quando:
+
+`EXPO_PUBLIC_WAYPER_DIAGNOSTICS_UPLOAD_ENABLED=true`
+
+Quando habilitado, o ZIP vai para Firebase Storage e o Firestore recebe somente metadata e o resumo `gpsFilterReport`. O conteudo NDJSON nao e salvo em documento Firestore.
+
+## APK prod sem adb
+
+1. Instale o APK prod.
+2. Antes da corrida, abra `Configuracoes > Diagnostico` e confirme `log backend: file-system`.
+3. Deixe `Coordenadas exatas` desligado, salvo em uma corrida controlada.
+4. Corra normalmente, inclusive com tela bloqueada.
+5. Depois, abra `Configuracoes > Diagnostico`.
+6. Use `Exportar ultima corrida` e compartilhe o ZIP por Drive, email ou outro app.
+
+No `gpsFilterReport.json`, compare:
+
+- `rawPoints`;
+- `acceptedByCurrentFilter`;
+- `rejectedByCurrentFilter`;
+- `acceptedByRelaxedFilter`;
+- `topRejectReasons`;
+- gaps entre pontos raw e aceitos.
+
+Se `rawPoints` for baixo, investigue captura/background/permissoes. Se raw for alto e `acceptedByRelaxedFilter` ficar muito acima do filtro atual, investigue thresholds. Se accepted for alto e a rota visual nao acompanhar, investigue renderizacao/throttle.
 
 ## Interpretando Bugs
 

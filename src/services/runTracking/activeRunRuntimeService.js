@@ -77,6 +77,7 @@ function isRuntimeActiveEvidence(runtime = {}) {
     ) ||
     runtime?.backgroundTaskStatus === "started" ||
     runtime?.backgroundStarted === true ||
+    runtime?.notificationStatus === "active" ||
     isNativeNotificationActive(runtime?.nativeNotificationState) ||
     Boolean(runtime?.offlineRun && !["FINISHED", "COMPLETED", "CANCELLED"].includes(String(runtime.offlineRun.status || "").toUpperCase())) ||
     hasRecentEvidence(lastDeepLinkReceived) ||
@@ -211,18 +212,24 @@ export function recordNotificationAction(action, context = {}) {
 }
 
 export async function getActiveRunRuntimeSnapshot(reason = "runtime") {
-  const [snapshot, offlineRun, nativeNotificationState] = await Promise.all([
+  const [snapshot, offlineRun, nativeNotificationState, backgroundTaskProbe] = await Promise.all([
     activeRunTrackingService.getActiveRunSnapshot?.().catch(() => null),
     loadActiveRun().catch(() => null),
     getNativeNotificationState().catch(() => null),
+    activeRunTrackingService.getBackgroundLocationTaskStatus?.().catch(() => null),
   ]);
-  return buildRuntimeSnapshot({
+  const runtime = buildRuntimeSnapshot({
     snapshot,
     offlineRun,
     nativeNotificationState,
     reason,
     reconciliationStatus: snapshot || offlineRun || isNativeNotificationActive(nativeNotificationState) ? "has_evidence" : "idle",
   });
+  return {
+    ...runtime,
+    backgroundTaskStatus: backgroundTaskProbe?.status || runtime.backgroundTaskStatus,
+    backgroundTaskProbe,
+  };
 }
 
 function buildRecoverableEvidenceSnapshot(before = {}, error = null) {

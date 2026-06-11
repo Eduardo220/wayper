@@ -109,6 +109,7 @@
     "expo-web-browser": "~15.0.9",
     "firebase": "^12.6.0",
     "firebase-admin": "^13.6.0",
+    "jszip": "^3.10.1",
     "kalmanjs": "^1.1.0",
     "moti": "^0.30.0",
     "react": "19.1.0",
