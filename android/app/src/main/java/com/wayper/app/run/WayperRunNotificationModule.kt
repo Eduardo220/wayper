@@ -1,10 +1,12 @@
 package com.wayper.app.run
 
 import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.WritableMap
 import kotlin.math.max
 
 class WayperRunNotificationModule(
@@ -66,6 +68,29 @@ class WayperRunNotificationModule(
     }
   }
 
+  @ReactMethod
+  fun isActive(promise: Promise) {
+    try {
+      promise.resolve(RunNotificationForegroundService.isActive())
+    } catch (error: Exception) {
+      promise.reject("RUN_NOTIFICATION_STATE_FAILED", error)
+    }
+  }
+
+  @ReactMethod
+  fun getState(promise: Promise) {
+    try {
+      promise.resolve(toWritableMap(RunNotificationForegroundService.getLastState()))
+    } catch (error: Exception) {
+      promise.reject("RUN_NOTIFICATION_STATE_FAILED", error)
+    }
+  }
+
+  @ReactMethod
+  fun getLastNotificationState(promise: Promise) {
+    getState(promise)
+  }
+
   private fun elapsedSeconds(options: ReadableMap): Long {
     val value = when {
       options.hasKey("elapsedTimeSeconds") -> options.getDouble("elapsedTimeSeconds")
@@ -104,5 +129,21 @@ class WayperRunNotificationModule(
     } else {
       null
     }
+  }
+
+  private fun toWritableMap(source: Map<String, Any?>): WritableMap {
+    val map = Arguments.createMap()
+    source.forEach { (key, value) ->
+      when (value) {
+        null -> map.putNull(key)
+        is Boolean -> map.putBoolean(key, value)
+        is Int -> map.putInt(key, value)
+        is Long -> map.putDouble(key, value.toDouble())
+        is Float -> map.putDouble(key, value.toDouble())
+        is Double -> map.putDouble(key, value)
+        else -> map.putString(key, value.toString())
+      }
+    }
+    return map
   }
 }

@@ -1,4 +1,5 @@
 import logger, { LOG_CATEGORIES, sanitizeLogContext } from "../../utils/logger.js";
+import { getDiagnosticsConfig } from "../../config/diagnosticsConfig.js";
 import {
   getErrorLogs,
   getLogsSummary,
@@ -168,23 +169,34 @@ async function safePermissionSummary() {
 
 async function safeActiveRunSummary() {
   try {
-    const module = await import("../runTracking/activeRunTrackingService.js");
-    const service = module.default || module;
-    const snapshot = await service.getActiveRunSnapshot?.();
-    const runtime = service.getTrackingRuntimeStatus?.() || {};
-    return summarizeRunSnapshot(snapshot || {}, runtime);
+    const runtimeModule = await import("../runTracking/activeRunRuntimeService.js");
+    const runtimeService = runtimeModule.default || runtimeModule;
+    const runtime = await runtimeService.getActiveRunRuntimeSnapshot?.("diagnostics_export");
+    return sanitizeLogContext(runtime || {});
   } catch (error) {
-    return { error: error?.message || String(error) };
+    try {
+      const module = await import("../runTracking/activeRunTrackingService.js");
+      const service = module.default || module;
+      const snapshot = await service.getActiveRunSnapshot?.();
+      const runtime = service.getTrackingRuntimeStatus?.() || {};
+      return summarizeRunSnapshot(snapshot || {}, runtime);
+    } catch (fallbackError) {
+      return { error: fallbackError?.message || error?.message || String(error) };
+    }
   }
 }
 
 async function safeStorageSummary() {
   try {
     const offline = await import("../runOfflineStorageService.js");
+    const tracking = await import("../runTracking/activeRunTrackingService.js");
+    const trackingService = tracking.default || tracking;
     const activeRun = await offline.loadActiveRun?.();
+    const canonical = await trackingService.getActiveRunStorageDiagnostics?.();
     const logs = await getLogsSummary();
     return sanitizeLogContext({
       logs,
+      canonical,
       activeRun: activeRun
         ? {
             localRunId: activeRun.localRunId || null,
@@ -204,9 +216,9 @@ async function safeStorageSummary() {
 
 async function safeWatcherSummary() {
   try {
-    const module = await import("../runTracking/activeRunTrackingService.js");
-    const service = module.default || module;
-    return sanitizeLogContext(service.getTrackingRuntimeStatus?.() || {});
+    const runtimeModule = await import("../runTracking/activeRunRuntimeService.js");
+    const runtimeService = runtimeModule.default || runtimeModule;
+    return sanitizeLogContext(await runtimeService.getActiveRunRuntimeSnapshot?.("watcher_summary"));
   } catch (error) {
     return { error: error?.message || String(error) };
   }
@@ -214,6 +226,7 @@ async function safeWatcherSummary() {
 
 export async function exportDiagnosticsBundle(options = {}) {
   const limit = Number(options.limit || 300);
+  const diagnosticsConfig = getDiagnosticsConfig();
   const [logs, errorLogs, activeRun, storage, permissions, watcher] = await Promise.all([
     getRecentLogs(limit),
     getErrorLogs(),
@@ -229,6 +242,8 @@ export async function exportDiagnosticsBundle(options = {}) {
       timestamp: new Date().toISOString(),
       environment: typeof __DEV__ === "undefined" || __DEV__ ? "dev" : "prod",
       bundleVersion: 1,
+      preciseLocationLogsEnabled: diagnosticsConfig.allowPreciseLocationLogs === true,
+      locationPrecisionMode: diagnosticsConfig.locationPrecisionMode,
     },
     platform: logs[logs.length - 1]?.platform || "unknown",
     timestamp: new Date().toISOString(),
@@ -239,6 +254,25 @@ export async function exportDiagnosticsBundle(options = {}) {
     permissions,
     watcher,
     backgroundTask: watcher?.backgroundTaskStatus || watcher?.backgroundStarted || null,
+    foregroundWatcher: watcher?.foregroundWatcherStatus || null,
+    notification: watcher?.notificationStatus || null,
+    nativeNotificationState: watcher?.nativeNotificationState || activeRun?.nativeNotificationState || null,
+    lastDeepLinkReceived: watcher?.lastDeepLinkReceived || null,
+    lastNotificationActionReceived: watcher?.lastNotificationActionReceived || null,
+    rejectionSummary: {
+      rejectedPointsCount: activeRun?.rejectedPointsCount || watcher?.rejectedPointsCount || 0,
+      acceptedPointsCount: activeRun?.acceptedPointsCount || watcher?.acceptedPointsCount || 0,
+    },
+    routeChunks: {
+      chunksCount: activeRun?.routeChunksCount || watcher?.routeChunksCount || storage?.canonical?.routeChunks?.chunksCount || storage?.canonical?.meta?.routeChunksCount || 0,
+      routeChunksIndex: activeRun?.routeChunksIndex || watcher?.routeChunksIndex || null,
+      storage: storage?.canonical?.routeChunks || storage?.canonical || null,
+    },
+    activeEvidence: {
+      recoveryReason: activeRun?.recoveryReason || watcher?.recoveryReason || null,
+      reconciliationStatus: activeRun?.reconciliationStatus || watcher?.reconciliationStatus || null,
+      canShowStartButton: activeRun?.canShowStartButton ?? watcher?.canShowStartButton ?? null,
+    },
   });
 }
 

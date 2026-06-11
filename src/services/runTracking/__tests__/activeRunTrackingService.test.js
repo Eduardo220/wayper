@@ -43,8 +43,32 @@ jest.unstable_mockModule("@react-native-async-storage/async-storage", () => ({
   default: AsyncStorageMock,
 }));
 
+jest.unstable_mockModule("@react-native-community/netinfo", () => ({
+  default: {
+    fetch: jest.fn(async () => ({
+      isConnected: true,
+      isInternetReachable: true,
+    })),
+    addEventListener: jest.fn(() => () => {}),
+  },
+}));
+
 jest.unstable_mockModule("react-native", () => ({
+  AppState: {
+    currentState: "active",
+  },
   NativeModules: {},
+  PermissionsAndroid: {
+    PERMISSIONS: {
+      POST_NOTIFICATIONS: "android.permission.POST_NOTIFICATIONS",
+    },
+    RESULTS: {
+      GRANTED: "granted",
+      DENIED: "denied",
+    },
+    check: jest.fn(async () => true),
+    request: jest.fn(async () => "granted"),
+  },
   Platform: {
     OS: "android",
     Version: 33,
@@ -56,6 +80,7 @@ jest.unstable_mockModule("expo-location", () => LocationMock);
 jest.unstable_mockModule("expo-task-manager", () => TaskManagerMock);
 
 const service = await import("../activeRunTrackingService.js");
+const runtimeService = await import("../activeRunRuntimeService.js");
 const {
   ACTIVE_RUN_STATUS,
   ACTIVE_RUN_STORAGE_KEY,
@@ -82,6 +107,18 @@ function nextPoint(index = 1) {
   };
 }
 
+function getStoredActiveRun() {
+  return JSON.parse(storage.get(ACTIVE_RUN_STORAGE_KEY));
+}
+
+function getStoredTrustedPointsFromChunks(raw = getStoredActiveRun()) {
+  const chunks = raw.routeChunksIndex?.chunks || [];
+  return chunks.flatMap((chunk) => {
+    const stored = storage.get(chunk.key);
+    return stored ? JSON.parse(stored).trustedPath || [] : [];
+  });
+}
+
 beforeEach(async () => {
   storage.clear();
   locationStarted = false;
@@ -103,11 +140,123 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(true);
 
     const updated = await service.recordLocation(nextPoint(1), { source: "foreground" });
-    const raw = JSON.parse(storage.get(ACTIVE_RUN_STORAGE_KEY));
+    const raw = getStoredActiveRun();
+    const chunkPoints = getStoredTrustedPointsFromChunks(raw);
 
     expect(updated.activeRunId).toBe("run-local-snapshot");
     expect(raw.activeRunId).toBe("run-local-snapshot");
-    expect(raw.trustedPath.length).toBeGreaterThanOrEqual(1);
+    expect(raw.snapshotStorage).toBe("light");
+    expect(raw.trustedPath).toBeUndefined();
+    expect(raw.routeChunksIndex.chunks.length).toBeGreaterThanOrEqual(1);
+    expect(chunkPoints.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("mantem backup do snapshot canonico e usa backup se current estiver corrompido", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-backup-restore",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+
+    expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(true);
+    expect(storage.has(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)).toBe(true);
+
+    storage.set(ACTIVE_RUN_STORAGE_KEY, "{broken-json");
+    service.__resetActiveRunRuntimeForTests();
+
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+
+    expect(restored.activeRunId).toBe("run-backup-restore");
+    expect(restored.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(restored.trustedPath.length).toBeGreaterThanOrEqual(1);
+    expect(storage.has(service.ACTIVE_RUN_CORRUPT_STORAGE_KEY)).toBe(true);
+  });
+
+  test("salva rota em chunks, nao regrava chunks antigos e restaura rota completa", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-route-chunks",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+
+    for (let index = 1; index <= service.ACTIVE_RUN_ROUTE_CHUNK_SIZE + 2; index += 1) {
+      await service.recordLocation(nextPoint(index), { source: "foreground" });
+    }
+
+    const raw = getStoredActiveRun();
+    expect(raw.snapshotStorage).toBe("light");
+    expect(raw.trustedPath).toBeUndefined();
+    expect(raw.routeChunksIndex.chunks.length).toBeGreaterThanOrEqual(2);
+
+    const firstChunkKey = raw.routeChunksIndex.chunks[0].key;
+    const writesBefore = AsyncStorageMock.setItem.mock.calls
+      .filter(([key]) => key === firstChunkKey)
+      .length;
+
+    await service.recordLocation(nextPoint(service.ACTIVE_RUN_ROUTE_CHUNK_SIZE + 3), { source: "foreground" });
+
+    const writesAfter = AsyncStorageMock.setItem.mock.calls
+      .filter(([key]) => key === firstChunkKey)
+      .length;
+    expect(writesAfter).toBe(writesBefore);
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+
+    expect(restored.activeRunId).toBe("run-route-chunks");
+    expect(restored.trustedPath.length).toBeGreaterThanOrEqual(service.ACTIVE_RUN_ROUTE_CHUNK_SIZE + 3);
+    expect(restored.routeSegments.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("limpa snapshot leve e chunks somente apos confirmacao local", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-clean-chunks",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+    const raw = getStoredActiveRun();
+    const chunkKeys = raw.routeChunksIndex.chunks.map((chunk) => chunk.key);
+    expect(chunkKeys.some((key) => storage.has(key))).toBe(true);
+
+    await service.markActiveRunLocallySaved();
+
+    expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(false);
+    expect(storage.has(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)).toBe(false);
+    expect(chunkKeys.some((key) => storage.has(key))).toBe(false);
+  });
+
+  test("falha de escrita do AsyncStorage nao apaga snapshot em memoria nem backup anterior", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-write-error-safe",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    const previousBackup = storage.get(service.ACTIVE_RUN_BACKUP_STORAGE_KEY);
+    let failedActiveRunWrite = false;
+    AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+      if (!failedActiveRunWrite && key === service.ACTIVE_RUN_BACKUP_STORAGE_KEY) {
+        failedActiveRunWrite = true;
+        throw new Error("sqlite busy");
+      }
+      storage.set(key, value);
+    });
+
+    try {
+      await expect(service.recordLocation(nextPoint(1), { source: "foreground" })).resolves.toMatchObject({
+        activeRunId: "run-write-error-safe",
+      });
+
+      expect(await service.getActiveRunSnapshot()).toMatchObject({
+        activeRunId: "run-write-error-safe",
+      });
+      expect(storage.get(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)).toBe(previousBackup);
+    } finally {
+      AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+        storage.set(key, value);
+      });
+    }
   });
 
   test("ponto em background atualiza o snapshot canonico sem duplicar watcher", async () => {
@@ -125,13 +274,15 @@ describe("activeRunTrackingService lifecycle", () => {
     });
 
     const updated = await service.recordLocation(nextPoint(1), { source: "background" });
-    const raw = JSON.parse(storage.get(ACTIVE_RUN_STORAGE_KEY));
+    const raw = getStoredActiveRun();
+    const chunkPoints = getStoredTrustedPointsFromChunks(raw);
 
     expect(updated.activeRunId).toBe("run-background-point");
     expect(updated.source).toBe("background");
     expect(raw.activeRunId).toBe("run-background-point");
     expect(raw.source).toBe("background");
-    expect(raw.trustedPath.length).toBeGreaterThanOrEqual(1);
+    expect(raw.snapshotStorage).toBe("light");
+    expect(chunkPoints.length).toBeGreaterThanOrEqual(1);
     expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
   });
 
@@ -154,13 +305,14 @@ describe("activeRunTrackingService lifecycle", () => {
       },
     });
 
-    const raw = JSON.parse(storage.get(ACTIVE_RUN_STORAGE_KEY));
+    const raw = getStoredActiveRun();
+    const chunkPoints = getStoredTrustedPointsFromChunks(raw);
     expect(raw.activeRunId).toBe("run-background-ordered");
-    expect(raw.trustedPath.map((point) => point.timestamp)).toEqual([
+    expect(chunkPoints.map((point) => point.timestamp)).toEqual([
       BASE_TIME + 2000,
       BASE_TIME + 4000,
     ]);
-    expect(raw.trustedPath).toHaveLength(2);
+    expect(chunkPoints).toHaveLength(2);
   });
 
   test("ponto recebido em background durante PAUSED nao soma distancia", async () => {
@@ -364,6 +516,47 @@ describe("activeRunTrackingService lifecycle", () => {
 
     expect(LocationMock.hasStartedLocationUpdatesAsync).toHaveBeenCalled();
     expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+  });
+
+  test("runtime reconcile reidrata RUNNING e preserva task background existente", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-runtime-reconcile",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+
+    service.__resetActiveRunRuntimeForTests();
+    locationStarted = true;
+
+    const result = await runtimeService.hydrateActiveRunFromRuntime("test_reentry", {
+      userId: "user-1",
+      restartTracking: true,
+    });
+
+    expect(result.snapshot.activeRunId).toBe("run-runtime-reconcile");
+    expect(result.snapshot.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(result.snapshot.trustedPath.length).toBeGreaterThanOrEqual(1);
+    expect(LocationMock.hasStartedLocationUpdatesAsync).toHaveBeenCalled();
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+  });
+
+  test("runtime nao retorna IDLE quando ha evidencia ativa sem snapshot legivel", async () => {
+    service.setRunRuntimeSurfaceState({
+      backgroundTaskStatus: "started",
+      notificationStatus: "active",
+    });
+
+    const result = await runtimeService.reconcileActiveRunState("active_evidence_without_snapshot", {
+      restartTracking: false,
+    });
+
+    expect(result.snapshot).toMatchObject({
+      status: ACTIVE_RUN_STATUS.ERROR_RECOVERABLE,
+    });
+    expect(result.canShowStartButton).toBe(false);
+    expect(result.runtime.canShowStartButton).toBe(false);
   });
 
   test("startActiveRun nao substitui uma corrida viva existente", async () => {

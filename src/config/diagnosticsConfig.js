@@ -1,5 +1,8 @@
 const isDevEnvironment = () => typeof __DEV__ === "undefined" || Boolean(__DEV__);
 const isTestEnvironment = () => typeof process !== "undefined" && process.env?.NODE_ENV === "test";
+const preciseLocationEnvEnabled = () =>
+  typeof process !== "undefined" &&
+  process.env?.EXPO_PUBLIC_WAYPER_ALLOW_PRECISE_DIAGNOSTIC_LOCATION === "true";
 
 export const LOG_LEVEL_PRIORITY = {
   debug: 10,
@@ -21,7 +24,8 @@ export const DEFAULT_DIAGNOSTICS_CONFIG = {
   persistEnabled: true,
   minLevel: isDevEnvironment() ? "debug" : "warn",
   maxStoredLogs: 1000,
-  locationPrecisionMode: isDevEnvironment()
+  allowPreciseLocationLogs: preciseLocationEnvEnabled(),
+  locationPrecisionMode: preciseLocationEnvEnabled()
     ? LOCATION_PRECISION_MODE.full
     : LOCATION_PRECISION_MODE.masked,
   categoriesEnabled: null,
@@ -37,9 +41,13 @@ export function getDiagnosticsConfig() {
 }
 
 export function updateDiagnosticsConfig(patch = {}) {
+  const next = { ...(patch || {}) };
+  if (next.locationPrecisionMode === LOCATION_PRECISION_MODE.full && next.allowPreciseLocationLogs !== true) {
+    next.locationPrecisionMode = LOCATION_PRECISION_MODE.masked;
+  }
   diagnosticsConfig = {
     ...diagnosticsConfig,
-    ...(patch || {}),
+    ...next,
   };
   return getDiagnosticsConfig();
 }

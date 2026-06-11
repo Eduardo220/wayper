@@ -1,24 +1,28 @@
 import { createNavigationContainerRef } from "@react-navigation/native";
+import { recordDeepLinkReceived } from "../services/runTracking/activeRunRuntimeService.js";
 
 export const ACTIVE_RUN_DEEP_LINK = "wayper://run/active";
 
 export const navigationRef = createNavigationContainerRef();
 
 let pendingActiveRunOpen = false;
+let pendingActiveRunOpenOptions = null;
 
-function buildOpenActiveRunParams() {
+function buildOpenActiveRunParams(options = {}) {
   return {
     screen: "Mapa",
     params: {
       activeRunOpenRequestId: Date.now(),
-      fromRunNotification: true,
+      fromRunNotification: options.fromRunNotification !== false,
+      fromDeepLink: Boolean(options.fromDeepLink),
     },
   };
 }
 
-export function requestOpenActiveRun() {
+export function requestOpenActiveRun(options = {}) {
   if (!navigationRef.isReady()) {
     pendingActiveRunOpen = true;
+    pendingActiveRunOpenOptions = options;
     return false;
   }
 
@@ -26,17 +30,19 @@ export function requestOpenActiveRun() {
   const routeNames = Array.isArray(rootState?.routeNames) ? rootState.routeNames : [];
   if (routeNames.length > 0 && !routeNames.includes("Main")) {
     pendingActiveRunOpen = true;
+    pendingActiveRunOpenOptions = options;
     return false;
   }
 
   pendingActiveRunOpen = false;
-  navigationRef.navigate("Main", buildOpenActiveRunParams());
+  pendingActiveRunOpenOptions = null;
+  navigationRef.navigate("Main", buildOpenActiveRunParams(options));
   return true;
 }
 
 export function flushPendingNavigation() {
   if (pendingActiveRunOpen) {
-    requestOpenActiveRun();
+    requestOpenActiveRun(pendingActiveRunOpenOptions || {});
   }
 }
 
@@ -48,7 +54,13 @@ export function isActiveRunUrl(url) {
 
 export function handleNavigationUrl(url) {
   if (!isActiveRunUrl(url)) return false;
-  requestOpenActiveRun();
+  recordDeepLinkReceived(url, {
+    source: "linking",
+  });
+  requestOpenActiveRun({
+    fromDeepLink: true,
+    fromRunNotification: true,
+  });
   return true;
 }
 

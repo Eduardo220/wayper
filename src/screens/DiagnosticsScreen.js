@@ -122,7 +122,7 @@ export default function DiagnosticsScreen() {
     try {
       const bundle = await exportDiagnosticsBundle({ limit: 500 });
       const json = JSON.stringify(bundle, null, 2);
-      const fileName = `wayper-diagnostics-${Date.now()}.json`;
+      const fileName = "wayper-last-run-diagnostics.json";
       const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || "";
       if (!baseDir || typeof FileSystem.writeAsStringAsync !== "function") {
         await Clipboard.setStringAsync(json);
@@ -187,7 +187,7 @@ export default function DiagnosticsScreen() {
         <StatRow label="last location" value={summary.lastLocationAt || "-"} />
         <StatRow
           label="last point"
-          value={lastPoint ? `${formatNumber(lastPoint.latitude, 5)}, ${formatNumber(lastPoint.longitude, 5)}` : "-"}
+          value={lastPoint ? `${formatNumber(lastPoint.latitude, 3)}, ${formatNumber(lastPoint.longitude, 3)}` : "-"}
         />
         <StatRow label="last local save" value={activeRun?.lastUpdatedAt || activeRun?.checkpointAt || "-"} />
         <StatRow label="watcher" value={runtime.watcherStatus || "-"} />

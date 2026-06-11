@@ -39,6 +39,10 @@ import DashboardScreen from "../screens/Runs/DashboardScreen";
 import CustomDrawer from "../components/CustomDrawer";
 import { WayperTheme } from "../theme/wayperTheme";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
+import {
+  findRecoverableRunForUser,
+  isLiveRecovery,
+} from "../services/run/runRecoveryService.js";
 import logger, { LOG_CATEGORIES } from "../utils/logger.js";
 import { subscribeCurrentUserProfile } from "../repositories/userProfileRepository.js";
 import { runLocalMigrationsOnce } from "../services/storage/storageMigrationService.js";
@@ -199,9 +203,14 @@ export default function MainNavigator() {
 
   useEffect(() => {
     let mounted = true;
-    activeRunTrackingService.hasActiveRunSnapshot?.()
-      .then((hasActiveRun) => {
-        if (mounted) setInitialRouteName(hasActiveRun ? "Mapa" : "Inicio");
+    const uid = auth.currentUser?.uid || "offline";
+    Promise.all([
+      activeRunTrackingService.hasActiveRunSnapshot?.().catch(() => false),
+      findRecoverableRunForUser(uid, { reason: "initial_route" }).catch(() => null),
+    ])
+      .then(([hasActiveRun, recovery]) => {
+        const hasLiveRecovery = recovery?.recoverable && isLiveRecovery(recovery);
+        if (mounted) setInitialRouteName(hasActiveRun || hasLiveRecovery ? "Mapa" : "Inicio");
       })
       .catch(() => {
         if (mounted) setInitialRouteName("Inicio");

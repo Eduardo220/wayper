@@ -1,5 +1,6 @@
 // MapScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
   Text,
@@ -62,6 +63,11 @@ import {
   warmUpGpsForRun,
 } from "../services/runTracking";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
+import {
+  hydrateActiveRunFromRuntime,
+  recordNotificationOpen,
+  setRuntimeSurfaceState,
+} from "../services/runTracking/activeRunRuntimeService.js";
 import {
   checkpointOnLocationError,
   flushActiveRunCheckpoint,
@@ -534,6 +540,7 @@ const MapScreen = ({ navigation, route }) => {
   const [completedZonePreview, setCompletedZonePreview] = useState([]);
   const [mode, setMode] = useState(null);
   const [gpsQualityWarning, setGpsQualityWarning] = useState(null);
+  const [runtimeRecovering, setRuntimeRecovering] = useState(false);
 
   const [showRunsModal, setShowRunsModal] = useState(false);
   const [showSavedModal, setShowSavedModal] = useState(false);
@@ -593,6 +600,7 @@ const MapScreen = ({ navigation, route }) => {
   const activeRunRestoreAttemptedRef = useRef(false);
   const restoreActiveRunForReentryRef = useRef(null);
   const restoringActiveRunRef = useRef(false);
+  const runtimeHydrationInFlightRef = useRef(false);
   const lastNotificationOpenRequestRef = useRef(null);
   const lastMapRouteDiagnosticRef = useRef("");
 
@@ -999,7 +1007,17 @@ const MapScreen = ({ navigation, route }) => {
 
         appStateSub = AppState.addEventListener("change", (next) => {
           appStateRef.current = next;
+          setRuntimeSurfaceState({
+            appState: next,
+            screenFocusState: "mounted",
+          });
           if (next !== "active" && currentRunIdRef.current) {
+            recordRunEvent("RUN_APP_BACKGROUND", {
+              runId: currentRunIdRef.current,
+              status: runStatusRef.current,
+              appState: next,
+              screen: "MapScreen",
+            });
             recordRunEvent("APP_BACKGROUND", {
               runId: currentRunIdRef.current,
               status: runStatusRef.current,
@@ -1011,6 +1029,12 @@ const MapScreen = ({ navigation, route }) => {
             });
           }
           if (next === "active") {
+            recordRunEvent("RUN_APP_ACTIVE", {
+              runId: currentRunIdRef.current,
+              status: runStatusRef.current,
+              appState: next,
+              screen: "MapScreen",
+            });
             recordRunEvent("APP_ACTIVE", {
               runId: currentRunIdRef.current,
               status: runStatusRef.current,
@@ -1092,7 +1116,12 @@ const MapScreen = ({ navigation, route }) => {
     try {
       watcherStartTokenRef.current += 1;
       const w = watcherRef.current;
-      if (!w) return;
+      if (!w) {
+        setRuntimeSurfaceState({
+          foregroundWatcherStatus: "stopped",
+        });
+        return;
+      }
       if (typeof w.remove === "function") {
         try {
           w.remove();
@@ -1107,6 +1136,9 @@ const MapScreen = ({ navigation, route }) => {
         }
       }
       watcherRef.current = null;
+      setRuntimeSurfaceState({
+        foregroundWatcherStatus: "stopped",
+      });
       debugTracking("watcher_stopped", { runSessionId: currentRunIdRef.current });
     } catch (e) {
       debug("stopWatcher caught", e);
@@ -1524,6 +1556,9 @@ const MapScreen = ({ navigation, route }) => {
 
   const startLocationWatcher = useCallback(async () => {
     if (watcherRef.current) {
+      setRuntimeSurfaceState({
+        foregroundWatcherStatus: "started",
+      });
       recordRunEvent("LOCATION_WATCHER_STARTED", {
         runId: currentRunIdRef.current,
         watcherStatus: "foreground_watcher_alive",
@@ -1533,6 +1568,9 @@ const MapScreen = ({ navigation, route }) => {
         activeRunId: currentRunIdRef.current,
       });
     } else if (currentRunIdRef.current) {
+      setRuntimeSurfaceState({
+        foregroundWatcherStatus: "restarting",
+      });
       recordRunEvent("LOCATION_WATCHER_RESTARTED", {
         runId: currentRunIdRef.current,
         watcherStatus: "foreground_restarting",
@@ -1627,8 +1665,11 @@ const MapScreen = ({ navigation, route }) => {
         } catch {}
         return;
       }
-      watcherRef.current = sub;
-      debugTracking("watcher_started", { runSessionId, distanceInterval: WATCH_DISTANCE_INTERVAL, timeInterval: WATCH_TIME_INTERVAL_MS });
+          watcherRef.current = sub;
+          setRuntimeSurfaceState({
+            foregroundWatcherStatus: "started",
+          });
+          debugTracking("watcher_started", { runSessionId, distanceInterval: WATCH_DISTANCE_INTERVAL, timeInterval: WATCH_TIME_INTERVAL_MS });
     } catch (e) {
       debug("watchPositionAsync failed, fallback polling", e);
       checkpointOnLocationError(e, {
@@ -1668,6 +1709,9 @@ const MapScreen = ({ navigation, route }) => {
         return;
       }
       watcherRef.current = { pollingInterval: poll };
+      setRuntimeSurfaceState({
+        foregroundWatcherStatus: "fallback_polling_started",
+      });
       recordRunEvent("LOCATION_WATCHER_STARTED", {
         runId: runSessionId,
         watcherStatus: "fallback_polling_started",
@@ -1705,7 +1749,33 @@ const MapScreen = ({ navigation, route }) => {
 
     const status = snapshot.status || ACTIVE_RUN_STATUS.RUNNING;
     const isPaused = status === ACTIVE_RUN_STATUS.PAUSED;
-    const isLive = status === ACTIVE_RUN_STATUS.RUNNING || isPaused;
+    const isRecoverableLive = [
+      ACTIVE_RUN_STATUS.STARTING,
+      ACTIVE_RUN_STATUS.RECOVERING,
+      ACTIVE_RUN_STATUS.ERROR_RECOVERABLE,
+    ].includes(status);
+    const isLive = status === ACTIVE_RUN_STATUS.RUNNING || isPaused || isRecoverableLive;
+    if (!isLive && options.allowTerminal !== true) {
+      recordRunSnapshotEvent("RUN_RECONCILE_INCONSISTENT_STATE", snapshot, {
+        reason: "non_live_snapshot_without_terminal_event",
+        currentUiStatus: runStatusRef.current,
+        screen: "MapScreen",
+      });
+      hydrateActiveRunFromRuntime("non_live_snapshot_guard", {
+        userId: auth.currentUser?.uid || "offline",
+        appState: appStateRef.current,
+        screenFocusState: "focused",
+        restartTracking: true,
+      }).then((result) => {
+        if (result?.snapshot?.activeRunId) {
+          applyActiveRunSnapshotToUi(result.snapshot, {
+            recovered: true,
+            forceSyncControls: true,
+          });
+        }
+      }).catch((error) => debug("non-live snapshot guard failed", error));
+      return;
+    }
     const previousSameRun = Boolean(currentRunIdRef.current && currentRunIdRef.current === snapshot.activeRunId);
     const session = createTrackingSessionFromSnapshot(snapshot);
     const trackingState = session.getState?.() || {};
@@ -1757,8 +1827,14 @@ const MapScreen = ({ navigation, route }) => {
     trackingSessionRef.current = session;
     currentRunIdRef.current = snapshot.activeRunId;
     modeRef.current = snapshot.mode || "free";
-    runningRef.current = status === ACTIVE_RUN_STATUS.RUNNING;
-    runStatusRef.current = status === ACTIVE_RUN_STATUS.RUNNING ? "active" : isPaused ? "paused" : "idle";
+    runningRef.current = status === ACTIVE_RUN_STATUS.RUNNING || isRecoverableLive;
+    runStatusRef.current = status === ACTIVE_RUN_STATUS.RUNNING
+      ? "active"
+      : isPaused
+        ? "paused"
+        : isRecoverableLive
+          ? "recovering"
+          : "idle";
     rawPathRef.current = sanitizePath(snapshot.rawPath || snapshot.rawPoints || trustedPath);
     savedPathRef.current = trustedPath;
     routeStateRef.current = trustedPath;
@@ -1781,6 +1857,13 @@ const MapScreen = ({ navigation, route }) => {
     setTimeSec(durationSeconds);
     if (snapshot.currentLocation) setLocation(snapshot.currentLocation);
     setGpsQualityWarning(getGpsQualityWarning(snapshot.gpsQualitySummary || snapshot.pathQuality));
+    recordRunSnapshotEvent("RUN_UI_STATE_CHANGED", snapshot, {
+      previousStatus: previousRunStatus,
+      nextStatus: runStatusRef.current,
+      running: isLive,
+      paused: isPaused,
+      screen: "MapScreen",
+    });
     devLog("MapScreen", "hydrated route points count", {
       activeRunId: snapshot.activeRunId,
       points: trustedPath.length,
@@ -1801,12 +1884,14 @@ const MapScreen = ({ navigation, route }) => {
         startLocationWatcher().catch((error) => debug("snapshot startLocationWatcher failed", error));
         startBackgroundLocationService().catch((error) => debug("snapshot startBackgroundLocationService failed", error));
       }
-    } else {
+    } else if (isPaused) {
       stopElapsedTimer();
       if (shouldSyncControls && (forceSyncControls || previousRunStatus === "active")) {
         stopWatcherAndPolling();
         stopBackgroundLocationService();
       }
+    } else if (isRecoverableLive) {
+      stopElapsedTimer();
     }
 
     if (options.recovered) {
@@ -1828,7 +1913,10 @@ const MapScreen = ({ navigation, route }) => {
     const unsubscribe = activeRunTrackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
       if (!snapshot || !mountedRef.current) return;
       if (event === "active_snapshot_cleared" || event === "run_cancelled") return;
-      applyActiveRunSnapshotToUi(snapshot, { recovered: event === "run_restored" });
+      applyActiveRunSnapshotToUi(snapshot, {
+        recovered: event === "run_restored",
+        allowTerminal: event === "run_finished_snapshot_saved",
+      });
     });
 
     return () => {
@@ -1847,12 +1935,13 @@ const MapScreen = ({ navigation, route }) => {
         running,
         screen: "MapScreen",
       });
-      if (counting || running) {
+      if (counting || running || runtimeRecovering) {
         recordRunEvent("RUN_START_FAILED", {
           mode: selectedMode,
           reason: "invalid_state",
           counting,
           running,
+          runtimeRecovering,
           level: "warn",
           screen: "MapScreen",
         });
@@ -1967,7 +2056,7 @@ const MapScreen = ({ navigation, route }) => {
       };
       return cleanup;
     },
-    [counting, refreshForegroundLocation, running]
+    [counting, refreshForegroundLocation, running, runtimeRecovering]
   );
 
   const startRun = useCallback(
@@ -1982,6 +2071,30 @@ const MapScreen = ({ navigation, route }) => {
           recordRunEvent("RUN_START_FAILED", {
             mode: selectedMode,
             reason: "already_running",
+            level: "warn",
+            screen: "MapScreen",
+          });
+          return;
+        }
+        const existingRuntime = await hydrateActiveRunFromRuntime("start_guard", {
+          userId: auth.currentUser?.uid || "offline",
+          appState: appStateRef.current,
+          screenFocusState: "focused",
+          restartTracking: true,
+        });
+        const existingSnapshot = existingRuntime?.snapshot;
+        if (
+          existingSnapshot?.activeRunId &&
+          [ACTIVE_RUN_STATUS.RUNNING, ACTIVE_RUN_STATUS.PAUSED].includes(existingSnapshot.status)
+        ) {
+          applyActiveRunSnapshotToUi(existingSnapshot, {
+            recovered: true,
+            forceSyncControls: true,
+          });
+          recordRunEvent("RUN_START_FAILED", {
+            mode: selectedMode,
+            reason: "existing_active_run_recovered",
+            runId: existingSnapshot.activeRunId,
             level: "warn",
             screen: "MapScreen",
           });
@@ -2494,6 +2607,19 @@ const MapScreen = ({ navigation, route }) => {
             syncStatus: ACTIVE_RUN_SYNC_STATUS.PENDING,
             offlineStatus: "PENDING_SYNC",
           });
+          if (savedLocalRun?.id === runData.id) {
+            recordRunSnapshotEvent("RUN_FINISH_SAVED", savedLocalRun, {
+              runId,
+              sessionId: stoppedRunSessionId || runId,
+              distanceMeters: totalDistance,
+              elapsedMs: totalDuration * 1000,
+              pointsCount: path.length,
+              segmentsCount: runData.segments.length,
+              savedLocal: true,
+              queuedSync: true,
+              screen: "MapScreen",
+            });
+          }
           sync.scheduleRunsSync?.();
           recordRunSnapshotEvent("RUN_SYNC_QUEUED", savedLocalRun || runData, {
             source: "finish",
@@ -2617,17 +2743,43 @@ const MapScreen = ({ navigation, route }) => {
 
   const restoreActiveRunForReentry = useCallback(
     async (options = {}) => {
-      const recovery = await findRecoverableRunForUser(auth.currentUser?.uid || "offline");
-      if (!recovery?.recoverable || !isLiveRecovery(recovery)) return false;
-      return restoreRecoveryCandidateToUi(recovery, {
-        closeBlockingOverlays: options.closeBlockingOverlays,
-        forceSyncControls: options.forceSyncControls,
-        recovered: options.recovered,
-        restartTracking: true,
-        startWatchers: true,
-      });
+      if (runtimeHydrationInFlightRef.current) return Boolean(runningRef.current);
+
+      runtimeHydrationInFlightRef.current = true;
+      setRuntimeRecovering(true);
+      try {
+        if (options.closeBlockingOverlays !== false) {
+          closeActiveRunBlockingOverlays();
+        }
+        const reason = options.reason || "map_reentry";
+        const result = await hydrateActiveRunFromRuntime(reason, {
+          userId: auth.currentUser?.uid || "offline",
+          appState: appStateRef.current,
+          screenFocusState: "focused",
+          restartTracking: true,
+          forceNotification: true,
+          forceRunning: options.forceRunning,
+        });
+        const snapshot = result?.snapshot;
+        if (!snapshot?.activeRunId || !isLiveRecovery({
+          status: snapshot.status === ACTIVE_RUN_STATUS.PAUSED ? "paused" : "running",
+        })) {
+          return false;
+        }
+        applyActiveRunSnapshotToUi(snapshot, {
+          recovered: options.recovered,
+          forceSyncControls: options.forceSyncControls !== false,
+        });
+        return true;
+      } finally {
+        runtimeHydrationInFlightRef.current = false;
+        if (mountedRef.current) setRuntimeRecovering(false);
+      }
     },
-    [restoreRecoveryCandidateToUi]
+    [
+      applyActiveRunSnapshotToUi,
+      closeActiveRunBlockingOverlays,
+    ]
   );
 
   useEffect(() => {
@@ -2639,15 +2791,62 @@ const MapScreen = ({ navigation, route }) => {
     };
   }, [restoreActiveRunForReentry]);
 
+  useFocusEffect(
+    useCallback(() => {
+      setRuntimeSurfaceState({
+        screenFocusState: "focused",
+        appState: appStateRef.current,
+      });
+      recordRunEvent("RUN_SCREEN_FOCUS", {
+        runId: currentRunIdRef.current,
+        status: runStatusRef.current,
+        appState: appStateRef.current,
+        screen: "MapScreen",
+      });
+
+      restoreActiveRunForReentry({
+        closeBlockingOverlays: false,
+        forceSyncControls: true,
+        recovered: false,
+        reason: "screen_focus",
+      }).catch((error) => {
+        debug("screen focus active run restore failed", error);
+      });
+
+      return () => {
+        setRuntimeSurfaceState({
+          screenFocusState: "blurred",
+          appState: appStateRef.current,
+        });
+        recordRunEvent("RUN_SCREEN_BLUR", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          appState: appStateRef.current,
+          screen: "MapScreen",
+        });
+      };
+    }, [restoreActiveRunForReentry])
+  );
+
   useEffect(() => {
     const requestId = route?.params?.activeRunOpenRequestId;
     if (!requestId || lastNotificationOpenRequestRef.current === requestId) return;
     lastNotificationOpenRequestRef.current = requestId;
+    recordNotificationOpen({
+      requestId,
+      screen: "MapScreen",
+      fromRunNotification: Boolean(route?.params?.fromRunNotification),
+    });
 
     restoreActiveRunForReentry({
       closeBlockingOverlays: true,
       forceSyncControls: true,
       recovered: false,
+      reason: route?.params?.fromRunNotification
+        ? "notification_open"
+        : route?.params?.fromDeepLink
+          ? "deep_link_open"
+          : "active_run_open",
     }).catch((error) => {
       debug("notification active run restore failed", error);
     });
@@ -2655,8 +2854,15 @@ const MapScreen = ({ navigation, route }) => {
     navigation?.setParams?.({
       activeRunOpenRequestId: undefined,
       fromRunNotification: undefined,
+      fromDeepLink: undefined,
     });
-  }, [navigation, restoreActiveRunForReentry, route?.params?.activeRunOpenRequestId]);
+  }, [
+    navigation,
+    restoreActiveRunForReentry,
+    route?.params?.activeRunOpenRequestId,
+    route?.params?.fromDeepLink,
+    route?.params?.fromRunNotification,
+  ]);
 
   useEffect(() => {
     if (loading || activeRunRestoreAttemptedRef.current) return;
@@ -3552,7 +3758,7 @@ const MapScreen = ({ navigation, route }) => {
         </View>
       )}
 
-      {!running && !replaying && (
+      {!running && !replaying && !runtimeRecovering && (
         <View style={styles.menuPanel}>
           <View pointerEvents="none" style={styles.menuTopGlow} />
           {permissionDenied ? (

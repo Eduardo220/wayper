@@ -25,6 +25,7 @@ const DEFAULT_NATIVE_MODULE = NativeModules?.WayperRunNotificationAndroid || nul
 
 let nativeModuleOverride = null;
 let trackingServiceOverride = null;
+let runtimeServiceOverride = null;
 let notificationActive = false;
 let lastPayloadKey = "";
 let lastStatusKey = "";
@@ -34,6 +35,11 @@ let unsubscribeSnapshots = null;
 
 const getNativeModule = () => nativeModuleOverride || DEFAULT_NATIVE_MODULE;
 const getTrackingService = () => trackingServiceOverride || activeRunTrackingService;
+const getRuntimeService = async () => {
+  if (runtimeServiceOverride) return runtimeServiceOverride;
+  const module = await import("../runTracking/activeRunRuntimeService.js");
+  return module.default || module;
+};
 
 export function isRunNotificationSupported() {
   return Platform.OS === "android" && Boolean(getNativeModule());
@@ -178,6 +184,69 @@ function clearUpdateTimer() {
   }
 }
 
+function normalizeNativeNotificationState(state = {}) {
+  const isActive = Boolean(state?.isActive);
+  const status = String(state?.status || (isActive ? "UNKNOWN" : "IDLE")).toUpperCase();
+  return {
+    isActive,
+    channelId: state?.channelId || RUN_NOTIFICATION_CHANNEL_ID,
+    notificationId: state?.notificationId || RUN_NOTIFICATION_ID,
+    status,
+    lastUpdatedAt: state?.lastUpdatedAt || null,
+    title: state?.title || NOTIFICATION_TITLE,
+    text: state?.text || null,
+    hasForegroundService: Boolean(state?.hasForegroundService || isActive),
+  };
+}
+
+export async function getNativeNotificationState() {
+  const nativeModule = getNativeModule();
+  if (!isRunNotificationSupported() || !nativeModule) {
+    const fallback = normalizeNativeNotificationState({
+      isActive: notificationActive,
+      status: notificationActive ? "UNKNOWN" : "IDLE",
+      hasForegroundService: notificationActive,
+    });
+    recordRunEvent("RUN_NOTIFICATION_NATIVE_STATE_READ", fallback, {
+      category: LOG_CATEGORIES.NOTIFICATION,
+    });
+    return fallback;
+  }
+
+  try {
+    let state = null;
+    if (typeof nativeModule.getState === "function") {
+      state = await nativeModule.getState();
+    } else if (typeof nativeModule.getLastNotificationState === "function") {
+      state = await nativeModule.getLastNotificationState();
+    } else if (typeof nativeModule.isActive === "function") {
+      state = { isActive: await nativeModule.isActive() };
+    }
+    const normalized = normalizeNativeNotificationState(state || {
+      isActive: notificationActive,
+      status: notificationActive ? "UNKNOWN" : "IDLE",
+    });
+    recordRunEvent("RUN_NOTIFICATION_NATIVE_STATE_READ", normalized, {
+      category: LOG_CATEGORIES.NOTIFICATION,
+    });
+    return normalized;
+  } catch (error) {
+    const fallback = normalizeNativeNotificationState({
+      isActive: notificationActive,
+      status: notificationActive ? "UNKNOWN" : "UNKNOWN",
+      hasForegroundService: notificationActive,
+    });
+    recordRunEvent("RUN_NOTIFICATION_NATIVE_STATE_READ", {
+      ...fallback,
+      error,
+      level: "warn",
+    }, {
+      category: LOG_CATEGORIES.NOTIFICATION,
+    });
+    return fallback;
+  }
+}
+
 function isLiveSnapshot(snapshot = {}) {
   const status = String(snapshot?.status || "").toUpperCase();
   return status === ACTIVE_RUN_STATUS.RUNNING || status === ACTIVE_RUN_STATUS.PAUSED;
@@ -288,6 +357,9 @@ export async function startRunNotification(payload = {}, options = {}) {
   if (typeof nativeModule[method] !== "function") return false;
   await nativeModule[method](normalized);
   notificationActive = true;
+  getTrackingService().setRunRuntimeSurfaceState?.({
+    notificationStatus: "active",
+  });
   lastPayloadKey = getPayloadKey(normalized);
   lastStatusKey = getStatusKey(normalized);
   lastNativeUpdateAt = Date.now();
@@ -322,6 +394,9 @@ export async function updateRunNotification(payload = {}, options = {}) {
 
   if (typeof nativeModule.updateRunNotification !== "function") return false;
   await nativeModule.updateRunNotification(normalized);
+  getTrackingService().setRunRuntimeSurfaceState?.({
+    notificationStatus: "active",
+  });
   lastPayloadKey = key;
   lastStatusKey = getStatusKey(normalized);
   lastNativeUpdateAt = Date.now();
@@ -340,6 +415,9 @@ export async function stopRunNotification() {
   lastStatusKey = "";
   lastNativeUpdateAt = 0;
   notificationActive = false;
+  getTrackingService().setRunRuntimeSurfaceState?.({
+    notificationStatus: "stopped",
+  });
 
   const nativeModule = getNativeModule();
   if (!isRunNotificationSupported() || typeof nativeModule?.stopRunNotification !== "function") {
@@ -358,79 +436,113 @@ export async function stopRunNotification() {
 }
 
 export async function pauseRunFromNotification() {
-  const trackingService = getTrackingService();
-  const snapshot = await trackingService.getActiveRunSnapshot?.();
-  if (!snapshot || String(snapshot.status).toUpperCase() !== ACTIVE_RUN_STATUS.RUNNING) {
-    if (snapshot && isLiveSnapshot(snapshot)) {
-      await updateRunNotification(buildRunNotificationPayloadFromSnapshot(snapshot), {
-        force: true,
-        requestPermission: false,
-      });
-    }
-    return snapshot || null;
-  }
-
-  recordRunSnapshotEvent("PAUSE_PRESSED", snapshot, {
-    source: "notification",
-  });
-  const paused = await trackingService.pauseActiveRun?.({
-    endedAtMs: Date.now(),
-    source: "notification",
-  });
-  if (paused) {
-    await flushActiveRunCheckpoint({
-      reason: "notification_pause",
-      checkpointAtMs: Date.now(),
-    });
-    await updateRunNotification(buildRunNotificationPayloadFromSnapshot(paused), {
-      force: true,
-      requestPermission: false,
-    });
-    recordRunSnapshotEvent("PAUSE_SUCCESS", paused, {
-      source: "notification",
-    });
-  }
-  return paused || snapshot;
+  return runNotificationActionThroughRuntime(RUN_NOTIFICATION_ACTION.PAUSE);
 }
 
 export async function resumeRunFromNotification() {
+  return runNotificationActionThroughRuntime(RUN_NOTIFICATION_ACTION.RESUME);
+}
+
+async function runNotificationActionThroughRuntime(action) {
+  const normalizedAction = String(action || "").toLowerCase();
   const trackingService = getTrackingService();
-  const snapshot = await trackingService.getActiveRunSnapshot?.();
-  if (!snapshot || String(snapshot.status).toUpperCase() !== ACTIVE_RUN_STATUS.PAUSED) {
-    if (snapshot && isLiveSnapshot(snapshot)) {
+  const runtimeService = await getRuntimeService();
+  runtimeService.recordNotificationAction?.(normalizedAction, {
+    source: "notification_action_handler",
+  });
+  const result = await runtimeService.hydrateActiveRunFromRuntime?.(`notification_action:${normalizedAction}`, {
+    restartTracking: true,
+    forceNotification: true,
+  });
+  let snapshot = result?.snapshot || null;
+  const status = String(snapshot?.status || "").toUpperCase();
+
+  if (!snapshot?.activeRunId) {
+    recordRunEvent("RUN_NOTIFICATION_ACTION_IGNORED", {
+      action: normalizedAction,
+      reason: "no_active_snapshot_after_reconcile",
+      recoveryStatus: result?.runtime?.status || null,
+      level: "warn",
+    }, {
+      category: LOG_CATEGORIES.NOTIFICATION,
+    });
+    return null;
+  }
+
+  if (normalizedAction === RUN_NOTIFICATION_ACTION.PAUSE || normalizedAction === "stop") {
+    if (status !== ACTIVE_RUN_STATUS.RUNNING) {
       await updateRunNotification(buildRunNotificationPayloadFromSnapshot(snapshot), {
         force: true,
         requestPermission: false,
       });
+      return snapshot;
     }
-    return snapshot || null;
-  }
-
-  recordRunSnapshotEvent("RESUME_PRESSED", snapshot, {
-    source: "notification",
-  });
-  const resumed = await trackingService.resumeActiveRun?.({
-    startedAtMs: Date.now(),
-    source: "notification",
-  });
-  if (resumed) {
-    await flushActiveRunCheckpoint({
-      reason: "notification_resume",
-      checkpointAtMs: Date.now(),
+    recordRunSnapshotEvent("PAUSE_PRESSED", snapshot, {
+      source: "notification",
     });
-    await updateRunNotification(buildRunNotificationPayloadFromSnapshot(resumed), {
+    const paused = await trackingService.pauseActiveRun?.({
+      endedAtMs: Date.now(),
+      source: "notification",
+    });
+    snapshot = paused || snapshot;
+    if (paused) {
+      await flushActiveRunCheckpoint({
+        reason: "notification_pause",
+        checkpointAtMs: Date.now(),
+      });
+      recordRunSnapshotEvent("PAUSE_SUCCESS", paused, {
+        source: "notification",
+      });
+    }
+    await updateRunNotification(buildRunNotificationPayloadFromSnapshot(snapshot), {
       force: true,
       requestPermission: false,
     });
-    recordRunSnapshotEvent("RESUME_SUCCESS", resumed, {
+    return snapshot;
+  }
+
+  if (normalizedAction === RUN_NOTIFICATION_ACTION.RESUME || normalizedAction === "start") {
+    if (status !== ACTIVE_RUN_STATUS.PAUSED) {
+      await updateRunNotification(buildRunNotificationPayloadFromSnapshot(snapshot), {
+        force: true,
+        requestPermission: false,
+      });
+      return snapshot;
+    }
+    recordRunSnapshotEvent("RESUME_PRESSED", snapshot, {
       source: "notification",
     });
+    const resumed = await trackingService.resumeActiveRun?.({
+      startedAtMs: Date.now(),
+      source: "notification",
+    });
+    snapshot = resumed || snapshot;
+    if (resumed) {
+      await flushActiveRunCheckpoint({
+        reason: "notification_resume",
+        checkpointAtMs: Date.now(),
+      });
+      recordRunSnapshotEvent("RESUME_SUCCESS", resumed, {
+        source: "notification",
+      });
+    }
+    await updateRunNotification(buildRunNotificationPayloadFromSnapshot(snapshot), {
+      force: true,
+      requestPermission: false,
+    });
+    return snapshot;
   }
-  return resumed || snapshot;
+
+  return snapshot;
 }
 
 export async function handleRunNotificationAction(action) {
   const normalized = String(action || "").toLowerCase();
+  recordRunEvent("RUN_NOTIFICATION_ACTION_RECEIVED", {
+    action: normalized,
+  }, {
+    category: LOG_CATEGORIES.NOTIFICATION,
+  });
   recordRunEvent("RUN_NOTIFICATION_ACTION", {
     action: normalized,
   }, {
@@ -484,9 +596,10 @@ export function stopRunNotificationCoordinator() {
   clearUpdateTimer();
 }
 
-export function __setRunNotificationDependenciesForTests({ nativeModule, trackingService } = {}) {
+export function __setRunNotificationDependenciesForTests({ nativeModule, trackingService, runtimeService } = {}) {
   nativeModuleOverride = nativeModule === undefined ? nativeModuleOverride : nativeModule;
   trackingServiceOverride = trackingService === undefined ? trackingServiceOverride : trackingService;
+  runtimeServiceOverride = runtimeService === undefined ? runtimeServiceOverride : runtimeService;
 }
 
 export function __resetRunNotificationServiceForTests() {
@@ -498,6 +611,7 @@ export function __resetRunNotificationServiceForTests() {
   lastNativeUpdateAt = 0;
   nativeModuleOverride = null;
   trackingServiceOverride = null;
+  runtimeServiceOverride = null;
 }
 
 export async function handleRunNotificationActionTask(data = {}) {
@@ -516,6 +630,7 @@ export default {
   formatDistanceKm,
   formatElapsedTime,
   formatRunNotificationText,
+  getNativeNotificationState,
   handleRunNotificationAction,
   handleRunNotificationActionTask,
   isRunNotificationSupported,

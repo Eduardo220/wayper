@@ -139,6 +139,14 @@ describe("active run persistence state", () => {
     expect(mapScreen).toContain("checkpointOnLocationError");
     expect(mapScreen).toContain('reason: "before_finish"');
     expect(mapScreen).toContain("hydrated route points count");
+    expect(mapScreen).toContain("hydrateActiveRunFromRuntime");
+    expect(mapScreen).toContain("useFocusEffect");
+    expect(mapScreen).toContain("RUN_SCREEN_FOCUS");
+    expect(mapScreen).toContain("recordNotificationOpen");
+    expect(mapScreen).toContain("non_live_snapshot_guard");
+    expect(mapScreen).toContain("!running && !replaying && !runtimeRecovering");
+    expect(mapScreen).toContain('"RUN_FINISH_SAVED"');
+    expect(mapScreen.indexOf('"RUN_FINISH_SAVED"')).toBeLessThan(mapScreen.indexOf("markRecoveredRunLocallySaved({ reason: \"finish_local_run_saved\" })"));
   });
 
   test("merge seguro nao sobrescreve segments reais com default vazio", () => {

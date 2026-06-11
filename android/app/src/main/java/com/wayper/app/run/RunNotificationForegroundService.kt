@@ -90,10 +90,12 @@ class RunNotificationForegroundService : Service() {
         startForeground(NOTIFICATION_ID, notification)
       }
       foregroundStarted = true
+      markForegroundServiceActive(true)
       return
     }
 
     updateVisibleNotification(notification)
+    markForegroundServiceActive(true)
   }
 
   private fun updateVisibleNotification(notification: Notification = buildNotification()) {
@@ -111,6 +113,7 @@ class RunNotificationForegroundService : Service() {
   private fun stopNotificationService() {
     handler.removeCallbacks(ticker)
     foregroundStarted = false
+    markForegroundServiceActive(false)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
       stopForeground(STOP_FOREGROUND_REMOVE)
     } else {
@@ -222,6 +225,64 @@ class RunNotificationForegroundService : Service() {
     private const val REQUEST_PAUSE = 42171
     private const val REQUEST_RESUME = 42172
     private val PT_BR = Locale("pt", "BR")
+    @Volatile private var lastIsActive = false
+    @Volatile private var lastHasForegroundService = false
+    @Volatile private var lastStatus = "UNKNOWN"
+    @Volatile private var lastUpdatedAt = 0L
+    @Volatile private var lastTitle = "Wayper"
+    @Volatile private var lastText = ""
+
+    fun markForegroundServiceActive(active: Boolean) {
+      lastHasForegroundService = active
+      if (!active) {
+        lastIsActive = false
+        lastStatus = "UNKNOWN"
+        lastText = ""
+        lastUpdatedAt = System.currentTimeMillis()
+      }
+    }
+
+    private fun formatElapsedTimeStatic(seconds: Long): String {
+      val total = max(0L, seconds)
+      val hours = total / 3600L
+      val minutes = (total % 3600L) / 60L
+      val secs = total % 60L
+      return if (hours > 0L) {
+        String.format(Locale.US, "%d:%02d:%02d", hours, minutes, secs)
+      } else {
+        String.format(Locale.US, "%02d:%02d", minutes, secs)
+      }
+    }
+
+    fun updateLastNotificationState(
+      elapsedSeconds: Long,
+      distanceKm: Double,
+      isPaused: Boolean,
+      statusLabel: String?
+    ) {
+      val status = if (isPaused) "PAUSED" else "RUNNING"
+      val label = statusLabel?.takeIf { it.isNotBlank() } ?: if (isPaused) "Pausada" else "Correndo"
+      val distance = String.format(PT_BR, "%.2f km", max(0.0, distanceKm)).replace('.', ',')
+      lastIsActive = true
+      lastHasForegroundService = true
+      lastStatus = status
+      lastUpdatedAt = System.currentTimeMillis()
+      lastTitle = "Wayper"
+      lastText = "$label - ${formatElapsedTimeStatic(elapsedSeconds)} - $distance"
+    }
+
+    fun isActive(): Boolean = lastIsActive
+
+    fun getLastState(): Map<String, Any?> = mapOf(
+      "isActive" to lastIsActive,
+      "channelId" to CHANNEL_ID,
+      "notificationId" to NOTIFICATION_ID,
+      "status" to lastStatus,
+      "lastUpdatedAt" to lastUpdatedAt,
+      "title" to lastTitle,
+      "text" to lastText,
+      "hasForegroundService" to lastHasForegroundService
+    )
 
     fun start(
       context: Context,
@@ -239,6 +300,7 @@ class RunNotificationForegroundService : Service() {
         putExtra(EXTRA_STATUS_LABEL, statusLabel)
         putExtra(EXTRA_ACTION_LABEL, actionLabel)
       }
+      updateLastNotificationState(elapsedSeconds, distanceKm, isPaused, statusLabel)
       startForegroundServiceCompat(context, intent)
     }
 
@@ -258,6 +320,7 @@ class RunNotificationForegroundService : Service() {
         putExtra(EXTRA_STATUS_LABEL, statusLabel)
         putExtra(EXTRA_ACTION_LABEL, actionLabel)
       }
+      updateLastNotificationState(elapsedSeconds, distanceKm, isPaused, statusLabel)
       startForegroundServiceCompat(context, intent)
     }
 
@@ -265,6 +328,7 @@ class RunNotificationForegroundService : Service() {
       val intent = Intent(context, RunNotificationForegroundService::class.java).apply {
         action = ACTION_STOP
       }
+      markForegroundServiceActive(false)
       context.startService(intent)
     }
 

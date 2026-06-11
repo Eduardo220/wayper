@@ -7,10 +7,15 @@ import { normalizeTrackSegments, sanitizeRunPath } from "./trackSegments.js";
 export const ACTIVE_RUN_STORAGE_KEY = "wayper:activeRun:v2";
 
 export const ACTIVE_RUN_STATUS = {
+  IDLE: "IDLE",
+  STARTING: "STARTING",
   RUNNING: "RUNNING",
   PAUSED: "PAUSED",
+  RECOVERING: "RECOVERING",
+  STOPPING: "STOPPING",
   FINISHING: "FINISHING",
   FINISHED: "FINISHED",
+  ERROR_RECOVERABLE: "ERROR_RECOVERABLE",
   CANCELLED: "CANCELLED",
 };
 
@@ -251,8 +256,13 @@ function mergeSegmentsPreservingGeometry(existingSegments = [], incomingSegments
 
 function normalizeStatus(status) {
   const raw = String(status || "").toUpperCase();
+  if (raw === "IDLE") return ACTIVE_RUN_STATUS.IDLE;
+  if (raw === "STARTING") return ACTIVE_RUN_STATUS.STARTING;
   if (raw === "ACTIVE") return ACTIVE_RUN_STATUS.RUNNING;
+  if (raw === "RECOVERY" || raw === "RECOVERING") return ACTIVE_RUN_STATUS.RECOVERING;
+  if (raw === "STOPPING" || raw === "SAVING") return ACTIVE_RUN_STATUS.STOPPING;
   if (raw === "COMPLETED") return ACTIVE_RUN_STATUS.FINISHED;
+  if (raw === "ERROR" || raw === "ERROR_RECOVERABLE") return ACTIVE_RUN_STATUS.ERROR_RECOVERABLE;
   return Object.values(ACTIVE_RUN_STATUS).includes(raw) ? raw : ACTIVE_RUN_STATUS.RUNNING;
 }
 

@@ -70,7 +70,7 @@ describe("diagnostics logging", () => {
       persistEnabled: true,
       minLevel: "debug",
       maxStoredLogs: 1000,
-      locationPrecisionMode: "full",
+      locationPrecisionMode: "masked",
     });
     storageService.__resetLogStorageForTests();
     await storageService.clearLogs();
@@ -124,6 +124,23 @@ describe("diagnostics logging", () => {
     expect(sanitized.token).toBe("[redacted]");
     expect(sanitized.nested.latitude).toBe(-30.123);
     expect(sanitized.nested.longitude).toBe(-51.765);
+  });
+
+  test("dev padrao nao habilita coordenadas exatas e full exige opt-in", () => {
+    config.resetDiagnosticsConfigForTests();
+    expect(config.getDiagnosticsConfig()).toMatchObject({
+      allowPreciseLocationLogs: false,
+      locationPrecisionMode: "masked",
+    });
+
+    config.updateDiagnosticsConfig({ locationPrecisionMode: "full" });
+    expect(config.getDiagnosticsConfig().locationPrecisionMode).toBe("masked");
+
+    config.updateDiagnosticsConfig({
+      allowPreciseLocationLogs: true,
+      locationPrecisionMode: "full",
+    });
+    expect(config.getDiagnosticsConfig().locationPrecisionMode).toBe("full");
   });
 
   test("storage limita numero maximo de logs e remove antigos", async () => {
@@ -197,6 +214,10 @@ describe("diagnostics logging", () => {
     expect(json).not.toContain("athlete@example.com");
     expect(json).toContain("at***@example.com");
     expect(bundle.activeRun.runId).toBe("run-export");
+    expect(bundle.metadata).toMatchObject({
+      preciseLocationLogsEnabled: false,
+      locationPrecisionMode: "masked",
+    });
   });
 
   test("ErrorBoundary registra erro via errorReporter", () => {

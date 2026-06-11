@@ -7,6 +7,14 @@ const nativeModule = {
   startRunNotification: jest.fn(async () => true),
   updateRunNotification: jest.fn(async () => true),
   stopRunNotification: jest.fn(async () => true),
+  isActive: jest.fn(async () => false),
+  getState: jest.fn(async () => ({
+    isActive: false,
+    channelId: "wayper_run_tracking",
+    notificationId: 4217,
+    status: "UNKNOWN",
+    hasForegroundService: false,
+  })),
 };
 
 let currentSnapshot = null;
@@ -39,6 +47,17 @@ const trackingService = {
     };
     return currentSnapshot;
   }),
+};
+
+const runtimeService = {
+  hydrateActiveRunFromRuntime: jest.fn(async () => ({
+    snapshot: currentSnapshot,
+    source: "test_runtime",
+    runtime: {
+      status: currentSnapshot?.status || "IDLE",
+    },
+  })),
+  recordNotificationAction: jest.fn(),
 };
 
 await jest.unstable_mockModule("react-native", () => ({
@@ -123,6 +142,20 @@ beforeEach(() => {
   notificationPermissionRequest.mockResolvedValue("granted");
   flushActiveRunCheckpoint.mockClear();
   flushActiveRunCheckpoint.mockResolvedValue({ ok: true });
+  runtimeService.hydrateActiveRunFromRuntime.mockClear();
+  runtimeService.hydrateActiveRunFromRuntime.mockImplementation(async () => ({
+    snapshot: currentSnapshot,
+    source: "test_runtime",
+    runtime: {
+      status: currentSnapshot?.status || "IDLE",
+    },
+  }));
+  runtimeService.recordNotificationAction.mockClear();
+  service.__setRunNotificationDependenciesForTests({
+    nativeModule,
+    trackingService,
+    runtimeService,
+  });
 });
 
 afterEach(() => {
@@ -198,6 +231,13 @@ describe("run notification service", () => {
 
     const paused = await service.pauseRunFromNotification();
 
+    expect(runtimeService.recordNotificationAction).toHaveBeenCalledWith("pause", expect.objectContaining({
+      source: "notification_action_handler",
+    }));
+    expect(runtimeService.hydrateActiveRunFromRuntime).toHaveBeenCalledWith("notification_action:pause", expect.objectContaining({
+      restartTracking: true,
+      forceNotification: true,
+    }));
     expect(trackingService.pauseActiveRun).toHaveBeenCalledWith(expect.objectContaining({
       source: "notification",
     }));
@@ -224,6 +264,13 @@ describe("run notification service", () => {
 
     const resumed = await service.resumeRunFromNotification();
 
+    expect(runtimeService.recordNotificationAction).toHaveBeenCalledWith("resume", expect.objectContaining({
+      source: "notification_action_handler",
+    }));
+    expect(runtimeService.hydrateActiveRunFromRuntime).toHaveBeenCalledWith("notification_action:resume", expect.objectContaining({
+      restartTracking: true,
+      forceNotification: true,
+    }));
     expect(trackingService.resumeActiveRun).toHaveBeenCalledWith(expect.objectContaining({
       source: "notification",
     }));
@@ -246,9 +293,56 @@ describe("run notification service", () => {
     await service.pauseRunFromNotification();
     await service.pauseRunFromNotification();
 
+    expect(runtimeService.hydrateActiveRunFromRuntime).toHaveBeenCalledTimes(2);
     expect(trackingService.pauseActiveRun).toHaveBeenCalledTimes(1);
     expect(flushActiveRunCheckpoint).toHaveBeenCalledTimes(1);
     expect(currentSnapshot.status).toBe("PAUSED");
+  });
+
+  test("le estado nativo da notificacao para evidencias de runtime", async () => {
+    nativeModule.getState.mockResolvedValueOnce({
+      isActive: true,
+      channelId: "wayper_run_tracking",
+      notificationId: 4217,
+      status: "RUNNING",
+      lastUpdatedAt: 1700000001234,
+      title: "Wayper",
+      text: "Correndo - 08:23 - 1,42 km",
+      hasForegroundService: true,
+    });
+
+    const state = await service.getNativeNotificationState();
+
+    expect(nativeModule.getState).toHaveBeenCalled();
+    expect(state).toMatchObject({
+      isActive: true,
+      status: "RUNNING",
+      hasForegroundService: true,
+      channelId: "wayper_run_tracking",
+    });
+  });
+
+  test("acao com reconcile falho e evidencia ativa nao pausa nem zera estado", async () => {
+    currentSnapshot = null;
+    runtimeService.hydrateActiveRunFromRuntime.mockResolvedValueOnce({
+      snapshot: {
+        activeRunId: "recoverable-from-native",
+        status: "ERROR_RECOVERABLE",
+        startedAtMs: BASE_TIME,
+        distanceMeters: 0,
+      },
+      source: "preserved_active_evidence",
+      canShowStartButton: false,
+    });
+
+    const result = await service.pauseRunFromNotification();
+
+    expect(result.status).toBe("ERROR_RECOVERABLE");
+    expect(trackingService.pauseActiveRun).not.toHaveBeenCalled();
+    expect(
+      nativeModule.updateRunNotification.mock.calls.length +
+        nativeModule.startRunNotification.mock.calls.length
+    ).toBeGreaterThan(0);
   });
 
   test("permissao de notificacao negada nao inicia foreground service", async () => {
