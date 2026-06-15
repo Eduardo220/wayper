@@ -45,7 +45,12 @@ export async function reportError(error, context = {}) {
       })),
     });
     const level = context.fatal ? "fatal" : "error";
-    logger[level](LOG_CATEGORIES.UNKNOWN, context.event || "UNCAUGHT_ERROR", payload);
+    logger[level](
+      LOG_CATEGORIES.UNKNOWN,
+      context.event || "UNCAUGHT_ERROR",
+      payload,
+      { skipRemote: context.remoteCapturedByGlobalHandler === true }
+    );
     return payload;
   } catch {
     return null;
@@ -65,6 +70,7 @@ export function installGlobalErrorReporter() {
           event: "GLOBAL_JS_ERROR",
           fatal: Boolean(isFatal),
           source: "ErrorUtils",
+          remoteCapturedByGlobalHandler: true,
         }).finally(() => {
           if (typeof previousGlobalHandler === "function") {
             previousGlobalHandler(error, isFatal);
@@ -85,6 +91,7 @@ export function installGlobalErrorReporter() {
       reportError(reason, {
         event: "UNHANDLED_PROMISE_REJECTION",
         source: "onunhandledrejection",
+        remoteCapturedByGlobalHandler: true,
       });
       if (typeof previousUnhandledRejection === "function") {
         previousUnhandledRejection(event);

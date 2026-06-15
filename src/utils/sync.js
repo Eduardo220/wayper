@@ -695,6 +695,12 @@ export async function findLocalRunById(lookup) {
 }
 
 export async function saveLocalRun(run = {}) {
+  recordRunEvent("RUN_SAVE_STARTED", {
+    runId: run.id || run.runId || null,
+    localRunId: run.localRunId || null,
+    pointsCount: run.trustedPath?.length || run.path?.length || 0,
+    segmentsCount: run.routeSegments?.length || run.segments?.length || 0,
+  });
   try {
     const existing = await loadLocalRuns();
     const now = new Date().toISOString();
@@ -740,6 +746,11 @@ export async function saveLocalRun(run = {}) {
     return savedRecord;
   } catch (err) {
     logError(err, { fn: "saveLocalRun" });
+    recordRunEvent("RUN_SAVE_FAILED", {
+      runId: run.id || run.runId || null,
+      localRunId: run.localRunId || null,
+      reason: err?.message || "save_local_run_failed",
+    }, { skipRemote: true });
     const now = new Date().toISOString();
     return {
       id: uid(),
@@ -1639,6 +1650,12 @@ export async function syncRunsToFirestore() {
       recoverableFailures: summary.recoverableFailures,
       runIds: summary.runIds.slice(0, 20),
     });
+    recordRunEvent("RUN_SYNC_COMPLETED", {
+      count: summary.attempted,
+      synced: summary.synced,
+      failed: summary.failed,
+      result: summary.failed > 0 ? "partial_failure" : "success",
+    });
 
     return summary;
   } catch (err) {
@@ -1648,6 +1665,12 @@ export async function syncRunsToFirestore() {
       synced: summary.synced,
       failed: summary.failed,
       error: err,
+    });
+    recordRunEvent("RUN_SYNC_COMPLETED", {
+      count: summary.attempted,
+      synced: summary.synced,
+      failed: summary.failed,
+      result: "failure",
     });
     return {
       ...summary,

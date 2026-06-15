@@ -116,6 +116,12 @@ function emitError(error, context = {}) {
   emit("error", { error, context });
 }
 
+function isMissingBackgroundTaskError(error) {
+  const message = String(error?.message || error || "");
+  return message.includes("TaskNotFoundException")
+    && message.includes(ACTIVE_RUN_LOCATION_TASK);
+}
+
 function isLiveStatus(status) {
   return LIVE_TRACKING_STATUSES.has(String(status || "").toUpperCase());
 }
@@ -1006,7 +1012,11 @@ export async function stopBackgroundLocationUpdates(options = {}) {
     const runId = activeSnapshot?.activeRunId || null;
     const started = await Location.hasStartedLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK).catch(() => backgroundStarted);
     if (started) {
-      await Location.stopLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK);
+      try {
+        await Location.stopLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK);
+      } catch (error) {
+        if (!isMissingBackgroundTaskError(error)) throw error;
+      }
     }
     backgroundStarted = false;
     updateRuntimeState({

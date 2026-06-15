@@ -14,6 +14,7 @@ import {
   savePngToGallery as savePngFileToGallery,
   sharePngFile,
 } from "../shareImage";
+import logger, { LOG_CATEGORIES } from "../logger.js";
 
 export const SHARE_DIR = WAYPER_SHARE_DIR || "";
 export const WAYPER_SHARE_ALBUM = "Wayper";
@@ -374,15 +375,18 @@ export async function logShareDiagnostics(action, data = {}) {
 }
 
 export function logShareError(context, error, extra = {}) {
-  if (typeof __DEV__ === "undefined" || !__DEV__) return;
-
-  console.log(`[WayperShare:${context}]`, {
+  const safeSummary = {
     code: error?.code,
-    message: error?.message,
-    stack: error?.stack,
-    cause: error?.cause?.message || error?.cause,
-    extra,
-  });
+    error,
+    runId: extra.runId || extra.localRunId || null,
+    isZone: Boolean(extra.isZone),
+    pathPointsCount: Array.isArray(extra.path) ? extra.path.length : 0,
+    segmentsCount: Array.isArray(extra.segments) ? extra.segments.length : 0,
+    zonePointsCount: Array.isArray(extra.zoneCoords) ? extra.zoneCoords.length : 0,
+    distanceKm: Number(extra.distanceKm || 0),
+    durationSeconds: Number(extra.durationSeconds || 0),
+  };
+  logger.error(LOG_CATEGORIES.UI_ACTION, `SHARE_${String(context || "UNKNOWN").toUpperCase()}`, safeSummary);
 }
 
 export function showShareError(message, error) {

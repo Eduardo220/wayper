@@ -32,6 +32,12 @@ import {
 } from "../services/diagnostics/diagnosticUploadService.js";
 import { getDiagnosticsConfig } from "../config/diagnosticsConfig.js";
 import { setPreciseLocationDiagnosticsEnabled } from "../services/diagnostics/diagnosticsPreferencesService.js";
+import {
+  flushMonitoring,
+  getMonitoringStatus,
+  isMonitoringTestAvailable,
+  sendMonitoringTestEvent,
+} from "../services/monitoring/sentryService.js";
 import { LOG_CATEGORIES } from "../utils/logger.js";
 
 const LEVELS = ["ALL", "debug", "info", "warn", "error", "fatal"];
@@ -82,6 +88,7 @@ export default function DiagnosticsScreen() {
   const [preciseLocationEnabled, setPreciseLocationEnabled] = useState(
     getDiagnosticsConfig().allowPreciseLocationLogs === true
   );
+  const [monitoringStatus, setMonitoringStatus] = useState(getMonitoringStatus());
 
   const filters = useMemo(() => ({
     limit: 150,
@@ -99,6 +106,7 @@ export default function DiagnosticsScreen() {
     setRuntime(activeRunTrackingService.getTrackingRuntimeStatus?.() || {});
     setLogs(recentLogs.slice(-150).reverse());
     setDiagnosticStorage(storageHealth);
+    setMonitoringStatus(getMonitoringStatus());
     setLoading(false);
   }, [filters]);
 
@@ -193,6 +201,27 @@ export default function DiagnosticsScreen() {
     );
   }, []);
 
+  const sendSentryTest = useCallback(async () => {
+    setBusyAction("sentry-test");
+    try {
+      const eventId = sendMonitoringTestEvent();
+      if (!eventId) {
+        Alert.alert("Sentry inativo", "Configure o DSN e habilite o ambiente para enviar o teste.");
+        return;
+      }
+      const flushed = await flushMonitoring(2500);
+      Alert.alert(
+        "Evento de teste enviado",
+        flushed
+          ? `ID do evento: ${eventId}`
+          : `Evento enfileirado: ${eventId}`
+      );
+    } finally {
+      setBusyAction(null);
+      setMonitoringStatus(getMonitoringStatus());
+    }
+  }, []);
+
   if (loading) {
     return (
       <View style={styles.loading}>
@@ -227,6 +256,27 @@ export default function DiagnosticsScreen() {
         <StatRow label="appState" value={appState || "-"} />
         <StatRow label="log backend" value={diagnosticStorage.backend || "-"} />
         <StatRow label="pending log buffer" value={diagnosticStorage.pendingLogs || 0} />
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Sentry</Text>
+        <StatRow label="status" value={monitoringStatus.enabled ? "ativo" : "inativo"} />
+        <StatRow label="ambiente" value={monitoringStatus.environment} />
+        <StatRow label="DSN configurado" value={monitoringStatus.dsnConfigured ? "sim" : "nao"} />
+        <StatRow label="release" value={monitoringStatus.release || "-"} />
+        <StatRow label="dist" value={monitoringStatus.dist || "-"} />
+        {isMonitoringTestAvailable() ? (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={sendSentryTest}
+            disabled={Boolean(busyAction)}
+          >
+            <Ionicons name="bug-outline" size={18} color={WayperTheme.colors.textInverse} />
+            <Text style={styles.actionText}>
+              {busyAction === "sentry-test" ? "Enviando" : "Enviar erro de teste para Sentry"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <View style={styles.panel}>

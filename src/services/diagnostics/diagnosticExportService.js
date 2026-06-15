@@ -1,6 +1,10 @@
 import JSZip from "jszip";
 import * as FileSystem from "expo-file-system/legacy";
 import { sanitizeLogContext } from "../../utils/logger.js";
+import {
+  captureException,
+  traceAsync,
+} from "../monitoring/sentryService.js";
 import activeRunRuntimeService from "../runTracking/activeRunRuntimeService.js";
 import {
   getDiagnosticNdjson,
@@ -85,7 +89,7 @@ function addJson(zip, filename, value) {
   zip.file(filename, JSON.stringify(sanitizeLogContext(value || {}), null, 2));
 }
 
-export async function createDiagnosticsArchive(options = {}) {
+async function createDiagnosticsArchiveInternal(options = {}) {
   const scope = options.scope || DIAGNOSTIC_EXPORT_SCOPE.LAST_RUN;
   const context = await resolveExportContext(scope);
   const [bundle, ndjsonFiles, diagnosticStorage] = await Promise.all([
@@ -163,6 +167,27 @@ export async function createDiagnosticsArchive(options = {}) {
     runId: context.runId,
     bundle,
   };
+}
+
+export async function createDiagnosticsArchive(options = {}) {
+  const scope = options.scope || DIAGNOSTIC_EXPORT_SCOPE.LAST_RUN;
+  return traceAsync(
+    "Export diagnostics",
+    "wayper.diagnostics.export",
+    { scope },
+    async () => {
+      try {
+        return await createDiagnosticsArchiveInternal(options);
+      } catch (error) {
+        captureException(error, {
+          category: "DIAGNOSTICS",
+          event: "DIAGNOSTICS_EXPORT_FAILED",
+          scope,
+        });
+        throw error;
+      }
+    }
+  );
 }
 
 export default {

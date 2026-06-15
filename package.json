@@ -74,6 +74,8 @@
     "eas:dev": "npx eas-cli build -p android --profile development",
     "eas:preview": "npx eas-cli build -p android --profile preview",
     "eas:prod": "npx eas-cli build -p android --profile production",
+    "sentry:check": "expo config --type public",
+    "sentry:upload:update": "sentry-expo-upload-sourcemaps dist",
     "clean": "rd /s /q node_modules && del package-lock.json && npm install && npm dedupe"
   },
   "dependencies": {
@@ -85,6 +87,7 @@
     "@react-navigation/drawer": "^7.7.1",
     "@react-navigation/native": "^7.1.19",
     "@react-navigation/native-stack": "^7.6.0",
+    "@sentry/react-native": "~7.2.0",
     "@shopify/react-native-skia": "^2.4.5",
     "@tanstack/query-async-storage-persister": "^5.90.14",
     "@tanstack/react-query": "^5.90.12",
@@ -108,7 +111,6 @@
     "expo-task-manager": "~14.0.8",
     "expo-web-browser": "~15.0.9",
     "firebase": "^12.6.0",
-    "firebase-admin": "^13.6.0",
     "jszip": "^3.10.1",
     "kalmanjs": "^1.1.0",
     "moti": "^0.30.0",
@@ -124,7 +126,8 @@
     "react-native-view-shot": "^4.0.3"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
+    "concurrently": "^10.0.3",
+    "firebase-admin": "^13.10.0",
     "jest": "^29.7.0",
     "wait-on": "^8.0.3"
   },

@@ -253,6 +253,31 @@ Impactos:
 - Complexidade.
 - Segurança contra manipulação.
 
+## Sentry complementa diagnostico local
+
+Status: aprovada.
+
+Contexto:
+
+- O app precisa observar crashes e falhas reais em production/staging.
+- Logs NDJSON e export ZIP locais contem o detalhe necessario para GPS, background e recovery.
+- Rota e dados pessoais nao devem sair do dispositivo por telemetria automatica.
+
+Decisao:
+
+- Usar `@sentry/react-native` para erros, breadcrumbs seguros, release, ambiente e tracing amostrado.
+- Manter NDJSON/ZIP como diagnostico detalhado e independente.
+- Sanitizar todo evento, breadcrumb e transacao antes do envio.
+- Nao habilitar Session Replay, PII padrao ou log remoto de alta frequencia.
+
+Impactos:
+
+- GPS: nenhum ponto ou coordenada crua e enviado; apenas contagens/estado resumido.
+- Mapa: falhas capturaveis podem ser monitoradas sem enviar geometria.
+- Firestore: erros sao observados sem enviar payload de Auth ou snapshots completos.
+- Performance: tracing de baixo volume; nenhum span por ponto GPS.
+- Experiencia do usuario: ErrorBoundary continua acionando checkpoint local e mostra fallback existente.
+
 ## Decisões rejeitadas
 
 ### Ranking competitivo completo no MVP

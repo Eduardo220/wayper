@@ -5,6 +5,8 @@ const rootDir = path.resolve(__dirname, "..");
 const androidAppDir = path.join(rootDir, "android", "app");
 const buildGradlePath = path.join(androidAppDir, "build.gradle");
 const manifestPath = path.join(androidAppDir, "src", "main", "AndroidManifest.xml");
+const sentryGradleApply =
+  `apply from: new File(["node", "--print", "require('path').dirname(require.resolve('@sentry/react-native/package.json'))"].execute().text.trim(), "sentry.gradle")`;
 
 const flavorBlock = `    flavorDimensions "environment"
     productFlavors {
@@ -97,6 +99,10 @@ function configureBuildGradle() {
     content = `${content.slice(0, defaultConfigCloseBrace + 1)}\n${flavorBlock}${content.slice(defaultConfigCloseBrace + 1)}`;
   }
 
+  if (!content.includes("sentry.gradle")) {
+    content = content.replace(/^android \{/m, `${sentryGradleApply}\n\nandroid {`);
+  }
+
   content = content.replace(
     /\napply plugin:\s*['"]com\.google\.gms\.google-services['"]\s*$/m,
     `\n${googleServicesBlock.trimEnd()}`
@@ -135,4 +141,4 @@ configureManifest();
 writeFlavorString("dev", "Wayper Dev");
 writeFlavorString("prod", "Wayper Prod");
 
-console.log("Configured Android flavors: Wayper Dev (com.wayper.app.dev) and Wayper Prod (com.wayper.app).");
+console.log("Configured Android flavors and Sentry source map tasks.");

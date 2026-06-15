@@ -47,10 +47,14 @@ export const RUN_DIAGNOSTIC_EVENTS = Object.freeze({
   FINISH_PRESSED: "FINISH_PRESSED",
   FINISH_SUCCESS: "FINISH_SUCCESS",
   FINISH_FAILED: "FINISH_FAILED",
+  RUN_SAVE_STARTED: "RUN_SAVE_STARTED",
+  RUN_SAVE_FAILED: "RUN_SAVE_FAILED",
   RUN_SAVED_LOCAL: "RUN_SAVED_LOCAL",
+  RUN_SYNC_STARTED: "RUN_SYNC_STARTED",
   RUN_SYNC_QUEUED: "RUN_SYNC_QUEUED",
   RUN_SYNC_SUCCESS: "RUN_SYNC_SUCCESS",
   RUN_SYNC_FAILED: "RUN_SYNC_FAILED",
+  RUN_SYNC_COMPLETED: "RUN_SYNC_COMPLETED",
 });
 
 function toArray(value) {
@@ -107,7 +111,9 @@ function categoryForRunEvent(event = "") {
   if (event.startsWith("RECOVERY_")) return LOG_CATEGORIES.RUN_RECOVERY;
   if (event.startsWith("MAP_")) return LOG_CATEGORIES.MAP;
   if (event.startsWith("RUN_SYNC_")) return LOG_CATEGORIES.SYNC;
-  if (event.startsWith("ACTIVE_RUN_") || event === "RUN_SAVED_LOCAL") return LOG_CATEGORIES.STORAGE;
+  if (event.startsWith("ACTIVE_RUN_") || event.startsWith("RUN_SAVE_") || event === "RUN_SAVED_LOCAL") {
+    return LOG_CATEGORIES.STORAGE;
+  }
   if (event.startsWith("PAUSE_") || event.startsWith("RESUME_") || event.startsWith("FINISH_")) return LOG_CATEGORIES.UI_ACTION;
   if (event.includes("WATCHER")) return LOG_CATEGORIES.RUN_TRACKING;
   return LOG_CATEGORIES.RUN_SESSION;

@@ -62,6 +62,18 @@ Tornar a corrida uma experiência mais envolvente por meio de **estratégia**, *
 **Mapas & Localização:** MapLibre + OpenFreeMap  
 **Autenticação:** Firebase Auth  
 
+## Monitoramento com Sentry
+
+O Sentry e opcional em development e ativo em staging/production quando `EXPO_PUBLIC_SENTRY_DSN` esta configurado. Use as chaves documentadas em `.env.example` no ambiente local/EAS apropriado.
+
+```bash
+npm run sentry:check
+npm test
+npm run eas:preview
+```
+
+O token de upload de source maps deve ser armazenado como `SENTRY_AUTH_TOKEN` em secret de CI/EAS. O Sentry nao substitui os diagnosticos NDJSON/ZIP e nao recebe coordenadas ou rotas cruas.
+
 ---
 
 ## 🚧 Status do Projeto

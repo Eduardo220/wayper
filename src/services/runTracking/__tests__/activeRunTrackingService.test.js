@@ -518,6 +518,22 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
   });
 
+  test("parada background trata task removida concorrente como sucesso idempotente", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-background-stop-race",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    LocationMock.hasStartedLocationUpdatesAsync.mockResolvedValueOnce(true);
+    LocationMock.stopLocationUpdatesAsync.mockRejectedValueOnce(new Error(
+      "TaskNotFoundException: Task 'WAYPER_ACTIVE_RUN_LOCATION' not found"
+    ));
+
+    await expect(service.stopBackgroundLocationUpdates({
+      reason: "notification_pause",
+    })).resolves.toBe(true);
+  });
+
   test("runtime reconcile reidrata RUNNING e preserva task background existente", async () => {
     await service.startActiveRun({
       activeRunId: "run-runtime-reconcile",

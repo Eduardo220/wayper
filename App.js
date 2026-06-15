@@ -21,6 +21,11 @@ import {
   stopPerformanceDiagnostics,
 } from "./src/services/diagnostics/performanceDiagnosticsService.js";
 import { initializeDiagnosticsPreferences } from "./src/services/diagnostics/diagnosticsPreferencesService.js";
+import {
+  finishAppStartSpan,
+  setMonitoringAuthState,
+  setMonitoringScreen,
+} from "./src/services/monitoring/sentryService.js";
 import logger, { LOG_CATEGORIES } from "./src/utils/logger.js";
 import {
   startRunNotificationCoordinator,
@@ -105,11 +110,13 @@ export default function App() {
       auth,
       (firebaseUser) => {
         setUser(firebaseUser || null);
+        setMonitoringAuthState(firebaseUser ? "authenticated" : "anonymous");
         setAuthChecked(true);
       },
       (error) => {
         logger.error(LOG_CATEGORIES.FIREBASE, "AUTH_STATE_ERROR", { error });
         setUser(null);
+        setMonitoringAuthState("anonymous");
         setAuthChecked(true);
       }
     );
@@ -155,6 +162,15 @@ export default function App() {
     return () => clearTimeout(handle);
   }, [authChecked, user]);
 
+  useEffect(() => {
+    if (authChecked) finishAppStartSpan("ready");
+  }, [authChecked]);
+
+  const syncMonitoringScreen = () => {
+    const route = navigationRef.getCurrentRoute?.();
+    if (route?.name) setMonitoringScreen(route.name);
+  };
+
   // ============================
   // SPLASH / LOADING
   // ============================
@@ -180,7 +196,14 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ErrorBoundary>
-        <NavigationContainer ref={navigationRef} onReady={flushPendingNavigation}>
+        <NavigationContainer
+          ref={navigationRef}
+          onReady={() => {
+            flushPendingNavigation();
+            syncMonitoringScreen();
+          }}
+          onStateChange={syncMonitoringScreen}
+        >
           <Stack.Navigator screenOptions={{ headerShown: false }}>
             {!USE_AUTH && (
               <Stack.Screen name="Main" component={MainNavigator} />

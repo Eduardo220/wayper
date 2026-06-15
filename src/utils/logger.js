@@ -5,6 +5,7 @@ import {
   LOG_LEVEL_PRIORITY,
 } from "../config/diagnosticsConfig.js";
 import { appendLog } from "../services/diagnostics/logStorageService.js";
+import { forwardLogToMonitoring } from "../services/monitoring/monitoringBridge.js";
 
 export const LOG_LEVELS = Object.freeze({
   debug: "debug",
@@ -192,6 +193,8 @@ export function log(level, category, event, context = {}, options = {}) {
   if (shouldPersist) {
     appendLog(logEvent).catch(() => null);
   }
+
+  forwardLogToMonitoring(logEvent, context, options);
 
   return logEvent;
 }

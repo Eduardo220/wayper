@@ -58,6 +58,29 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - `main` deve receber apenas versões estáveis.
 - Pull requests para `main` devem ser mais criteriosos.
 
+## ADR-016: Usar Sentry como complemento ao diagnostico local
+
+**Status:** aceito
+**Contexto:** o Wayper precisa observar crashes, excecoes e performance em builds reais sem enviar rotas, coordenadas ou artefatos detalhados da corrida para um servico externo. O diagnostico local em NDJSON/ZIP ja e a fonte detalhada para investigar GPS, background, storage e notificacao.
+**Decisao:** usar `@sentry/react-native` com Expo Dev Client para erros, breadcrumbs e tracing basico. O Sentry complementa, mas nao substitui, reduz ou altera a persistencia local de diagnosticos.
+**Politica:**
+
+- `development`: envio desligado por padrao; exige `EXPO_PUBLIC_SENTRY_ENABLE_DEV=true`.
+- `staging`: envio ativo quando existe DSN.
+- `production`: envio ativo quando existe DSN.
+- Sampling de tracing: `0.20` em development, `0.15` em staging e `0.08` em production.
+- Session Replay, logs remotos em massa e `sendDefaultPii` ficam desativados.
+- `error` e `fatal` sao enviados; warnings importantes usam filtro e throttle; `info/debug` nao viram eventos.
+- Coordenadas, paths, rotas, snapshots, NDJSON, imagens, ZIPs, tokens, headers de auth, email e telefone sao removidos antes do envio.
+- IDs de corrida/usuario presentes em contexto remoto sao pseudonimizados.
+
+**Consequencias:**
+
+- Crashes e falhas criticas ficam visiveis por release, ambiente e build.
+- Breadcrumbs de corrida/lifecycle ajudam a reconstruir a sequencia sem expor o trajeto.
+- Source maps exigem `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` e `SENTRY_PROJECT` no ambiente de build.
+- Investigacao profunda de GPS continua usando o ZIP/NDJSON local, inclusive quando coordenadas exatas forem habilitadas explicitamente para um teste.
+
 ## ADR-006: Persistir corrida ativa localmente antes do Firestore
 
 **Status:** aceito

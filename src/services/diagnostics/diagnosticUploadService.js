@@ -1,6 +1,10 @@
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { auth, db, storage } from "../../firebaseConfig.js";
+import {
+  captureException,
+  traceAsync,
+} from "../monitoring/sentryService.js";
 
 export function isDiagnosticUploadConfigured() {
   return (
@@ -9,7 +13,7 @@ export function isDiagnosticUploadConfigured() {
   );
 }
 
-export async function uploadDiagnosticsArchive(archive = {}) {
+async function uploadDiagnosticsArchiveInternal(archive = {}) {
   if (!isDiagnosticUploadConfigured()) {
     const error = new Error("diagnostic_upload_not_configured");
     error.code = "diagnostic_upload_not_configured";
@@ -52,6 +56,27 @@ export async function uploadDiagnosticsArchive(archive = {}) {
     storagePath: path,
     downloadUrl,
   };
+}
+
+export async function uploadDiagnosticsArchive(archive = {}) {
+  return traceAsync(
+    "Upload diagnostics",
+    "wayper.diagnostics.upload",
+    { scope: archive.scope || "last_run", size: Number(archive.size || 0) },
+    async () => {
+      try {
+        return await uploadDiagnosticsArchiveInternal(archive);
+      } catch (error) {
+        captureException(error, {
+          category: "DIAGNOSTICS",
+          event: "DIAGNOSTICS_UPLOAD_FAILED",
+          scope: archive.scope || "last_run",
+          size: Number(archive.size || 0),
+        });
+        throw error;
+      }
+    }
+  );
 }
 
 export default {
