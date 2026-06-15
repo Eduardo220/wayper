@@ -227,3 +227,15 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - `xpService`, `territoryXp`, `MedalsWidget`, storage `medals` e `@wayper:medals_awarded_v1` ficam como legado/visual ate uma migracao explicita; nao sao fonte de progresso real.
 - Recalculo completo a partir de `runs` existe como operacao segura/idempotente, mas nao apaga progresso local nem eventos antigos por padrao.
 - SQLite nao entra nesta etapa; se volume de eventos/progresso crescer, medir antes de migrar storage.
+
+## ADR-016: Feedback imediato ao iniciar corrida
+
+**Status:** aceito
+**Contexto:** o fluxo de inicio da corrida executava permissoes, refresh de localizacao, provider de rede e warmup de GPS antes de exibir a contagem regressiva. Isso podia gerar varios segundos sem resposta visual apos o toque.
+**Decisao:** o toque em iniciar corrida deve armar imediatamente `isStartingRun`, bloquear novos cliques e exibir o feedback/countdown. A duracao da contagem fica centralizada em `RUN_START_COUNTDOWN_SECONDS = 1`. Permissoes essenciais continuam validadas antes de criar a corrida, mas tarefas pesadas de GPS nao podem bloquear a exibicao do feedback inicial. A coleta foreground/background deve ser solicitada antes da busca pontual de `getCurrentPositionAsync`.
+**Consequencias:**
+
+- O usuario ve resposta visual praticamente no toque, mesmo quando permissao ou notificacao ainda precisam ser resolvidas.
+- Duplo clique nao cria duas corridas, dois watchers ou duas notificacoes.
+- GPS pode aquecer em paralelo ao inicio da corrida; qualidade ruim vira aviso/diagnostico, nao delay silencioso.
+- Corrida livre e corrida por zonas compartilham o mesmo guard e countdown.

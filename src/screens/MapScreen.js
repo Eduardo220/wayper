@@ -60,7 +60,6 @@ import {
   smoothDisplayPath,
   summarizeGpsQuality,
   splitPathIntoSegments,
-  warmUpGpsForRun,
 } from "../services/runTracking";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
 import {
@@ -136,6 +135,10 @@ import {
   recordRunEvent,
   recordRunSnapshotEvent,
 } from "../services/diagnostics/runDiagnosticsService.js";
+import {
+  RUN_START_COUNTDOWN_SECONDS,
+  RUN_START_COUNTDOWN_TICK_MS,
+} from "../config/runStartConfig.js";
 
 /* Tunáveis */
 const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
@@ -143,7 +146,6 @@ const FLUSH_INTERVAL_MS = 300;
 const WATCH_TIME_INTERVAL_MS = 1000;
 const WATCH_DISTANCE_INTERVAL = 2.5;
 const INITIAL_REGION_DELTA = 0.001;
-const COUNTDOWN_DEFAULT = 3;
 const WAYPER_GREEN = WayperTheme.colors.primary;
 const ROUTE_CAP = 8000;
 const MAX_RUNNING_SPEED_MPS = TRACKING_CONFIG.MAX_HUMAN_SPRINT_SPEED_KMH / 3.6;
@@ -509,6 +511,7 @@ const MapScreen = ({ navigation, route }) => {
   const [mapRecenterSignal, setMapRecenterSignal] = useState(0);
   const [showZones] = useState(true);
   const [selectModeVisible, setSelectModeVisible] = useState(false);
+  const [isStartingRun, setIsStartingRun] = useState(false);
   const [counting, setCounting] = useState(false);
   const [countdown, setCountdown] = useState(0);
 
@@ -569,6 +572,8 @@ const MapScreen = ({ navigation, route }) => {
   const appStateRef = useRef(AppState.currentState);
   const mountedRef = useRef(true);
   const locationPermissionRef = useRef(null);
+  const isStartingRunRef = useRef(false);
+  const runStartCountdownIntervalRef = useRef(null);
 
   const lastPointRef = useRef(null);
   const rawPathRef = useRef([]);
@@ -1095,6 +1100,10 @@ const MapScreen = ({ navigation, route }) => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
+      }
+      if (runStartCountdownIntervalRef.current) {
+        clearInterval(runStartCountdownIntervalRef.current);
+        runStartCountdownIntervalRef.current = null;
       }
       if (replayIntervalRef.current) {
         clearInterval(replayIntervalRef.current);
@@ -1928,140 +1937,274 @@ const MapScreen = ({ navigation, route }) => {
   }, [applyActiveRunSnapshotToUi]);
 
   /* ===== Start / Pause / Stop run ===== */
+  const isRunStartBusy = isStartingRun || counting || running || runtimeRecovering;
+
+  const clearRunStartCountdownTimer = useCallback(() => {
+    if (runStartCountdownIntervalRef.current) {
+      clearInterval(runStartCountdownIntervalRef.current);
+      runStartCountdownIntervalRef.current = null;
+    }
+  }, []);
+
+  const resetRunStartFeedback = useCallback(() => {
+    clearRunStartCountdownTimer();
+    isStartingRunRef.current = false;
+    if (!mountedRef.current) return;
+    setIsStartingRun(false);
+    setCounting(false);
+    setCountdown(0);
+  }, [clearRunStartCountdownTimer]);
+
+  const waitRunStartCountdown = useCallback(
+    (selectedMode, pressedAtMs) =>
+      new Promise((resolve) => {
+        clearRunStartCountdownTimer();
+        let remaining = Math.max(0, Number(RUN_START_COUNTDOWN_SECONDS) || 0);
+
+        if (remaining <= 0) {
+          recordRunEvent("COUNTDOWN_SKIPPED", {
+            marker: "countdown_skipped",
+            mode: selectedMode,
+            reason: "disabled",
+            screen: "MapScreen",
+          });
+          resolve();
+          return;
+        }
+
+        recordRunEvent("COUNTDOWN_SHOWN", {
+          marker: "countdown_shown",
+          mode: selectedMode,
+          countdownSeconds: remaining,
+          feedbackDelayMs: Date.now() - pressedAtMs,
+          screen: "MapScreen",
+        });
+
+        runStartCountdownIntervalRef.current = setInterval(() => {
+          remaining -= 1;
+          if (!mountedRef.current) {
+            clearRunStartCountdownTimer();
+            resolve();
+            return;
+          }
+          if (remaining <= 0) {
+            clearRunStartCountdownTimer();
+            setCountdown(0);
+            resolve();
+            return;
+          }
+          setCountdown(remaining);
+        }, RUN_START_COUNTDOWN_TICK_MS);
+      }),
+    [clearRunStartCountdownTimer]
+  );
+
   const startWithCountdown = useCallback(
     async (selectedMode = "free") => {
+      const pressedAtMs = Date.now();
+      recordRunEvent("START_BUTTON_PRESSED", {
+        marker: "start_button_pressed",
+        mode: selectedMode,
+        counting,
+        running,
+        isStartingRun: isStartingRunRef.current,
+        screen: "MapScreen",
+      });
       recordRunEvent("RUN_START_ATTEMPT", {
         mode: selectedMode,
         counting,
         running,
+        isStartingRun: isStartingRunRef.current,
         screen: "MapScreen",
       });
-      if (counting || running || runtimeRecovering) {
+      if (isStartingRunRef.current || counting || runningRef.current || running || runtimeRecovering) {
         recordRunEvent("RUN_START_FAILED", {
           mode: selectedMode,
           reason: "invalid_state",
           counting,
           running,
+          isStartingRun: isStartingRunRef.current,
           runtimeRecovering,
+          level: "warn",
+          screen: "MapScreen",
+        });
+        recordRunEvent("START_FAILED", {
+          marker: "start_failed",
+          mode: selectedMode,
+          reason: "invalid_state",
           level: "warn",
           screen: "MapScreen",
         });
         return;
       }
-      const permission = await ensureLocationForRun();
-      setLocationPermission(permission);
-      locationPermissionRef.current = permission;
-      setPermissionDenied(!permission.granted);
-      if (!permission.granted) {
-        recordRunEvent("LOCATION_PERMISSION_DENIED", {
-          permissionName: "locationForeground",
-          status: permission.status,
-          canAskAgain: permission.canAskAgain,
+
+      const cachedPermission = locationPermissionRef.current;
+      if (cachedPermission && !cachedPermission.granted && permissionDenied) {
+        setRunPermissionNoticeVisible(true);
+        recordRunEvent("RUN_START_FAILED", {
+          mode: selectedMode,
+          reason: "location_permission_required",
+          permissionStatus: cachedPermission.status,
+          level: "warn",
           screen: "MapScreen",
         });
-        setRunPermissionNoticeVisible(true);
+        recordRunEvent("START_FAILED", {
+          marker: "start_failed",
+          mode: selectedMode,
+          reason: "location_permission_required",
+          permissionStatus: cachedPermission.status,
+          level: "warn",
+          screen: "MapScreen",
+        });
         return;
       }
-      recordRunEvent("LOCATION_PERMISSION_GRANTED", {
-        permissionName: "locationForeground",
-        status: permission.status,
-        screen: "MapScreen",
-      });
-      if (Platform.OS !== "web") {
-        const currentBackground = await checkBackgroundLocationPermission();
-        const background = currentBackground.granted
-          ? currentBackground
-          : await requestBackgroundLocationPermission();
 
-        if (!background.granted) {
+      isStartingRunRef.current = true;
+      setIsStartingRun(true);
+      setMode(selectedMode);
+      setRunPermissionNoticeVisible(false);
+      setCounting(RUN_START_COUNTDOWN_SECONDS > 0);
+      setCountdown(Math.max(0, Number(RUN_START_COUNTDOWN_SECONDS) || 0));
+
+      const preflight = (async () => {
+        const permission = await ensureLocationForRun();
+        if (!mountedRef.current) return { ok: false, reason: "unmounted" };
+
+        setLocationPermission(permission);
+        locationPermissionRef.current = permission;
+        setPermissionDenied(!permission.granted);
+        if (!permission.granted) {
           recordRunEvent("LOCATION_PERMISSION_DENIED", {
-            permissionName: "locationBackground",
-            status: background.status,
-            canAskAgain: background.canAskAgain,
+            permissionName: "locationForeground",
+            status: permission.status,
+            canAskAgain: permission.canAskAgain,
             screen: "MapScreen",
           });
-          setRunPermissionNoticeVisible(true);
-          Alert.alert(
-            "Localizacao em segundo plano",
-            "Para salvar sua corrida com a tela bloqueada, permita localizacao em segundo plano antes de iniciar.",
-            background.canAskAgain
-              ? undefined
-              : [
-                  { text: "Agora nao", style: "cancel" },
-                  { text: "Abrir configuracoes", onPress: openAppSettings },
-                ]
-          );
-          return;
+          return {
+            ok: false,
+            reason: "location_permission_denied",
+            permission,
+          };
         }
+
         recordRunEvent("LOCATION_PERMISSION_GRANTED", {
-          permissionName: "locationBackground",
-          status: background.status,
+          permissionName: "locationForeground",
+          status: permission.status,
           screen: "MapScreen",
         });
-      }
-      if (Platform.OS === "android") {
-        const notificationPermission = await ensureRunNotificationPermission({ request: true });
-        if (!notificationPermission.granted) {
-          Alert.alert(
-            "Notificacao da corrida",
-            "Sem permissao de notificacao, o Android pode ocultar o painel persistente da corrida. A corrida ainda pode ser iniciada, mas recomendamos permitir notificacoes para pausar e retomar pela barra do sistema."
-          );
+
+        if (Platform.OS === "android") {
+          try {
+            const notificationPermission = await ensureRunNotificationPermission({ request: true });
+            if (!notificationPermission.granted && mountedRef.current) {
+              Alert.alert(
+                "Notificacao da corrida",
+                "Sem permissao de notificacao, o Android pode ocultar o painel persistente da corrida. A corrida ainda pode ser iniciada, mas recomendamos permitir notificacoes para pausar e retomar pela barra do sistema."
+              );
+            }
+          } catch (notificationError) {
+            recordRunEvent("START_FAILED", {
+              marker: "start_failed",
+              mode: selectedMode,
+              phase: "notification_permission",
+              error: notificationError,
+              level: "warn",
+              screen: "MapScreen",
+            });
+          }
         }
-      }
-      setRunPermissionNoticeVisible(false);
-      await refreshForegroundLocation({ updatePosition: true });
-      await enableNetworkProviderForRun(Location, Platform);
+
+        return { ok: true, permission };
+      })();
+
       try {
-        const warmup = await warmUpGpsForRun(Location, { durationMs: 5500 });
-        if (warmup.bestPoint) {
-          setLocation(warmup.bestPoint);
-        }
-        if (!warmup.ok) {
-          setGpsQualityWarning(
-            warmup.poor
-              ? "GPS instavel. Va para uma area aberta para melhorar a precisao."
-              : "Sinal GPS fraco. A rota pode ficar menos precisa."
-          );
-        } else {
-          setGpsQualityWarning(null);
-        }
-      } catch (warmupError) {
-        debug("gps warmup failed", warmupError);
-        setGpsQualityWarning("Sinal GPS fraco. A rota pode ficar menos precisa.");
-      }
-      setMode(selectedMode);
-      setCounting(true);
-      setCountdown(COUNTDOWN_DEFAULT);
+        const [preflightResult] = await Promise.all([
+          preflight,
+          waitRunStartCountdown(selectedMode, pressedAtMs),
+        ]);
 
-      let cancelled = false;
-      const interval = setInterval(() => {
-        setCountdown((c) => {
-          if (cancelled) {
-            clearInterval(interval);
-            setCounting(false);
-            return 0;
+        if (!mountedRef.current) return;
+
+        if (!preflightResult?.ok) {
+          resetRunStartFeedback();
+          if (preflightResult?.reason === "location_permission_denied") {
+            setRunPermissionNoticeVisible(true);
           }
-          if (c <= 1) {
-            clearInterval(interval);
-            setCounting(false);
-            startRun(selectedMode);
-            return 0;
-          }
-          return c - 1;
+          recordRunEvent("RUN_START_FAILED", {
+            mode: selectedMode,
+            reason: preflightResult?.reason || "preflight_failed",
+            permissionStatus: preflightResult?.permission?.status,
+            level: "warn",
+            screen: "MapScreen",
+          });
+          recordRunEvent("START_FAILED", {
+            marker: "start_failed",
+            mode: selectedMode,
+            reason: preflightResult?.reason || "preflight_failed",
+            permissionStatus: preflightResult?.permission?.status,
+            level: "warn",
+            screen: "MapScreen",
+          });
+          return;
+        }
+
+        setCounting(false);
+        setCountdown(0);
+
+        const result = await startRun(selectedMode, {
+          permission: preflightResult.permission,
+          pressedAtMs,
         });
-      }, 1000);
 
-      const cleanup = () => {
-        cancelled = true;
-        clearInterval(interval);
-      };
-      return cleanup;
+        if (!result?.ok && result?.reason !== "existing_active_run_recovered") {
+          recordRunEvent("START_FAILED", {
+            marker: "start_failed",
+            mode: selectedMode,
+            reason: result?.reason || "start_run_failed",
+            level: "warn",
+            screen: "MapScreen",
+          });
+        }
+      } catch (error) {
+        debug("startWithCountdown failed", error);
+        resetRunStartFeedback();
+        recordRunEvent("RUN_START_FAILED", {
+          mode: selectedMode,
+          reason: "start_preflight_exception",
+          error,
+          screen: "MapScreen",
+        });
+        recordRunEvent("START_FAILED", {
+          marker: "start_failed",
+          mode: selectedMode,
+          reason: "start_preflight_exception",
+          error,
+          screen: "MapScreen",
+        });
+        Alert.alert("Erro", "Nao foi possivel iniciar a corrida. Tente novamente.");
+      } finally {
+        clearRunStartCountdownTimer();
+        isStartingRunRef.current = false;
+        if (mountedRef.current) {
+          setIsStartingRun(false);
+        }
+      }
     },
-    [counting, refreshForegroundLocation, running, runtimeRecovering]
+    [
+      clearRunStartCountdownTimer,
+      counting,
+      permissionDenied,
+      resetRunStartFeedback,
+      running,
+      runtimeRecovering,
+      waitRunStartCountdown,
+    ]
   );
 
   const startRun = useCallback(
-    async (selectedMode = "free") => {
+    async (selectedMode = "free", options = {}) => {
+      const pressedAtMs = Number(options.pressedAtMs || Date.now());
+      let activeRunStarted = false;
       try {
         recordRunEvent("RUN_START_ATTEMPT", {
           mode: selectedMode,
@@ -2075,7 +2218,7 @@ const MapScreen = ({ navigation, route }) => {
             level: "warn",
             screen: "MapScreen",
           });
-          return;
+          return { ok: false, reason: "already_running" };
         }
         const existingRuntime = await hydrateActiveRunFromRuntime("start_guard", {
           userId: auth.currentUser?.uid || "offline",
@@ -2099,10 +2242,16 @@ const MapScreen = ({ navigation, route }) => {
             level: "warn",
             screen: "MapScreen",
           });
-          return;
+          return {
+            ok: false,
+            reason: "existing_active_run_recovered",
+            snapshot: existingSnapshot,
+          };
         }
 
-        const permission = await checkLocationPermission();
+        const permission = options.permission?.granted
+          ? options.permission
+          : await checkLocationPermission();
         setLocationPermission(permission);
         locationPermissionRef.current = permission;
         setPermissionDenied(!permission.granted);
@@ -2114,7 +2263,7 @@ const MapScreen = ({ navigation, route }) => {
           });
           setRunPermissionNoticeVisible(true);
           setCounting(false);
-          return;
+          return { ok: false, reason: "location_permission_denied", permission };
         }
 
         setRunning(true);
@@ -2139,6 +2288,13 @@ const MapScreen = ({ navigation, route }) => {
         timeSecRef.current = 0;
         setTimeSec(0);
         debugTracking("session_started", { runSessionId: currentRunIdRef.current, mode: selectedMode });
+        recordRunEvent("TRACKING_START_REQUESTED", {
+          marker: "tracking_start_requested",
+          runId,
+          mode: selectedMode,
+          elapsedSincePressMs: Date.now() - pressedAtMs,
+          screen: "MapScreen",
+        });
         recordRunEvent("RUN_STARTED", {
           runId,
           mode: selectedMode,
@@ -2165,10 +2321,18 @@ const MapScreen = ({ navigation, route }) => {
                 recovered: true,
                 forceSyncControls: true,
               });
-              return;
+              return {
+                ok: false,
+                reason: "existing_active_run_recovered",
+                snapshot: activeSnapshot,
+              };
             }
             currentRunIdRef.current = activeSnapshot.activeRunId;
           }
+          if (!activeSnapshot?.activeRunId) {
+            throw new Error("activeRunTrackingService.startActiveRun returned empty snapshot");
+          }
+          activeRunStarted = true;
         } catch (activeRunError) {
           debug("startActiveRun service failed", activeRunError);
           recordRunEvent("RUN_START_FAILED", {
@@ -2178,9 +2342,19 @@ const MapScreen = ({ navigation, route }) => {
             error: activeRunError,
             screen: "MapScreen",
           });
+          throw activeRunError;
         }
 
         startElapsedTimer();
+        await startLocationWatcher();
+        await startBackgroundLocationService();
+        recordRunEvent("TRACKING_STARTED", {
+          marker: "tracking_started",
+          runId: currentRunIdRef.current,
+          mode: selectedMode,
+          elapsedSincePressMs: Date.now() - pressedAtMs,
+          screen: "MapScreen",
+        });
 
         let pos = null;
         try {
@@ -2208,9 +2382,7 @@ const MapScreen = ({ navigation, route }) => {
             runSessionId: currentRunIdRef.current,
           });
         }
-
-        await startLocationWatcher();
-        await startBackgroundLocationService();
+        return { ok: true, runId: currentRunIdRef.current };
       } catch (e) {
         debug("startRun catch", e);
         recordRunEvent("RUN_START_FAILED", {
@@ -2218,9 +2390,25 @@ const MapScreen = ({ navigation, route }) => {
           error: e,
           screen: "MapScreen",
         });
+        setCounting(false);
+        if (!activeRunStarted) {
+          setRunning(false);
+          setPaused(false);
+          runningRef.current = false;
+          runStatusRef.current = "idle";
+          currentRunIdRef.current = null;
+          resetTrackingPipeline({ segmentId: 0 });
+          timeSecRef.current = 0;
+          distanceRef.current = 0;
+          setTimeSec(0);
+          setDistanceState(0);
+          stopWatcherAndPolling();
+          stopElapsedTimer();
+        }
+        return { ok: false, reason: "exception", error: e };
       }
     },
-    [applyActiveRunSnapshotToUi, closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]
+    [applyActiveRunSnapshotToUi, closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher, stopElapsedTimer, stopWatcherAndPolling]
   );
 
   const pauseRun = useCallback(() => {
@@ -3321,7 +3509,10 @@ const MapScreen = ({ navigation, route }) => {
       },
     });
   }, [navigation]);
-  const openStartModal = useCallback(() => setSelectModeVisible(true), []);
+  const openStartModal = useCallback(() => {
+    if (isRunStartBusy) return;
+    setSelectModeVisible(true);
+  }, [isRunStartBusy]);
 
   const runFromSelectedTerritory = useCallback(() => {
     closeSelectedTerritory();
@@ -3812,7 +4003,8 @@ const MapScreen = ({ navigation, route }) => {
             <Animated.View style={{ transform: [{ scale: startPressAnim }] }}>
               <TouchableOpacity
                 activeOpacity={0.94}
-                style={styles.startMainBtn}
+                disabled={isRunStartBusy}
+                style={[styles.startMainBtn, isRunStartBusy && styles.startMainBtnDisabled]}
                 onPress={openStartModal}
                 onPressIn={handleStartPressIn}
                 onPressOut={handleStartPressOut}
@@ -3832,7 +4024,7 @@ const MapScreen = ({ navigation, route }) => {
                 />
                 <View pointerEvents="none" style={styles.startMainBtnGloss} />
                 <View style={styles.startMainBtnContent}>
-                  <Text style={styles.startMainBtnTxt}>Iniciar Corrida</Text>
+                  <Text style={styles.startMainBtnTxt}>{isStartingRun || counting ? "Iniciando..." : "Iniciar Corrida"}</Text>
                   <View style={styles.startChevronCircle}>
                     <Ionicons name="chevron-forward" size={27} color={WayperTheme.colors.text} />
                   </View>
@@ -4408,7 +4600,8 @@ const MapScreen = ({ navigation, route }) => {
 
             <TouchableOpacity
               activeOpacity={0.9}
-              style={styles.modeOption}
+              disabled={isRunStartBusy}
+              style={[styles.modeOption, isRunStartBusy && styles.modeOptionDisabled]}
               onPress={() => {
                 setSelectModeVisible(false);
                 startWithCountdown("free");
@@ -4426,7 +4619,12 @@ const MapScreen = ({ navigation, route }) => {
 
             <TouchableOpacity
               activeOpacity={0.9}
-              style={[styles.modeOption, styles.modeOptionSecondary]}
+              disabled={isRunStartBusy}
+              style={[
+                styles.modeOption,
+                styles.modeOptionSecondary,
+                isRunStartBusy && styles.modeOptionDisabled,
+              ]}
               onPress={() => {
                 setSelectModeVisible(false);
                 startWithCountdown("zones");
@@ -4842,6 +5040,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     ...WayperTheme.shadows.greenGlow,
   },
+  startMainBtnDisabled: {
+    opacity: 0.76,
+  },
   startMainBtnHighlight: {
     position: "absolute",
     top: -26,
@@ -5084,6 +5285,9 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 0 },
     elevation: 10,
+  },
+  modeOptionDisabled: {
+    opacity: 0.62,
   },
   modeOptionSecondary: {
     backgroundColor: WayperTheme.colors.surfaceSoft,

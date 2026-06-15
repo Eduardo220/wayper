@@ -149,6 +149,62 @@ describe("active run persistence state", () => {
     expect(mapScreen.indexOf('"RUN_FINISH_SAVED"')).toBeLessThan(mapScreen.indexOf("markRecoveredRunLocallySaved({ reason: \"finish_local_run_saved\" })"));
   });
 
+  test("inicio de corrida mostra feedback antes de preparacao pesada", () => {
+    const config = fs.readFileSync(path.join(process.cwd(), "src/config/runStartConfig.js"), "utf8");
+    const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const startFlowStart = mapScreen.indexOf("const startWithCountdown = useCallback");
+    const startFlowEnd = mapScreen.indexOf("const startRun = useCallback", startFlowStart);
+    const startFlow = mapScreen.slice(startFlowStart, startFlowEnd);
+
+    expect(config).toContain("RUN_START_COUNTDOWN_SECONDS = 1");
+    expect(startFlow).toContain('recordRunEvent("START_BUTTON_PRESSED"');
+    expect(mapScreen).toContain('recordRunEvent("COUNTDOWN_SHOWN"');
+    expect(startFlow).toContain('recordRunEvent("START_FAILED"');
+    expect(startFlow).toContain("isStartingRunRef.current = true");
+    expect(startFlow).toContain("setIsStartingRun(true)");
+    expect(startFlow).toContain("setCounting(RUN_START_COUNTDOWN_SECONDS > 0)");
+    expect(startFlow).toContain("waitRunStartCountdown(selectedMode, pressedAtMs)");
+    expect(startFlow.indexOf("setCounting(RUN_START_COUNTDOWN_SECONDS > 0)")).toBeLessThan(startFlow.indexOf("ensureLocationForRun()"));
+    expect(startFlow).not.toContain("warmUpGpsForRun");
+    expect(startFlow).not.toContain("refreshForegroundLocation({ updatePosition: true })");
+    expect(startFlow).not.toContain("requestBackgroundLocationPermission()");
+  });
+
+  test("inicio de corrida bloqueia clique duplo e preserva modos livre/zonas", () => {
+    const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const startFlowStart = mapScreen.indexOf("const startWithCountdown = useCallback");
+    const startFlowEnd = mapScreen.indexOf("const startRun = useCallback", startFlowStart);
+    const startFlow = mapScreen.slice(startFlowStart, startFlowEnd);
+
+    expect(mapScreen).toContain("const [isStartingRun, setIsStartingRun] = useState(false)");
+    expect(mapScreen).toContain("const isRunStartBusy = isStartingRun || counting || running || runtimeRecovering");
+    expect(startFlow).toContain("isStartingRunRef.current || counting || runningRef.current || running || runtimeRecovering");
+    expect(mapScreen).toContain("disabled={isRunStartBusy}");
+    expect(mapScreen).toContain("startMainBtnDisabled");
+    expect(mapScreen).toContain("modeOptionDisabled");
+    expect(mapScreen).toContain('startWithCountdown("free")');
+    expect(mapScreen).toContain('startWithCountdown("zones")');
+  });
+
+  test("startRun solicita tracking antes da busca pontual de GPS", () => {
+    const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const startRunStart = mapScreen.indexOf("const startRun = useCallback");
+    const startRunEnd = mapScreen.indexOf("const pauseRun = useCallback", startRunStart);
+    const startRunFlow = mapScreen.slice(startRunStart, startRunEnd);
+
+    expect(startRunFlow).toContain('recordRunEvent("TRACKING_START_REQUESTED"');
+    expect(startRunFlow).toContain('recordRunEvent("TRACKING_STARTED"');
+    expect(startRunFlow.indexOf("await startLocationWatcher();")).toBeLessThan(startRunFlow.indexOf("Location.getCurrentPositionAsync"));
+    expect(startRunFlow.indexOf("await startBackgroundLocationService();")).toBeLessThan(startRunFlow.indexOf("Location.getCurrentPositionAsync"));
+    expect(startRunFlow).toContain('return { ok: false, reason: "location_permission_denied", permission }');
+    expect(startRunFlow).toContain("let activeRunStarted = false");
+    expect(startRunFlow).toContain('throw new Error("activeRunTrackingService.startActiveRun returned empty snapshot")');
+    expect(startRunFlow).toContain("if (!activeRunStarted)");
+    expect(startRunFlow).toContain("setRunning(false)");
+    expect(startRunFlow).toContain("currentRunIdRef.current = null");
+    expect(startRunFlow).toContain("return { ok: true, runId: currentRunIdRef.current }");
+  });
+
   test("merge seguro nao sobrescreve segments reais com default vazio", () => {
     const existing = makeRunningSnapshot();
     const incomingEmpty = normalizeActiveRunSnapshot({
