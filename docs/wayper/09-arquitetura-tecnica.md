@@ -352,7 +352,8 @@ Desde 2026-06-06, a camada de acesso a dados passa a ter facades finas para redu
 - `src/repositories/runRepository.js`: encapsula historico local de runs por `sync.js`. A chave `runs` continua oficial.
 - `src/repositories/runSyncQueueRepository.js`: encapsula enfileiramento/retry/auto sync por `runSyncQueueService` e `sync.js`, sem storage proprio.
 - `src/repositories/territoryRepository.js`: encapsula territorios/eventos/leaderboards locais atuais; `zones` e `@wayper_zones` sao legados explicitos.
-- `src/repositories/userProfileRepository.js`: encapsula perfil local/cacheado por `profileService` e Firestore/Storage como melhor esforco.
+- `src/repositories/profileStats.js`: consolida estatisticas locais de perfil/ranking a partir de runs, territorios, XP e conquistas reais.
+- `src/repositories/userProfileRepository.js`: encapsula perfil local/cacheado por `profileService`, mescla `profileStats` e trata Firestore/Storage como melhor esforco.
 - `src/repositories/rankingRepository.js`: encapsula ranking remoto/cache/local e identifica demo/vazio para nao mascarar ausencia de dado real.
 - `src/repositories/localMetadataRepository.js` e `src/services/storage/storageMigrationService.js`: registram schemaVersion, migrations executadas e storages legados sem apagar dados.
 
@@ -363,6 +364,14 @@ Territorio local-first:
 - `DashboardScreen` e feed/home devem usar territorios atuais locais, nao `sync.loadLocalZones()`.
 - A captura territorial continua em `territoryCaptureService`; repository nao recalcula geometria nem reimplementa antifraude.
 - `zones` e `@wayper_zones` so aparecem em `listLegacyZones()` ou migracao explicita.
+
+Perfil/ranking local-first:
+
+- `ProfileScreen` deve consumir `UserProfileRepository`; Firestore direto fica fora da tela.
+- Estatisticas do perfil contam corridas finalizadas locais, inclusive pendentes/falhas de sync, mas ignoram corrida ativa e `FINISHING`.
+- Dedupe de estatistica e ranking local usa `localRunId`, `remoteRunId`, `id`, `runId` e `legacyId`.
+- `RankingScreen` deve consumir `RankingRepository` e respeitar `source`: `remote`, `cache`, `local`, `empty` ou `demo`.
+- Ranking local limitado nao inventa usuarios; demo exige opt-in/dev e nunca mascara falha remota.
 
 Regra de evolucao:
 

@@ -175,6 +175,35 @@ Checklist manual adicional:
 - [ ] Confirmar que ranking sem dados reais mostra estado vazio/cache identificado, nao mock real.
 - [ ] Confirmar que zonas legadas so aparecem onde o fluxo ainda chama leitura legada explicitamente.
 
+## Perfil e ranking local-first
+
+Checklist manual:
+
+- [ ] Abrir Perfil sem internet/Firestore e confirmar que nome/avatar/cache local nao somem.
+- [ ] Finalizar corrida offline e confirmar que Perfil soma corrida, distancia, duracao e XP local.
+- [ ] Confirmar que corrida pendente de sync conta no Perfil e que `SYNC_FAILED` nao remove estatistica.
+- [ ] Voltar internet, sincronizar e confirmar que a mesma corrida nao duplica total.
+- [ ] Iniciar uma corrida e deixar ativa/pausada; confirmar que ela nao entra nas estatisticas finalizadas.
+- [ ] Finalizar corrida por zonas com captura real e conferir area/zonas no Perfil.
+- [ ] Finalizar corrida livre e confirmar que area/territorio nao aumentam artificialmente.
+- [ ] Gerar XP/conquista e conferir Perfil e Dashboard com Firestore falhando.
+- [ ] Abrir Ranking sem internet no modo Km, XP, Corridas e Area; confirmar `local`, `cache` ou `empty` honesto.
+- [ ] Confirmar que Ranking local com apenas o usuario do aparelho nao inventa outros atletas.
+- [ ] Confirmar que Ranking demo so aparece em fluxo dev/opt-in e com identificacao demo.
+- [ ] Trocar usuario/logout quando possivel e confirmar que progresso/conquistas/ranking local nao misturam `userId`.
+- [ ] Testar falha de upload de avatar e confirmar que o perfil local continua salvo sem apagar avatar/cache.
+
+Cobertura automatizada esperada:
+
+- `profileStats` calcula estatisticas por `RunRepository`, `TerritoryRepository`, `ProgressionRepository` e `AchievementRepository`.
+- `profileStats` ignora corrida ativa/`FINISHING`, conta pendente de sync e deduplica local/remoto.
+- `UserProfileRepository` retorna perfil local com estatisticas locais quando Firestore falha.
+- `UserProfileRepository` nao grava avatar `file://` como avatar remoto quando Storage falha.
+- `RankingRepository` retorna `remote`, `cache`, `local`, `empty` e `demo` explicitamente.
+- `RankingRepository` usa XP local de `ProgressionRepository`, distancia local de `RunRepository` e area local de `TerritoryRepository`.
+- Cache de ranking tem `updatedAt`/`cachedAt` e overlay local nao duplica o proprio usuario.
+- Ranking demo nao aparece como fallback silencioso de erro remoto.
+
 ## Territorios e zonas local-first
 
 Checklist manual:

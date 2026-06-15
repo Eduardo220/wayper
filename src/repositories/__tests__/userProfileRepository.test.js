@@ -15,6 +15,44 @@ const saveProfile = jest.fn(async (patch) => ({
   ...patch,
 }));
 const fetchRemoteProfile = jest.fn(async () => null);
+const getLocalProfileStats = jest.fn(async () => ({
+  source: "local",
+  userId: "user-1",
+  hasLocalData: true,
+  totalRuns: 1,
+  freeRuns: 1,
+  zoneRuns: 0,
+  totalDistanceMeters: 1000,
+  totalDurationSeconds: 600,
+  totalTerritoryAreaM2: 0,
+  totalZones: 0,
+  longestRunMeters: 1000,
+  largestZoneAreaM2: 0,
+  bestPaceSecondsPerKm: 600,
+  averagePaceSecondsPerKm: 600,
+  totalXp: 110,
+  xp: 10,
+  level: 2,
+  nextLevelXp: 150,
+  progressToNextLevelPct: 7,
+  achievementsUnlocked: 1,
+  achievementsTotal: 8,
+  pendingSyncCount: 0,
+  failedSyncCount: 0,
+  updatedAt: "2026-06-15T10:00:00.000Z",
+  progress: {
+    userId: "user-1",
+    totalXp: 110,
+    xp: 10,
+    level: 2,
+    nextLevelXp: 150,
+    totalRuns: 1,
+    totalDistanceMeters: 1000,
+    totalDurationSeconds: 600,
+    totalTerritoryAreaM2: 0,
+    territoryCaptures: 0,
+  },
+}));
 
 const FirestoreMock = {
   doc: jest.fn((...parts) => ({ path: parts.join("/") })),
@@ -65,19 +103,8 @@ jest.unstable_mockModule("../../services/profile/profileService.js", () => ({
   saveProfile,
 }));
 
-jest.unstable_mockModule("../progressionRepository.js", () => ({
-  getUserProgress: jest.fn(async () => ({
-    userId: "user-1",
-    totalXp: 110,
-    xp: 10,
-    level: 2,
-    nextLevelXp: 150,
-    totalRuns: 1,
-    totalDistanceMeters: 1000,
-    totalDurationSeconds: 600,
-    totalTerritoryAreaM2: 0,
-    territoryCaptures: 0,
-  })),
+jest.unstable_mockModule("../profileStats.js", () => ({
+  getLocalProfileStats,
 }));
 
 const repository = await import("../userProfileRepository.js");
@@ -102,6 +129,13 @@ describe("userProfileRepository", () => {
 
     expect(result.source).toBe("remote");
     expect(result.data.profile.displayName).toBe("Local User");
+    expect(result.data.profile).toMatchObject({
+      totalRuns: 1,
+      totalDistance: 1000,
+      totalXp: 110,
+      level: 2,
+      achievementsUnlocked: 1,
+    });
     expect(result.data.userDoc).toMatchObject({
       name: "Remote User",
       avatar: "https://cdn/remote.jpg",
@@ -116,6 +150,7 @@ describe("userProfileRepository", () => {
     expect(result.source).toBe("local");
     expect(result.error).toBeTruthy();
     expect(result.data.profile.displayName).toBe("Local User");
+    expect(result.data.profile.totalRuns).toBe(1);
     expect(result.data.userDoc).toBeNull();
   });
 
@@ -137,6 +172,11 @@ describe("userProfileRepository", () => {
       isPrivate: true,
       profileVisibility: "private",
     }));
+    expect(FirestoreMock.setDoc).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ avatar: "file://avatar.jpg" }),
+      { merge: true }
+    );
     expect(result.source).toBe("local");
     expect(result.syncStatus).toBe("SYNC_FAILED");
     expect(result.data.userDoc).toMatchObject({

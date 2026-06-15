@@ -81,6 +81,11 @@ Regras atuais obrigatorias:
 - Corridas inválidas não devem pontuar.
 - Atualização de ranking deve ser consistente para evitar manipulação.
 
+- Ranking deve identificar origem de dados: `remote`, `cache`, `local`, `empty` ou `demo`.
+- Cache remoto nao pode ser mostrado como ranking remoto atual e deve ter `updatedAt`/`cachedAt`.
+- Ranking local deve usar somente dados locais reais e nao inventar usuarios adversarios.
+- Demo/mock nunca pode ser fallback silencioso para erro remoto.
+
 ## Antifraude
 
 Sinais suspeitos:

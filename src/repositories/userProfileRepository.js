@@ -7,7 +7,7 @@ import {
   loadProfile,
   saveProfile,
 } from "../services/profile/profileService.js";
-import { getUserProgress } from "./progressionRepository.js";
+import { getLocalProfileStats } from "./profileStats.js";
 
 export const USER_PROFILE_SOURCE = {
   LOCAL: "local",
@@ -57,40 +57,80 @@ function normalizeUserDoc(uid, data = {}) {
   };
 }
 
-function progressToProfilePatch(progress = {}, profile = {}) {
+function resolveProfileUserId(user, profile = {}) {
+  return String(user?.uid || profile?.uid || "offline");
+}
+
+function progressToProfilePatch(progress = {}, profile = {}, localStats = {}) {
   const hasProgress = Number(progress.totalRuns || 0) > 0 || Number(progress.totalXp || 0) > 0;
-  if (!hasProgress) return {};
+  const hasStats = localStats?.hasLocalData === true ||
+    Number(localStats.totalRuns || 0) > 0 ||
+    Number(localStats.totalDistanceMeters || localStats.totalDistance || 0) > 0 ||
+    Number(localStats.totalTerritoryAreaM2 || localStats.totalArea || 0) > 0;
+  if (!hasProgress && !hasStats) {
+    return {
+      progress,
+      localStats,
+      achievementsUnlocked: Number(localStats.achievementsUnlocked ?? profile.achievementsUnlocked ?? 0),
+      achievementsTotal: Number(localStats.achievementsTotal ?? profile.achievementsTotal ?? 0),
+      recentAchievements: Array.isArray(localStats.recentAchievements) ? localStats.recentAchievements : [],
+      pendingSyncCount: Number(localStats.pendingSyncCount ?? 0),
+      failedSyncCount: Number(localStats.failedSyncCount ?? 0),
+      localProfileSource: "local",
+      localFirstProgress: true,
+      lastUpdate: localStats.updatedAt || progress.updatedAt || profile.lastUpdate || null,
+    };
+  }
 
   return {
     progress,
+    localStats,
     totalXp: Number(progress.totalXp || 0),
     xp: Number(progress.xp || 0),
     level: Number(progress.level || 1),
     nextLevelXp: Number(progress.nextLevelXp || DEFAULT_PROFILE.nextLevelXp || 1000),
     progressToNextLevel: Number(progress.progressToNextLevel || 0),
     progressToNextLevelPct: Number(progress.progressToNextLevelPct || 0),
-    totalRuns: Number(progress.totalRuns || 0),
-    totalDistance: Number(progress.totalDistanceMeters || 0),
-    totalTime: Number(progress.totalDurationSeconds || 0),
-    totalArea: Number(progress.totalTerritoryAreaM2 || 0),
-    totalZones: Number(progress.territoryCaptures || 0),
+    totalRuns: Number(localStats.totalRuns ?? progress.totalRuns ?? 0),
+    freeRuns: Number(localStats.freeRuns ?? progress.freeRuns ?? 0),
+    zoneRuns: Number(localStats.zoneRuns ?? progress.zoneRuns ?? 0),
+    totalDistance: Number(localStats.totalDistanceMeters ?? progress.totalDistanceMeters ?? 0),
+    totalTime: Number(localStats.totalDurationSeconds ?? progress.totalDurationSeconds ?? 0),
+    totalArea: Number(localStats.totalTerritoryAreaM2 ?? progress.totalTerritoryAreaM2 ?? 0),
+    totalZones: Number(localStats.totalZones ?? progress.territoryCaptures ?? 0),
+    longestRun: Number(localStats.longestRunMeters ?? profile.longestRun ?? 0),
+    largestZone: Number(localStats.largestZoneAreaM2 ?? profile.largestZone ?? 0),
+    bestPace: localStats.bestPaceSecondsPerKm ?? profile.bestPace ?? null,
+    averagePace: localStats.averagePaceSecondsPerKm ?? profile.averagePace ?? null,
+    weeklyPoints: Number(localStats.weeklyDistanceMeters ?? profile.weeklyPoints ?? 0),
+    monthlyPoints: Number(localStats.monthlyDistanceMeters ?? profile.monthlyPoints ?? 0),
+    globalPoints: Number(progress.totalXp ?? profile.globalPoints ?? 0),
+    monthlyDistance: Number(localStats.monthlyDistanceMeters ?? profile.monthlyDistance ?? 0),
+    monthlyArea: Number(localStats.monthlyAreaM2 ?? profile.monthlyArea ?? 0),
+    achievementsUnlocked: Number(localStats.achievementsUnlocked ?? profile.achievementsUnlocked ?? 0),
+    achievementsTotal: Number(localStats.achievementsTotal ?? profile.achievementsTotal ?? 0),
+    recentAchievements: Array.isArray(localStats.recentAchievements) ? localStats.recentAchievements : [],
+    pendingSyncCount: Number(localStats.pendingSyncCount ?? 0),
+    failedSyncCount: Number(localStats.failedSyncCount ?? 0),
+    duplicateRunCount: Number(localStats.duplicateRunCount ?? 0),
+    localProfileSource: "local",
     localFirstProgress: true,
-    lastUpdate: progress.updatedAt || profile.lastUpdate || null,
+    lastUpdate: localStats.updatedAt || progress.updatedAt || profile.lastUpdate || null,
   };
 }
 
-function mergeProgressIntoProfile(profile = {}, progress = {}) {
+function mergeProgressIntoProfile(profile = {}, progress = {}, localStats = {}) {
   return {
     ...profile,
-    ...progressToProfilePatch(progress, profile),
+    ...progressToProfilePatch(progress, profile, localStats),
   };
 }
 
-function mergeProgressIntoUserDoc(userDoc, progress = {}) {
+function mergeProgressIntoUserDoc(userDoc, progress = {}, localStats = {}) {
   if (!userDoc) return userDoc;
   return {
     ...userDoc,
-    ...progressToProfilePatch(progress, userDoc),
+    ...progressToProfilePatch(progress, userDoc, localStats),
   };
 }
 
@@ -111,15 +151,16 @@ async function getRemoteUserDoc(uid) {
 export async function loadCurrentProfile() {
   const localProfile = await loadProfile();
   const user = auth.currentUser;
-  const progress = await getUserProgress({ userId: user?.uid || localProfile?.uid || "offline" });
-  const mergedProfile = mergeProgressIntoProfile(localProfile, progress);
+  const localStats = await getLocalProfileStats({ userId: resolveProfileUserId(user, localProfile) });
+  const progress = localStats.progress || {};
+  const mergedProfile = mergeProgressIntoProfile(localProfile, progress, localStats);
 
   if (!user?.uid) {
     return ok(buildData(mergedProfile, null), { source: USER_PROFILE_SOURCE.LOCAL });
   }
 
   try {
-    const userDoc = mergeProgressIntoUserDoc(await getRemoteUserDoc(user.uid), progress);
+    const userDoc = mergeProgressIntoUserDoc(await getRemoteUserDoc(user.uid), progress, localStats);
     return ok(buildData(mergedProfile, userDoc), {
       source: userDoc ? USER_PROFILE_SOURCE.REMOTE : USER_PROFILE_SOURCE.LOCAL,
     });
@@ -136,8 +177,9 @@ export function subscribeCurrentUserProfile(callback) {
 
   const emitLocal = async (error = null) => {
     const localProfile = await loadProfile();
-    const localProgress = await getUserProgress({ userId: user?.uid || localProfile?.uid || "offline" });
-    const mergedProfile = mergeProgressIntoProfile(localProfile, localProgress);
+    const localStats = await getLocalProfileStats({ userId: resolveProfileUserId(user, localProfile) });
+    const localProgress = localStats.progress || {};
+    const mergedProfile = mergeProgressIntoProfile(localProfile, localProgress, localStats);
     if (!active) return;
     callback({
       data: buildData(mergedProfile, null),
@@ -161,11 +203,12 @@ export function subscribeCurrentUserProfile(callback) {
       doc(db, "users", user.uid),
       async (snap) => {
         const localProfile = await loadProfile();
-        const localProgress = await getUserProgress({ userId: user.uid || localProfile?.uid || "offline" });
-        const mergedProfile = mergeProgressIntoProfile(localProfile, localProgress);
+        const localStats = await getLocalProfileStats({ userId: resolveProfileUserId(user, localProfile) });
+        const localProgress = localStats.progress || {};
+        const mergedProfile = mergeProgressIntoProfile(localProfile, localProgress, localStats);
         if (!active) return;
         const userDoc = snap.exists()
-          ? mergeProgressIntoUserDoc(normalizeUserDoc(snap.id || user.uid, snap.data()), localProgress)
+          ? mergeProgressIntoUserDoc(normalizeUserDoc(snap.id || user.uid, snap.data()), localProgress, localStats)
           : null;
         callback({
           data: buildData(mergedProfile, userDoc),
@@ -198,11 +241,15 @@ export function subscribeCurrentUserProfile(callback) {
 export async function updateCurrentUserProfile(patch = {}) {
   const user = auth.currentUser;
   const displayName = patch.displayName ?? patch.name;
+  const avatarCandidate = patch.avatarLocalUri ?? patch.avatar;
+  const remoteAvatarCandidate = patch.avatarRemoteUrl ?? (
+    /^https?:\/\//i.test(String(patch.avatar || "")) ? patch.avatar : undefined
+  );
   const localPatch = compactObject({
     displayName,
     bio: patch.bio,
-    avatar: patch.avatar,
-    photoURL: patch.avatar,
+    avatar: avatarCandidate,
+    photoURL: remoteAvatarCandidate,
     isPrivate: patch.isPrivate,
     profileVisibility: patch.profileVisibility,
   });
@@ -214,8 +261,8 @@ export async function updateCurrentUserProfile(patch = {}) {
     name: patch.name ?? displayName,
     displayName,
     bio: patch.bio,
-    avatar: patch.avatar,
-    photoURL: patch.avatar,
+    avatar: remoteAvatarCandidate,
+    photoURL: remoteAvatarCandidate,
     isPrivate: patch.isPrivate,
     profileVisibility: patch.profileVisibility,
     updatedAt: serverTimestamp(),
@@ -266,23 +313,25 @@ export async function uploadAvatarImage(uri, storagePath) {
 export async function syncCurrentProfile() {
   try {
     const remoteProfile = await fetchRemoteProfile();
-    const progress = await getUserProgress({ userId: auth.currentUser?.uid || remoteProfile?.uid || "offline" });
+    const localStats = await getLocalProfileStats({ userId: auth.currentUser?.uid || remoteProfile?.uid || "offline" });
+    const progress = localStats.progress || {};
     if (remoteProfile) {
-      return ok(buildData(mergeProgressIntoProfile(remoteProfile, progress), null), {
+      return ok(buildData(mergeProgressIntoProfile(remoteProfile, progress, localStats), null), {
         source: USER_PROFILE_SOURCE.REMOTE,
         syncStatus: "SYNCED",
       });
     }
 
     const localProfile = await loadProfile();
-    return ok(buildData(mergeProgressIntoProfile(localProfile, progress), null), {
+    return ok(buildData(mergeProgressIntoProfile(localProfile, progress, localStats), null), {
       source: USER_PROFILE_SOURCE.LOCAL,
       syncStatus: "LOCAL_ONLY",
     });
   } catch (error) {
     const localProfile = await loadProfile();
-    const progress = await getUserProgress({ userId: auth.currentUser?.uid || localProfile?.uid || "offline" });
-    return fail(error, buildData(mergeProgressIntoProfile(localProfile, progress), null), {
+    const localStats = await getLocalProfileStats({ userId: auth.currentUser?.uid || localProfile?.uid || "offline" });
+    const progress = localStats.progress || {};
+    return fail(error, buildData(mergeProgressIntoProfile(localProfile, progress, localStats), null), {
       source: USER_PROFILE_SOURCE.LOCAL,
       syncStatus: "SYNC_FAILED",
     });
@@ -309,4 +358,5 @@ export default {
   uploadAvatarImage,
   syncCurrentProfile,
   getPublicProfile,
+  getLocalProfileStats,
 };

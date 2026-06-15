@@ -101,8 +101,8 @@ Desde 2026-06-06, os dominios principais passam a ter facades/repositories finos
 - `RunRepository`: encapsula `sync.loadLocalRunHistory()`, `sync.findLocalRunById()`, `sync.saveLocalRun()` e `sync.deleteLocalRun()`. A chave local oficial continua sendo `runs`.
 - `RunSyncQueueRepository`: encapsula `runSyncQueueService` e agenda/processa sync por `sync.js`, sem criar fila paralela.
 - `TerritoryRepository`: encapsula `wayper_territories_v1`, eventos e leaderboards locais. `zones` e `@wayper_zones` ficam legados e so entram por chamada explicita.
-- `UserProfileRepository`: usa `wayper_profile_v3` como fallback local e trata Firestore/Storage como melhor esforco para dados publicos e avatar.
-- `RankingRepository`: diferencia ranking remoto, cache local e estado vazio. Ranking demo/mock nao deve aparecer como dado real.
+- `UserProfileRepository`: usa `wayper_profile_v3` como fallback local, combina estatisticas reais por `profileStats` e trata Firestore/Storage como melhor esforco para dados publicos e avatar.
+- `RankingRepository`: diferencia ranking remoto, cache local, local limitado, demo e estado vazio. Ranking demo/mock nao deve aparecer como dado real.
 - `ProgressionRepository`: encapsula XP, nivel, progresso agregado e eventos locais de XP em `wayper_user_progress_v1` e `wayper_xp_events_v1`.
 - `AchievementRepository`: encapsula catalogo, progresso e desbloqueios locais de conquistas em `wayper_achievements_v1` e `wayper_achievement_progress_v1`.
 - `LocalMetadataRepository` e `storageMigrationService`: registram schemaVersion por dominio, migrations executadas e storages legados sem apagar dados.
@@ -139,6 +139,19 @@ A base de XP, nivel e conquistas e local-first e nao depende obrigatoriamente de
 - Corrida por zonas pode gerar XP territorial quando houver area/captura/celulas validas ja salvas pela corrida.
 - Perfil e dashboard podem ler progresso local mesmo com Firestore indisponivel.
 - `src/services/xp/xpService.js`, `src/services/xp/territoryXp.js`, `MedalsWidget`, storage `medals` e `@wayper:medals_awarded_v1` ficam como legado/visual ate migracao explicita; nao sao a fonte oficial de progresso real.
+
+## Perfil e ranking local-first
+
+Desde 2026-06-15, perfil e ranking usam uma consolidacao local explicita antes de depender de dados remotos:
+
+- `src/repositories/profileStats.js` calcula estatisticas locais a partir de `RunRepository`, `TerritoryRepository`, `ProgressionRepository` e `AchievementRepository`.
+- Corridas ativas, `RUNNING`, `PAUSED`, `RECOVERING`, `FINISHING`, canceladas, removidas, invalidas ou suspeitas nao entram nas estatisticas do perfil.
+- Corridas pendentes ou com falha de sync contam como corridas locais reais; duplicatas por `localRunId`, `remoteRunId`, `id`, `runId` e `legacyId` nao inflam totais.
+- Perfil offline exibe nome/avatar/cache quando existirem, XP/nivel/conquistas locais, estatisticas de runs/territorios locais e contadores de pendencia/falha de sync.
+- Upload de avatar usa Firebase Storage como melhor esforco. Falha de Storage nao bloqueia salvar perfil localmente e nao deve apagar avatar local/cacheado.
+- Ranking local pode mostrar apenas o usuario do aparelho quando houver metrica real para o criterio pedido; se nao houver dados suficientes, retorna `source: "empty"`.
+- Ranking cacheado retorna `source: "cache"` e `updatedAt`; se houver linha local do usuario, ela pode sobrescrever apenas essa identidade sem duplicar o usuario.
+- Ranking demo so pode ser retornado com `source: "demo"`, opt-in explicito e ambiente dev. Demo nunca e fallback silencioso de erro remoto.
 
 ## Pontos que precisam ser definidos
 

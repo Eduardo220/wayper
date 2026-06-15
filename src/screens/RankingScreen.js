@@ -51,6 +51,12 @@ const getMetricValue = (item, mode, period) => {
   if (mode === "distance") {
     return safeNumber(period === "monthly" ? item.monthlyDistance ?? item.distance : item.distance);
   }
+  if (mode === "xp") {
+    return safeNumber(item.totalXp ?? item.xp);
+  }
+  if (mode === "runs") {
+    return safeNumber(item.totalRuns);
+  }
   return safeNumber(period === "monthly" ? item.monthlyArea ?? item.area : item.area);
 };
 
@@ -58,6 +64,8 @@ const getMetricLabel = (item, mode, period) => {
   const value = getMetricValue(item, mode, period);
   if (mode === "localLeaders" || mode === "cellsLed") return `${Math.round(value)} regioes`;
   if (mode === "stolenArea") return formatArea(value);
+  if (mode === "xp") return `${Math.round(value)} XP`;
+  if (mode === "runs") return `${Math.round(value)} corridas`;
   return mode === "distance" ? formatKm(value) : formatArea(value);
 };
 
@@ -66,6 +74,8 @@ const getMetricTitle = (mode) => {
   if (mode === "localLeaders") return "Lideres locais";
   if (mode === "stolenArea") return "Area retomada";
   if (mode === "cellsLed") return "Regioes lideradas";
+  if (mode === "xp") return "XP total";
+  if (mode === "runs") return "Corridas";
   return "Area capturada";
 };
 
@@ -225,7 +235,9 @@ export default function RankingScreen({ route, navigation }) {
         const normalized = normalizeRanking(result.data || [], mode, period);
         setRankingSource(result.source || RANKING_SOURCE.EMPTY);
         setData(normalized);
-        persistMyMonthlyPreview(normalized);
+        if (result.source !== RANKING_SOURCE.DEMO && normalized.length > 0) {
+          persistMyMonthlyPreview(normalized);
+        }
         if (result.error) {
           console.warn("Ranking load fallback:", result.error);
         }
@@ -299,7 +311,11 @@ export default function RankingScreen({ route, navigation }) {
     ? "cache"
     : rankingSource === RANKING_SOURCE.LOCAL
       ? "local"
-      : null;
+      : rankingSource === RANKING_SOURCE.DEMO
+        ? "demo"
+        : rankingSource === RANKING_SOURCE.EMPTY
+          ? "vazio"
+          : null;
   const subtitle = `${period === "monthly" ? `Mensal ${monthLabel}` : "Geral"} - ${scope === "regional" ? city : "Global"}${sourceLabel ? ` - ${sourceLabel}` : ""}`;
 
   const Header = useCallback(
@@ -395,6 +411,17 @@ export default function RankingScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
 
+          <View style={styles.modeRow}>
+            <TouchableOpacity activeOpacity={0.86} onPress={() => setMode("xp")} style={[styles.modeButton, mode === "xp" && styles.modeButtonActive]}>
+              <Ionicons name="sparkles-outline" size={18} color={mode === "xp" ? WayperTheme.colors.textInverse : WayperTheme.colors.primary} />
+              <Text style={[styles.modeText, mode === "xp" && styles.modeTextActive]}>XP</Text>
+            </TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.86} onPress={() => setMode("runs")} style={[styles.modeButton, mode === "runs" && styles.modeButtonActiveCyan]}>
+              <Ionicons name="walk-outline" size={18} color={mode === "runs" ? WayperTheme.colors.textInverse : WayperTheme.colors.cyan} />
+              <Text style={[styles.modeText, mode === "runs" && styles.modeTextActive]}>Corridas</Text>
+            </TouchableOpacity>
+          </View>
+
           {scope === "regional" ? (
             <View style={styles.inputShell}>
               <Ionicons name="business-outline" size={17} color={WayperTheme.colors.textSubtle} />
@@ -478,7 +505,7 @@ export default function RankingScreen({ route, navigation }) {
           )}
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={<Header />}
-          ListEmptyComponent={<EmptyRanking />}
+          ListEmptyComponent={<EmptyRanking source={rankingSource} />}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -493,12 +520,15 @@ export default function RankingScreen({ route, navigation }) {
   );
 }
 
-function EmptyRanking() {
+function EmptyRanking({ source }) {
+  const text = source === RANKING_SOURCE.EMPTY
+    ? "Sem dados reais para este criterio ainda."
+    : "Tente mudar os filtros ou atualizar o ranking.";
   return (
     <View style={styles.emptyCard}>
       <Ionicons name="search-outline" size={26} color={WayperTheme.colors.textSubtle} />
       <Text style={styles.emptyTitle}>Sem resultados</Text>
-      <Text style={styles.emptyText}>Tente mudar os filtros ou atualizar o ranking.</Text>
+      <Text style={styles.emptyText}>{text}</Text>
     </View>
   );
 }

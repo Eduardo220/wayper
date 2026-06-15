@@ -326,6 +326,34 @@ Impactos:
 - Experiência do usuário:
 ```
 
+## Registro adicional aprovado
+
+### Perfil e ranking local-first com source explicito
+
+Status: aprovada.
+
+Contexto:
+
+- Perfil precisava refletir corridas, territorios, XP e conquistas locais reais mesmo com Firestore indisponivel.
+- Ranking precisava abrir sem Firestore e diferenciar dado remoto, cache, local, vazio e demo.
+- Demo/mock nao pode mascarar falha remota nem aparecer como ranking real.
+
+Decisao:
+
+- Consolidar estatisticas locais em `profileStats`, lendo `RunRepository`, `TerritoryRepository`, `ProgressionRepository` e `AchievementRepository`.
+- `UserProfileRepository` mescla essa visao local no perfil local/cacheado.
+- `RankingRepository` retorna sempre `source`: `remote`, `cache`, `local`, `empty` ou `demo`.
+- Ranking local usa dados reais do proprio usuario e nao inventa oponentes.
+- Cache remoto pode receber overlay da linha local do proprio usuario sem duplicar identidade.
+- Upload de avatar por Storage e melhor esforco; falha preserva avatar local/cacheado.
+
+Impactos:
+
+- Perfil/ranking abrem offline ou com Firestore falhando.
+- Corrida ativa e `FINISHING` nao entram em estatisticas finalizadas.
+- Corridas pendentes/falhas de sync continuam contando como dado local real.
+- SQLite continua pendente de medicao futura se volume local crescer.
+
 ## Documentos relacionados
 
 - [[00-index]]

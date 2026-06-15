@@ -15,6 +15,28 @@ const normalizeLocalLeaderRanking = jest.fn((leaderboards = []) =>
   }))
 );
 const saveProfile = jest.fn(async (patch) => patch);
+const loadProfile = jest.fn(async () => ({
+  uid: "user-1",
+  displayName: "Local User",
+  username: "local",
+  avatar: "file://avatar.jpg",
+}));
+const getLocalProfileStats = jest.fn(async () => ({
+  source: "local",
+  userId: "user-1",
+  hasLocalData: false,
+  totalRuns: 0,
+  totalDistanceMeters: 0,
+  monthlyDistanceMeters: 0,
+  totalTerritoryAreaM2: 0,
+  monthlyAreaM2: 0,
+  totalCapturedCells: 0,
+  totalXp: 0,
+  xp: 0,
+  level: 1,
+  pendingSyncCount: 0,
+  progress: { userId: "user-1", totalXp: 0, xp: 0, level: 1 },
+}));
 const setDoc = jest.fn(async () => {});
 
 jest.unstable_mockModule("@react-native-async-storage/async-storage", () => ({
@@ -56,7 +78,12 @@ jest.unstable_mockModule("../../services/territory/index.js", () => ({
 }));
 
 jest.unstable_mockModule("../../services/profile/profileService.js", () => ({
+  loadProfile,
   saveProfile,
+}));
+
+jest.unstable_mockModule("../profileStats.js", () => ({
+  getLocalProfileStats,
 }));
 
 const repository = await import("../rankingRepository.js");
@@ -71,6 +98,29 @@ describe("rankingRepository", () => {
     fetchLocalLeadersRanking.mockResolvedValue([]);
     loadLocalTerritoryLeaderboards.mockResolvedValue([]);
     setDoc.mockResolvedValue(undefined);
+    loadProfile.mockResolvedValue({
+      uid: "user-1",
+      displayName: "Local User",
+      username: "local",
+      avatar: "file://avatar.jpg",
+    });
+    getLocalProfileStats.mockResolvedValue({
+      source: "local",
+      userId: "user-1",
+      hasLocalData: false,
+      totalRuns: 0,
+      totalDistanceMeters: 0,
+      monthlyDistanceMeters: 0,
+      totalTerritoryAreaM2: 0,
+      monthlyAreaM2: 0,
+      totalCapturedCells: 0,
+      totalXp: 0,
+      xp: 0,
+      level: 1,
+      pendingSyncCount: 0,
+      progress: { userId: "user-1", totalXp: 0, xp: 0, level: 1 },
+    });
+    delete globalThis.__DEV__;
   });
 
   test("retorna ranking remoto e grava cache identificado", async () => {
@@ -99,6 +149,7 @@ describe("rankingRepository", () => {
 
     expect(result.source).toBe("cache");
     expect(result.data).toEqual([{ id: "cached-user", monthlyArea: 90 }]);
+    expect(result.updatedAt).toBeTruthy();
   });
 
   test("nao retorna demo/mock como ranking real", async () => {
@@ -131,6 +182,90 @@ describe("rankingRepository", () => {
       id: "leader-1",
       cellsLedCount: 1,
     });
+  });
+
+  test("usa ranking local por XP quando remoto e cache nao existem", async () => {
+    getLocalProfileStats.mockResolvedValue({
+      source: "local",
+      userId: "user-1",
+      hasLocalData: true,
+      totalRuns: 2,
+      totalDistanceMeters: 1500,
+      totalTerritoryAreaM2: 0,
+      totalCapturedCells: 0,
+      totalXp: 180,
+      xp: 80,
+      level: 2,
+      updatedAt: "2026-06-15T10:00:00.000Z",
+      progress: { userId: "user-1", totalXp: 180, xp: 80, level: 2 },
+    });
+
+    const result = await repository.listRanking({
+      period: "all",
+      mode: "xp",
+      criterion: "xp",
+      allowCache: false,
+    });
+
+    expect(result.source).toBe("local");
+    expect(result.limited).toBe(true);
+    expect(result.data).toEqual([
+      expect.objectContaining({
+        id: "user-1",
+        name: "Local User",
+        totalXp: 180,
+        totalRuns: 2,
+        localOnly: true,
+      }),
+    ]);
+  });
+
+  test("cache remoto preserva outros usuarios e atualiza linha local sem duplicar", async () => {
+    fetchAllRanking.mockResolvedValue([
+      { id: "user-1", totalXp: 20, xp: 20 },
+      { id: "other", totalXp: 40, xp: 40 },
+    ]);
+    await repository.listRanking({ period: "all", mode: "xp", criterion: "xp" });
+    fetchAllRanking.mockResolvedValue([]);
+    getLocalProfileStats.mockResolvedValue({
+      source: "local",
+      userId: "user-1",
+      hasLocalData: true,
+      totalRuns: 3,
+      totalDistanceMeters: 2000,
+      totalTerritoryAreaM2: 0,
+      totalCapturedCells: 0,
+      totalXp: 90,
+      xp: 90,
+      level: 2,
+      updatedAt: "2026-06-15T10:00:00.000Z",
+      progress: { userId: "user-1", totalXp: 90, xp: 90, level: 2 },
+    });
+
+    const result = await repository.listRanking({ period: "all", mode: "xp", criterion: "xp" });
+
+    expect(result.source).toBe("cache");
+    expect(result.localOverlay).toBe(true);
+    expect(result.data).toHaveLength(2);
+    expect(result.data.find((item) => item.id === "user-1")).toMatchObject({
+      totalXp: 90,
+      localOverlay: true,
+    });
+  });
+
+  test("demo so aparece quando pedido explicitamente em dev", async () => {
+    globalThis.__DEV__ = true;
+
+    const result = await repository.listRanking({
+      period: "all",
+      mode: "distance",
+      criterion: "distance",
+      allowCache: false,
+      allowDemo: true,
+    });
+
+    expect(result.source).toBe("demo");
+    expect(result.data.every((item) => item.demo === true && item.source === "demo")).toBe(true);
   });
 
   test("persistMyMonthlyPreview salva local antes do remoto", async () => {

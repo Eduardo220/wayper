@@ -256,6 +256,27 @@ Regras:
 - Dados demo/mock nao entram no progresso real.
 - `medals`, `@wayper:medals_awarded_v1` e colecao remota `medals` sao legado visual; nao substituem `wayper_achievements_v1`.
 
+## estatisticas locais de perfil
+
+As estatisticas exibidas no perfil sao uma visao derivada, nao um novo storage. A consolidacao fica em `src/repositories/profileStats.js` e le fontes locais reais:
+
+| Fonte | Uso |
+| --- | --- |
+| `RunRepository` / `runs` | Total de corridas finalizadas, distancia, duracao, pace medio, melhor pace, maior corrida, corridas livres e corridas por zonas. |
+| `TerritoryRepository` / `wayper_territories_v1` | Area territorial atual, quantidade de territorios/zonas locais e celulas capturadas. |
+| `ProgressionRepository` / `wayper_user_progress_v1` | `totalXp`, `xp`, nivel e progresso para o proximo nivel. |
+| `AchievementRepository` / `wayper_achievements_v1` | Total de conquistas, conquistas desbloqueadas e conquistas recentes. |
+
+Regras da visao local:
+
+- Corrida ativa, `RUNNING`, `PAUSED`, `RECOVERING` ou `FINISHING` nao entra em estatistica finalizada.
+- Corrida invalida, cancelada, removida ou suspeita nao entra.
+- Corrida pendente de sync ou com `SYNC_FAILED` conta como dado local real.
+- Dedupe usa `localRunId`, `remoteRunId`, `id`, `runId` e `legacyId`.
+- Registros com `userId`/`ownerId` diferente do usuario atual nao entram.
+- Corrida livre nao soma territorio falso; area de corrida so entra quando `mode=zones`.
+- `pendingSyncCount` e `failedSyncCount` sao expostos para a UI sem apagar os dados locais.
+
 ## rankings
 
 Representa rankings agregados.
@@ -267,6 +288,18 @@ Representa rankings agregados.
 | `period` | string | `global`, `weekly`, `monthly`. |
 | `entries` | array | Lista resumida de usuários e pontuações. |
 | `updatedAt` | timestamp | Última atualização. |
+
+No app, `RankingRepository` sempre retorna origem explicita:
+
+| Source | Significado |
+| --- | --- |
+| `remote` | Dados vindos do service remoto de ranking e elegiveis para cache. |
+| `cache` | Ultimo ranking remoto salvo em `wayper:rankingCache:v1:*`; deve carregar `updatedAt`/`cachedAt`. |
+| `local` | Ranking limitado calculado com dados locais reais, normalmente apenas o usuario do aparelho ou leaderboards territoriais locais. |
+| `empty` | Sem dados reais suficientes para o criterio/periodo solicitado. |
+| `demo` | Dados de demonstracao, somente opt-in/dev; nunca substituem remoto/cache/local silenciosamente. |
+
+Ranking local por distancia usa `RunRepository`; por XP usa `ProgressionRepository`; por area/territorio usa `TerritoryRepository` e dados territoriais reais. Cache remoto pode ser combinado com a linha local do proprio usuario, mas a identidade do usuario nao pode aparecer duplicada.
 
 ## Metadados locais e repositories
 

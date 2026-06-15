@@ -119,6 +119,20 @@ Elementos esperados:
 - Status de validação.
 - Acesso ao detalhe da atividade.
 
+Complementos local-first:
+
+- Corridas livres e corridas por zonas.
+- Pace medio e melhores marcas quando houver dados confiaveis.
+- Conquistas locais desbloqueadas e progresso parcial.
+- Status local de sync/cache quando houver pendencias ou falhas.
+
+Comportamento offline:
+
+- A tela deve abrir com `UserProfileRepository`, sem depender obrigatoriamente de Firestore.
+- Estatisticas locais devem vir de `profileStats`, usando `RunRepository`, `TerritoryRepository`, `ProgressionRepository` e `AchievementRepository`.
+- Erro remoto nao deve apagar perfil local/cacheado.
+- Avatar remoto ou upload por Storage sao melhor esforco; falha nao deve quebrar a tela nem apagar avatar local/cacheado.
+
 ## Ranking futuro
 
 Ranking completo fica fora do MVP.
@@ -129,6 +143,14 @@ Quando implementado, deve permitir comparação por:
 - Distância.
 - Território conquistado.
 - Período.
+
+Comportamento local-first atual:
+
+- A tela deve consumir `RankingRepository`, nao Firestore direto.
+- O repository deve identificar a origem com `source`: `remote`, `cache`, `local`, `empty` ou `demo`.
+- Ranking cacheado/local/vazio precisa aparecer de forma honesta para o usuario.
+- Ranking local pode mostrar apenas o usuario do aparelho quando houver dado real para o criterio; nao deve inventar oponentes.
+- Demo/mock so pode aparecer identificado como `demo` e em fluxo dev/opt-in.
 
 Antes de ranking competitivo, revisar [[05-gps-e-validacao]] e [[06-xp-nivel-ranking]].
 
@@ -166,4 +188,3 @@ Qualquer mecânica de clans deve ser registrada em [[12-ideias-futuras]] antes d
 - [[04-regras-corrida]]
 - [[05-gps-e-validacao]]
 - [[09-arquitetura-tecnica]]
-

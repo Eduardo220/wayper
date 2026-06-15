@@ -239,3 +239,21 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Duplo clique nao cria duas corridas, dois watchers ou duas notificacoes.
 - GPS pode aquecer em paralelo ao inicio da corrida; qualidade ruim vira aviso/diagnostico, nao delay silencioso.
 - Corrida livre e corrida por zonas compartilham o mesmo guard e countdown.
+
+## ADR-017: Perfil e ranking local-first com origem explicita
+
+**Status:** aceito
+**Contexto:** perfil e ranking ja tinham fallback local/cacheado, mas as estatisticas do perfil ainda podiam depender de agregados legados do perfil remoto/local e o ranking local so cobria lideres territoriais. Isso deixava risco de Firestore indisponivel apagar contexto local, de mock/demo ser confundido com dado real e de corridas sincronizadas/localmente pendentes inflarem ou sumirem das estatisticas.
+**Decisao:** consolidar estatisticas locais em `src/repositories/profileStats.js`, consumindo `RunRepository`, `TerritoryRepository`, `ProgressionRepository` e `AchievementRepository`. `UserProfileRepository` passa a mesclar essa visao no perfil local/cacheado. `RankingRepository` passa a retornar `remote`, `cache`, `local`, `empty` ou `demo` de forma explicita, calculando uma linha local real para distancia, XP, area/territorio e numero de corridas quando houver dado suficiente.
+**Consequencias:**
+
+- Perfil abre sem Firestore e mostra estatisticas reais de corridas finalizadas locais, XP/nivel/conquistas locais e territorios atuais locais.
+- Corridas `RUNNING`, `PAUSED`, `RECOVERING` e `FINISHING` ficam fora das estatisticas finalizadas; corridas pendentes ou com falha de sync continuam contando como dado local real.
+- Dedupe de estatisticas usa `localRunId`, `remoteRunId`, `id`, `runId` e `legacyId`.
+- Corrida livre nao soma territorio falso; corrida por zonas usa area territorial real quando presente.
+- Ranking cacheado carrega `updatedAt`/`cachedAt` e pode receber overlay apenas da linha local do proprio usuario, sem duplicar identidade.
+- Ranking local nao inventa oponentes; se so houver o usuario local, a resposta e `source: "local"` e `limited: true`.
+- Ranking vazio retorna `source: "empty"` quando nao ha dado real suficiente para o criterio/periodo.
+- Ranking demo so aparece com `source: "demo"`, opt-in explicito e ambiente dev; erro remoto nunca cai para demo silencioso.
+- Upload de avatar usa Storage como melhor esforco; falha de upload preserva avatar local/cacheado e nao grava `file://` como avatar remoto.
+- AsyncStorage continua suficiente nesta etapa; se volume de runs/territorios tornar o calculo pesado, medir antes de migrar para SQLite ou agregados precomputados.

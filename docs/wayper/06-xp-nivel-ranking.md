@@ -119,6 +119,17 @@ Ranking inicial, se existir, deve ser simples:
 
 Ranking não deve definir posse competitiva de território no MVP.
 
+Regra local-first atual:
+
+- `RankingRepository` sempre retorna `source`: `remote`, `cache`, `local`, `empty` ou `demo`.
+- `remote` vem do service remoto de ranking e pode alimentar cache local.
+- `cache` vem de `wayper:rankingCache:v1:*`, deve carregar `updatedAt`/`cachedAt` e nao e ranking remoto atual.
+- `local` usa dados reais locais do proprio usuario e leaderboards territoriais locais quando existirem.
+- Ranking local por XP usa `ProgressionRepository`; por distancia/corridas usa `RunRepository`; por area/territorio usa `TerritoryRepository`.
+- Se so houver o usuario local, o ranking pode mostrar esse estado limitado, sem inventar adversarios.
+- Se nao houver dado real suficiente para o criterio/periodo, o retorno deve ser `empty`.
+- `demo` so pode aparecer por opt-in explicito em ambiente dev e nunca como fallback silencioso de erro remoto.
+
 ## Cuidados
 
 - Não recompensar GPS ruim.

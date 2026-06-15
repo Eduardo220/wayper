@@ -204,17 +204,23 @@ export default function ProfileScreen() {
     };
   }, [fadeAnim, loadAll, slideAnim]);
 
-  const displayAvatar = useMemo(() => avatarUri || userDoc?.avatar || DEFAULT_AVATAR, [avatarUri, userDoc]);
+  const displayAvatar = useMemo(
+    () => avatarUri || userDoc?.avatar || profile?.avatar || profile?.photoURL || DEFAULT_AVATAR,
+    [avatarUri, profile, userDoc]
+  );
 
   const stats = useMemo(() => {
     const p = profile || DEFAULT_PROFILE;
     const xp = safeNumber(p.xp);
     const nextLevelXp = Math.max(1, safeNumber(p.nextLevelXp, DEFAULT_PROFILE.nextLevelXp));
-    const progressPct = Math.min(100, Math.max(0, Math.round((xp / nextLevelXp) * 100)));
+    const progressPct = p.progressToNextLevelPct != null
+      ? Math.min(100, Math.max(0, Math.round(safeNumber(p.progressToNextLevelPct))))
+      : Math.min(100, Math.max(0, Math.round((xp / nextLevelXp) * 100)));
 
     return {
       level: safeNumber(p.level, 1),
       xp,
+      totalXp: safeNumber(p.totalXp),
       nextLevelXp,
       progressPct,
       totalDistance: safeNumber(p.totalDistance),
@@ -225,10 +231,16 @@ export default function ProfileScreen() {
       longestRun: safeNumber(p.longestRun),
       largestZone: safeNumber(p.largestZone),
       bestPace: p.bestPace,
+      averagePace: p.averagePace,
       weeklyPoints: safeNumber(p.weeklyPoints),
       monthlyPoints: safeNumber(p.monthlyPoints),
       globalPoints: safeNumber(p.globalPoints),
       lastUpdate: p.lastUpdate || null,
+      freeRuns: safeNumber(p.freeRuns),
+      zoneRuns: safeNumber(p.zoneRuns),
+      pendingSyncCount: safeNumber(p.pendingSyncCount),
+      failedSyncCount: safeNumber(p.failedSyncCount),
+      source: p.localProfileSource || (p.localFirstProgress ? "local" : "cache"),
       achievementsUnlocked: achievements.filter((item) => item.unlocked).length,
       achievementsTotal: achievements.length,
     };
@@ -288,14 +300,23 @@ export default function ProfileScreen() {
 
     setSaving(true);
     try {
-      let remoteAvatarUrl = avatarUri || userDoc?.avatar || DEFAULT_AVATAR;
-      const isRemoteAvatar = /^https?:\/\//i.test(remoteAvatarUrl);
+      const previousAvatar = userDoc?.avatar || profile?.avatar || profile?.photoURL || null;
+      let localAvatarUri = avatarUri || previousAvatar || null;
+      let remoteAvatarUrl = /^https?:\/\//i.test(String(localAvatarUri || ""))
+        ? localAvatarUri
+        : /^https?:\/\//i.test(String(previousAvatar || ""))
+          ? previousAvatar
+          : null;
+      const isRemoteAvatar = /^https?:\/\//i.test(String(localAvatarUri || ""));
+      let avatarUploadFailed = false;
 
       if (avatarUri && !isRemoteAvatar) {
         const upload = await uploadAvatarImage(avatarUri, `avatars/${uid}_${Date.now()}.jpg`);
         if (upload.data) {
           remoteAvatarUrl = upload.data;
+          localAvatarUri = upload.data;
         } else {
+          avatarUploadFailed = true;
           console.warn("[Profile] avatar upload failed", upload.error);
           Alert.alert("Aviso", "Nao consegui enviar o avatar. O restante do perfil sera salvo.");
         }
@@ -304,7 +325,9 @@ export default function ProfileScreen() {
       const result = await updateCurrentUserProfile({
         name: trimmedName,
         bio: bio.trim(),
-        avatar: remoteAvatarUrl,
+        avatar: localAvatarUri,
+        avatarLocalUri: localAvatarUri,
+        avatarRemoteUrl: remoteAvatarUrl,
         isPrivate,
         profileVisibility: isPrivate ? "private" : "public",
       });
@@ -314,17 +337,19 @@ export default function ProfileScreen() {
         ...(userDoc || {}),
         name: trimmedName,
         bio: bio.trim(),
-        avatar: remoteAvatarUrl,
+        avatar: remoteAvatarUrl || previousAvatar || null,
         isPrivate,
         profileVisibility: isPrivate ? "private" : "public",
       };
       setUserDoc((prev) => ({ ...(prev || {}), ...(updatedUserDoc || {}) }));
       setProfile(updatedProfile);
-      setAvatarUri(remoteAvatarUrl);
+      setAvatarUri(localAvatarUri);
       setEditing(false);
       Alert.alert(
-        result.error ? "Salvo localmente" : "Sucesso",
-        result.error ? "Perfil salvo no aparelho. O sync remoto sera tentado novamente depois." : "Perfil atualizado."
+        result.error || avatarUploadFailed ? "Salvo localmente" : "Sucesso",
+        result.error || avatarUploadFailed
+          ? "Perfil salvo no aparelho. O sync remoto sera tentado novamente depois."
+          : "Perfil atualizado."
       );
     } catch (error) {
       console.error("[Profile] saveChanges failed", error);
@@ -338,7 +363,7 @@ export default function ProfileScreen() {
     setEditing(false);
     setName(userDoc?.name || profile?.displayName || "");
     setBio(userDoc?.bio || "");
-    setAvatarUri(userDoc?.avatar || null);
+    setAvatarUri(userDoc?.avatar || profile?.avatar || null);
     setIsPrivate(!!userDoc?.isPrivate || userDoc?.profileVisibility === "private");
   }, [profile, userDoc]);
 
@@ -555,15 +580,16 @@ export default function ProfileScreen() {
         <SectionCard title="Recordes" icon="trophy-outline">
           <RecordRow icon="rocket-outline" label="Maior corrida" value={`${formatKm(stats.longestRun)} km`} />
           <RecordRow icon="speedometer-outline" label="Melhor pace" value={formatPace(stats.bestPace)} />
+          <RecordRow icon="analytics-outline" label="Pace medio" value={formatPace(stats.averagePace)} />
           <RecordRow icon="map-outline" label="Maior zona" value={formatArea(stats.largestZone)} accent="cyan" />
           <RecordRow icon="time-outline" label="Tempo total" value={formatDuration(stats.totalTime)} />
         </SectionCard>
 
         <SectionCard title="Ranking Wayper" icon="podium-outline">
           <View style={styles.pointsRow}>
-            <PointPill label="Semana" value={stats.weeklyPoints} />
-            <PointPill label="Mes" value={stats.monthlyPoints} />
-            <PointPill label="Global" value={stats.globalPoints} accent="cyan" />
+            <PointPill label="XP total" value={stats.totalXp} />
+            <PointPill label="Livre" value={stats.freeRuns} />
+            <PointPill label="Zonas" value={stats.zoneRuns} accent="cyan" />
           </View>
         </SectionCard>
 
@@ -642,6 +668,9 @@ export default function ProfileScreen() {
           </View>
           <InfoLine label="Email" value={auth.currentUser?.email || "--"} />
           <InfoLine label="Ultima atualizacao" value={formatDate(stats.lastUpdate)} />
+          <InfoLine label="Fonte dos dados" value={stats.source === "local" ? "Local" : "Cache local"} />
+          <InfoLine label="Pendencias de sync" value={String(stats.pendingSyncCount)} />
+          <InfoLine label="Falhas de sync" value={String(stats.failedSyncCount)} />
         </SectionCard>
 
         <SectionCard title="Conquistas" icon="medal-outline">

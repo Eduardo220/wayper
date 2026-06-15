@@ -159,7 +159,8 @@ Repositories atuais:
 - `RunRepository`: le/escreve historico local por `sync.js`; Firestore so entra no sync posterior.
 - `RunSyncQueueRepository`: agenda/processa fila oficial de runs por `runSyncQueueService`/`sync.js`.
 - `TerritoryRepository`: le/escreve storage local atual de territorios e separa zonas legadas de territorios atuais.
-- `UserProfileRepository`: retorna perfil local/cacheado quando remoto falha e tenta Firestore/Storage como melhor esforco.
+- `profileStats`: consolida estatisticas locais de perfil por `RunRepository`, `TerritoryRepository`, `ProgressionRepository` e `AchievementRepository`.
+- `UserProfileRepository`: retorna perfil local/cacheado quando remoto falha, mescla estatisticas locais reais e tenta Firestore/Storage como melhor esforco.
 - `RankingRepository`: retorna ranking remoto quando existir, cache quando disponivel, local quando aplicavel ou estado vazio identificado; mock/demo nao pode ser apresentado como ranking real.
 
 Chamadas Firestore ainda existentes devem ficar em services/repositories ate serem desacopladas:
@@ -176,8 +177,10 @@ Chamadas Firestore ainda existentes devem ficar em services/repositories ate ser
 Regra de falha:
 
 - Falha de Firestore nao deve apagar dado local nem impedir leitura de historico/detalhe.
-- Erro remoto em perfil/ranking deve virar cache, vazio controlado ou erro de repository identificado.
+- Erro remoto em perfil/ranking deve virar cache, local limitado, vazio controlado ou erro de repository identificado.
 - Mocks e demos precisam carregar `source: "demo"` ou equivalente, nunca serem tratados como dado real.
+- Cache de ranking precisa carregar `updatedAt`/`cachedAt`.
+- Upload de avatar por Storage e melhor esforco; falha nao deve apagar avatar local/cacheado nem gravar `file://` como avatar remoto.
 
 ## Territorios antes do Firestore
 
