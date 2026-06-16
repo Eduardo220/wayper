@@ -277,6 +277,72 @@ Regras da visao local:
 - Corrida livre nao soma territorio falso; area de corrida so entra quando `mode=zones`.
 - `pendingSyncCount` e `failedSyncCount` sao expostos para a UI sem apagar os dados locais.
 
+## Home social local-first
+
+`src/repositories/socialHomeRepository.js` monta a visao social de `Inicio`. A tela nao acessa Firestore diretamente e nao usa mock/demo como dado real.
+
+Campos principais da visao:
+
+| Campo | Origem | Observacao |
+| --- | --- | --- |
+| `profile` | `UserProfileRepository` | Perfil/avatar local/cacheado para o atalho "Seu story". |
+| `activeRun` | `activeRunTrackingService` | Apenas para navegar ao `Mapa` quando houver corrida preservada. |
+| `stories` | `wayper_run_stories_v1` | Stories locais/cacheados de corrida; remoto futuro deve entrar por repository. |
+| `friends` / `friendActivity` | `feedService` | Amigos reais/cacheados; presenca so aparece com dado de presenca. |
+| `feedItems` | `feedService` + `wayper_activity_feed_cache_v1` + stories locais | Atividades normalizadas para cards sociais. |
+| `myRecentRunsForStory` | `RunRepository` | Corridas finalizadas do usuario, sem ativa/`FINISHING`, para adicionar ao story. |
+| `pendingStoryUploads` | `wayper_run_stories_v1` | Stories locais com `syncStatus=PENDING_SYNC`. |
+| `source` | derivado | `remote`, `cache`, `local` ou `empty`; nunca `demo` na Home. |
+| `states` | derivado | Estados vazios/offline/cache para stories, amigos, feed e corridas postaveis. |
+
+### `wayper_run_stories_v1`
+
+Story local de corrida:
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `localId` | string | ID local do story. |
+| `remoteId` | string/null | ID remoto futuro, quando houver sync. |
+| `userId` | string | Dono do story. |
+| `actor` | object | Nome/avatar/username seguros para UI. |
+| `runLocalId` | string/null | Corrida local associada. |
+| `runRemoteId` | string/null | Corrida remota associada, se existir. |
+| `type` | string | `run_card` nesta etapa. |
+| `visibility` | string | `friends` por padrao. |
+| `createdAt` | ISO string | Criacao local. |
+| `expiresAt` | ISO string/null | Expiracao local opcional. |
+| `media` | object/null | Referencia futura a imagem/tracado, sem gerar remoto falso. |
+| `runSummary` | object | Resumo seguro da corrida, sem exigir rawPath. |
+| `syncStatus` | string | `PENDING_SYNC`, `SYNCED`, `SYNC_FAILED` ou `LOCAL_ONLY`. |
+| `source` | string | `local`, `cache` ou `remote`. |
+| `schemaVersion` | number | Versao do schema. |
+
+`runSummary` deve conter apenas identificadores e metricas seguras: `id/localRunId/remoteRunId`, `mode`, `distanceMeters`, `durationSeconds`, `paceSecondsPerKm`, `territoryAreaM2` quando `mode=zones`, `finishedAt`, `syncStatus` e `source`. Nao duplicar rota bruta se um preview/resumo resolver.
+
+### `wayper_activity_feed_cache_v1`
+
+Cache normalizado de feed para abrir a Home sem remoto:
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `id`/`activityId` | string | ID local/remoto do item. |
+| `remoteId` | string/null | ID remoto quando existir. |
+| `userId` | string | Autor da atividade. |
+| `type` | string | `run` ou `zone`. |
+| `createdAt` | ISO string | Data de exibicao. |
+| `payload`/campos normalizados | object | Metricas e preview seguros do feed. |
+| `source` | string | `remote`, `cache` ou `local`. |
+| `syncStatus`/`cacheStatus` | string/null | Status quando aplicavel. |
+| `schemaVersion` | number | Versao do schema. |
+
+Regras:
+
+- Falha remota nao apaga cache local.
+- Cache antigo deve aparecer como cache, nao como remoto.
+- Demo/mock so pode existir em fluxo dev opt-in fora da Home; `socialHomeRepository` filtra `demo`.
+- Story local vira item de feed local, mas continua `PENDING_SYNC` ate existir publicacao remota real.
+- Corrida ativa, `RUNNING`, `PAUSED`, `RECOVERING` ou `FINISHING` nao entra em `myRecentRunsForStory`.
+
 ## rankings
 
 Representa rankings agregados.
@@ -317,6 +383,8 @@ Storages locais preservados:
 | Leaderboards territoriais | `wayper_territory_leaderboards_v1` | Cache/local atual para lideres locais. |
 | Perfil | `wayper_profile_v3` | Cache/local do perfil e agregados. |
 | Ranking | `wayper:rankingCache:v1:*` | Cache identificado; nao substitui ranking real. |
+| Stories de corrida | `wayper_run_stories_v1` | Stories locais/cacheados da Home social. |
+| Feed social cacheado | `wayper_activity_feed_cache_v1` | Cache normalizado da Home social. |
 | Progresso/XP | `wayper_user_progress_v1` | Fonte local atual via `ProgressionRepository`. |
 | Eventos de XP | `wayper_xp_events_v1` | Auditoria local/idempotencia de XP. |
 | Conquistas desbloqueadas | `wayper_achievements_v1` | Fonte local atual via `AchievementRepository`. |

@@ -153,6 +153,35 @@ Desde 2026-06-15, perfil e ranking usam uma consolidacao local explicita antes d
 - Ranking cacheado retorna `source: "cache"` e `updatedAt`; se houver linha local do usuario, ela pode sobrescrever apenas essa identidade sem duplicar o usuario.
 - Ranking demo so pode ser retornado com `source: "demo"`, opt-in explicito e ambiente dev. Demo nunca e fallback silencioso de erro remoto.
 
+## Home social local-first
+
+Desde 2026-06-16, `Inicio` voltou a ser a Home social do app. A tela usa `src/repositories/socialHomeRepository.js` para compor stories, amigos recentes, feed de atividades e minhas corridas elegiveis para story, sem chamar Firestore diretamente.
+
+Fontes usadas:
+
+- `feedService` para feed remoto/cache/local, sempre com `allowDemo=false`.
+- `RunRepository` para listar minhas corridas finalizadas que podem virar story.
+- `UserProfileRepository` para perfil/avatar local/cacheado do usuario.
+- `activeRunTrackingService` apenas para detectar corrida ativa preservada e navegar para `Mapa`.
+- `wayper_run_stories_v1` para stories locais de corrida.
+- `wayper_activity_feed_cache_v1` para cache normalizado do feed social usado pela Home.
+
+Regras:
+
+- A Home mostra stories/feed somente quando existem dados reais, cacheados ou locais.
+- A Home nao inventa amigos, status online, stories ou atividades demo.
+- `online` so pode aparecer quando existe presenca real/cacheada; caso contrario a UI usa "Amigos recentes".
+- Firestore e melhor esforco; falha remota cai para cache/local/vazio sem apagar cache.
+- Adicionar ao story salva um story local `PENDING_SYNC`; nao finge publicacao remota.
+- Corrida ativa, pausada, recovering ou `FINISHING` nao pode ser adicionada ao story.
+- Corrida livre nao ganha territorio falso no feed; corrida por zonas preserva area real quando existir.
+- A Home nao reimplementa corrida ativa, GPS/path, sync de runs ou historico local.
+- A dashboard pessoal fica em `Dashboard` e `Perfil`, nao como conteudo principal de `Inicio`.
+
+## Dashboard pessoal local-first
+
+O trabalho de dashboard pessoal anterior continua util fora da Home. `homeDashboardRepository.js`, `profileStats.js`, `DashboardScreen` e `ProfileScreen` podem ser usados para resumo pessoal, XP, estatisticas, territorio, ranking e sync, desde que a primeira tela continue social.
+
 ## Pontos que precisam ser definidos
 
 - Regra exata de transformação de rota em zona.

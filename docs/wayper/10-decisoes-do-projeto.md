@@ -354,6 +354,36 @@ Impactos:
 - Corridas pendentes/falhas de sync continuam contando como dado local real.
 - SQLite continua pendente de medicao futura se volume local crescer.
 
+### Home principal social local-first
+
+Status: aprovada.
+
+Contexto:
+
+- `Inicio` e percebida como Home social, similar a apps de corrida com stories/feed/amigos.
+- Uma implementacao anterior transformou a Home em dashboard pessoal; essa visao continua util, mas pertence a Dashboard/Perfil.
+- Historico local, perfil/cache, feed e corrida ativa ja tinham fontes oficiais; a Home nao deve duplicar run/sync/GPS.
+- Firestore indisponivel nao pode apagar a Home nem trocar dados reais por demo/mock.
+
+Decisao:
+
+- Criar `socialHomeRepository` como facade da Home social.
+- `HomeScreen` consome `socialHomeRepository` e preserva drawer/`HomeHeader`.
+- Fontes da Home social: `feedService`, `RunRepository`, `UserProfileRepository`, `activeRunTrackingService`, `wayper_run_stories_v1` e `wayper_activity_feed_cache_v1`.
+- `feedService` roda na Home com `allowDemo=false`; demo/mock nao aparece como amigo, online fake, story ou atividade real.
+- "Adicionar ao story" cria story local a partir de corrida finalizada real, com status `PENDING_SYNC`, sem enviar nada silenciosamente para remoto.
+- A Home nao chama Firestore direto, nao reimplementa corrida ativa, nao recalcula GPS/path e nao cria storage paralelo de run/sync.
+- Acao principal continua/retoma corrida preservada navegando para `Mapa`, ou abre o mapa para iniciar corrida.
+- `homeDashboardRepository` permanece valido para Dashboard/Perfil, nao para a Home principal.
+
+Impactos:
+
+- Usuario novo ve estados vazios sociais uteis, nao cards pessoais falsos.
+- Corridas ativas, pausadas, recuperando ou `FINISHING` nao viram story nem card finalizado.
+- Story criado localmente aparece imediatamente e fica pendente de sync futura.
+- Falha remota cai para cache/local/empty sem apagar stories ou feed cacheado.
+- Dashboard pessoal segue acessivel fora da Home social.
+
 ## Documentos relacionados
 
 - [[00-index]]

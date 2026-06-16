@@ -2,7 +2,7 @@
 
 ## Objetivo visual
 
-O Wayper deve parecer um app esportivo, competitivo e moderno, com foco em mapa, progresso e sensação de conquista.
+O Wayper deve parecer um app esportivo, competitivo e moderno, com foco em mapa, progresso social e sensacao de conquista.
 
 ## Telas principais
 
@@ -10,44 +10,57 @@ O Wayper deve parecer um app esportivo, competitivo e moderno, com foco em mapa,
 | --- | --- |
 | Login | Entrar no app. |
 | Cadastro | Criar conta. |
-| Home/Menu | Acessar áreas principais. |
+| Home/Menu | Ser a entrada social do app, com stories, amigos recentes, feed de atividades e acoes rapidas discretas. |
 | Corrida | Iniciar, acompanhar e finalizar corrida. |
-| Mapa | Visualizar localização e zonas. |
-| Ranking | Comparar progresso com outros usuários. |
-| Perfil | Ver dados, estatísticas e conquistas. |
-| Amigos | Gerenciar conexões sociais. |
-| Grupo | Competição entre grupos/amigos. |
+| Mapa | Visualizar localizacao e zonas. |
+| Ranking | Comparar progresso com outros usuarios. |
+| Perfil | Ver dados, estatisticas e conquistas. |
+| Dashboard | Ver estatisticas pessoais, XP, territorio, ranking e sync. |
+| Amigos | Gerenciar conexoes sociais. |
+| Grupo | Competicao entre grupos/amigos. |
 
 ## Componentes importantes
 
-- Botão de iniciar corrida.
+- Botao de iniciar corrida.
 - Indicador de corrida ativa.
-- Cards de estatísticas.
+- Stories horizontais de corrida no topo da Home.
+- Card/lista de feed social com corridas livres, corridas por zonas, conquistas e atividades reais/cacheadas.
+- Atalho compacto para iniciar/continuar corrida.
+- Acao compacta "Adicionar ao story" com seletor de corridas finalizadas.
+- Dashboard pessoal em `Dashboard`/`Perfil`, nao como conteudo principal da Home.
+- Cards de estatisticas pessoais apenas fora da Home social.
+- Card discreto de sync pendente/falho quando aplicavel.
 - Lista de ranking.
-- Mapa com polígonos de zonas.
+- Mapa com poligonos de zonas.
 - Linha de rota.
 - Modal de resumo da corrida.
-- Alertas de permissão/localização.
+- Alertas de permissao/localizacao.
 
 ## Diretrizes de UX
 
-- Ação principal deve estar visível.
-- Tela de corrida não pode ser confusa.
+- Acao principal deve estar visivel.
+- Na Home, a acao principal deve ser compacta: continuar corrida preservada ou abrir o mapa para iniciar uma nova.
+- Home deve priorizar stories/feed social; estatisticas pessoais ficam em Perfil/Dashboard.
+- Tela de corrida nao pode ser confusa.
 - Feedback de GPS deve ser claro.
-- Não esconder erro técnico atrás de mensagem genérica inútil.
-- Ranking deve mostrar posição do usuário.
-- Mapa deve diferenciar área própria e área de outros usuários.
+- Nao esconder erro tecnico atras de mensagem generica inutil.
+- Ranking deve mostrar posicao do usuario.
+- Mapa deve diferenciar area propria e area de outros usuarios.
+- Home nao deve mostrar mock/demo como story, amigo, online, feed, progresso, ranking ou territorio real.
+- Bolinha/status online so aparece com presenca real/cacheada.
+- Sem avatar, usar placeholder local com iniciais em vez de imagem remota generica.
 
-## Estados obrigatórios
+## Estados obrigatorios
 
 Toda tela relevante deve prever:
 
 - Carregando.
 - Vazio.
 - Erro.
-- Sem internet, se aplicável.
-- Sem permissão de localização.
+- Sem internet, se aplicavel.
+- Sem permissao de localizacao.
 - Dados incompletos.
+- Na Home: sem stories, sem amigos, sem feed, offline/cache, usuario novo, sem corridas para postar e story local pendente de sync.
 
 ## Assets atuais
 
@@ -63,7 +76,7 @@ assets/screens/amigos.png
 assets/screens/group.png
 ```
 
-## Pendências
+## Pendencias
 
 - Definir paleta oficial.
 - Definir tipografia.

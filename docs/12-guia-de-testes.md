@@ -175,6 +175,44 @@ Checklist manual adicional:
 - [ ] Confirmar que ranking sem dados reais mostra estado vazio/cache identificado, nao mock real.
 - [ ] Confirmar que zonas legadas so aparecem onde o fluxo ainda chama leitura legada explicitamente.
 
+## Home social local-first
+
+Checklist manual:
+
+- [ ] Abrir `Inicio` com internet e confirmar stories/feed reais ou cacheados quando existirem.
+- [ ] Abrir `Inicio` sem internet/Firestore e confirmar que cache/local/vazio aparece sem quebrar.
+- [ ] Abrir sem amigos e confirmar estado honesto, sem amigos fake.
+- [ ] Abrir sem stories e confirmar estado vazio com acao para adicionar corrida.
+- [ ] Abrir sem feed e confirmar estado vazio sem atividade demo.
+- [ ] Confirmar que "online" so aparece quando ha presenca real/cacheada.
+- [ ] Tocar em `Seu story` e abrir o seletor de corridas.
+- [ ] Confirmar que o seletor lista minhas corridas finalizadas locais.
+- [ ] Confirmar que corrida ativa/`FINISHING` nao aparece no seletor.
+- [ ] Adicionar corrida finalizada ao story e confirmar story local `PENDING_SYNC`.
+- [ ] Tentar adicionar a mesma corrida de novo e confirmar que nao duplica.
+- [ ] Abrir story salvo localmente.
+- [ ] Abrir card de corrida do feed; se for de outro usuario, abrir detalhe seguro/read-only.
+- [ ] Testar corrida livre no feed sem territorio falso.
+- [ ] Testar corrida por zonas no feed com area quando existir.
+- [ ] Confirmar que Dashboard/Perfil ainda mostram estatisticas pessoais.
+- [ ] Confirmar que a Home nao domina a tela com XP, estatisticas, territorio, ranking ou sync pessoal.
+- [ ] Simular Firestore falhando e confirmar que cache/local nao e apagado.
+
+Cobertura automatizada esperada:
+
+- `socialHomeRepository` retorna `stories`, `friends`, `feedItems`, `myRecentRunsForStory`, `pendingStoryUploads`, `source` e estados vazios.
+- `socialHomeRepository` usa `feedService` com `allowDemo=false`.
+- Erro remoto retorna cache/local/vazio sem apagar cache.
+- `wayper_run_stories_v1` salva story local com `PENDING_SYNC`.
+- `wayper_activity_feed_cache_v1` preserva cache normalizado do feed.
+- Corrida ativa/`FINISHING` nao aparece em `myRecentRunsForStory`.
+- Corrida livre nao cria `territoryAreaM2` falso.
+- Corrida por zonas preserva area real no resumo.
+- Duplicata de story da mesma corrida nao cria novo registro sem opt-in.
+- Amigos/feed `demo` ou `mock-*` nao passam como dado real.
+- `feedService` nao injeta `DEV_MOCK_FRIENDS` sem opt-in explicito.
+- `homeDashboardRepository` continua testado como base de dashboard pessoal, nao como fonte principal da Home.
+
 ## Perfil e ranking local-first
 
 Checklist manual:

@@ -355,6 +355,8 @@ Desde 2026-06-06, a camada de acesso a dados passa a ter facades finas para redu
 - `src/repositories/profileStats.js`: consolida estatisticas locais de perfil/ranking a partir de runs, territorios, XP e conquistas reais.
 - `src/repositories/userProfileRepository.js`: encapsula perfil local/cacheado por `profileService`, mescla `profileStats` e trata Firestore/Storage como melhor esforco.
 - `src/repositories/rankingRepository.js`: encapsula ranking remoto/cache/local e identifica demo/vazio para nao mascarar ausencia de dado real.
+- `src/repositories/socialHomeRepository.js`: compoe a Home social local-first a partir de feed, stories locais, perfil e corrida ativa canonica, sem demo/mock silencioso.
+- `src/repositories/homeDashboardRepository.js`: compoe o dashboard pessoal local-first a partir dos repositories existentes, corrida ativa canonica e fila oficial de sync.
 - `src/repositories/localMetadataRepository.js` e `src/services/storage/storageMigrationService.js`: registram schemaVersion, migrations executadas e storages legados sem apagar dados.
 
 Territorio local-first:
@@ -372,6 +374,21 @@ Perfil/ranking local-first:
 - Dedupe de estatistica e ranking local usa `localRunId`, `remoteRunId`, `id`, `runId` e `legacyId`.
 - `RankingScreen` deve consumir `RankingRepository` e respeitar `source`: `remote`, `cache`, `local`, `empty` ou `demo`.
 - Ranking local limitado nao inventa usuarios; demo exige opt-in/dev e nunca mascara falha remota.
+
+Home social local-first:
+
+- `HomeScreen` deve consumir `socialHomeRepository` e manter Firestore fora da tela.
+- A Home compoe stories, amigos recentes, feed de atividades, perfil minimo e corrida ativa canonica sem criar storage paralelo de run/sync/GPS.
+- Corrida ativa/pausada vem de `activeRunTrackingService` e a Home apenas navega para `Mapa` com `activeRunOpenRequestId`.
+- "Adicionar ao story" deve listar apenas corridas finalizadas locais do `RunRepository`, excluindo `RUNNING`, `PAUSED`, `RECOVERING` e `FINISHING`.
+- Stories locais ficam em `wayper_run_stories_v1` com status `PENDING_SYNC`; feed social cacheado fica em `wayper_activity_feed_cache_v1`.
+- `feedService` deve operar na Home com `allowDemo=false`; demo/mock nao pode aparecer como amigo, online fake, story ou atividade real.
+- A Home nao deve renderizar MapLibre/rota pesada nem carregar detalhes completos de `rawPath`; detalhes ficam em Historico/Detalhe/Mapa.
+
+Dashboard pessoal local-first:
+
+- Dashboard/Perfil podem usar `homeDashboardRepository`, `profileStats` e facades de progresso/ranking/territorio.
+- Estatisticas pessoais, XP/conquistas, ultima corrida, territorio e retry de sync ficam fora da Home social principal.
 
 Regra de evolucao:
 

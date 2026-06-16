@@ -122,6 +122,18 @@ function isFinishedRunForStats(run = {}) {
   return true;
 }
 
+export {
+  belongsToUser as recordBelongsToUser,
+  getDistanceMeters as getRunDistanceMeters,
+  getDurationSeconds as getRunDurationSeconds,
+  getMode as getRunMode,
+  getTerritoryAreaFromRun,
+  getTimestamp as getRunTimestamp,
+  isFailedSync as isFailedSyncRecord,
+  isFinishedRunForStats,
+  isPendingSync as isPendingSyncRecord,
+};
+
 function mergeRunForStats(previous = null, run = {}) {
   if (!previous) return { ...run };
 

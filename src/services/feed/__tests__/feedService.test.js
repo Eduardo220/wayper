@@ -61,6 +61,7 @@ const { loadHomeFeedData } = await import("../feedService.js");
 describe("feedService", () => {
   beforeEach(() => {
     storage.clear();
+    delete global.__DEV__;
     getDocsShouldThrow = false;
     localRuns = [];
     localTerritories = [];
@@ -98,10 +99,13 @@ describe("feedService", () => {
 
   test("nao cria atividade demo quando remoto e storage local estao vazios", async () => {
     getDocsShouldThrow = true;
+    global.__DEV__ = true;
 
     const result = await loadHomeFeedData({ limit: 10 });
 
     expect(result.usedFallback).toBe(true);
+    expect(result.source).toBe("empty");
     expect(result.activities).toEqual([]);
+    expect(result.friends).toEqual([]);
   });
 });

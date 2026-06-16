@@ -43,6 +43,17 @@ const chunk = (list = [], size = 10) => {
 
 const uniq = (list = []) => Array.from(new Set(list.filter(Boolean)));
 
+const isExplicitDemoAllowed = (allowDemo = false) =>
+  allowDemo === true && typeof __DEV__ !== "undefined" && __DEV__;
+
+const isDemoFriend = (friend = {}) => {
+  const id = String(friend.id || friend.friendUid || friend.uid || "");
+  return friend.demo === true || friend.source === "demo" || id.startsWith("mock-");
+};
+
+const withoutDemoFriends = (friends = []) =>
+  (Array.isArray(friends) ? friends : []).filter((friend) => !isDemoFriend(friend));
+
 const toNumber = (value, fallback = null) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -581,19 +592,30 @@ async function calculateStreak(uid) {
   return count;
 }
 
-export async function loadActiveFriends(uid) {
+export async function loadActiveFriends(uid, options = {}) {
   if (!uid) return [];
+  const allowDemo = isExplicitDemoAllowed(options.allowDemo);
 
   try {
     const friendIds = await fetchFriendIds(uid);
     const profiles = await fetchProfilesMap(friendIds);
     const friends = friendIds.map((friendUid) => {
       const profile = profiles.get(friendUid) || {};
+      const presenceValue =
+        profile.online ??
+        profile.status?.state ??
+        profile.lastActiveAt ??
+        profile.lastSeen ??
+        profile.lastActivityAt ??
+        profile.lastUpdate ??
+        null;
+      const hasPresence = presenceValue != null;
       return {
         id: friendUid,
         friendUid,
         name: getDisplayName(profile, "Atleta"),
         avatar: getAvatar(profile, friendUid),
+        hasPresence,
         isActive:
           profile.online === true ||
           profile.status?.state === "online" ||
@@ -603,22 +625,23 @@ export async function loadActiveFriends(uid) {
 
     await setJsonCache(FRIENDS_CACHE_KEY, friends);
     if (friends.length) return friends;
-    return typeof __DEV__ !== "undefined" && __DEV__ ? DEV_MOCK_FRIENDS : [];
+    return allowDemo ? DEV_MOCK_FRIENDS.map((friend) => ({ ...friend, demo: true, source: "demo", hasPresence: true })) : [];
   } catch (error) {
     safeDevWarn("friends fallback", error?.message || error);
-    const cached = await getJsonCache(FRIENDS_CACHE_KEY, []);
+    const cached = withoutDemoFriends(await getJsonCache(FRIENDS_CACHE_KEY, []));
     if (cached.length) return cached;
-    return typeof __DEV__ !== "undefined" && __DEV__ ? DEV_MOCK_FRIENDS : [];
+    return allowDemo ? DEV_MOCK_FRIENDS.map((friend) => ({ ...friend, demo: true, source: "demo", hasPresence: true })) : [];
   }
 }
 
-export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
+export async function loadHomeFeedData({ limit = DEFAULT_LIMIT, allowDemo = false } = {}) {
   const currentUser = auth.currentUser;
   const uid = currentUser?.uid || null;
   let activities = [];
   let friends = [];
   let friendIds = [];
   let usedFallback = false;
+  let source = "empty";
   let mutedAuthorIds = new Set();
 
   if (uid) {
@@ -633,7 +656,7 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
   try {
     if (uid) {
       friendIds = await fetchFriendIds(uid);
-      friends = await loadActiveFriends(uid);
+      friends = await loadActiveFriends(uid, { allowDemo });
     }
 
     let rows = friendIds.length ? await fetchActivitiesForUsers(friendIds, limit) : [];
@@ -648,6 +671,7 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
     if (rows.length) {
       activities = filterMutedAuthors(await normalizeRows(rows, limit * 2)).slice(0, limit);
       await setJsonCache(FEED_CACHE_KEY, activities);
+      source = "remote";
     }
   } catch (error) {
     usedFallback = true;
@@ -659,16 +683,18 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
     if (cached.length) {
       activities = filterMutedAuthors(cached).slice(0, limit);
       usedFallback = true;
+      source = "cache";
     }
   }
 
   if (!activities.length) {
     activities = filterMutedAuthors(await loadLocalFallback(limit * 2)).slice(0, limit);
     usedFallback = true;
+    source = activities.length ? "local" : "empty";
   }
 
-  if (!friends.length && typeof __DEV__ !== "undefined" && __DEV__) {
-    friends = DEV_MOCK_FRIENDS;
+  if (!friends.length && isExplicitDemoAllowed(allowDemo)) {
+    friends = DEV_MOCK_FRIENDS.map((friend) => ({ ...friend, demo: true, source: "demo", hasPresence: true }));
   }
 
   const summary = buildSummary(activities, uid);
@@ -676,9 +702,10 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
 
   return {
     activities,
-    friends,
+    friends: isExplicitDemoAllowed(allowDemo) ? friends : withoutDemoFriends(friends),
     summary,
     streakDays,
+    source,
     usedFallback,
   };
 }

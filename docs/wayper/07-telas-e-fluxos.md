@@ -32,6 +32,37 @@ Regras:
 - O app deve tratar erro de login de forma clara.
 - Fluxo não deve bloquear entendimento inicial do produto mais do que o necessário.
 
+## Home / Inicio
+
+Funcao:
+
+- Ser a tela inicial social do app.
+- Mostrar atividade real de amigos, stories de corrida e feed, com dados locais/cacheados quando o remoto falhar.
+- Manter a acao de corrida acessivel, mas sem transformar a Home em dashboard pessoal.
+- Funcionar sem Firestore, usando dados locais/cacheados reais.
+
+Elementos esperados:
+
+- Header Wayper/Inicio com avatar e notificacoes.
+- Stories horizontais com "Seu story"/Adicionar e stories locais/remotos reais.
+- Amigos recentes ou ativos recentemente; indicador online somente quando houver presenca real.
+- Feed de atividades reais com mapa/rota compacta, curtidas/comentarios quando disponiveis e estado vazio honesto.
+- Acao compacta para iniciar corrida ou continuar/retomar corrida preservada.
+- Acao "Adicionar ao story" listando corridas locais finalizadas elegiveis.
+- Estados `remote`, `cache`, `local` e `empty` visiveis sem inventar usuarios, ranking ou atividade.
+- Dashboard pessoal fica fora da Home, em Dashboard/Perfil.
+
+Comportamento local-first:
+
+- A tela deve consumir `socialHomeRepository`, nao Firestore direto.
+- `socialHomeRepository` compoe `feedService`, `RunRepository`, `UserProfileRepository` e `activeRunTrackingService`.
+- Corrida ativa vem de `wayper:activeRun:v2` por `activeRunTrackingService` e apenas navega para `Mapa`.
+- O seletor de story usa corridas locais finalizadas do `RunRepository`; corrida ativa, pausada, recuperando ou `FINISHING` nao entra como story.
+- Story criado localmente fica em `wayper_run_stories_v1` com status `PENDING_SYNC` ate existir envio remoto.
+- Feed cacheado fica em `wayper_activity_feed_cache_v1` e pode alimentar a Home quando Firestore falhar.
+- Demo/mock nao entra como amigo, story, online fake, ranking, progresso, avatar ou atividade real.
+- Sem dados locais ou remotos, estados vazios devem ser claros e nao apagar a UI.
+
 ## Mapa
 
 Função:

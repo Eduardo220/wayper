@@ -51,6 +51,14 @@ Quando responder sobre o Wayper:
 - Para XP/progresso/conquistas, usar `ProgressionRepository` e `AchievementRepository` com os storages `wayper_user_progress_v1`, `wayper_xp_events_v1`, `wayper_achievements_v1` e `wayper_achievement_progress_v1`.
 - Nao usar `xpService`, `MedalsWidget`, `medals` ou `@wayper:medals_awarded_v1` como fonte de progresso real sem migracao explicita.
 - XP so deve ser aplicado apos corrida finalizada salva localmente; corrida ativa ou `FINISHING` nao gera XP.
+- Para `Inicio`/Home principal, usar `socialHomeRepository` como composicao social local-first; nao chamar Firestore direto na tela.
+- Home deve mostrar stories, amigos recentes/presenca real-cacheada e feed de atividades; nao deve virar dashboard pessoal.
+- Dashboard pessoal deve ficar em `Dashboard`, `Perfil` ou resumo dedicado, podendo reaproveitar `homeDashboardRepository`/`profileStats`.
+- Home nao deve mostrar demo/mock como story, amigo, online, feed, ranking real, progresso real, avatar real ou territorio real.
+- Home nao deve pausar/finalizar/retomar corrida diretamente; deve navegar para `Mapa` quando houver corrida ativa/pausada preservada.
+- Home nao deve renderizar mapa/rota pesada nem carregar `rawPath` para preview; detalhes ficam para Historico/Detalhe/Mapa.
+- "Adicionar ao story" deve usar `RunRepository`, salvar em `wayper_run_stories_v1` como `PENDING_SYNC`, excluir corrida ativa/`FINISHING` e nao fingir publicacao remota.
+- Feed social cacheado deve usar origem explicita (`remote`, `cache`, `local`, `empty`) e nunca cair em demo silencioso.
 - Nao adicionar SQLite sem ADR, medicao e plano incremental.
 
 ## Estilo de implementação

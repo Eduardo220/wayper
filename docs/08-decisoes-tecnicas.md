@@ -257,3 +257,22 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Ranking demo so aparece com `source: "demo"`, opt-in explicito e ambiente dev; erro remoto nunca cai para demo silencioso.
 - Upload de avatar usa Storage como melhor esforco; falha de upload preserva avatar local/cacheado e nao grava `file://` como avatar remoto.
 - AsyncStorage continua suficiente nesta etapa; se volume de runs/territorios tornar o calculo pesado, medir antes de migrar para SQLite ou agregados precomputados.
+
+## ADR-018: Home principal como feed social local-first
+
+**Status:** aceito
+**Contexto:** uma implementacao anterior transformou `Inicio` em dashboard pessoal com perfil, XP, estatisticas, ultima corrida, territorio, ranking, sync e atalhos. Esses dados sao uteis, mas o papel de produto da Home e social, no estilo feed/stories de corridas e atividades. Dados pessoais devem ficar em `Perfil`, `Dashboard` ou resumo dedicado.
+**Decisao:** refatorar `HomeScreen` para consumir `src/repositories/socialHomeRepository.js`. A Home passa a exibir stories de corrida, amigos recentes quando houver dado real/cacheado, feed social de atividades e a acao "Adicionar ao story" baseada em corridas finalizadas locais. `homeDashboardRepository.js` e `profileStats.js` ficam preservados para dashboard pessoal/perfil, mas deixam de ser o conteudo principal de `Inicio`.
+**Consequencias:**
+
+- `Inicio` volta a ser social e nao uma dashboard pessoal.
+- `socialHomeRepository` encapsula `feedService`, `RunRepository`, `UserProfileRepository`, `activeRunTrackingService`, `wayper_run_stories_v1` e `wayper_activity_feed_cache_v1`.
+- A tela nao chama Firestore diretamente; remoto e melhor esforco e falha remota cai para cache/local/vazio.
+- `feedService` nao retorna amigos mockados por padrao; demo exige opt-in dev explicito e ainda e filtrado pela Home.
+- Stories locais usam `syncStatus=PENDING_SYNC` e nao fingem publicacao remota.
+- A selecao de story lista apenas corridas finalizadas do usuario e exclui ativa/`FINISHING`.
+- Duplicar story da mesma corrida e bloqueado sem criar outro registro.
+- `online` so aparece quando ha dado de presenca real/cacheado; sem isso a UI fala em amigos recentes.
+- Corrida livre nao mostra territorio falso; corrida por zonas preserva area quando existir.
+- A Home preserva o atalho para `Mapa`, mas nao reimplementa corrida ativa, GPS/path, sync de runs ou historico.
+- `DashboardScreen` e `ProfileScreen` continuam responsaveis por estatisticas pessoais, XP, territorio, ranking e sync.

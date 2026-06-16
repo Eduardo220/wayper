@@ -17,7 +17,20 @@
 4. App carrega perfil do Firestore.
 5. Usuário entra na tela principal.
 
-## 3. Permissão de localização
+## 3. Home / Inicio
+
+1. Usuario entra no app e abre `Inicio`.
+2. App monta a Home social por `socialHomeRepository`, sem Firestore obrigatorio.
+3. App mostra stories de corrida reais/cacheados/locais, amigos recentes quando houver dado real/cacheado e feed social de atividades.
+4. Se existir corrida `RUNNING` ou `PAUSED` preservada em `wayper:activeRun:v2`, a acao compacta leva ao `Mapa` para continuar; a Home nao pausa/finaliza/retoma diretamente.
+5. Se nao existir corrida ativa, a acao compacta leva ao `Mapa` para iniciar uma corrida.
+6. Usuario toca em `Seu story` ou `Adicionar ao story`.
+7. App lista minhas corridas finalizadas vindas de `RunRepository`, excluindo ativa/`FINISHING`.
+8. Usuario seleciona uma corrida e o app salva story local em `wayper_run_stories_v1` com `syncStatus=PENDING_SYNC`.
+9. Se nao houver stories, amigos ou feed, a tela mostra estados vazios honestos sem inventar dados.
+10. Estatisticas pessoais, XP, territorio, ranking e sync ficam em `Perfil`/`Dashboard`, nao como foco principal de `Inicio`.
+
+## 4. Permissão de localização
 
 1. Usuário acessa tela de corrida/mapa.
 2. App solicita permissão de localização.
@@ -25,7 +38,7 @@
 4. Se negar, app mostra aviso claro e bloqueia início da corrida.
 5. Se a permissão for revogada depois, app deve tratar sem quebrar.
 
-## 4. Iniciar corrida
+## 5. Iniciar corrida
 
 1. Usuário toca em iniciar.
 2. App valida localização disponível.
@@ -33,7 +46,7 @@
 4. App mostra tempo, distância e rota.
 5. App mantém estado de corrida ativa.
 
-## 5. Finalizar corrida
+## 6. Finalizar corrida
 
 1. Usuário toca em finalizar.
 2. App para coleta de localização.
@@ -43,7 +56,7 @@
 6. App calcula zonas conquistadas.
 7. App mostra resumo.
 
-## 6. Visualizar mapa
+## 7. Visualizar mapa
 
 1. Usuário abre o mapa.
 2. App carrega localização atual.
@@ -52,14 +65,14 @@
 5. App desenha áreas no mapa.
 6. Usuário pode explorar regiões.
 
-## 7. Ranking
+## 8. Ranking
 
 1. Usuário acessa ranking.
 2. App carrega lista global ou por período.
 3. App destaca posição do usuário.
 4. App permite alternar critérios: área, zonas, distância.
 
-## 8. Perfil
+## 9. Perfil
 
 1. Usuário abre perfil.
 2. App mostra dados básicos.
@@ -67,7 +80,7 @@
 4. App mostra histórico/conquistas.
 5. Usuário pode editar dados permitidos.
 
-## 9. Grupos/amigos
+## 10. Grupos/amigos
 
 Fluxo ainda a validar.
 
