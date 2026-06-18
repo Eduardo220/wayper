@@ -45,6 +45,20 @@ function toOfflineStatus(status) {
   return OFFLINE_RUN_STATUS.RUNNING;
 }
 
+function isTerminalTrackingStatus(status) {
+  const raw = String(status || "").toUpperCase();
+  return raw === "FINISHED" || raw === "COMPLETED" || raw === "CANCELLED";
+}
+
+function canCheckpointTerminalSnapshot(context = {}) {
+  return (
+    context.allowTerminal === true ||
+    context.event === "run_finished_snapshot_saved" ||
+    context.reason === "before_finish" ||
+    context.reason === "finish"
+  );
+}
+
 async function getNetworkSnapshot() {
   try {
     const state = await NetInfo.fetch();
@@ -128,6 +142,15 @@ export async function flushActiveRunCheckpoint(context = {}) {
   try {
     const snapshot = await activeRunTrackingService.getActiveRunSnapshot?.();
     if (!snapshot?.activeRunId) return null;
+    if (isTerminalTrackingStatus(snapshot.status) && !canCheckpointTerminalSnapshot(context)) {
+      recordRunEvent("ACTIVE_RUN_TERMINAL_CHECKPOINT_SKIPPED", {
+        runId: snapshot.activeRunId,
+        status: snapshot.status,
+        reason: context.reason || "manual",
+        event: context.event || null,
+      });
+      return null;
+    }
 
     const network = context.network || (await getNetworkSnapshot());
     const checkpoint = buildOfflineCheckpointFromTrackingSnapshot(snapshot, {

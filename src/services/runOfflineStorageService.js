@@ -50,6 +50,10 @@ function toFiniteNumber(value, fallback = null) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function isStorageFullError(error) {
+  return /SQLITE_FULL|database or disk is full|quota/i.test(String(error?.message || error));
+}
+
 function toTimestampMs(value, fallback = Date.now()) {
   const number = Number(value);
   if (Number.isFinite(number) && number > 0) return number;
@@ -278,9 +282,11 @@ export async function saveActiveRun(run = {}) {
         source: "offline_storage",
       });
     } catch (error) {
+      const storageFull = isStorageFullError(error);
       recordRunSnapshotEvent("ACTIVE_RUN_SAVE_FAILED", normalized, {
         source: "offline_storage",
         error,
+        storageFull,
       });
       throw error;
     }
@@ -377,6 +383,20 @@ export async function updateActiveRun(patch = {}) {
         preservedDistanceMeters: distanceMeters,
       });
     }
+    const baseDurationMs = toFiniteNumber(base.durationMs, 0) ?? 0;
+    const patchDurationMs = toFiniteNumber(patch.durationMs, baseDurationMs) ?? baseDurationMs;
+    const durationMs = isLiveStatus(incomingStatus)
+      ? Math.max(baseDurationMs, patchDurationMs)
+      : patchDurationMs;
+    if (isLiveStatus(incomingStatus) && patchDurationMs < baseDurationMs) {
+      recordRunEvent("ACTIVE_RUN_ELAPSED_REGRESSION_BLOCKED", {
+        localRunId: incomingLocalRunId || base.localRunId,
+        status: incomingStatus,
+        previousElapsedMs: baseDurationMs,
+        incomingElapsedMs: patchDurationMs,
+        preservedElapsedMs: durationMs,
+      });
+    }
     const checkpoint = normalizeCheckpointFields(patch);
 
     const next = {
@@ -387,6 +407,7 @@ export async function updateActiveRun(patch = {}) {
       points,
       segments,
       distanceMeters,
+      durationMs,
       territoryData: patch.territoryData === undefined ? base.territoryData : patch.territoryData,
       updatedAt: nowIso(),
       checkpointAt: checkpoint.checkpointAt,
@@ -400,9 +421,11 @@ export async function updateActiveRun(patch = {}) {
         source: "offline_storage",
       });
     } catch (error) {
+      const storageFull = isStorageFullError(error);
       recordRunSnapshotEvent("ACTIVE_RUN_SAVE_FAILED", next, {
         source: "offline_storage",
         error,
+        storageFull,
       });
       throw error;
     }

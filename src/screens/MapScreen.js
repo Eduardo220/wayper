@@ -586,6 +586,8 @@ const MapScreen = ({ navigation, route }) => {
   const lastSmoothedLocationRef = useRef(null);
   const pendingSuspiciousPointRef = useRef(null);
   const currentRunIdRef = useRef(null);
+  const applyActiveRunSnapshotToUiRef = useRef(null);
+  const finishInFlightRef = useRef(false);
   const currentSegmentIdRef = useRef(0);
   const forceNextSegmentBreakRef = useRef(false);
   const routeBufferRef = useRef([]);
@@ -1355,7 +1357,14 @@ const MapScreen = ({ navigation, route }) => {
           activeRunTrackingService.recordLocation?.({
             ...locObj,
             source: "foreground",
-          }, { source: "foreground" }).catch((error) => {
+          }, { source: "foreground" }).then((snapshot) => {
+            if (snapshot?.activeRunId) {
+              applyActiveRunSnapshotToUiRef.current?.(snapshot, {
+                syncControls: false,
+                source: "foreground_point_saved",
+              });
+            }
+          }).catch((error) => {
             debug("active run snapshot point failed", error);
           });
         }
@@ -1791,20 +1800,20 @@ const MapScreen = ({ navigation, route }) => {
     const trackingState = session.getState?.() || {};
     const restoredTrustedPath = sanitizePath(trackingState.trustedPath || snapshot.trustedPath || snapshot.path || []);
     const previousTrustedPath = previousSameRun ? sanitizePath(savedPathRef.current || routeStateRef.current || []) : [];
-    const trustedPath = restoredTrustedPath.length > 0 ? restoredTrustedPath : previousTrustedPath;
+    let trustedPath = restoredTrustedPath.length > 0 ? restoredTrustedPath : previousTrustedPath;
     const restoredLiveSegments = sanitizeSegmentPaths(trackingState.liveRenderSegments || snapshot.routeSegments || snapshot.segments || []);
     const previousLiveSegments = previousSameRun ? sanitizeSegmentPaths(displaySegmentsRef.current || []) : [];
-    const liveSegments = restoredLiveSegments.length > 0 ? restoredLiveSegments : previousLiveSegments;
-    const livePath = limitPathForRendering(
+    let liveSegments = restoredLiveSegments.length > 0 ? restoredLiveSegments : previousLiveSegments;
+    let livePath = limitPathForRendering(
       liveSegments.length > 0
         ? flattenSegmentPaths(liveSegments)
         : sanitizePath(trackingState.liveRenderPath || snapshot.liveRenderPath || trustedPath),
       TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
     );
-    const segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
-    const durationSeconds = calculateActiveRunDurationSeconds(snapshot);
+    let segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
+    let durationSeconds = calculateActiveRunDurationSeconds(snapshot, { nowMs: Date.now() });
     const incomingDistanceMeters = Number(snapshot.distanceMeters ?? snapshot.distance ?? trackingState.stats?.distanceMeters ?? 0) || 0;
-    const distanceMeters = status === ACTIVE_RUN_STATUS.RUNNING && previousSameRun
+    let distanceMeters = status === ACTIVE_RUN_STATUS.RUNNING && previousSameRun
       ? Math.max(distanceRef.current || 0, incomingDistanceMeters)
       : incomingDistanceMeters;
     const previousRunStatus = runStatusRef.current;
@@ -1821,6 +1830,24 @@ const MapScreen = ({ navigation, route }) => {
         screen: "MapScreen",
       });
     }
+    if (
+      previousSameRun &&
+      status === ACTIVE_RUN_STATUS.RUNNING &&
+      restoredTrustedPath.length > 0 &&
+      restoredTrustedPath.length < previousTrustedPath.length
+    ) {
+      trustedPath = previousTrustedPath;
+      liveSegments = previousLiveSegments;
+      livePath = displayPathRef.current?.length
+        ? displayPathRef.current
+        : limitPathForRendering(previousTrustedPath, TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS);
+      segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
+      recordRunSnapshotEvent("RUN_UI_STATE_STALE_UPDATE_BLOCKED", snapshot, {
+        previousPoints: previousTrustedPath.length,
+        incomingPoints: restoredTrustedPath.length,
+        screen: "MapScreen",
+      });
+    }
     if (status === ACTIVE_RUN_STATUS.RUNNING && incomingDistanceMeters < (distanceRef.current || 0)) {
       devLog("RunGeometry", "distance preserved", {
         activeRunId: snapshot.activeRunId,
@@ -1832,6 +1859,23 @@ const MapScreen = ({ navigation, route }) => {
         incomingDistanceMeters,
         screen: "MapScreen",
       });
+      recordRunSnapshotEvent("RUN_UI_DISTANCE_REGRESSION_BLOCKED", snapshot, {
+        previousDistanceMeters: distanceRef.current,
+        incomingDistanceMeters,
+        screen: "MapScreen",
+      });
+    }
+    if (
+      previousSameRun &&
+      status === ACTIVE_RUN_STATUS.RUNNING &&
+      durationSeconds < (timeSecRef.current || 0)
+    ) {
+      recordRunSnapshotEvent("RUN_UI_ELAPSED_REGRESSION_BLOCKED", snapshot, {
+        previousElapsedMs: (timeSecRef.current || 0) * 1000,
+        incomingElapsedMs: durationSeconds * 1000,
+        screen: "MapScreen",
+      });
+      durationSeconds = timeSecRef.current || durationSeconds;
     }
 
     trackingSessionRef.current = session;
@@ -1872,6 +1916,19 @@ const MapScreen = ({ navigation, route }) => {
       nextStatus: runStatusRef.current,
       running: isLive,
       paused: isPaused,
+      screen: "MapScreen",
+    });
+    recordRunSnapshotEvent("RUN_UI_STATE_APPLIED", snapshot, {
+      previousStatus: previousRunStatus,
+      nextStatus: runStatusRef.current,
+      running: isLive,
+      paused: isPaused,
+      source: options.source || snapshot.source || null,
+      routePointsCount: trustedPath.length,
+      routeSegmentsCount: segmentSnapshot.length,
+      displayPointsCount: livePath.length,
+      distanceMeters,
+      elapsedMs: durationSeconds * 1000,
       screen: "MapScreen",
     });
     devLog("MapScreen", "hydrated route points count", {
@@ -1918,6 +1975,15 @@ const MapScreen = ({ navigation, route }) => {
     stopElapsedTimer,
     stopWatcherAndPolling,
   ]);
+
+  useEffect(() => {
+    applyActiveRunSnapshotToUiRef.current = applyActiveRunSnapshotToUi;
+    return () => {
+      if (applyActiveRunSnapshotToUiRef.current === applyActiveRunSnapshotToUi) {
+        applyActiveRunSnapshotToUiRef.current = null;
+      }
+    };
+  }, [applyActiveRunSnapshotToUi]);
 
   useEffect(() => {
     const unsubscribe = activeRunTrackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
@@ -2332,6 +2398,10 @@ const MapScreen = ({ navigation, route }) => {
           if (!activeSnapshot?.activeRunId) {
             throw new Error("activeRunTrackingService.startActiveRun returned empty snapshot");
           }
+          applyActiveRunSnapshotToUi(activeSnapshot, {
+            source: "run_started",
+            syncControls: false,
+          });
           activeRunStarted = true;
         } catch (activeRunError) {
           debug("startActiveRun service failed", activeRunError);
@@ -2411,7 +2481,7 @@ const MapScreen = ({ navigation, route }) => {
     [applyActiveRunSnapshotToUi, closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher, stopElapsedTimer, stopWatcherAndPolling]
   );
 
-  const pauseRun = useCallback(() => {
+  const pauseRun = useCallback(async () => {
     recordRunEvent("PAUSE_PRESSED", {
       runId: currentRunIdRef.current,
       status: runStatusRef.current,
@@ -2431,17 +2501,29 @@ const MapScreen = ({ navigation, route }) => {
       return;
     }
 
-    runningRef.current = false;
-    runStatusRef.current = "paused";
-    setPaused(true);
-    flushRouteBufferToState();
-    trackingSessionRef.current?.pause?.({ endedAt: Date.now() });
-    debugTracking("session_paused", {
-      runSessionId: currentRunIdRef.current,
-      segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
-      distanceMeters: distanceRef.current,
-    });
-    activeRunTrackingService.pauseActiveRun?.({ endedAtMs: Date.now() }).catch((error) => {
+    try {
+      flushRouteBufferToState();
+      const pausedSnapshot = await activeRunTrackingService.pauseActiveRun?.({
+        endedAtMs: Date.now(),
+        source: "MapScreen",
+      });
+      if (!pausedSnapshot?.activeRunId) {
+        throw new Error("activeRunTrackingService.pauseActiveRun returned empty snapshot");
+      }
+      applyActiveRunSnapshotToUi(pausedSnapshot, {
+        source: "pause_button",
+        syncControls: false,
+        forceSyncControls: false,
+      });
+      runningRef.current = false;
+      runStatusRef.current = "paused";
+      setPaused(true);
+      debugTracking("session_paused", {
+        runSessionId: currentRunIdRef.current,
+        segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
+        distanceMeters: distanceRef.current,
+      });
+    } catch (error) {
       debug("pauseActiveRun service failed", error);
       recordRunEvent("PAUSE_FAILED", {
         runId: currentRunIdRef.current,
@@ -2450,7 +2532,8 @@ const MapScreen = ({ navigation, route }) => {
         error,
         screen: "MapScreen",
       });
-    });
+      return;
+    }
     stopWatcherAndPolling();
     stopBackgroundLocationService();
     stopElapsedTimer();
@@ -2461,7 +2544,7 @@ const MapScreen = ({ navigation, route }) => {
       distance: distanceRef.current,
       screen: "MapScreen",
     });
-  }, [flushRouteBufferToState, paused, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
+  }, [applyActiveRunSnapshotToUi, flushRouteBufferToState, paused, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
 
   const resumeRun = useCallback(async () => {
     recordRunEvent("RESUME_PRESSED", {
@@ -2500,10 +2583,21 @@ const MapScreen = ({ navigation, route }) => {
         return;
       }
 
+      const resumedSnapshot = await activeRunTrackingService.resumeActiveRun?.({
+        startedAtMs: Date.now(),
+        source: "MapScreen",
+      });
+      if (!resumedSnapshot?.activeRunId) {
+        throw new Error("activeRunTrackingService.resumeActiveRun returned empty snapshot");
+      }
+      applyActiveRunSnapshotToUi(resumedSnapshot, {
+        source: "resume_button",
+        syncControls: false,
+        forceSyncControls: false,
+      });
       setPaused(false);
       runningRef.current = true;
       runStatusRef.current = "active";
-      trackingSessionRef.current?.resume?.({ startedAt: Date.now() });
       forceNextSegmentBreakRef.current = true;
       pendingSuspiciousPointRef.current = null;
       lastSmoothedLocationRef.current = null;
@@ -2512,7 +2606,6 @@ const MapScreen = ({ navigation, route }) => {
         segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
         nextSegmentStartsOnFirstAcceptedPoint: true,
       });
-      await activeRunTrackingService.resumeActiveRun?.({ startedAtMs: Date.now() });
 
       startElapsedTimer();
 
@@ -2558,7 +2651,7 @@ const MapScreen = ({ navigation, route }) => {
         screen: "MapScreen",
       });
     }
-  }, [paused, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]);
+  }, [applyActiveRunSnapshotToUi, paused, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]);
 
   const fadeOutRoute = useCallback(() => {
     return new Promise((resolve) => {
@@ -2605,6 +2698,15 @@ const MapScreen = ({ navigation, route }) => {
           fromRecovery: Boolean(opts.fromRecovery),
           screen: "MapScreen",
         });
+        if (finishInFlightRef.current) {
+          recordRunEvent("FINISH_FAILED", {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            reason: "finish_already_in_flight",
+            screen: "MapScreen",
+          });
+          return;
+        }
         if (!running && !runningRef.current && !opts.force) {
           recordRunEvent("FINISH_FAILED", {
             runId: currentRunIdRef.current,
@@ -2615,6 +2717,7 @@ const MapScreen = ({ navigation, route }) => {
           return;
         }
 
+        finishInFlightRef.current = true;
         runningRef.current = false;
         runStatusRef.current = "finishing";
         setRunning(false);
@@ -2633,7 +2736,33 @@ const MapScreen = ({ navigation, route }) => {
           checkpointAtMs: finishedAtMs,
         });
         const activeFinalSnapshot = await activeRunTrackingService.finishActiveRun?.({ finishedAtMs });
-        const totalDuration = Number(activeFinalSnapshot?.durationSeconds || timeSecRef.current || timeSec || 0);
+        const startedAtMs = Number(activeFinalSnapshot?.startedAtMs) ||
+          Date.parse(activeFinalSnapshot?.startedAt || trackingSessionRef.current?.state?.startedAt || "") ||
+          null;
+        const totalPausedMs = Number(
+          activeFinalSnapshot?.totalPausedMs ??
+          activeFinalSnapshot?.pausedDurationMs ??
+          activeFinalSnapshot?.totalPausedTime ??
+          0
+        ) || 0;
+        const lastLocationAtMs = Date.parse(
+          activeFinalSnapshot?.currentLocation?.timestamp ||
+          lastAcceptedLocationRef.current?.timestamp ||
+          ""
+        ) || null;
+        const storedDurationMs = Number(activeFinalSnapshot?.durationMs || activeFinalSnapshot?.elapsedMs || 0) ||
+          Number(activeFinalSnapshot?.durationSeconds || activeFinalSnapshot?.duration || 0) * 1000 ||
+          0;
+        const finishedElapsedMs = startedAtMs ? Math.max(0, finishedAtMs - startedAtMs - totalPausedMs) : 0;
+        const lastLocationElapsedMs = startedAtMs && lastLocationAtMs
+          ? Math.max(0, lastLocationAtMs - startedAtMs - totalPausedMs)
+          : 0;
+        const totalDuration = Math.round(Math.max(
+          storedDurationMs,
+          (timeSecRef.current || timeSec || 0) * 1000,
+          finishedElapsedMs,
+          lastLocationElapsedMs
+        ) / 1000);
         const trackingFinish = trackingSessionRef.current?.finishTrackingSession?.({
           durationMs: totalDuration * 1000,
           finishedAt: finishedAtMs,
@@ -2657,6 +2786,17 @@ const MapScreen = ({ navigation, route }) => {
         const stoppedRunSessionId = currentRunIdRef.current;
         const runId = stoppedRunSessionId || uid();
         const finishedAt = new Date(finishedAtMs).toISOString();
+        recordRunEvent("RUN_FINISH_FINAL_VALUES", {
+          runId,
+          finishedAt,
+          finishedAtMs,
+          elapsedMs: totalDuration * 1000,
+          distanceMeters: totalDistance,
+          acceptedPointsCount: path.length,
+          rawPointsCount: rawPath.length,
+          routeSegmentsCount: sanitizeTrackingSegments(activeFinalSnapshot?.routeSegments || activeFinalSnapshot?.segments || trackingFinish?.segments || []).length,
+          screen: "MapScreen",
+        });
         const avgSpeedKmh = totalDistance && totalDuration
           ? Number(((totalDistance / 1000) / (totalDuration / 3600)).toFixed(2))
           : 0;
@@ -2890,6 +3030,8 @@ const MapScreen = ({ navigation, route }) => {
           error: e,
           screen: "MapScreen",
         });
+      } finally {
+        finishInFlightRef.current = false;
       }
     },
     [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, flushRouteBufferToState, mode, territories]
@@ -2958,7 +3100,16 @@ const MapScreen = ({ navigation, route }) => {
         applyActiveRunSnapshotToUi(snapshot, {
           recovered: options.recovered,
           forceSyncControls: options.forceSyncControls !== false,
+          source: reason,
         });
+        if (reason === "notification_open") {
+          recordRunSnapshotEvent("RUN_NOTIFICATION_OPEN_RESTORE_COMPLETED", snapshot, {
+            screen: "MapScreen",
+            routePointsCount: snapshot.trustedPath?.length || snapshot.path?.length || 0,
+            distanceMeters: Number(snapshot.distanceMeters || snapshot.distance || 0) || 0,
+            elapsedMs: calculateActiveRunDurationSeconds(snapshot, { nowMs: Date.now() }) * 1000,
+          });
+        }
         return true;
       } finally {
         runtimeHydrationInFlightRef.current = false;

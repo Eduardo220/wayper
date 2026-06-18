@@ -108,6 +108,20 @@ Regra vigente desde 2026-06-04:
 - Legado vivo so pode ser aplicado depois de migrado para o snapshot canonico.
 - Depois que uma corrida finalizada entra no historico/fila local, os storages de corrida ativa devem ser limpos.
 
+### Consistencia visual e canonica
+
+Regra vigente desde 2026-06-17:
+
+- Mapa, card da corrida, timer, distancia, botoes, notificacao e storage devem derivar do mesmo snapshot reconciliado.
+- Se o mapa recebeu pontos novos, o layout da corrida nao pode continuar preso em snapshot antigo.
+- `elapsedMs` de uma corrida `RUNNING` nao pode usar `endedAt`/`endTimestamp` do segmento ativo.
+- Segmento ativo `RUNNING` deve permanecer aberto; `endedAt` so existe em pausa, cancelamento, encerramento ou fim real de segmento.
+- Restore de route chunks, abertura por notificacao e hydrate legado nao podem sobrescrever estado mais novo com snapshot velho.
+- Distancia canonica vem de `trustedPath` deduplicado ou de valor canonico monotonicamente preservado; rota visual limitada nao pode reduzir a distancia real.
+- Foreground e background podem entregar pontos proximos, mas o merge deve deduplicar por timestamp/coordenada/accuracy antes de recalcular distancia.
+- Ao finalizar, o tempo salvo deve ser o maior valor seguro entre storage, UI viva, `finishedAt - startedAt - totalPausedMs` e `lastLocationAt - startedAt - totalPausedMs`.
+- Se o storage falhar por falta de espaco, a corrida em memoria e o ultimo backup valido devem ser preservados e o erro precisa ficar auditavel.
+
 ### Auto-save e estados offline
 
 Estados praticos da corrida:

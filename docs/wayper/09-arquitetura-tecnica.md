@@ -169,6 +169,46 @@ Fluxo consolidado:
 
 `start -> snapshot canonico -> checkpoint legado -> pause/resume canonicos -> AppState/background checkpoint -> recovery via runRecoveryService -> finish canonico -> rascunho final legado -> saveLocalRun/enqueue -> limpeza dos storages ativos -> sync posterior`.
 
+### Reconciliacao canonica da corrida ativa
+
+Desde 2026-06-17, todo fluxo que pode alterar a corrida ativa deve passar pela reconciliacao central de `activeRunState` antes de atualizar UI, storage, notificacao ou mapa.
+
+Entradas cobertas:
+
+- pontos de foreground;
+- lotes da background task;
+- restore por app ativo/background;
+- abertura por notificacao;
+- hydrate legado;
+- restore de route chunks;
+- snapshot final.
+
+Regras invariantes:
+
+- `RUNNING` nunca calcula tempo por `segment.endedAt` ou `segment.endTimestamp`.
+- Tempo de `RUNNING` vem de `now - startedAt - totalPausedMs`; em recovery de GPS pode usar `lastLocationAt - startedAt - totalPausedMs`.
+- Tempo de `PAUSED` vem de `pausedAt - startedAt - totalPausedMs`.
+- Tempo final usa o maior valor seguro entre storage, `finishedAt`, `lastLocationAt` e UI viva.
+- Segmento ativo `RUNNING` com `reason: active`/`resume`/`gps_gap` e `endReason: null` deve ficar aberto, sem `endedAt`/`endTimestamp`.
+- Restore que encontrar segmento ativo fechado indevidamente deve limpar o fim e registrar `ACTIVE_SEGMENT_STALE_END_CLEARED` e `ACTIVE_SEGMENT_NORMALIZED`.
+- Snapshot antigo nao pode reduzir `elapsedMs`, `distanceMeters`, contagem de pontos ou geometria viva.
+- `trustedPath` deduplicado e a base comum para distancia, mapa, UI, notificacao, historico, XP e sync.
+- `displayPoints`/`liveRenderPath` podem simplificar renderizacao, mas nao podem reduzir distancia canonica.
+
+Eventos de auditoria esperados quando a reconciliacao corrige estado:
+
+- `ACTIVE_RUN_ELAPSED_REGRESSION_BLOCKED`;
+- `ACTIVE_RUN_DISTANCE_REGRESSION_BLOCKED`;
+- `ACTIVE_RUN_STALE_SNAPSHOT_BLOCKED`;
+- `RECOVERY_STALE_STATE_IGNORED`;
+- `RECOVERY_STATE_RECALCULATED`;
+- `RUN_POINTS_DEDUPED`;
+- `ROUTE_CHUNKS_DUPLICATE_POINTS_REMOVED`;
+- `RECOVERY_DISTANCE_RECALCULATED_FROM_DEDUPED_POINTS`;
+- `RUN_UI_ELAPSED_REGRESSION_BLOCKED`;
+- `RUN_UI_DISTANCE_REGRESSION_BLOCKED`;
+- `RUN_UI_STATE_STALE_UPDATE_BLOCKED`.
+
 ### Politica de auto-save e hardening
 
 Desde 2026-06-04, `runAutoSaveService` tambem protege a corrida ativa contra quedas entre eventos de GPS:
@@ -179,6 +219,8 @@ Desde 2026-06-04, `runAutoSaveService` tambem protege a corrida ativa contra que
 - Falhas repetidas de localizacao usam throttle para evitar escrita excessiva no AsyncStorage.
 - Todo checkpoint carrega `checkpointAtMs`; `runOfflineStorageService` ignora escrita viva mais antiga do mesmo `localRunId`.
 - Estado `FINISHING` e tratado como finalizado para recovery, nunca como corrida viva.
+- Checkpoint periodico nao deve regravar snapshot terminal (`FINISHED`, `COMPLETED`, `CANCELLED`) como corrida ativa; somente eventos de finalizacao podem persistir estado terminal.
+- Erros de storage cheio (`SQLITE_FULL`, `database or disk is full`, quota) devem ser registrados em `storageHealth` e `ACTIVE_RUN_SAVE_FAILED`, preservando snapshot em memoria e backup anterior quando possivel.
 
 Fluxo reforcado:
 

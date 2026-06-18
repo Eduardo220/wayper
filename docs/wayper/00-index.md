@@ -28,6 +28,7 @@ Tudo que define produto, regras de negócio, mecânicas de território, decisõe
 - [[12-ideias-futuras]]: ideias fora do MVP para evolução do produto.
 - [[13-problemas-conhecidos]]: riscos técnicos e problemas conhecidos.
 - [[14-glossario]]: termos usados na documentação e no produto.
+- [[15-checklist-validacao-corrida-ativa]]: roteiro de validacao fisica para corrida ativa, background, tela bloqueada, notificacao, recovery e finalizacao.
 
 ## Regra de atualização
 
@@ -40,4 +41,3 @@ Toda mudança relevante no comportamento do app deve atualizar a documentação 
 - Mudança em telas ou fluxo: atualize [[07-telas-e-fluxos]].
 - Mudança em Firestore: atualize [[08-firebase-firestore]] e registre decisão em [[10-decisoes-do-projeto]].
 - Mudança arquitetural: atualize [[09-arquitetura-tecnica]] e [[10-decisoes-do-projeto]].
-

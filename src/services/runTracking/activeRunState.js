@@ -56,6 +56,54 @@ function pointKey(point = {}) {
   ].join(":");
 }
 
+function toOptionalTimestampMs(value) {
+  if (value == null || value === "") return null;
+  if (Number.isFinite(Number(value))) return Number(value);
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function getPointTimestampMs(point = {}) {
+  return toOptionalTimestampMs(point.timestamp ?? point.time ?? point.t ?? point.createdAt ?? null);
+}
+
+function latestTimestampFromPath(path = []) {
+  return sanitizeRunPath(path).reduce((latest, point) => {
+    const timestamp = getPointTimestampMs(point);
+    return timestamp != null ? Math.max(latest, timestamp) : latest;
+  }, 0);
+}
+
+function getLatestLocationAtMs(snapshot = {}, segments = []) {
+  return Math.max(
+    latestTimestampFromPath(snapshot.trustedPath || snapshot.filteredPoints || snapshot.points || snapshot.path || []),
+    latestTimestampFromPath(snapshot.rawPath || snapshot.rawPoints || []),
+    latestTimestampFromPath(snapshot.liveRenderPath || snapshot.displayPoints || []),
+    latestTimestampFromPath(flattenSegmentsPath(segments, "trustedPath")),
+    latestTimestampFromPath(flattenSegmentsPath(segments, "rawPath")),
+    toOptionalTimestampMs(snapshot.currentLocation?.timestamp) || 0,
+    toOptionalTimestampMs(snapshot.lastValidPoint?.timestamp) || 0,
+    toOptionalTimestampMs(snapshot.lastLocationAt) || 0
+  ) || null;
+}
+
+function getStoredDurationMs(snapshot = {}) {
+  if (!snapshot || typeof snapshot !== "object") return 0;
+  const durationMs = Number(snapshot.durationMs ?? snapshot.elapsedMs);
+  if (Number.isFinite(durationMs) && durationMs > 0) return durationMs;
+  const durationSeconds = Number(snapshot.durationSeconds ?? snapshot.duration);
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0) return durationSeconds * 1000;
+  return 0;
+}
+
+function getExplicitPausedDurationMs(snapshot = {}) {
+  const pausedMs = Number(snapshot.pausedDurationMs ?? snapshot.totalPausedMs ?? snapshot.totalPausedTime);
+  return Number.isFinite(pausedMs) && pausedMs > 0 ? pausedMs : null;
+}
+
 function dedupeRunPath(path = []) {
   const seen = new Set();
   const output = [];
@@ -266,11 +314,34 @@ function normalizeStatus(status) {
   return Object.values(ACTIVE_RUN_STATUS).includes(raw) ? raw : ACTIVE_RUN_STATUS.RUNNING;
 }
 
-function normalizeSegments(segments = []) {
+function isOpenRunningSegmentEnd(segment = {}, status = null, index = 0, all = []) {
+  if (status !== ACTIVE_RUN_STATUS.RUNNING) return false;
+  if (index !== all.length - 1) return false;
+  if (segment.endReason != null) return false;
+  const reason = String(segment.reason || "").toLowerCase();
+  return !reason || reason === "active" || reason === "resume" || reason === "gps_gap";
+}
+
+function hasInvalidRunningSegmentEnd(segments = [], status = null) {
+  if (status !== ACTIVE_RUN_STATUS.RUNNING) return false;
+  const source = Array.isArray(segments) ? segments : [];
+  const last = source[source.length - 1];
+  if (!last) return false;
+  if (last.endReason != null) return false;
+  const reason = String(last.reason || "").toLowerCase();
+  const looksOpen = !reason || reason === "active" || reason === "resume" || reason === "gps_gap";
+  return looksOpen && (last.endedAt != null || last.endTimestamp != null);
+}
+
+function normalizeSegments(segments = [], options = {}) {
   const sourceSegments = Array.isArray(segments) ? segments : [];
-  return normalizeTrackSegments(sourceSegments).map((segment, index) => {
+  const hasStatus = options.status != null;
+  const status = hasStatus ? normalizeStatus(options.status) : null;
+  const normalizedSegments = normalizeTrackSegments(sourceSegments);
+  return normalizedSegments.map((segment, index) => {
     const source = sourceSegments[index] || {};
-    const hasExplicitEnd = source.endedAt != null || source.endReason != null;
+    const clearOpenEnd = isOpenRunningSegmentEnd(source, status, index, normalizedSegments);
+    const hasExplicitEnd = !clearOpenEnd && (source.endedAt != null || source.endReason != null);
     const segmentIndex = Number.isFinite(Number(segment.index)) ? Number(segment.index) : index;
     const rawPath = withSegmentId(segment.rawPath || segment.rawPoints || [], segmentIndex);
     const trustedPath = withSegmentId(segment.trustedPath || segment.filteredPoints || segment.path || [], segmentIndex);
@@ -287,7 +358,7 @@ function normalizeSegments(segments = []) {
       summaryRenderPath,
       displayPoints: summaryRenderPath,
       endedAt: hasExplicitEnd ? (source.endedAt ?? source.endTimestamp ?? segment.endedAt) : null,
-      endTimestamp: hasExplicitEnd ? (source.endTimestamp ?? source.endedAt ?? segment.endTimestamp) : (source.endTimestamp ?? segment.endTimestamp),
+      endTimestamp: hasExplicitEnd ? (source.endTimestamp ?? source.endedAt ?? segment.endTimestamp) : null,
     };
   });
 }
@@ -309,12 +380,87 @@ function sumSegmentsDurationMs(segments = [], options = {}) {
   }, 0);
 }
 
+function getSegmentStartMs(segment = {}) {
+  return toOptionalTimestampMs(segment.startedAt ?? segment.startTimestamp);
+}
+
+function getSegmentEndMs(segment = {}) {
+  return toOptionalTimestampMs(segment.endedAt ?? segment.endTimestamp);
+}
+
+function derivePausedDurationMs(snapshot = {}, segments = []) {
+  const explicit = getExplicitPausedDurationMs(snapshot);
+  if (explicit != null) return explicit;
+
+  const sorted = normalizeSegments(segments)
+    .map((segment) => ({
+      start: getSegmentStartMs(segment),
+      end: getSegmentEndMs(segment),
+    }))
+    .filter((segment) => segment.start != null)
+    .sort((a, b) => a.start - b.start);
+
+  let pausedMs = 0;
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previousEnd = sorted[index - 1].end;
+    const nextStart = sorted[index].start;
+    if (previousEnd != null && nextStart != null && nextStart > previousEnd) {
+      pausedMs += nextStart - previousEnd;
+    }
+  }
+  return pausedMs;
+}
+
+function getPausedAtMs(snapshot = {}, segments = [], nowMs = Date.now()) {
+  const explicit = toOptionalTimestampMs(snapshot.pausedAt ?? snapshot.pausedAtMs);
+  if (explicit != null) return explicit;
+  const ends = normalizeSegments(segments)
+    .map(getSegmentEndMs)
+    .filter((value) => value != null);
+  return ends.length > 0 ? Math.max(...ends) : nowMs;
+}
+
+function calculateStartedAtElapsedMs(snapshot = {}, segments = [], options = {}) {
+  const nowMs = Number(options.nowMs || Date.now());
+  const status = normalizeStatus(snapshot.status);
+  const startedAtMs = toTimestampMs(snapshot.startedAtMs ?? snapshot.startedAt, nowMs);
+  const pausedMs = derivePausedDurationMs(snapshot, segments);
+  const storedDurationMs = getStoredDurationMs(snapshot);
+  const latestLocationAtMs = getLatestLocationAtMs(snapshot, segments);
+
+  if (status === ACTIVE_RUN_STATUS.PAUSED) {
+    const pausedAtMs = getPausedAtMs(snapshot, segments, nowMs);
+    return Math.max(0, pausedAtMs - startedAtMs - pausedMs, storedDurationMs);
+  }
+
+  if (status === ACTIVE_RUN_STATUS.FINISHED) {
+    const finishedAtMs = toTimestampMs(
+      snapshot.finishedAtMs ?? snapshot.finishedAt ?? snapshot.endedAt,
+      latestLocationAtMs || nowMs
+    );
+    const finishedElapsedMs = Math.max(0, finishedAtMs - startedAtMs - pausedMs);
+    const lastLocationElapsedMs = latestLocationAtMs
+      ? Math.max(0, latestLocationAtMs - startedAtMs - pausedMs)
+      : 0;
+    return Math.max(storedDurationMs, finishedElapsedMs, lastLocationElapsedMs);
+  }
+
+  if (status === ACTIVE_RUN_STATUS.RUNNING || status === ACTIVE_RUN_STATUS.RECOVERING || status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE) {
+    const runningEndMs = options.useLastLocationAtForRunning && latestLocationAtMs
+      ? latestLocationAtMs
+      : Math.max(nowMs, latestLocationAtMs || 0);
+    return Math.max(0, runningEndMs - startedAtMs - pausedMs, storedDurationMs);
+  }
+
+  return null;
+}
+
 export function calculateActiveRunDurationMs(snapshot = {}, options = {}) {
   const nowMs = Number(options.nowMs || Date.now());
   const status = normalizeStatus(snapshot.status);
-  const segments = normalizeSegments(snapshot.segments || snapshot.routeSegments || []);
-  const segmentDuration = sumSegmentsDurationMs(segments, { nowMs, status });
-  if (segmentDuration > 0) return segmentDuration;
+  const segments = normalizeSegments(snapshot.segments || snapshot.routeSegments || [], { status });
+  const startedAtElapsed = calculateStartedAtElapsedMs(snapshot, segments, { ...options, nowMs });
+  if (startedAtElapsed != null) return startedAtElapsed;
 
   const startedAtMs = toTimestampMs(snapshot.startedAtMs ?? snapshot.startedAt, nowMs);
   const finishedAtMs =
@@ -340,7 +486,7 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
   const runId = base.activeRunId || base.id || createRunId(nowMs);
   const status = normalizeStatus(options.status || base.status || ACTIVE_RUN_STATUS.RUNNING);
   const state = session?.getState?.() || {};
-  let segments = normalizeSegments(state.segments || base.segments || []);
+  let segments = normalizeSegments(state.segments || base.segments || [], { status });
   let trustedPath = dedupeRunPath(state.trustedPath || state.filteredPoints || base.points || base.trustedPath || base.path || []);
   if (trustedPath.length === 0 && segments.length > 0) trustedPath = flattenSegmentsPath(segments, "trustedPath");
   let rawPath = dedupeRunPath(state.rawPath || state.rawPoints || base.rawPoints || base.rawPath || trustedPath);
@@ -354,6 +500,7 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
       summaryRenderPath: base.summaryRenderPath || base.renderPath || base.displayPoints || trustedPath,
       startedAtMs: base.startedAtMs || nowMs,
     });
+    segments = normalizeSegments(segments, { status });
   }
   const currentLocation = state.currentPosition || trustedPath[trustedPath.length - 1] || base.currentLocation || null;
   const baseDistance = Number(base.distanceMeters ?? base.distance ?? 0) || 0;
@@ -425,12 +572,15 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
   };
 }
 
-export function normalizeActiveRunSnapshot(snapshot = {}) {
+export function normalizeActiveRunSnapshot(snapshot = {}, options = {}) {
   if (!snapshot || typeof snapshot !== "object") return null;
+  const nowMs = Number(options.nowMs || Date.now());
   const status = normalizeStatus(snapshot.status);
-  const startedAtMs = toTimestampMs(snapshot.startedAtMs ?? snapshot.startedAt, Date.now());
+  const startedAtMs = toTimestampMs(snapshot.startedAtMs ?? snapshot.startedAt, nowMs);
   const runId = snapshot.activeRunId || snapshot.id || createRunId(startedAtMs);
-  let segments = normalizeSegments(snapshot.segments || snapshot.routeSegments || []);
+  const sourceSegments = snapshot.segments || snapshot.routeSegments || [];
+  const activeSegmentEndCleared = hasInvalidRunningSegmentEnd(sourceSegments, status);
+  let segments = normalizeSegments(sourceSegments, { status });
   let trustedPath = dedupeRunPath(snapshot.points || snapshot.trustedPath || snapshot.filteredPoints || snapshot.path || []);
   if (trustedPath.length === 0 && segments.length > 0) trustedPath = flattenSegmentsPath(segments, "trustedPath");
   let rawPath = dedupeRunPath(snapshot.rawPoints || snapshot.rawPath || trustedPath);
@@ -451,6 +601,7 @@ export function normalizeActiveRunSnapshot(snapshot = {}) {
       summaryRenderPath: snapshot.summaryRenderPath || snapshot.renderPath || snapshot.displayPath || displayPoints,
       startedAtMs,
     });
+    segments = normalizeSegments(segments, { status });
   }
   const finishedAtMs = snapshot.finishedAtMs || snapshot.finishedAt || snapshot.endedAt
     ? toTimestampMs(snapshot.finishedAtMs ?? snapshot.finishedAt ?? snapshot.endedAt, null)
@@ -462,8 +613,9 @@ export function normalizeActiveRunSnapshot(snapshot = {}) {
     segments,
     startedAtMs,
     finishedAtMs,
-  });
+  }, { nowMs });
   const pace = calculatePaceSecondsPerKm(durationSeconds, distance);
+  const lastUpdatedAtMs = toTimestampMs(snapshot.lastUpdatedAtMs ?? snapshot.lastUpdatedAt, nowMs);
 
   return {
     ...snapshot,
@@ -475,8 +627,8 @@ export function normalizeActiveRunSnapshot(snapshot = {}) {
     startedAt: snapshot.startedAt || nowIso(startedAtMs),
     finishedAtMs,
     finishedAt: snapshot.finishedAt || (finishedAtMs ? nowIso(finishedAtMs) : null),
-    lastUpdatedAtMs: toTimestampMs(snapshot.lastUpdatedAtMs ?? snapshot.lastUpdatedAt, Date.now()),
-    lastUpdatedAt: snapshot.lastUpdatedAt || nowIso(toTimestampMs(snapshot.lastUpdatedAtMs ?? snapshot.lastUpdatedAt, Date.now())),
+    lastUpdatedAtMs,
+    lastUpdatedAt: snapshot.lastUpdatedAt || nowIso(lastUpdatedAtMs),
     status,
     points: trustedPath,
     path: trustedPath,
@@ -500,22 +652,33 @@ export function normalizeActiveRunSnapshot(snapshot = {}) {
     synced: false,
     source: snapshot.source || "foreground",
     notificationBody: snapshot.notificationBody || DEFAULT_NOTIFICATION_BODY,
-    meta: snapshot.meta || {},
+    meta: {
+      ...(snapshot.meta || {}),
+      activeSegmentEndCleared: Boolean(snapshot.meta?.activeSegmentEndCleared || activeSegmentEndCleared),
+      activeSegmentNormalized: Boolean(snapshot.meta?.activeSegmentNormalized || activeSegmentEndCleared),
+    },
   };
 }
 
 export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapshot = null, options = {}) {
-  const existing = normalizeActiveRunSnapshot(existingSnapshot);
-  const incoming = normalizeActiveRunSnapshot(incomingSnapshot);
+  const nowMs = Number(options.nowMs || Date.now());
+  const previousStoredElapsedMs = getStoredDurationMs(existingSnapshot);
+  const incomingStoredElapsedMs = getStoredDurationMs(incomingSnapshot);
+  const existing = normalizeActiveRunSnapshot(existingSnapshot, { nowMs });
+  const incoming = normalizeActiveRunSnapshot(incomingSnapshot, { nowMs });
   if (!existing) return incoming;
   if (!incoming) return existing;
   if (existing.activeRunId !== incoming.activeRunId && options.replaceExisting === true) return incoming;
   if (existing.activeRunId !== incoming.activeRunId) return existing;
 
   const status = normalizeStatus(incoming.status || existing.status);
+  const trustedPathMergeInput = [...(existing.trustedPath || existing.path || []), ...(incoming.trustedPath || incoming.path || [])];
+  const rawPathMergeInput = [...(existing.rawPath || existing.rawPoints || []), ...(incoming.rawPath || incoming.rawPoints || [])];
   const mergedTrustedPath = mergeRunPaths(existing.trustedPath || existing.path || [], incoming.trustedPath || incoming.path || []);
   let mergedRawPath = mergeRunPaths(existing.rawPath || existing.rawPoints || mergedTrustedPath, incoming.rawPath || incoming.rawPoints || []);
   if (mergedRawPath.length < mergedTrustedPath.length) mergedRawPath = mergeRunPaths(mergedRawPath, mergedTrustedPath);
+  const dedupedTrustedPointsCount = Math.max(0, sanitizeRunPath(trustedPathMergeInput).length - mergedTrustedPath.length);
+  const dedupedRawPointsCount = Math.max(0, sanitizeRunPath(rawPathMergeInput).length - mergedRawPath.length);
   const incomingHasEmptyGeometry =
     countSegmentPoints(incoming.segments) === 0 &&
     sanitizeRunPath(incoming.trustedPath || incoming.path || []).length === 0 &&
@@ -545,11 +708,43 @@ export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapsho
     incoming.displayPoints,
     liveRenderPath
   );
+  const existingUpdatedAtMs = toTimestampMs(existing.lastUpdatedAtMs ?? existing.lastUpdatedAt ?? existing.updatedAt, 0);
+  const incomingUpdatedAtMs = toTimestampMs(incoming.lastUpdatedAtMs ?? incoming.lastUpdatedAt ?? incoming.updatedAt, 0);
+  const latestPointAtMs = Math.max(
+    getLatestLocationAtMs(existing, existing.segments) || 0,
+    getLatestLocationAtMs(incoming, incoming.segments) || 0,
+    latestTimestampFromPath(mergedTrustedPath)
+  );
+  const nextUpdatedAtMs = Math.max(existingUpdatedAtMs, incomingUpdatedAtMs, latestPointAtMs, nowMs);
+  const existingPointsCount = sanitizeRunPath(existing.trustedPath || existing.path || []).length;
+  const incomingPointsCount = sanitizeRunPath(incoming.trustedPath || incoming.path || []).length;
+  const staleSnapshotIgnored = Boolean(
+    isLiveStatus(status) &&
+    existingUpdatedAtMs > 0 &&
+    incomingUpdatedAtMs > 0 &&
+    incomingUpdatedAtMs < existingUpdatedAtMs &&
+    incomingPointsCount <= existingPointsCount &&
+    incomingDistance <= previousDistance
+  );
+  const previousElapsedMs = calculateActiveRunDurationMs(existing, { nowMs });
+  const incomingElapsedMs = calculateActiveRunDurationMs(incoming, { nowMs });
+  const elapsedPreserved = Boolean(
+    isLiveStatus(status) &&
+    (
+      (incomingElapsedMs > 0 && previousElapsedMs > 0 && incomingElapsedMs < previousElapsedMs) ||
+      (incomingStoredElapsedMs > 0 && previousStoredElapsedMs > 0 && incomingStoredElapsedMs < previousStoredElapsedMs)
+    )
+  );
+  const scalarBase = staleSnapshotIgnored
+    ? { ...incoming, ...existing }
+    : { ...existing, ...incoming };
 
   return normalizeActiveRunSnapshot({
-    ...existing,
-    ...incoming,
+    ...scalarBase,
     status,
+    lastUpdatedAtMs: nextUpdatedAtMs,
+    lastUpdatedAt: nowIso(nextUpdatedAtMs),
+    updatedAt: nowIso(nextUpdatedAtMs),
     points: mergedTrustedPath,
     path: mergedTrustedPath,
     trustedPath: mergedTrustedPath,
@@ -579,8 +774,115 @@ export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapsho
           (incomingDistance < previousDistance || mergedDistance < previousDistance)
         )
       ),
+      elapsedPreserved,
+      staleSnapshotIgnored,
+      staleSnapshotBlocked: staleSnapshotIgnored,
+      dedupedPoints: Boolean(
+        existing.meta?.dedupedPoints ||
+        incoming.meta?.dedupedPoints ||
+        dedupedTrustedPointsCount > 0 ||
+        dedupedRawPointsCount > 0
+      ),
+      dedupedTrustedPointsCount: Math.max(
+        Number(existing.meta?.dedupedTrustedPointsCount || 0),
+        Number(incoming.meta?.dedupedTrustedPointsCount || 0),
+        dedupedTrustedPointsCount
+      ),
+      dedupedRawPointsCount: Math.max(
+        Number(existing.meta?.dedupedRawPointsCount || 0),
+        Number(incoming.meta?.dedupedRawPointsCount || 0),
+        dedupedRawPointsCount
+      ),
     },
-  });
+  }, { nowMs });
+}
+
+function isLiveStatus(status) {
+  return [
+    ACTIVE_RUN_STATUS.RUNNING,
+    ACTIVE_RUN_STATUS.PAUSED,
+    ACTIVE_RUN_STATUS.RECOVERING,
+    ACTIVE_RUN_STATUS.ERROR_RECOVERABLE,
+  ].includes(normalizeStatus(status));
+}
+
+export function reconcileRunState({
+  currentState = null,
+  incomingState = null,
+  routeChunks = null,
+  gpsPoints = null,
+  now = Date.now(),
+  reason = "runtime",
+} = {}) {
+  const logs = [];
+  const gpsTrustedPath = sanitizeRunPath(gpsPoints || []);
+  const chunkTrustedPath = sanitizeRunPath(routeChunks?.trustedPath || routeChunks?.points || []);
+  const chunkRawPath = sanitizeRunPath(routeChunks?.rawPath || routeChunks?.rawPoints || chunkTrustedPath);
+  const externalTrustedPath = mergeRunPaths(chunkTrustedPath, gpsTrustedPath);
+  const externalRawPath = mergeRunPaths(chunkRawPath, gpsTrustedPath);
+  const incomingTrustedPath = incomingState
+    ? mergeRunPaths(
+        firstNonEmptyPath(incomingState.trustedPath, incomingState.points, incomingState.path),
+        externalTrustedPath
+      )
+    : externalTrustedPath;
+  const incomingRawPath = incomingState
+    ? mergeRunPaths(
+        firstNonEmptyPath(incomingState.rawPath, incomingState.rawPoints, incomingTrustedPath),
+        externalRawPath
+      )
+    : externalRawPath;
+  const incomingWithExternalGeometry = incomingState
+    ? {
+        ...incomingState,
+        trustedPath: incomingTrustedPath,
+        points: incomingTrustedPath,
+        path: incomingTrustedPath,
+        rawPath: incomingRawPath,
+        rawPoints: incomingRawPath,
+        routeChunksIndex: incomingState.routeChunksIndex || routeChunks?.routeChunksIndex || routeChunks || null,
+      }
+    : incomingState;
+
+  const nowMs = Number(now) || Date.now();
+  const current = normalizeActiveRunSnapshot(currentState, { nowMs });
+  const incoming = normalizeActiveRunSnapshot(incomingWithExternalGeometry, { nowMs });
+  const state = current?.activeRunId && incoming?.activeRunId
+    ? mergeActiveRunSnapshots(currentState, incomingWithExternalGeometry, { nowMs, reason })
+    : (incoming || current);
+
+  if (!state) return { state: null, logs };
+
+  if (state.meta?.activeSegmentEndCleared) {
+    logs.push({ event: "ACTIVE_SEGMENT_STALE_END_CLEARED", reason });
+    logs.push({ event: "ACTIVE_SEGMENT_NORMALIZED", reason });
+  }
+  if (state.meta?.staleSnapshotIgnored) {
+    logs.push({ event: "ACTIVE_RUN_STALE_SNAPSHOT_BLOCKED", reason });
+    logs.push({ event: "RECOVERY_STALE_STATE_IGNORED", reason });
+  }
+  if (state.meta?.elapsedPreserved) {
+    logs.push({ event: "ACTIVE_RUN_ELAPSED_REGRESSION_BLOCKED", reason });
+  }
+  if (state.meta?.distancePreserved) {
+    logs.push({ event: "ACTIVE_RUN_DISTANCE_REGRESSION_BLOCKED", reason });
+  }
+  if (state.meta?.dedupedPoints) {
+    logs.push({
+      event: "RUN_POINTS_DEDUPED",
+      reason,
+      dedupedTrustedPointsCount: Number(state.meta?.dedupedTrustedPointsCount || 0),
+      dedupedRawPointsCount: Number(state.meta?.dedupedRawPointsCount || 0),
+    });
+  }
+  if (logs.length > 0) {
+    logs.push({ event: "RECOVERY_STATE_RECALCULATED", reason });
+  }
+
+  return {
+    state,
+    logs,
+  };
 }
 
 export function createTrackingSessionFromSnapshot(snapshot = {}) {

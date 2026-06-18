@@ -212,4 +212,21 @@ describe("runAutoSaveService", () => {
     expect(checkpoint.status).toBe(ACTIVE_RUN_STATUS.FINISHED);
     expect(checkpoint.localRunId).toBe("run-autosave");
   });
+
+  test("checkpoint periodico nao regrava snapshot terminal como corrida ativa", async () => {
+    currentSnapshot = makeSnapshot({
+      status: "FINISHED",
+      finishedAtMs: BASE_TIME + 12_000,
+      finishedAt: iso(BASE_TIME + 12_000),
+    });
+    jest.useFakeTimers({ now: BASE_TIME + 15_000 });
+
+    startActiveRunAutoCheckpointing({
+      minIntervalMs: 0,
+      periodicIntervalMs: 1000,
+    });
+    await jest.advanceTimersByTimeAsync(1000);
+
+    expect(saveActiveRunSnapshot).not.toHaveBeenCalled();
+  });
 });
