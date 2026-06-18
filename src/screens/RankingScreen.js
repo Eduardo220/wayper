@@ -4,7 +4,6 @@ import {
   Alert,
   Animated,
   FlatList,
-  Image,
   RefreshControl,
   StyleSheet,
   Text,
@@ -21,9 +20,9 @@ import {
   listRanking,
   persistMyMonthlyPreview as persistMonthlyPreview,
 } from "../repositories/rankingRepository";
+import { EmptyState, OfflineState } from "../components/states";
+import HomeAvatar from "../components/Home/HomeAvatar";
 import { WayperTheme } from "../theme/wayperTheme";
-
-const DEFAULT_AVATAR = "https://i.pravatar.cc/150?u=wayper";
 
 const safeNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -92,7 +91,7 @@ const normalizeRanking = (list, mode, period) =>
   (Array.isArray(list) ? list : [])
     .map((item) => ({
       ...item,
-      avatar: item.avatar || item.photoURL || DEFAULT_AVATAR,
+      avatar: item.avatar || item.photoURL || null,
       name: item.name || item.displayName || item.username || "Atleta",
     }))
     .sort((a, b) => getMetricValue(b, mode, period) - getMetricValue(a, mode, period))
@@ -140,7 +139,7 @@ function RankItem({ item, mode, period, maxValue, isMe }) {
       </View>
 
       <View style={styles.avatarWrap}>
-        <Image source={{ uri: item.avatar }} style={styles.avatar} />
+        <HomeAvatar uri={item.avatar} name={item.name} size={58} />
         {isMe ? (
           <View style={styles.meDot}>
             <Ionicons name="person" size={10} color={WayperTheme.colors.textInverse} />
@@ -355,7 +354,7 @@ export default function RankingScreen({ route, navigation }) {
           {leader ? (
             <View style={styles.leaderPanel}>
               <View style={styles.leaderAvatarShell}>
-                <Image source={{ uri: leader.avatar }} style={styles.leaderAvatar} />
+                <HomeAvatar uri={leader.avatar} name={leader.name} size={58} />
               </View>
               <View style={styles.leaderBody}>
                 <Text style={styles.leaderLabel}>Lider atual</Text>
@@ -521,15 +520,24 @@ export default function RankingScreen({ route, navigation }) {
 }
 
 function EmptyRanking({ source }) {
-  const text = source === RANKING_SOURCE.EMPTY
-    ? "Sem dados reais para este criterio ainda."
-    : "Tente mudar os filtros ou atualizar o ranking.";
+  if (source === RANKING_SOURCE.CACHE || source === RANKING_SOURCE.LOCAL) {
+    return (
+      <OfflineState
+        title={source === RANKING_SOURCE.LOCAL ? "Ranking local limitado" : "Ranking em cache"}
+        description={source === RANKING_SOURCE.LOCAL
+          ? "Mostrando apenas dados reais deste aparelho. Nenhum atleta foi inventado para preencher a lista."
+          : "Voce esta vendo dados salvos localmente enquanto o ranking remoto nao responde."}
+        style={styles.emptyCard}
+      />
+    );
+  }
+
   return (
-    <View style={styles.emptyCard}>
-      <Ionicons name="search-outline" size={26} color={WayperTheme.colors.textSubtle} />
-      <Text style={styles.emptyTitle}>Sem resultados</Text>
-      <Text style={styles.emptyText}>{text}</Text>
-    </View>
+    <EmptyState
+      title="Sem ranking real ainda"
+      description="Finalize corridas ou troque o criterio. O Wayper nao usa demo como fallback silencioso."
+      style={styles.emptyCard}
+    />
   );
 }
 

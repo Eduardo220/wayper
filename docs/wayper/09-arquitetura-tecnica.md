@@ -23,6 +23,14 @@ Componentes principais:
 - Manter MVP simples e testável manualmente.
 - Documentar qualquer mudança relevante antes de ampliar a mecânica.
 
+## Onboarding, permissoes e estados de tela
+
+- `src/services/permissions.js` e a facade oficial para permissoes; novas telas nao devem pedir permissao diretamente se houver metodo equivalente ali.
+- `OnboardingScreen` e controlada por `wayper:onboarding:v1:completed` e nao dispara pedidos nativos de permissao.
+- `src/components/states` concentra `EmptyState`, `ErrorState`, `OfflineState`, `PermissionState`, `LoadingState` e `RetryState`.
+- Estados de tela devem diferenciar local/cache/vazio/remoto indisponivel sem expor termos tecnicos como Firestore ao usuario final.
+- Foreground location e bloqueante para iniciar/retomar corrida; background location e notificacao sao limitantes e devem ter copy de educacao antes do pedido.
+
 ## Separação sugerida
 
 ### `screens`

@@ -24,9 +24,7 @@ import {
 
 import { auth, db } from "../../firebaseConfig";
 import { WayperTheme } from "../../theme/wayperTheme";
-
-const DEFAULT_GROUP_AVATAR = "https://i.pravatar.cc/160?u=wayper_group_detail";
-const DEFAULT_USER_AVATAR = "https://i.pravatar.cc/150?u=wayper_member";
+import HomeAvatar from "../../components/Home/HomeAvatar";
 
 const safeNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -50,7 +48,7 @@ const normalizeGroup = (id, data = {}) => ({
 const normalizeUser = (id, data = {}) => ({
   id,
   uid: id,
-  avatar: data.avatar || data.photoURL || DEFAULT_USER_AVATAR,
+  avatar: data.avatar || data.photoURL || null,
   name: data.name || data.displayName || data.username || "Atleta Wayper",
   username: data.username || data.email?.split("@")?.[0] || "wayper",
   level: safeNumber(data.level, 1),
@@ -78,7 +76,7 @@ function GroupAvatar({ group }) {
   if (group?.avatar) {
     return (
       <View style={styles.groupAvatarFrame}>
-        <Image source={{ uri: group.avatar || DEFAULT_GROUP_AVATAR }} style={styles.groupAvatarImage} />
+        <Image source={{ uri: group.avatar }} style={styles.groupAvatarImage} />
       </View>
     );
   }
@@ -112,7 +110,7 @@ function MemberCard({ member, onPress }) {
 
   return (
     <TouchableOpacity activeOpacity={0.86} onPress={onPress} style={styles.memberCard}>
-      <Image source={{ uri: user?.avatar || DEFAULT_USER_AVATAR }} style={styles.memberAvatar} />
+      <HomeAvatar uri={user?.avatar || null} name={user?.name || member.nickname || member.uid} size={52} style={styles.memberAvatar} />
       <View style={styles.memberInfo}>
         <Text style={styles.memberName} numberOfLines={1}>{user?.name || member.nickname || member.uid}</Text>
         <Text style={styles.memberUsername} numberOfLines={1}>@{user?.username || "wayper"}</Text>

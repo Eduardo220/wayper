@@ -72,7 +72,6 @@ import {
   flushActiveRunCheckpoint,
   forceCheckpointForAppState,
 } from "../services/run/runAutoSaveService.js";
-import { ensureRunNotificationPermission } from "../services/run/runNotificationService.js";
 import {
   buildRunDataFromRecoveredRun,
   discardRecoveredRun,
@@ -122,8 +121,12 @@ import {
   checkBackgroundLocationPermission,
   checkLocationPermission,
   ensureLocationForRun,
+  markPermissionEducationSeen,
   openAppSettings,
+  PermissionName,
   requestBackgroundLocationPermission,
+  requestNotificationPermission,
+  shouldShowPermissionEducation,
 } from "../services/permissions";
 import {
   ACTIVE_RUN_STATUS,
@@ -499,6 +502,7 @@ const MapScreen = ({ navigation, route }) => {
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [locationPermission, setLocationPermission] = useState(null);
   const [runPermissionNoticeVisible, setRunPermissionNoticeVisible] = useState(false);
+  const [runLimitationNotice, setRunLimitationNotice] = useState(null);
   const [recoveryNoticeVisible, setRecoveryNoticeVisible] = useState(false);
   const [pendingRecovery, setPendingRecovery] = useState(null);
   const [recoveryModalVisible, setRecoveryModalVisible] = useState(false);
@@ -1523,9 +1527,30 @@ const MapScreen = ({ navigation, route }) => {
 
       if (Platform.OS === "android") {
         const currentBackground = await checkBackgroundLocationPermission();
-        const background = currentBackground.granted
-          ? currentBackground
-          : await requestBackgroundLocationPermission();
+        let background = currentBackground;
+
+        if (!currentBackground.granted) {
+          const shouldEducate = await shouldShowPermissionEducation(
+            PermissionName.LOCATION_BACKGROUND,
+            currentBackground
+          );
+
+          if (shouldEducate) {
+            await markPermissionEducationSeen(PermissionName.LOCATION_BACKGROUND);
+            if (mountedRef.current) {
+              setRunLimitationNotice({
+                type: "background",
+                title: "Corrida em segundo plano",
+                description: "Para registrar melhor com a tela bloqueada, permita localizacao o tempo todo. Sem isso, a corrida segue no app, mas o Android pode limitar pontos em background.",
+                status: currentBackground.status,
+                canAskAgain: currentBackground.canAskAgain !== false,
+              });
+            }
+            return;
+          }
+
+          background = await requestBackgroundLocationPermission();
+        }
 
         if (!background.granted && !backgroundPermissionWarnedRef.current) {
           recordRunEvent("LOCATION_PERMISSION_DENIED", {
@@ -1536,18 +1561,17 @@ const MapScreen = ({ navigation, route }) => {
             screen: "MapScreen",
           });
           backgroundPermissionWarnedRef.current = true;
-          Alert.alert(
-            "Corrida em segundo plano",
-            background.canAskAgain
-              ? "Para continuar registrando com o app minimizado, permita localizacao o tempo todo quando solicitado."
-              : "Para continuar registrando com o app minimizado, permita localizacao o tempo todo nas configuracoes do Android.",
-            background.canAskAgain
-              ? undefined
-              : [
-                  { text: "Agora nao", style: "cancel" },
-                  { text: "Abrir configuracoes", onPress: openAppSettings },
-                ]
-          );
+          if (mountedRef.current) {
+            setRunLimitationNotice({
+              type: "background",
+              title: background.canAskAgain ? "Background limitado" : "Background bloqueado",
+              description: background.canAskAgain
+                ? "A corrida foi iniciada, mas tela bloqueada pode registrar menos pontos. Voce pode permitir localizacao em segundo plano quando quiser."
+                : "A corrida foi iniciada, mas o Android bloqueou a permissao de segundo plano. Ajuste nas configuracoes para melhorar tela bloqueada.",
+              status: background.status,
+              canAskAgain: background.canAskAgain !== false,
+            });
+          }
         }
       }
 
@@ -2161,12 +2185,36 @@ const MapScreen = ({ navigation, route }) => {
 
         if (Platform.OS === "android") {
           try {
-            const notificationPermission = await ensureRunNotificationPermission({ request: true });
-            if (!notificationPermission.granted && mountedRef.current) {
-              Alert.alert(
-                "Notificacao da corrida",
-                "Sem permissao de notificacao, o Android pode ocultar o painel persistente da corrida. A corrida ainda pode ser iniciada, mas recomendamos permitir notificacoes para pausar e retomar pela barra do sistema."
-              );
+            const shouldEducateNotification = await shouldShowPermissionEducation(
+              PermissionName.NOTIFICATIONS
+            );
+            let notificationPermission = null;
+
+            if (shouldEducateNotification) {
+              await markPermissionEducationSeen(PermissionName.NOTIFICATIONS);
+              if (mountedRef.current) {
+                setRunLimitationNotice({
+                  type: "notification",
+                  title: "Notificacao da corrida",
+                  description: "A notificacao persistente ajuda a pausar e retomar pelo Android. Se voce negar, a corrida segue no app, mas os controles fora da tela podem nao aparecer.",
+                  status: "education",
+                  canAskAgain: true,
+                });
+              }
+            } else {
+              notificationPermission = await requestNotificationPermission();
+            }
+
+            if (notificationPermission && !notificationPermission.granted && mountedRef.current) {
+              setRunLimitationNotice({
+                type: "notification",
+                title: notificationPermission.canAskAgain === false ? "Notificacao bloqueada" : "Notificacao desativada",
+                description: notificationPermission.canAskAgain === false
+                  ? "A corrida continua preservada no aparelho, mas a notificacao persistente precisa ser liberada nas configuracoes."
+                  : "A corrida continua, mas o Android pode ocultar o painel persistente e os controles de pausa/retomada.",
+                status: notificationPermission.status,
+                canAskAgain: notificationPermission.canAskAgain !== false,
+              });
             }
           } catch (notificationError) {
             recordRunEvent("START_FAILED", {
@@ -2177,6 +2225,15 @@ const MapScreen = ({ navigation, route }) => {
               level: "warn",
               screen: "MapScreen",
             });
+            if (mountedRef.current) {
+              setRunLimitationNotice({
+                type: "notification",
+                title: "Notificacao indisponivel",
+                description: "Nao foi possivel validar a notificacao agora. A corrida segue localmente; controle pela barra do Android pode ficar indisponivel.",
+                status: "unknown",
+                canAskAgain: true,
+              });
+            }
           }
         }
 
@@ -4827,6 +4884,67 @@ const MapScreen = ({ navigation, route }) => {
             secondaryAction={{
               label: "Voltar",
               onPress: () => setRunPermissionNoticeVisible(false),
+            }}
+            style={styles.permissionNoticeModal}
+          />
+        </View>
+      </Modal>
+
+      <Modal visible={!!runLimitationNotice} transparent animationType="fade" onRequestClose={() => setRunLimitationNotice(null)}>
+        <View style={styles.permissionOverlay}>
+          <PermissionNotice
+            permissionType={runLimitationNotice?.type === "notification" ? "notification" : "background"}
+            required={false}
+            title={runLimitationNotice?.title || "Corrida com limitacao"}
+            description={runLimitationNotice?.description || "A corrida continua preservada no aparelho, mas este recurso pode ficar limitado."}
+            status={runLimitationNotice?.status}
+            canAskAgain={runLimitationNotice?.canAskAgain !== false}
+            primaryAction={{
+              label: runLimitationNotice?.canAskAgain === false ? "Abrir configuracoes" : "Permitir agora",
+              onPress: async () => {
+                if (runLimitationNotice?.canAskAgain === false) {
+                  await openAppSettings();
+                  return;
+                }
+
+                if (runLimitationNotice?.type === "notification") {
+                  const permission = await requestNotificationPermission({ force: true });
+                  if (permission.granted) {
+                    setRunLimitationNotice(null);
+                    return;
+                  }
+                  setRunLimitationNotice((current) => ({
+                    ...(current || {}),
+                    title: permission.canAskAgain === false ? "Notificacao bloqueada" : "Notificacao desativada",
+                    status: permission.status,
+                    canAskAgain: permission.canAskAgain !== false,
+                    description: permission.canAskAgain === false
+                      ? "Libere notificacoes nas configuracoes para ver o painel persistente da corrida."
+                      : "A corrida segue no app. Voce pode tentar permitir notificacoes mais tarde.",
+                  }));
+                  return;
+                }
+
+                const permission = await requestBackgroundLocationPermission();
+                if (permission.granted) {
+                  setRunLimitationNotice(null);
+                  await startBackgroundLocationService();
+                  return;
+                }
+                setRunLimitationNotice((current) => ({
+                  ...(current || {}),
+                  title: permission.canAskAgain === false ? "Background bloqueado" : "Background limitado",
+                  status: permission.status,
+                  canAskAgain: permission.canAskAgain !== false,
+                  description: permission.canAskAgain === false
+                    ? "Libere localizacao em segundo plano nas configuracoes para melhorar tela bloqueada."
+                    : "A corrida segue no app. Tela bloqueada pode registrar menos pontos.",
+                }));
+              },
+            }}
+            secondaryAction={{
+              label: "Continuar no app",
+              onPress: () => setRunLimitationNotice(null),
             }}
             style={styles.permissionNoticeModal}
           />

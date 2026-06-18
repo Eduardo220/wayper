@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, Image, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, StyleSheet, Text, View } from "react-native";
 import { collection, doc, getDoc, getDocs } from "firebase/firestore";
 
 import { db } from "../../firebaseConfig";
 import { colors } from "../../theme/colors";
+import HomeAvatar from "../Home/HomeAvatar";
 
 export default function GroupMembersList({ groupId }) {
   const [members, setMembers] = useState(null);
@@ -58,7 +59,12 @@ export default function GroupMembersList({ groupId }) {
 
   const render = ({ item }) => (
     <View style={styles.row}>
-      <Image source={{ uri: item.user?.avatar || "https://i.pravatar.cc/150" }} style={styles.avatar} />
+      <HomeAvatar
+        uri={item.user?.avatar || item.user?.photoURL || null}
+        name={item.user?.name || item.nickname || item.uid}
+        size={44}
+        style={styles.avatar}
+      />
       <View style={styles.memberInfo}>
         <Text style={styles.name}>{item.user?.name || item.nickname || item.uid}</Text>
         <Text style={styles.small}>{item.role}</Text>

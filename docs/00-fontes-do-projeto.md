@@ -36,6 +36,7 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 | Testes | `docs/12-guia-de-testes.md` |
 | Bugs conhecidos | `docs/13-bugs-conhecidos.md` |
 | Instruções para IA | `docs/14-instrucoes-para-ia.md` |
+| Onboarding, permissoes e estados vazios | `docs/23-onboarding-permissoes-estados-vazios.md` |
 
 ## Como manter isso útil
 

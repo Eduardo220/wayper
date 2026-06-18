@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Image,
   RefreshControl,
   ScrollView,
   Share,
@@ -34,8 +33,9 @@ import { saveTempImageAsync } from "../utils/fileSystemLegacy";
 import { formatPaceFromSeconds } from "../utils/pace";
 import { sharePngFile } from "../utils/shareImage";
 import { openAppSettings, requestImageLibraryPermission } from "../services/permissions";
+import { EmptyState, OfflineState } from "../components/states";
+import HomeAvatar from "../components/Home/HomeAvatar";
 
-const DEFAULT_AVATAR = "https://i.pravatar.cc/300?u=wayper_default_profile";
 const WAYPER_GREEN = WayperTheme.colors.primary;
 const SHARE_CAPTURE_OPTIONS = {
   format: "png",
@@ -205,7 +205,7 @@ export default function ProfileScreen() {
   }, [fadeAnim, loadAll, slideAnim]);
 
   const displayAvatar = useMemo(
-    () => avatarUri || userDoc?.avatar || profile?.avatar || profile?.photoURL || DEFAULT_AVATAR,
+    () => avatarUri || userDoc?.avatar || profile?.avatar || profile?.photoURL || null,
     [avatarUri, profile, userDoc]
   );
 
@@ -486,7 +486,7 @@ export default function ProfileScreen() {
           <View style={styles.heroGlow} />
           <View style={styles.heroTop}>
             <TouchableOpacity activeOpacity={editing ? 0.78 : 1} onPress={editing ? pickImage : undefined} style={styles.avatarShell}>
-              <Image source={{ uri: displayAvatar }} style={styles.avatar} />
+              <HomeAvatar uri={displayAvatar} name={profileName} size={104} />
               <View style={styles.avatarRing} />
               {editing ? (
                 <View style={styles.avatarEditBadge}>
@@ -603,7 +603,7 @@ export default function ProfileScreen() {
             >
               <View style={styles.shareTopRow}>
                 <View style={styles.shareAvatarWrap}>
-                  <Image source={{ uri: displayAvatar }} style={styles.shareAvatar} />
+                  <HomeAvatar uri={displayAvatar} name={profileName} size={60} />
                 </View>
                 <View style={styles.shareIdentity}>
                   <Text style={styles.shareBrand}>Wayper</Text>
@@ -652,6 +652,14 @@ export default function ProfileScreen() {
         </SectionCard>
 
         <SectionCard title="Privacidade" icon="shield-checkmark-outline">
+          {stats.source === "local" || stats.source === "cache" ? (
+            <OfflineState
+              compact
+              title={stats.source === "local" ? "Usando progresso local" : "Usando cache local"}
+              description="Se o remoto estiver indisponivel, seu perfil continua com dados preservados no aparelho."
+              style={styles.profileStateCard}
+            />
+          ) : null}
           <View style={styles.privacyRow}>
             <View style={styles.privacyTextWrap}>
               <Text style={styles.privacyTitle}>Perfil privado</Text>
@@ -679,7 +687,12 @@ export default function ProfileScreen() {
               <AchievementRow key={achievement.id} achievement={achievement} />
             ))
           ) : (
-            <Text style={styles.emptyAchievementText}>Nenhuma conquista local carregada.</Text>
+            <EmptyState
+              compact
+              title="Primeiras metas esperando voce"
+              description="Finalize uma corrida valida para começar a desbloquear conquistas locais."
+              style={styles.profileStateCard}
+            />
           )}
         </SectionCard>
       </Animated.View>
@@ -1216,6 +1229,9 @@ const styles = StyleSheet.create({
     color: WayperTheme.colors.textMuted,
     fontSize: 13,
     fontWeight: "700",
+  },
+  profileStateCard: {
+    marginHorizontal: 0,
   },
   pointsRow: {
     flexDirection: "row",

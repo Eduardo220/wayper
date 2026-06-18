@@ -18,6 +18,7 @@ import runSyncQueueRepository from "../../repositories/runSyncQueueRepository";
 import territoryRepository from "../../repositories/territoryRepository";
 import { getProgressSummary } from "../../repositories/progressionRepository";
 import { WPCard, WPScreen } from "../../components/ui";
+import { EmptyState as SharedEmptyState } from "../../components/states";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { calculatePaceSecondsPerKm, formatPaceFromSeconds } from "../../utils/pace";
 
@@ -469,10 +470,12 @@ function RankingRow({ index, title, meta, value, progress, icon, accent = "green
 
 function EmptyState({ text }) {
   return (
-    <View style={styles.emptyState}>
-      <Ionicons name="analytics-outline" size={22} color={WayperTheme.colors.textSubtle} />
-      <Text style={styles.emptyText}>{text}</Text>
-    </View>
+    <SharedEmptyState
+      compact
+      title="Ainda sem dados suficientes"
+      description={text}
+      style={styles.emptyState}
+    />
   );
 }
 

@@ -62,6 +62,14 @@ Toda tela relevante deve prever:
 - Dados incompletos.
 - Na Home: sem stories, sem amigos, sem feed, offline/cache, usuario novo, sem corridas para postar e story local pendente de sync.
 
+Padrao visual:
+
+- Usar `src/components/states` para `EmptyState`, `ErrorState`, `OfflineState`, `PermissionState`, `LoadingState` e `RetryState` sempre que a tela nao tiver um componente mais especifico ja consolidado.
+- Copy deve ter titulo curto, explicacao simples e acao clara.
+- Permissoes opcionais negadas devem parecer limitacao controlada, nao erro fatal.
+- Placeholder de avatar deve ser local por iniciais/icone; nao usar URL generica ou mock remoto como avatar real.
+- Estados offline devem dizer que dados locais/cacheados estao sendo usados quando isso for verdade.
+
 ## Assets atuais
 
 O README referencia imagens em:

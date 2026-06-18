@@ -30,8 +30,6 @@ import CreateGroupModal from "../../components/Group/CreateGroupModal";
 import { auth, db } from "../../firebaseConfig";
 import { WayperTheme } from "../../theme/wayperTheme";
 
-const DEFAULT_GROUP_AVATAR = "https://i.pravatar.cc/160?u=wayper_group";
-
 const safeNumber = (value, fallback = 0) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -65,7 +63,7 @@ function GroupAvatar({ group, size = 62 }) {
   if (group?.avatar) {
     return (
       <View style={[styles.avatarFrame, { width: size, height: size, borderRadius: radius }]}>
-        <Image source={{ uri: group.avatar || DEFAULT_GROUP_AVATAR }} style={{ width: "100%", height: "100%", borderRadius: radius - 3 }} />
+        <Image source={{ uri: group.avatar }} style={{ width: "100%", height: "100%", borderRadius: radius - 3 }} />
       </View>
     );
   }

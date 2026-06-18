@@ -276,3 +276,18 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Corrida livre nao mostra territorio falso; corrida por zonas preserva area quando existir.
 - A Home preserva o atalho para `Mapa`, mas nao reimplementa corrida ativa, GPS/path, sync de runs ou historico.
 - `DashboardScreen` e `ProfileScreen` continuam responsaveis por estatisticas pessoais, XP, territorio, ranking e sync.
+
+## ADR-019: Onboarding, permissoes e estados vazios local-first
+
+**Status:** aceito
+**Contexto:** usuario novo, offline ou com Firestore indisponivel precisava entender o Wayper sem ficar preso em prompts repetidos, spinners infinitos ou dados demo parecendo reais. O app tambem precisava separar permissao essencial de permissao limitante sem reimplementar a corrida ativa.
+**Decisao:** consolidar `src/services/permissions.js` como facade unica de permissoes, adicionar onboarding local-first em `OnboardingScreen` e padronizar empty/error/offline/permission/loading/retry em `src/components/states`. Onboarding informa, mas nao pede permissoes nativas. Foreground location e requisito para iniciar/retomar corrida. Background location e notificacoes devem ser explicadas antes de pedir e, se negadas, viram limitacao comunicada sem bloquear o app inteiro.
+**Consequencias:**
+
+- O app nao pede permissao em loop no mount/focus.
+- `shouldShowPermissionEducation` e `markPermissionEducationSeen` guardam educacao por permissao.
+- `normalizePermissionStatus` padroniza `granted`, `denied`, `blocked`, `limited`, `unavailable`, `unknown` e `checking`.
+- Usuario bloqueado por `canAskAgain=false` recebe acao de abrir configuracoes.
+- Negar notificacao nao quebra corrida; negar background nao permite prometer tela bloqueada perfeita.
+- Firestore falhando deve mostrar local/cache/vazio honesto; demo/mock nunca e fallback silencioso.
+- Estados vazios de Home, Historico, Detalhe, Perfil, Ranking e Dashboard devem usar copy acionavel e componentes compartilhados quando possivel.

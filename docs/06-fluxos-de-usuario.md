@@ -1,5 +1,14 @@
 # Fluxos de Usuário
 
+## 0. Onboarding
+
+1. Usuario novo autenticado abre o app sem corrida ativa preservada.
+2. App mostra onboarding local-first (`wayper:onboarding:v1:completed`).
+3. Onboarding explica corrida real, territorio, amigos/stories, uso offline, localizacao, background e notificacoes.
+4. Onboarding nao pede permissao nativa de localizacao, notificacao ou midia.
+5. Usuario conclui e entra na navegacao principal.
+6. Ao reabrir, onboarding nao reaparece enquanto o marcador local existir.
+
 ## 1. Cadastro
 
 1. Usuário abre o app.
@@ -33,18 +42,24 @@
 ## 4. Permissão de localização
 
 1. Usuário acessa tela de corrida/mapa.
-2. App solicita permissão de localização.
-3. Se permitir, app mostra posição atual.
-4. Se negar, app mostra aviso claro e bloqueia início da corrida.
-5. Se a permissão for revogada depois, app deve tratar sem quebrar.
+2. App pode checar status em foco, mas pedido nativo deve acontecer em acao explicita ou preflight de corrida.
+3. Antes de iniciar/retomar corrida, app exige localizacao foreground.
+4. Se permitir, app mostra posicao atual e libera corrida.
+5. Se negar, app mostra aviso claro e bloqueia inicio da corrida.
+6. Se `canAskAgain=false`, app mostra acao para abrir configuracoes.
+7. Background location e explicada separadamente quando a corrida precisar funcionar com tela bloqueada/background.
+8. Notificacao e explicada como apoio para corrida persistente; negar notificacao nao quebra a corrida.
+9. Se qualquer permissao for revogada depois, app deve mostrar estado claro sem pedir em loop.
 
 ## 5. Iniciar corrida
 
 1. Usuário toca em iniciar.
-2. App valida localização disponível.
-3. App começa a coletar pontos GPS.
-4. App mostra tempo, distância e rota.
-5. App mantém estado de corrida ativa.
+2. App valida localizacao foreground como permissao essencial.
+3. App mostra feedback de inicio e evita duplo clique.
+4. App explica/solicita background location e notificacao quando necessario, sem bloquear o app inteiro se forem negadas.
+5. App comeca a coletar pontos GPS.
+6. App mostra tempo, distancia e rota.
+7. App mantem estado de corrida ativa em `wayper:activeRun:v2`.
 
 ## 6. Finalizar corrida
 

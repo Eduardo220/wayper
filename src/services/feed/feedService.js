@@ -18,7 +18,6 @@ const FEED_CACHE_KEY = "wayper_home_feed_cache_v1";
 const FRIENDS_CACHE_KEY = "wayper_home_friends_cache_v1";
 const DEFAULT_LIMIT = 20;
 const ACTIVE_WINDOW_MS = 1000 * 60 * 60 * 24;
-const DEFAULT_AVATAR = "https://i.pravatar.cc/160?u=wayper_default";
 
 const DEV_MOCK_FRIENDS = [
   { id: "mock-lucas", friendUid: "mock-lucas", name: "Lucas", avatar: "https://i.pravatar.cc/160?u=lucas-wayper", isActive: true },
@@ -208,7 +207,7 @@ const getDisplayName = (profile = {}, fallback = "Atleta Wayper") =>
   fallback;
 
 const getAvatar = (profile = {}, uid = "wayper") =>
-  profile.photoURL || profile.avatar || profile.userAvatar || `${DEFAULT_AVATAR}_${uid}`;
+  profile.photoURL || profile.avatar || profile.userAvatar || null;
 
 const isRecent = (value) => {
   const date = toDate(value);

@@ -59,6 +59,12 @@ Quando responder sobre o Wayper:
 - Home nao deve renderizar mapa/rota pesada nem carregar `rawPath` para preview; detalhes ficam para Historico/Detalhe/Mapa.
 - "Adicionar ao story" deve usar `RunRepository`, salvar em `wayper_run_stories_v1` como `PENDING_SYNC`, excluir corrida ativa/`FINISHING` e nao fingir publicacao remota.
 - Feed social cacheado deve usar origem explicita (`remote`, `cache`, `local`, `empty`) e nunca cair em demo silencioso.
+- Para permissoes, usar `src/services/permissions.js`; nao criar facade paralela.
+- Onboarding deve informar sem pedir permissao nativa cedo demais.
+- Foreground location e obrigatoria para iniciar/retomar corrida; background location e notificacoes sao limitacoes comunicadas quando negadas.
+- Nao pedir permissao em loop no mount/focus; pedidos nativos devem vir de acao explicita ou preflight contextual.
+- Estados vazios/erro/offline/permissao devem reutilizar `src/components/states` quando possivel.
+- Usuario offline ou sem Firestore deve ver local/cache/vazio honesto, sem spinner infinito e sem mock como dado real.
 - Nao adicionar SQLite sem ADR, medicao e plano incremental.
 
 ## Estilo de implementação

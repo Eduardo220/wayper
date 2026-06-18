@@ -182,6 +182,17 @@ Regras:
 
 O trabalho de dashboard pessoal anterior continua util fora da Home. `homeDashboardRepository.js`, `profileStats.js`, `DashboardScreen` e `ProfileScreen` podem ser usados para resumo pessoal, XP, estatisticas, territorio, ranking e sync, desde que a primeira tela continue social.
 
+## Onboarding, permissoes e estados reutilizaveis
+
+Desde 2026-06-18, onboarding, permissoes e estados vazios seguem uma politica unica documentada em `docs/23-onboarding-permissoes-estados-vazios.md`.
+
+- `src/services/permissions.js` e a facade oficial para checar, pedir, normalizar e resumir permissoes.
+- `OnboardingScreen` explica Wayper, corrida real, territorio, social, offline, localizacao, background e notificacoes sem disparar pedidos nativos.
+- Localizacao foreground continua obrigatoria para iniciar ou retomar corrida.
+- Background location e notificacoes sao permissoes limitantes: devem ser explicadas antes do pedido, mas a negativa nao bloqueia o app inteiro.
+- Componentes em `src/components/states` padronizam vazio, erro, offline, permissao, loading e retry sem criar clones por tela.
+- Falha de Firestore deve cair para local/cache/vazio honesto; demo/mock nunca vira dado real.
+
 ## Pontos que precisam ser definidos
 
 - Regra exata de transformação de rota em zona.

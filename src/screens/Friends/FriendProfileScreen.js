@@ -3,7 +3,6 @@ import React, { useEffect, useState, useMemo } from "react";
 import {
   View,
   Text,
-  Image,
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
@@ -14,6 +13,7 @@ import { doc, getDoc, collection, query, getDocs, onSnapshot } from "firebase/fi
 import { db } from "../../firebaseConfig";
 import MedalsWidget from "../../components/MedalsWidget";
 import { colors } from "../../theme/colors";
+import HomeAvatar from "../../components/Home/HomeAvatar";
 
 const formatArea = (m2 = 0) => {
   const safe = Number(m2 || 0);
@@ -90,7 +90,7 @@ export default function FriendProfileScreen({ route, navigation }) {
     return (
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Image source={{ uri: friend.avatar || friend.photoURL || "https://i.pravatar.cc/150" }} style={styles.avatar} />
+          <HomeAvatar uri={friend.avatar || friend.photoURL || null} name={friend.name || friend.username} size={78} style={styles.avatar} />
           <View style={{ flex: 1, marginLeft: 14 }}>
             <Text style={styles.name}>{friend.name || friend.username}</Text>
             <Text style={styles.username}>@{friend.username}</Text>
@@ -106,12 +106,7 @@ export default function FriendProfileScreen({ route, navigation }) {
 
       {/* HEADER */}
       <View style={styles.header}>
-        <Image
-          source={{
-            uri: friend.avatar || friend.photoURL || "https://i.pravatar.cc/150",
-          }}
-          style={styles.avatar}
-        />
+        <HomeAvatar uri={friend.avatar || friend.photoURL || null} name={friend.name || friend.username} size={78} style={styles.avatar} />
 
         <View style={{ flex: 1, marginLeft: 14 }}>
           <Text style={styles.name}>{friend.name || friend.username}</Text>

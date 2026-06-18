@@ -17,6 +17,15 @@ Conteúdo mínimo:
 - Corridas e caminhadas viram território.
 - O mapa é o centro da experiência.
 - Atividades válidas geram XP e progresso.
+- Wayper funciona local/offline quando necessario e sincroniza depois.
+- Localizacao foreground e necessaria para correr.
+- Background location e notificacao ajudam durante corrida em andamento, mas devem ser explicadas antes de pedir.
+
+Regras:
+
+- Onboarding usa `wayper:onboarding:v1:completed`.
+- Onboarding nao pede permissao nativa de localizacao, notificacao ou midia.
+- Se houver corrida ativa preservada, a navegacao deve priorizar recuperacao da corrida em vez de prender o usuario no onboarding.
 
 ## Login e cadastro
 
@@ -79,6 +88,12 @@ Elementos esperados:
 - Estado de GPS/permissão.
 - Acesso a perfil e histórico.
 - Indicação visual de território conquistado quando a regra estiver implementada.
+
+Permissoes:
+
+- Localizacao foreground negada bloqueia inicio/retomada de corrida.
+- Background location negada deve mostrar aviso de corrida limitada, sem prometer tela bloqueada perfeita.
+- Notificacao negada deve mostrar limitacao de controle externo, sem quebrar a corrida local-first.
 
 ## Atividade ativa
 
@@ -203,15 +218,17 @@ Qualquer mecânica de clans deve ser registrada em [[12-ideias-futuras]] antes d
 
 1. Usuário abre o app.
 2. Usuário faz login ou cadastro.
-3. App solicita permissão de localização.
-4. Usuário vê o mapa.
-5. Usuário inicia caminhada ou corrida.
-6. App registra rota com GPS.
-7. Usuário pausa ou retoma se necessário.
-8. Usuário encerra a atividade.
-9. App calcula resumo, XP e território.
-10. App salva dados no Firestore.
-11. Usuário vê resumo e progresso.
+3. Usuario novo ve onboarding local-first e conclui.
+4. Usuario ve Inicio/Mapa.
+5. Ao iniciar corrida, app explica e exige localizacao foreground.
+6. App explica background/notificacao quando necessario e comunica limitacoes se negadas.
+7. Usuario inicia caminhada ou corrida.
+8. App registra rota com GPS e preserva `wayper:activeRun:v2`.
+9. Usuario pausa ou retoma se necessario.
+10. Usuario encerra a atividade.
+11. App salva corrida localmente em `runs`, calcula resumo, XP e territorio quando aplicavel.
+12. App enfileira sync posterior para Firestore.
+13. Usuario ve resumo e progresso mesmo offline.
 
 ## Documentos relacionados
 

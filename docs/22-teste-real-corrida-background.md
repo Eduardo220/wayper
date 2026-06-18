@@ -105,7 +105,7 @@ Resultado esperado: distancia calculada somente com `trustedPath`, pausas e gaps
 
 - Se o usuario usar "Forcar parada" nas configuracoes do Android, o sistema pode impedir qualquer task ate o app ser aberto manualmente.
 - Fabricantes com economia agressiva podem encerrar processos mesmo com foreground service. O Wayper deve preservar o ultimo snapshot salvo, mas nao pode garantir pontos depois que o processo foi morto pelo sistema.
-- Sem permissao de localizacao em segundo plano, o app bloqueia o inicio da corrida para evitar uma sessao quebrada.
+- Sem permissao de localizacao em segundo plano, o app deve explicar a limitacao e permitir corrida foreground sem prometer coleta confiavel com tela bloqueada.
 - Sem permissao de notificacao no Android 13+, a corrida local-first ainda deve ser preservada, mas o usuario perde a notificacao persistente e os controles de pausa/retomada fora do app.
 - Finalizar pela notificacao nao e suportado nesta etapa porque o encerramento precisa passar pela tela de resumo/confirmacao.
 - Testes em emulador nao validam completamente tela bloqueada, foreground service e restricoes agressivas de bateria; repetir em aparelho fisico antes de considerar o fluxo fechado.

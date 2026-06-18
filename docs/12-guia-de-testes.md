@@ -10,6 +10,12 @@ Garantir que as partes críticas do Wayper funcionem antes de mexer em produçã
 npm test
 ```
 
+Para validacao completa local antes de fechar uma mudanca grande:
+
+```bash
+npm test -- --runInBand
+```
+
 ## Testes unitários prioritários
 
 ### Corrida
@@ -36,6 +42,19 @@ npm test
 - Ordenação por distância.
 - Empate.
 - Exclusão de corridas inválidas.
+
+### Onboarding, permissoes e estados vazios
+
+- `normalizePermissionStatus` cobre `granted`, `denied`, `blocked`, `limited`, `unavailable`, `unknown` e `checking`.
+- Foreground location concedida permite iniciar corrida; negada bloqueia com mensagem clara.
+- Background location negada mostra limitacao, sem prometer tela bloqueada perfeita.
+- Notificacao negada nao quebra corrida.
+- `canAskAgain=false` mostra abrir configuracoes.
+- Educacao de permissao aparece uma vez e nao dispara request nativo em loop.
+- Onboarding aparece para usuario novo, pode ser concluido e nao reaparece.
+- Onboarding nao pede midia/galeria cedo demais.
+- Estados vazios de Home, Historico, Ranking, Perfil, Mapa, compartilhamento e detalhe nao usam mock como dado real.
+- Firestore falhando cai para local/cache/vazio e nao deixa spinner infinito.
 
 ## Testes de integração
 

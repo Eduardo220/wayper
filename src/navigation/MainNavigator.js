@@ -35,6 +35,7 @@ import CorridasScreen from "../screens/Runs/CorridasScreen";
 import RunDetailScreen from "../screens/Runs/RunDetailScreen";
 import ZoneDetailScreen from "../screens/Runs/ZoneDetailScreen";
 import DashboardScreen from "../screens/Runs/DashboardScreen";
+import OnboardingScreen from "../screens/OnboardingScreen";
 
 // UI
 import CustomDrawer from "../components/CustomDrawer";
@@ -48,6 +49,7 @@ import logger, { LOG_CATEGORIES } from "../utils/logger.js";
 import { subscribeCurrentUserProfile } from "../repositories/userProfileRepository.js";
 import { runLocalMigrationsOnce } from "../services/storage/storageMigrationService.js";
 import runSyncQueueRepository from "../repositories/runSyncQueueRepository.js";
+import { hasCompletedOnboarding } from "../services/onboarding/onboardingService.js";
 
 const Drawer = createDrawerNavigator();
 const Stack = createNativeStackNavigator();
@@ -172,6 +174,8 @@ export default function MainNavigator() {
   const [userData, setUserData] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [initialRouteName, setInitialRouteName] = useState(null);
+  const [checkingOnboarding, setCheckingOnboarding] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   // ===========================
   // LOAD USER DATA (SAFE)
@@ -236,6 +240,25 @@ export default function MainNavigator() {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    hasCompletedOnboarding()
+      .then((completed) => {
+        if (!mounted) return;
+        setShowOnboarding(!completed);
+      })
+      .catch(() => {
+        if (mounted) setShowOnboarding(false);
+      })
+      .finally(() => {
+        if (mounted) setCheckingOnboarding(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // ===========================
   // START BACKGROUND SYNC
   // ===========================
@@ -261,7 +284,7 @@ export default function MainNavigator() {
   // ===========================
   // LOADING
   // ===========================
-  if (loadingUser || !initialRouteName) {
+  if (loadingUser || !initialRouteName || checkingOnboarding) {
     return (
       <View style={styles.loadingScreen}>
         <LinearGradient
@@ -290,6 +313,10 @@ export default function MainNavigator() {
         </View>
       </View>
     );
+  }
+
+  if (showOnboarding && initialRouteName !== "Mapa") {
+    return <OnboardingScreen onComplete={() => setShowOnboarding(false)} />;
   }
 
   // ===========================

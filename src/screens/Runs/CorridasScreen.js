@@ -5,7 +5,8 @@ import { Ionicons } from "@expo/vector-icons";
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../../components/Map/WayperMapLibre";
 import TerritoryEventCard from "../../components/Territory/TerritoryEventCard";
 import TerritoryFeedFilter from "../../components/Territory/TerritoryFeedFilter";
-import { WPButton, WPCard, WPScreen, WPSectionTitle } from "../../components/ui";
+import { WPCard, WPScreen, WPSectionTitle } from "../../components/ui";
+import { EmptyState } from "../../components/states";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { auth } from "../../firebaseConfig";
 import {
@@ -323,10 +324,13 @@ function CorridasScreen({ navigation }) {
           </View>
         }
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>Nenhuma atividade encontrada.</Text>
-            <WPButton title="Ir para o mapa" compact onPress={() => goToMap()} style={styles.emptyButton} />
-          </View>
+          <EmptyState
+            title="Suas corridas aparecem aqui"
+            description="Quando voce finalizar uma corrida, ela fica salva no aparelho e sincroniza depois se precisar."
+            actionLabel="Ir para o mapa"
+            onAction={() => goToMap()}
+            style={styles.empty}
+          />
         }
       />
     </WPScreen>

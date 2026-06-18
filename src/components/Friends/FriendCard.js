@@ -1,20 +1,21 @@
 // ==== FriendCard with Presence Badge ====
 import React, { memo } from "react";
-import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../theme/colors";
 import useFriendPresence from "../../hooks/useFriendPresence";
+import HomeAvatar from "../Home/HomeAvatar";
 
 function FriendCard({ friend, onPress, onRemove }) {
   const isOnline = useFriendPresence(friend?.friendUid);
 
-  const avatar = friend?.avatar || "https://i.pravatar.cc/150";
+  const avatar = friend?.avatar || friend?.photoURL || null;
   const name = friend?.name || friend?.username || "—";
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85}>
       <View style={styles.avatarWrapper}>
-        <Image source={{ uri: avatar }} style={styles.avatar} />
+        <HomeAvatar uri={avatar} name={name} size={64} />
         
         {/* === Presence badge === */}
         <View

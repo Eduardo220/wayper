@@ -18,6 +18,7 @@ import RunShareModal from "../../components/Runs/RunShareModal";
 import RunShareCard, { RUN_SHARE_CARD_SIZE } from "../../components/Runs/RunShareCard";
 import RunSummaryModal from "../../components/Runs/RunSummaryModal";
 import { WPButton } from "../../components/ui";
+import { ErrorState, LoadingState } from "../../components/states";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { auth } from "../../firebaseConfig";
 import runRepository from "../../repositories/runRepository";
@@ -662,7 +663,19 @@ function RunDetailScreenInner({ route, navigation }) {
   if (!run) {
     return (
       <View style={[styles.container, styles.center]}>
-        <Text style={styles.invalidText}>{loadingRun ? "Carregando corrida..." : runLoadError || "Corrida invalida"}</Text>
+        {loadingRun ? (
+          <LoadingState
+            title="Carregando corrida"
+            description="Buscando a copia local salva no aparelho."
+            style={styles.detailStateCard}
+          />
+        ) : (
+          <ErrorState
+            title="Corrida nao encontrada"
+            description={runLoadError || "Nao encontramos esta corrida no historico local. Ela pode ter sido removida ou estar incompleta."}
+            style={styles.detailStateCard}
+          />
+        )}
       </View>
     );
   }
@@ -1037,6 +1050,9 @@ const styles = StyleSheet.create({
   invalidText: {
     ...WayperTheme.typography.body,
     color: WayperTheme.colors.textMuted,
+  },
+  detailStateCard: {
+    marginHorizontal: 0,
   },
   captureCard: {
     backgroundColor: WayperTheme.colors.background,

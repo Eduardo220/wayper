@@ -29,6 +29,7 @@ Tudo que define produto, regras de negócio, mecânicas de território, decisõe
 - [[13-problemas-conhecidos]]: riscos técnicos e problemas conhecidos.
 - [[14-glossario]]: termos usados na documentação e no produto.
 - [[15-checklist-validacao-corrida-ativa]]: roteiro de validacao fisica para corrida ativa, background, tela bloqueada, notificacao, recovery e finalizacao.
+- `../23-onboarding-permissoes-estados-vazios.md`: politica atual de onboarding, permissoes, estados vazios, offline e checklist manual.
 
 ## Regra de atualização
 

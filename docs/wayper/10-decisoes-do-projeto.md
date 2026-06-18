@@ -166,6 +166,37 @@ Impactos:
 - Performance: AsyncStorage continua; SQLite depende de medicao futura.
 - Experiencia do usuario: historico/detalhe seguem offline; perfil/ranking falham de forma mais controlada.
 
+### Onboarding, permissoes e estados vazios local-first
+
+Status: aprovada.
+
+Contexto:
+
+- Usuario novo/offline precisava entender Wayper sem cair em prompts repetidos ou telas vazias genericas.
+- Permissao de localizacao foreground e essencial para corrida, mas background e notificacoes sao limitacoes operacionais.
+- O app nao pode depender de Firestore para abrir as principais areas nem mostrar demo/mock como dado real.
+
+Decisao:
+
+- `src/services/permissions.js` e a facade oficial de permissoes.
+- Onboarding usa `wayper:onboarding:v1:completed`, informa antes de pedir e nao solicita permissao nativa.
+- Localizacao foreground bloqueia inicio/retomada quando negada.
+- Background location e notificacoes devem ser explicadas antes de pedir; se negadas, corrida fica limitada e o usuario recebe orientacao.
+- Estados vazios/erro/offline/permissao devem reutilizar `src/components/states` quando possivel.
+
+Motivo:
+
+- Reduzir risco de loops de permissao e dead-ends.
+- Manter corrida ativa e dados locais como fonte segura.
+- Melhorar a experiencia de usuario novo sem criar arquitetura paralela.
+
+Impactos:
+
+- Mapa: muda apenas gating/copy/permissao, sem reimplementar GPS/path/sync.
+- Home/Historico/Perfil/Ranking/Dashboard/Detalhe: estados vazios passam a ser explicitos e acionaveis.
+- Firestore: segue melhor esforco; falha remota vira local/cache/vazio.
+- Design: placeholder de avatar deve ser local por iniciais/icone, sem URL mock como avatar real.
+
 ## Decisões pendentes
 
 ### Estratégia final de território

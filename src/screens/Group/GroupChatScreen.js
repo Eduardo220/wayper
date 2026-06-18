@@ -27,8 +27,6 @@ import { auth, db } from "../../firebaseConfig";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { markGroupMessagesRead } from "../../services/notifications/notificationService";
 
-const DEFAULT_GROUP_AVATAR = "https://i.pravatar.cc/160?u=wayper_group_chat";
-
 const normalizeGroup = (id, data = {}) => ({
   id,
   avatar: data.avatar || null,
@@ -51,7 +49,7 @@ function GroupAvatar({ group }) {
   if (group?.avatar) {
     return (
       <View style={styles.avatarFrame}>
-        <Image source={{ uri: group.avatar || DEFAULT_GROUP_AVATAR }} style={styles.avatarImage} />
+        <Image source={{ uri: group.avatar }} style={styles.avatarImage} />
       </View>
     );
   }
