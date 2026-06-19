@@ -304,3 +304,25 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Firestore: nao participa de share/download/story local nesta etapa.
 - Performance: imagem/PNG sao gerados sob demanda; arquivos antigos de cache podem ser limpos pelo helper existente.
 - Experiencia do usuario: opcoes ficam claras, com loading/erro controlado e story local aparecendo na Home social.
+
+## ADR-021: Central de debug local e diagnostico seguro
+
+**Status:** aceito
+**Contexto:** bugs reais de corrida ativa, GPS, background, notificacao, share, story, sync, territorio e ranking precisam ser investigados em aparelho fisico sem depender de Firestore, Sentry ou adb. O projeto ja tinha logs NDJSON, ZIP de corrida, Sentry sanitizado e tela `Configuracoes > Diagnostico`, mas faltava uma visao consolidada dos dominios local-first atuais.
+**Decisao:** consolidar a central em `Configuracoes > Diagnostico`, usando `localDiagnosticsService` como agregador de resumos. A tela e o ZIP devem mostrar contadores e status de corrida ativa, GPS, permissoes, storage, sync, notificacao/background, Home social/stories/feed, compartilhamento, territorio e perfil/ranking/XP. O servico deve consumir facades existentes (`RunRepository`, `RunSyncQueueRepository`, `TerritoryRepository`, `SocialHomeRepository`, `ProgressionRepository`, `AchievementRepository`, `profileStats`, `permissions`, `activeRunTrackingService`) e nao criar fonte paralela.
+**Politica:**
+
+- Firestore e melhor esforco e nunca requisito para abrir Diagnostico ou exportar evidencia local.
+- Diagnostico fica disponivel tambem em producao por causa de bugs reais de release, mas logs respeitam nivel reduzido e acoes perigosas ficam bloqueadas/confirmadas.
+- Coordenadas exatas continuam desligadas por padrao; `rawPath` completo, tokens, emails completos, imagens privadas e payload completo de terceiros nao entram no resumo padrao.
+- Export ZIP amplia o bundle existente com `localDiagnostics-summary.json` e `reports/*`, mantendo os NDJSON e artefatos antigos.
+- Sentry complementa o diagnostico local e continua recebendo apenas contexto sanitizado.
+- Logs de alta frequencia continuam no backend file-system/buffer; novo codigo nao deve usar AsyncStorage por ponto GPS.
+- Limpeza de logs exige confirmacao e nao limpa corridas/runs.
+
+**Consequencias:**
+
+- Investigacao de corrida ativa/background/share/sync pode ser feita com um ZIP local unico.
+- A tela evita parse pesado por render e mostra counts/amostras pequenas.
+- Falha de uma secao do diagnostico nao derruba o export inteiro.
+- Novos dominios local-first devem registrar resumo e logs na central antes de criar debug paralelo.

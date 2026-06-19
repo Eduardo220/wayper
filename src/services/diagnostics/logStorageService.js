@@ -389,6 +389,12 @@ export async function getLogs(filters = {}) {
   return limit > 0 ? filtered.slice(-limit) : filtered;
 }
 
+export async function flushLogs() {
+  if (pendingLogs.length > 0) await flushPendingLogs();
+  await writeQueue.catch(() => null);
+  return getDiagnosticStorageHealth();
+}
+
 export async function getDiagnosticNdjson(options = {}) {
   if (pendingLogs.length > 0) await flushPendingLogs();
   await writeQueue.catch(() => null);
@@ -593,6 +599,7 @@ export default {
   clearLogs,
   clearOldLogs,
   exportLogs,
+  flushLogs,
   getDiagnosticNdjson,
   getDiagnosticStorageHealth,
   getErrorLogs,

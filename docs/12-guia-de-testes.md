@@ -349,6 +349,38 @@ Cobertura automatizada esperada:
 - Conquistas iniciais cobrem primeira corrida, distancia acumulada, primeira corrida por zonas, primeira area conquistada, 3 corridas e 30 minutos totais.
 - Perfil/dashboard conseguem consumir progresso local sem Firebase real, rede real, GPS real ou MapLibre.
 
+## Diagnostico local e export
+
+Checklist manual:
+
+- [ ] Abrir `Configuracoes > Diagnostico` sem corrida ativa.
+- [ ] Iniciar corrida e conferir `status`, `localRunId`, elapsed, distancia, path counts, segments e notification/background.
+- [ ] Bloquear tela e voltar pelo app/notificacao, conferindo lifecycle/background.
+- [ ] Gerar pontos GPS e conferir raw/accepted/rejected, motivos de descarte e gaps.
+- [ ] Pausar/retomar e conferir segments.
+- [ ] Finalizar offline e conferir sync pendente.
+- [ ] Criar story e conferir pending story sync.
+- [ ] Compartilhar imagem/PNG e conferir ultimo export em `Compartilhamento`.
+- [ ] Negar permissoes e conferir resumo normalizado.
+- [ ] Copiar resumo tecnico.
+- [ ] Forcar flush de logs.
+- [ ] Exportar ZIP e abrir `localDiagnostics-summary.json`.
+- [ ] Validar que coordenadas estao mascaradas por padrao.
+- [ ] Repetir em build dev Android e, quando possivel, em release.
+
+Cobertura automatizada esperada:
+
+- `localDiagnosticsService` gera resumo com e sem corrida ativa.
+- Resumo inclui counts de paths/segments, permissoes, sync, stories/feed, territorio e perfil/ranking/XP.
+- Coordenadas sao mascaradas por padrao e `rawPath` completo nao entra no resumo.
+- Tokens, emails completos, imagens privadas e payload de terceiros nao entram no export padrao.
+- Falha de uma secao nao derruba o resumo/export inteiro.
+- Export ZIP contem `localDiagnostics-summary.json` e os arquivos `reports/*`.
+- Logger categoriza `SHARE`, `STORY`, `TERRITORY`, `PROFILE`, `RANKING`, `XP` e `UI`.
+- Logs de alta frequencia continuam bufferizados/file-system; novo codigo nao deve persistir ponto GPS em AsyncStorage por evento.
+- Acoes destrutivas na UI exigem confirmacao.
+- Testes nao usam Firebase real, rede real, GPS real nem MapLibre real.
+
 ## Casos ruins que precisam ser testados
 
 - Usuário nega localização.

@@ -240,6 +240,22 @@ async function safeWatcherSummary() {
   }
 }
 
+async function safeLocalDiagnosticsSummary(options = {}) {
+  try {
+    const module = await import("./localDiagnosticsService.js");
+    return await module.buildLocalDiagnosticsSummary?.({
+      logsLimit: options.limit || 300,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        message: error?.message || String(error),
+      },
+    };
+  }
+}
+
 function numericStats(values = []) {
   const numbers = values.map(Number).filter(Number.isFinite);
   if (numbers.length === 0) {
@@ -331,7 +347,7 @@ function selectEvents(logs = [], matcher) {
 export async function exportDiagnosticsBundle(options = {}) {
   const limit = Number(options.limit || 300);
   const diagnosticsConfig = getDiagnosticsConfig();
-  const [logs, errorLogs, activeRun, storage, permissions, watcher] = await Promise.all([
+  const [logs, errorLogs, activeRun, storage, permissions, watcher, localDiagnostics] = await Promise.all([
     options.runId
       ? getLogs({ runId: options.runId, limit })
       : getRecentLogs(limit),
@@ -342,6 +358,7 @@ export async function exportDiagnosticsBundle(options = {}) {
     safeStorageSummary(),
     safePermissionSummary(),
     safeWatcherSummary(),
+    safeLocalDiagnosticsSummary({ limit }),
   ]);
 
   const gpsFilterReport = buildGpsFilterReport(logs);
@@ -363,6 +380,15 @@ export async function exportDiagnosticsBundle(options = {}) {
     storage,
     permissions,
     watcher,
+    localDiagnostics,
+    syncReport: localDiagnostics?.sync || {},
+    permissionsReport: localDiagnostics?.permissions || permissions || {},
+    storageReport: localDiagnostics?.storage || storage || {},
+    notificationBackgroundReport: localDiagnostics?.notificationBackground || {},
+    shareReport: localDiagnostics?.share || {},
+    storiesFeedReport: localDiagnostics?.social || {},
+    territoryReport: localDiagnostics?.territory || {},
+    profileRankingXpReport: localDiagnostics?.profileRankingXp || {},
     appState: watcher?.appState || activeRun?.appState || null,
     screenFocusState: watcher?.screenFocusState || activeRun?.screenFocusState || null,
     backgroundTask: watcher?.backgroundTaskStatus || watcher?.backgroundStarted || null,

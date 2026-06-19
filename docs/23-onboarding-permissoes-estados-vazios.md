@@ -47,6 +47,7 @@ Regras:
 - Educacao aparece uma vez por permissao.
 - Permissao opcional negada nunca bloqueia o app inteiro.
 - Foreground location negada bloqueia inicio de corrida.
+- `Configuracoes > Diagnostico` deve exibir o resumo normalizado dessas permissoes e oferecer `Abrir configuracoes do app` sem criar facade paralela.
 
 ## Estados vazios e offline
 

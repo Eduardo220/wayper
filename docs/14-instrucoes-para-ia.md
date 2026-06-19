@@ -59,6 +59,12 @@ Quando responder sobre o Wayper:
 - Home nao deve renderizar mapa/rota pesada nem carregar `rawPath` para preview; detalhes ficam para Historico/Detalhe/Mapa.
 - "Adicionar ao story" deve usar `RunRepository`, salvar em `wayper_run_stories_v1` como `PENDING_SYNC`, excluir corrida ativa/`FINISHING` e nao fingir publicacao remota.
 - Feed social cacheado deve usar origem explicita (`remote`, `cache`, `local`, `empty`) e nunca cair em demo silencioso.
+- Para diagnostico/debug, usar `src/screens/DiagnosticsScreen.js`, `localDiagnosticsService`, `runDiagnosticsService`, `diagnosticExportService`, `logStorageService` e `logger.js`; nao criar logger, export ZIP, service de storage ou tela debug paralelos.
+- Diagnostico local deve funcionar offline e sem Firestore obrigatorio.
+- Logs novos devem passar pelo logger central, com categoria adequada e contexto sanitizado.
+- Coordenadas exatas, `rawPath` completo, tokens, emails completos, imagens privadas e payload completo de terceiros nao devem entrar em export/resumo padrao.
+- Debug de alta frequencia deve usar buffer/file-system existente; nao gravar ponto GPS por evento no AsyncStorage.
+- Acoes destrutivas em debug exigem confirmacao explicita e nao devem limpar corridas/runs por padrao.
 - Para permissoes, usar `src/services/permissions.js`; nao criar facade paralela.
 - Onboarding deve informar sem pedir permissao nativa cedo demais.
 - Foreground location e obrigatoria para iniciar/retomar corrida; background location e notificacoes sao limitacoes comunicadas quando negadas.

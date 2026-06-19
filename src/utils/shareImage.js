@@ -7,8 +7,8 @@ import {
   saveBase64PngAsync,
 } from "./fileSystemLegacy";
 import { requestMediaPermission } from "../services/permissions";
+import logger, { LOG_CATEGORIES } from "./logger.js";
 
-const isDev = () => typeof __DEV__ !== "undefined" && __DEV__;
 let mediaLibraryModulePromise = null;
 
 const formatError = (error, fallback) => {
@@ -17,19 +17,29 @@ const formatError = (error, fallback) => {
   return error.message || fallback;
 };
 
-const logResult = (label, payload) => {
-  if (isDev()) {
-    console.log(`[Wayper Share] ${label}:`, {
-      platform: Platform.OS,
-      ...payload,
-    });
-  }
+function basenameFromUri(uri = "") {
+  return String(uri || "").split(/[\\/]/).filter(Boolean).pop() || null;
+}
+
+function eventName(label = "event") {
+  return `SHARE_${String(label).trim().replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase() || "EVENT"}`;
+}
+
+const logResult = (label, payload = {}) => {
+  logger.info(LOG_CATEGORIES.SHARE, eventName(label), {
+    platform: Platform.OS,
+    method: payload.method || null,
+    generatedFilename: basenameFromUri(payload.uri),
+    exists: payload.exists,
+    fileSize: payload.size,
+    visual: payload.visual || null,
+  }, { forcePersist: true });
 };
 
 const logError = (label, error) => {
-  if (isDev()) {
-    console.log(`[Wayper Share] ${label}:`, error);
-  }
+  logger.warn(LOG_CATEGORIES.SHARE, eventName(label), {
+    error,
+  }, { forcePersist: true });
 };
 
 const sanitizeFilename = (filename = "wayper-run.png") => {

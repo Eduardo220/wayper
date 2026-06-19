@@ -11,22 +11,34 @@ import {
   shareImageFile as shareImageFileInternal,
   WayperShareError,
 } from "./share/runShareExport";
+import logger, { LOG_CATEGORIES } from "./logger.js";
+
+function basenameFromUri(uri = "") {
+  return String(uri || "").split(/[\\/]/).filter(Boolean).pop() || null;
+}
+
+function eventName(label = "event") {
+  return String(label || "event")
+    .replace(/^\[|\]$/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase() || "SHARE_EVENT";
+}
 
 const log = (label, payload = {}) => {
-  if (typeof __DEV__ !== "undefined" && __DEV__) {
-    console.log(label, payload);
-  }
+  logger.info(LOG_CATEGORIES.SHARE, eventName(label), {
+    filename: payload.filename || null,
+    generatedFilename: basenameFromUri(payload.uri),
+  }, { forcePersist: true });
 };
 
 const logError = (label, error, payload = {}) => {
-  if (typeof __DEV__ !== "undefined" && __DEV__) {
-    console.log(label, {
-      code: error?.code,
-      message: error?.message,
-      stack: error?.stack,
-      ...payload,
-    });
-  }
+  logger.warn(LOG_CATEGORIES.SHARE, eventName(label), {
+    code: error?.code,
+    error,
+    filename: payload.filename || null,
+    generatedFilename: basenameFromUri(payload.uri),
+  }, { forcePersist: true });
 };
 
 const sanitizeFilename = (filename = "wayper-run") =>

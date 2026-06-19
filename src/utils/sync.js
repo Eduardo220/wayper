@@ -2121,6 +2121,25 @@ export function stopAutoSync() {
   }
 }
 
+export function getSyncRuntimeStatus() {
+  return {
+    isSyncingRuns,
+    isSyncingZones,
+    isSyncingMedals,
+    isSyncingTerritories,
+    isSyncingTerritoryEvents,
+    hasRunsDebounce: Boolean(debounceRunsTimer),
+    hasZonesDebounce: Boolean(debounceZonesTimer),
+    hasMedalsDebounce: Boolean(debounceMedalsTimer),
+    hasTerritoriesDebounce: Boolean(debounceTerritoriesTimer),
+    hasTerritoryEventsDebounce: Boolean(debounceTerritoryEventsTimer),
+    hasAllDebounce: Boolean(debounceAllTimer),
+    autoSyncActive: Boolean(autoSyncTimer),
+    netInfoListenerActive: Boolean(netInfoUnsubscribe),
+    appStateListenerActive: Boolean(appStateUnsubscribe),
+  };
+}
+
 // ----------------- Background sync task handler -----------------
 async function _bgSyncHandler() {
   try {
@@ -2238,6 +2257,7 @@ export default {
   syncNow,
   startAutoSync,
   stopAutoSync,
+  getSyncRuntimeStatus,
   // medals
   loadLocalMedals,
   saveLocalMedal,

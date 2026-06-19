@@ -43,6 +43,10 @@ export class WayperShareError extends Error {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function basenameFromUri(uri = "") {
+  return String(uri || "").split(/[\\/]/).filter(Boolean).pop() || null;
+}
+
 export function normalizeFileUri(uri) {
   return normalizeLegacyFileUri(uri);
 }
@@ -131,18 +135,16 @@ export async function captureRunShareImage(ref, options = {}) {
 
   try {
     const savedUri = await saveTempImageAsync(capturedUri, sanitizeShareFilename(filename));
-    if (typeof __DEV__ !== "undefined" && __DEV__) {
-      const info = await assertFileExists(savedUri);
-      console.log("[Wayper Share] capture generated file:", {
-        platform: Platform.OS,
-        method: result === "base64" ? "captureRef/base64" : "captureRef/tmpfile",
-        uri: info.uri,
-        exists: info.exists,
-        size: info.size,
-        width,
-        height,
-      });
-    }
+    const info = await assertFileExists(savedUri);
+    logger.info(LOG_CATEGORIES.SHARE, "SHARE_CAPTURE_GENERATED", {
+      platform: Platform.OS,
+      method: result === "base64" ? "captureRef/base64" : "captureRef/tmpfile",
+      generatedFilename: basenameFromUri(info.uri),
+      exists: info.exists,
+      fileSize: info.size,
+      width,
+      height,
+    }, { forcePersist: true });
     return savedUri;
   } catch (error) {
     throw new WayperShareError(
@@ -252,18 +254,13 @@ export async function cleanupOldShareFiles(maxAgeMs = 1000 * 60 * 60 * 24) {
       })
     );
   } catch (error) {
-    if (typeof __DEV__ !== "undefined" && __DEV__) {
-      console.warn("[WayperShare:cleanup]", {
-        message: error?.message,
-        stack: error?.stack,
-      });
-    }
+    logger.warn(LOG_CATEGORIES.SHARE, "SHARE_CLEANUP_FAILED", {
+      error,
+    }, { forcePersist: true });
   }
 }
 
 export async function logShareDiagnostics(action, data = {}) {
-  if (typeof __DEV__ === "undefined" || !__DEV__) return;
-
   let generatedFileInfo = null;
   if (data.generatedUri) {
     try {
@@ -280,16 +277,21 @@ export async function logShareDiagnostics(action, data = {}) {
     sharingAvailable = false;
   }
 
-  console.log("[WayperShare] diagnostics", {
+  logger.info(LOG_CATEGORIES.SHARE, "SHARE_EXPORT_DIAGNOSTICS", {
     action,
     platform: Platform.OS,
     sharingAvailable,
-    generatedUri: data.generatedUri,
-    fileInfo: generatedFileInfo,
+    generatedFilename: basenameFromUri(data.generatedUri),
+    fileInfo: generatedFileInfo
+      ? {
+          exists: generatedFileInfo.exists,
+          size: generatedFileInfo.size,
+        }
+      : null,
     pathLength: normalizeRunPath(data.path || []).length,
     runId: data.runId,
     extra: data.extra,
-  });
+  }, { forcePersist: true });
 }
 
 export function logShareError(context, error, extra = {}) {
@@ -304,7 +306,7 @@ export function logShareError(context, error, extra = {}) {
     distanceKm: Number(extra.distanceKm || 0),
     durationSeconds: Number(extra.durationSeconds || 0),
   };
-  logger.error(LOG_CATEGORIES.UI_ACTION, `SHARE_${String(context || "UNKNOWN").toUpperCase()}`, safeSummary);
+  logger.error(LOG_CATEGORIES.SHARE, `SHARE_${String(context || "UNKNOWN").toUpperCase()}`, safeSummary);
 }
 
 export function showShareError(message, error) {

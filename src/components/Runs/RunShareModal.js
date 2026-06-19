@@ -29,6 +29,7 @@ import {
 import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
 import { createRunStoryFromRun } from "../../repositories/socialHomeRepository";
 import { openAppSettings } from "../../services/permissions";
+import logger, { LOG_CATEGORIES } from "../../utils/logger";
 import RunShareImageTemplate from "./RunShareImageTemplate";
 import RunTracePngTemplate, { RUN_TRACE_PNG_SIZE } from "./RunTracePngTemplate";
 import TransparentPreviewBackground from "./TransparentPreviewBackground";
@@ -234,13 +235,10 @@ function RunShareModal({
   ), [date, isZone, run]);
 
   const showActionError = useCallback((fallback, error) => {
-    if (typeof __DEV__ !== "undefined" && __DEV__) {
-      console.log("[WAYPER_SHARE_MODAL_ACTION_ERROR]", {
-        code: error?.code,
-        message: error?.message,
-        stack: error?.stack,
-      });
-    }
+    logger.warn(LOG_CATEGORIES.SHARE, "WAYPER_SHARE_MODAL_ACTION_ERROR", {
+      code: error?.code,
+      error,
+    }, { forcePersist: true });
 
     if (error?.code === "MEDIA_PERMISSION_DENIED") {
       Alert.alert(

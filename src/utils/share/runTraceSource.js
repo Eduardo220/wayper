@@ -1,3 +1,5 @@
+import logger, { LOG_CATEGORIES } from "../logger.js";
+
 export class TracePointsInsufficientError extends Error {
   constructor(message = "Tracado indisponivel para esta corrida.") {
     super(message);
@@ -83,13 +85,11 @@ export function assertTraceHasEnoughPoints({ path = [], segments = [], zoneCoord
   const minPoints = source.type === "zone" ? 3 : 2;
 
   if (source.points.length < minPoints) {
-    if (typeof __DEV__ !== "undefined" && __DEV__) {
-      console.log("[Wayper Share] trace fallback:", {
-        type: source.type,
-        points: source.points.length,
-        minPoints,
-      });
-    }
+    logger.warn(LOG_CATEGORIES.SHARE, "SHARE_TRACE_POINTS_INSUFFICIENT", {
+      type: source.type,
+      points: source.points.length,
+      minPoints,
+    }, { forcePersist: true });
     throw new TracePointsInsufficientError();
   }
 

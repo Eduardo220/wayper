@@ -133,6 +133,17 @@ async function createDiagnosticsArchiveInternal(options = {}) {
     lastNotificationActionReceived: bundle.lastNotificationActionReceived,
   });
   addJson(zip, "gpsFilterReport.json", bundle.gpsFilterReport || {});
+  addJson(zip, "localDiagnostics-summary.json", bundle.localDiagnostics || {});
+  addJson(zip, "reports/app-build-device-metadata.json", bundle.localDiagnostics?.metadata || bundle.metadata || {});
+  addJson(zip, "reports/gps-report.json", bundle.localDiagnostics?.gpsTracking || bundle.gpsFilterReport || {});
+  addJson(zip, "reports/sync-report.json", bundle.syncReport || {});
+  addJson(zip, "reports/permissions-report.json", bundle.permissionsReport || {});
+  addJson(zip, "reports/storage-report.json", bundle.storageReport || {});
+  addJson(zip, "reports/notification-background-report.json", bundle.notificationBackgroundReport || {});
+  addJson(zip, "reports/share-report.json", bundle.shareReport || {});
+  addJson(zip, "reports/stories-feed-report.json", bundle.storiesFeedReport || {});
+  addJson(zip, "reports/territory-report.json", bundle.territoryReport || {});
+  addJson(zip, "reports/profile-ranking-xp-report.json", bundle.profileRankingXpReport || {});
   addJson(zip, "manifest.json", {
     format: "wayper-diagnostics-archive",
     version: 1,

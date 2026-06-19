@@ -25,6 +25,7 @@ O resultado esperado em todos os cenarios e preservar `localRunId`, status, temp
 - Conceder permissao de notificacao no Android 13+.
 - Manter GPS ligado e sair para area aberta.
 - Confirmar que o Android mostra notificacao persistente do Wayper com tempo, distancia, status e acao `Pausar`.
+- Abrir `Configuracoes > Diagnostico` antes/depois do teste e conferir corrida ativa, GPS, permissoes, notification/background, sync e export ZIP.
 - Em aparelhos com economia agressiva de bateria, orientar o usuario a remover o Wayper da otimizacao de bateria.
 
 ## Cenario 1: tela bloqueada

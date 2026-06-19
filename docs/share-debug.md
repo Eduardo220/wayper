@@ -19,9 +19,12 @@ Use este checklist quando alterar compartilhamento/exportacao de corridas.
 - Clicar varias vezes rapido nos botoes: deve manter apenas uma acao ativa.
 - Sem internet: card e PNG do tracado devem continuar funcionando, porque usam SVG/local cache.
 
-Logs esperados em desenvolvimento:
+Logs esperados no Diagnostico/export:
 
-- `[WayperShare] diagnostics`
-- `[WayperShare:<context>]`
+- categoria `SHARE`;
+- evento `SHARE_CAPTURE_GENERATED` quando o PNG for criado;
+- evento `SHARE_EXPORT_DIAGNOSTICS` quando o fluxo registrar a acao;
+- evento `SHARE_<context>` em erro controlado;
+- nenhum log deve incluir URI completa, token, email completo ou coordenadas brutas.
 
 Se aparecer erro de modulo nativo como `Cannot find native module ExpoMediaLibrary`, gere e reinstale o dev build/APK depois de instalar `expo-media-library`.

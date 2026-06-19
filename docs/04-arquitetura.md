@@ -111,6 +111,26 @@ Firestore ainda existe em services de sync, perfil, ranking, feed, amigos, grupo
 
 SQLite nao foi adicionado nesta etapa. AsyncStorage segue aceitavel para a camada atual; SQLite/Expo SQLite deve ser reavaliado se historicos com rotas longas causarem custo perceptivel de parse/carregamento.
 
+## Diagnostico local e observabilidade
+
+O diagnostico local e parte da arquitetura local-first e nao depende obrigatoriamente de Firestore:
+
+- `src/screens/DiagnosticsScreen.js`: tela unica em `Configuracoes > Diagnostico`.
+- `src/services/diagnostics/localDiagnosticsService.js`: agregador de resumo tecnico por dominio.
+- `src/services/diagnostics/logStorageService.js`: persistencia NDJSON file-system com buffer, rotacao e flush manual.
+- `src/services/diagnostics/runDiagnosticsService.js`: eventos de corrida/GPS e bundle JSON sanitizado.
+- `src/services/diagnostics/diagnosticExportService.js`: ZIP local com NDJSON, snapshots leves e `reports/*`.
+- `src/utils/logger.js`: logger central com sanitizacao, categorias e encaminhamento controlado para monitoramento.
+- `src/services/monitoring/sentryService.js`: Sentry complementar, sanitizado e sem substituir o ZIP local.
+
+Regras:
+
+- Novo debug deve entrar nessa central antes de criar tela, logger ou export paralelo.
+- A tela mostra contadores e amostras pequenas; leitura pesada, ZIP e upload sao sob demanda.
+- Coordenadas exatas exigem opt-in explicito; o resumo padrao mascara localizacao e nao exporta `rawPath` completo.
+- Acoes destrutivas exigem confirmacao e nao limpam corridas por padrao.
+- Firestore, Sentry e upload remoto sao melhores esforcos. O diagnostico local deve funcionar offline.
+
 ## Territorios local-first
 
 Desde 2026-06-06, territorio por zonas tambem segue a arquitetura local-first incremental:

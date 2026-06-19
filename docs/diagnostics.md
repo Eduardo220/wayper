@@ -32,7 +32,7 @@ Nao use `console.log` direto em fluxos novos. Se precisar registrar algo, passe 
 
 Categorias disponiveis:
 
-`RUN_SESSION`, `RUN_TRACKING`, `RUN_RECOVERY`, `LOCATION`, `BACKGROUND`, `STORAGE`, `MAP`, `NOTIFICATION`, `SYNC`, `PERMISSION`, `UI_ACTION`, `PERFORMANCE`, `APP_STATE`, `FIREBASE`, `UNKNOWN`.
+`RUN_SESSION`, `RUN_TRACKING`, `RUN_RECOVERY`, `LOCATION`, `BACKGROUND`, `STORAGE`, `MAP`, `NOTIFICATION`, `SYNC`, `PERMISSION`, `SHARE`, `STORY`, `TERRITORY`, `PROFILE`, `RANKING`, `XP`, `UI`, `UI_ACTION`, `PERFORMANCE`, `APP_STATE`, `FIREBASE`, `UNKNOWN`.
 
 Para eventos de corrida, prefira:
 
@@ -62,14 +62,35 @@ Em builds dev e prod, abra:
 
 A tela mostra:
 
-- `runId` e `localRunId`;
-- status da corrida;
-- segmentos e contagem de pontos;
-- distancia e tempo;
-- ultimo ponto e ultimo save local;
-- status de watcher/background task;
-- appState atual;
-- ultimos logs com filtros por nivel e categoria.
+- Corrida ativa: existencia, status, `runId`, `localRunId`, inicio, tempo, distancia, contadores de `rawPath`/`trustedPath`/`renderPath`, segmentos, route chunks, checkpoint, recovery, auto-save, watcher e notificacao.
+- GPS/tracking: pontos recebidos, aceitos, descartados, motivos de descarte, accuracy/speed recentes, gaps e ultimo erro de localizacao.
+- Permissoes: foreground location, background location, notificacoes, midia/galeria, onboarding concluido e acao para abrir configuracoes.
+- Storage local: contagem de runs, snapshot ativo canonico, snapshot legado, territorios, eventos territoriais, stories, feed cache, XP, conquistas, perfil, ranking e saude dos logs.
+- Sync: runs `PENDING_SYNC`, `SYNC_FAILED`, `SYNCING`, `SYNCED`, fila pendente, ultimo attempt, lock ativo, online/offline e ultimo erro.
+- Notificacao/background: foreground service, notification id/status, actions registradas, background task, foreground watcher, AppState e eventos recentes de lifecycle.
+- Home social/stories/feed: stories locais, pending/failed story sync, feed cache, source atual, demo habilitado ou nao e ultimo erro remoto.
+- Compartilhamento: ultimo export de imagem/PNG, ultimo erro, permissao de midia, story criado via share e arquivos temporarios rastreados.
+- Territorio: territorios, eventos, leaderboards cache, zonas legadas, area total, pending sync, ultima captura e ultimo erro.
+- Perfil/ranking/XP: profile source, XP, level, conquistas, ranking source e cache atualizado.
+- Sentry: status, ambiente, DSN, release, dist e envio de evento de teste quando habilitado.
+- Ultimos logs com filtros por nivel e categoria.
+
+A fonte consolidada e `src/services/diagnostics/localDiagnosticsService.js`. Ela agrega apenas resumos, contadores e amostras pequenas por repository/service existente. Firestore e sempre melhor esforco: o diagnostico local nao precisa de rede, Firebase real, GPS real ou MapLibre real para montar o resumo.
+
+## Acoes seguras
+
+A tela oferece acoes operacionais protegidas:
+
+- `Copiar resumo tecnico`: copia um texto curto com corrida ativa, GPS, permissoes, storage, sync, social, territorio e perfil.
+- `Exportar ultima corrida`, `Exportar corrida ativa` e `Exportar logs recentes`: geram ZIP local.
+- `Forcar flush de logs`: grava o buffer de logs antes de exportar.
+- `Verificar permissoes`: atualiza o resumo normalizado.
+- `Abrir configuracoes do app`: usa a facade `permissions.openAppSettings`.
+- `Tentar sync pendente`: chama `RunSyncQueueRepository.retry()`; Firestore continua melhor esforco e a copia local e preservada.
+- `Enviar ultima corrida`: opcional, somente quando backend de upload estiver configurado.
+- `Limpar logs antigos`: exige confirmacao e remove apenas pacotes de logs antigos, mantendo corridas e dados locais.
+
+O debug nao oferece limpar runs/corridas por padrao. Qualquer acao destrutiva futura deve ficar atras de modo dev claro e confirmacao explicita.
 
 ## Armazenamento local
 
@@ -109,9 +130,24 @@ Cada exportacao gera um ZIP compartilhavel pelo Android. O ZIP inclui:
 - `backgroundTaskStatus.json`;
 - `foregroundWatcherStatus.json`;
 - `runtime-state.json`;
+- `localDiagnostics-summary.json`;
+- `reports/app-build-device-metadata.json`;
+- `reports/gps-report.json`;
+- `reports/sync-report.json`;
+- `reports/permissions-report.json`;
+- `reports/storage-report.json`;
+- `reports/notification-background-report.json`;
+- `reports/share-report.json`;
+- `reports/stories-feed-report.json`;
+- `reports/territory-report.json`;
+- `reports/profile-ranking-xp-report.json`;
 - `manifest.json`.
 
 Coordenadas exatas ficam desligadas por padrao. O opt-in deve ser ativado explicitamente na tela antes de uma corrida de teste. Sem opt-in, coordenadas sao mascaradas.
+
+O resumo/export nao inclui `rawPath` completo, tokens, headers de auth, emails completos, imagens privadas, payload completo de feed de terceiros ou coordenadas precisas por padrao. O opt-in de coordenadas exatas deve ser usado somente em corrida controlada, com ciencia de que o ZIP pode revelar trajeto preciso.
+
+Se uma secao falhar, o export continua e marca a secao com `ok: false` e erro sanitizado. Isso evita que uma falha em feed remoto, ranking, Sentry ou permissao derrube a coleta de evidencia local.
 
 Tambem e possivel usar:
 
@@ -128,6 +164,30 @@ O export local sempre funciona. O envio remoto so e habilitado quando:
 `EXPO_PUBLIC_WAYPER_DIAGNOSTICS_UPLOAD_ENABLED=true`
 
 Quando habilitado, o ZIP vai para Firebase Storage e o Firestore recebe somente metadata e o resumo `gpsFilterReport`. O conteudo NDJSON nao e salvo em documento Firestore.
+
+## Modo producao
+
+Diagnostico fica acessivel tambem em producao por `Menu lateral > Configuracoes > Diagnostico`, porque bugs reais de corrida/background/share/sync normalmente acontecem em aparelho fisico e release. Em producao:
+
+- logs respeitam o nivel configurado e debug/info sao limitados;
+- coordenadas exatas continuam desligadas por padrao;
+- Sentry recebe apenas erros/fatal e contexto sanitizado;
+- export local funciona sem Sentry, Firestore ou upload remoto;
+- acoes destrutivas exigem confirmacao e nao limpam corridas.
+
+## Checklist para bug real
+
+- Abrir Diagnostico sem corrida ativa e confirmar storage/permissoes.
+- Iniciar corrida e abrir Diagnostico para conferir status, `localRunId`, watcher, notification e contadores de path.
+- Bloquear tela, voltar pelo app/notificacao e conferir background/lifecycle.
+- Gerar pontos GPS e comparar raw/accepted/rejected/gaps.
+- Pausar/retomar e conferir segmentos.
+- Finalizar offline e conferir `PENDING_SYNC`.
+- Criar story local e conferir pending story sync.
+- Compartilhar imagem/PNG e conferir ultimo export em `Compartilhamento`.
+- Negar permissoes e conferir resumo normalizado.
+- Exportar ZIP, abrir `localDiagnostics-summary.json` e validar que coordenadas estao mascaradas.
+- Repetir em build dev Android e, quando possivel, em release.
 
 ## APK prod sem adb
 
