@@ -401,8 +401,8 @@ function RunDetailScreenInner({ route, navigation }) {
   const routeStartPoint = !isZoneRun ? routeEndpointPath[0] : null;
   const routeEndPoint = !isZoneRun ? routeEndpointPath[routeEndpointPath.length - 1] : null;
   const shareRoutePath = useMemo(
-    () => (hasZoneShape ? [] : routeEndpointPath),
-    [hasZoneShape, routeEndpointPath]
+    () => (hasZoneShape ? [] : mapPath),
+    [hasZoneShape, mapPath]
   );
   const shareTracePoints = useMemo(
     () => buildShareSvgPoints(hasZoneShape ? zoneCoords : shareRoutePath, { smooth: false }),

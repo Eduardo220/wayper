@@ -14,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { WayperTheme } from "../../theme/wayperTheme";
 import {
+  cleanupOldShareFiles,
   generateShareImage,
   generateTransparentTracePng,
   getRenderableTraceSource,
@@ -26,6 +27,8 @@ import {
   getRunExportTemplateConfig,
 } from "../../utils/runExportImage";
 import { getRunDisplayTitle } from "../../utils/runDisplayTitle";
+import { createRunStoryFromRun } from "../../repositories/socialHomeRepository";
+import { openAppSettings } from "../../services/permissions";
 import RunShareImageTemplate from "./RunShareImageTemplate";
 import RunTracePngTemplate, { RUN_TRACE_PNG_SIZE } from "./RunTracePngTemplate";
 import TransparentPreviewBackground from "./TransparentPreviewBackground";
@@ -82,14 +85,13 @@ const deriveArea = (run, explicitArea) => {
   return `${Math.round(value).toLocaleString("pt-BR")} m2`;
 };
 
-function ActionButton({ icon, label, onPress, loading, disabled, primary = false, wide = false }) {
+function ActionButton({ icon, label, onPress, loading, disabled, primary = false }) {
   return (
     <TouchableOpacity
       activeOpacity={0.86}
       disabled={disabled || loading}
       style={[
         styles.actionButton,
-        wide && styles.actionButtonWide,
         primary && styles.actionButtonPrimary,
         (disabled || loading) && styles.actionButtonDisabled,
       ]}
@@ -113,21 +115,22 @@ function ActionButton({ icon, label, onPress, loading, disabled, primary = false
   );
 }
 
-function TemplateTab({ selected, title, subtitle, icon, onPress }) {
+function ShareOption({ icon, title, subtitle, children, actions, footer }) {
   return (
-    <TouchableOpacity
-      activeOpacity={0.86}
-      style={[styles.templateTab, selected && styles.templateTabSelected]}
-      onPress={onPress}
-    >
-      <View style={[styles.templateIcon, selected && styles.templateIconSelected]}>
-        <Ionicons name={icon} size={20} color={selected ? WayperTheme.colors.textInverse : WayperTheme.colors.primary} />
+    <View style={styles.optionCard}>
+      <View style={styles.optionHeader}>
+        <View style={styles.optionIcon}>
+          <Ionicons name={icon} size={20} color={WayperTheme.colors.primary} />
+        </View>
+        <View style={styles.optionText}>
+          <Text style={styles.optionTitle}>{title}</Text>
+          <Text style={styles.optionSubtitle}>{subtitle}</Text>
+        </View>
       </View>
-      <View style={styles.templateTextWrap}>
-        <Text style={[styles.templateTitle, selected && styles.templateTitleSelected]}>{title}</Text>
-        <Text style={styles.templateSubtitle}>{subtitle}</Text>
-      </View>
-    </TouchableOpacity>
+      <View style={styles.optionPreview}>{children}</View>
+      <View style={styles.actionsGrid}>{actions}</View>
+      {footer}
+    </View>
   );
 }
 
@@ -166,6 +169,7 @@ function RunShareModal({
   segments = [],
   zoneCoords = [],
   isZone = false,
+  title: titleProp,
   subtitle,
   distance,
   duration,
@@ -177,23 +181,21 @@ function RunShareModal({
   const { width } = useWindowDimensions();
   const imageRef = useRef(null);
   const traceRef = useRef(null);
-  const [selectedTemplate, setSelectedTemplate] = useState(TEMPLATE.image);
   const [busyAction, setBusyAction] = useState(null);
 
   useEffect(() => {
-    if (visible) {
-      setSelectedTemplate(TEMPLATE.image);
-      setBusyAction(null);
-    }
+    if (!visible) return;
+    setBusyAction(null);
+    cleanupOldShareFiles().catch(() => null);
   }, [visible]);
 
   const shareData = useMemo(() => {
-    const durationText = typeof duration === "string" ? duration : formatDuration(duration ?? run?.duration);
+    const durationText = typeof duration === "string" ? duration : formatDuration(duration ?? run?.durationSeconds ?? run?.duration);
     const distanceText = deriveDistance(run, distance);
     const paceText = typeof pace === "string" ? pace : formatPace(pace ?? run?.avgPaceSecondsPerKm ?? run?.pace);
     const areaText = deriveArea(run, area);
-    const dateText = typeof date === "string" ? date : formatDate(date ?? run?.date ?? run?.createdAt);
-    const runTitle = getRunDisplayTitle(run);
+    const dateText = typeof date === "string" ? date : formatDate(date ?? run?.date ?? run?.finishedAt ?? run?.endedAt ?? run?.createdAt);
+    const runTitle = titleProp || getRunDisplayTitle(run);
     const runSubtitle = subtitle && subtitle !== runTitle
       ? subtitle
       : (isZone ? "Corrida por zonas" : "Corrida livre");
@@ -201,15 +203,13 @@ function RunShareModal({
     return {
       title: runTitle,
       subtitle: runSubtitle,
-      traceTitle: runTitle,
       distance: distanceText,
       duration: durationText,
       pace: paceText,
       date: dateText,
       area: areaText,
-      filenameBase: `wayper-run-${run?.id || run?.runId || Date.now()}`,
     };
-  }, [area, date, distance, duration, isZone, pace, run, subtitle]);
+  }, [area, date, distance, duration, isZone, pace, run, subtitle, titleProp]);
 
   const traceAvailability = useMemo(() => {
     const source = getRenderableTraceSource({ path, segments, zoneCoords, isZone });
@@ -224,6 +224,15 @@ function RunShareModal({
   const previewWidth = Math.min(width - 44, 350);
   const isBusy = busyAction !== null;
 
+  const getExportFilenameBase = useCallback((template) => (
+    buildRunExportFilenameBase({
+      template,
+      run,
+      date: date ?? run?.date ?? run?.endedAt ?? run?.finishedAt ?? run?.createdAt,
+      fallbackTitle: isZone ? "corrida-zonas" : "corrida-livre",
+    })
+  ), [date, isZone, run]);
+
   const showActionError = useCallback((fallback, error) => {
     if (typeof __DEV__ !== "undefined" && __DEV__) {
       console.log("[WAYPER_SHARE_MODAL_ACTION_ERROR]", {
@@ -232,23 +241,27 @@ function RunShareModal({
         stack: error?.stack,
       });
     }
-    Alert.alert("Não foi possível concluir", error?.message || fallback);
+
+    if (error?.code === "MEDIA_PERMISSION_DENIED") {
+      Alert.alert(
+        "Permissao de midia",
+        error?.message || fallback,
+        [
+          { text: "Compartilhar depois", style: "cancel" },
+          { text: "Abrir configuracoes", onPress: () => openAppSettings?.() },
+        ]
+      );
+      return;
+    }
+
+    Alert.alert("Nao foi possivel concluir", error?.message || fallback);
   }, []);
 
   const ensureTraceAvailable = useCallback(() => {
     if (traceAvailability.available) return true;
-    Alert.alert("Traçado indisponível", "Traçado indisponível para esta corrida.");
+    Alert.alert("Tracado indisponivel", "Tracado indisponivel para esta corrida.");
     return false;
   }, [traceAvailability.available]);
-
-  const getExportFilenameBase = useCallback((template) => (
-    buildRunExportFilenameBase({
-      template,
-      run,
-      date: date ?? run?.date ?? run?.endedAt ?? run?.createdAt,
-      fallbackTitle: isZone ? "corrida-zonas" : "corrida-livre",
-    })
-  ), [date, isZone, run]);
 
   const buildImage = useCallback(async () => (
     generateShareImage(imageRef, getExportFilenameBase(TEMPLATE.image), { waitMs: 1400 })
@@ -258,12 +271,6 @@ function RunShareModal({
     if (!ensureTraceAvailable()) return null;
     return generateTransparentTracePng(traceRef, getExportFilenameBase(TEMPLATE.tracePng));
   }, [ensureTraceAvailable, getExportFilenameBase]);
-
-  const buildSelectedExportImage = useCallback(async () => {
-    const config = getRunExportTemplateConfig(selectedTemplate);
-    if (config.generateKind === "trace") return buildTrace();
-    return buildImage();
-  }, [buildImage, buildTrace, selectedTemplate]);
 
   const runWithBusy = useCallback(async (key, task) => {
     if (busyAction) return;
@@ -275,28 +282,76 @@ function RunShareModal({
     }
   }, [busyAction]);
 
-  const handleImageShare = useCallback((key, dialogTitle) => {
-    runWithBusy(key, async () => {
+  const buildStoryMedia = useCallback((kind, uri, template) => ({
+    type: kind === "trace" ? "trace_png" : "share_image",
+    kind,
+    uri,
+    mimeType: "image/png",
+    source: "local",
+    filenameBase: getExportFilenameBase(template),
+    createdAt: new Date().toISOString(),
+  }), [getExportFilenameBase]);
+
+  const assertStoryCreated = (result) => {
+    if (result?.duplicate) return "duplicate";
+    if (result?.data) return "created";
+    const error = result?.error || new Error(result?.code || "story_not_created");
+    if (result?.code && !error.code) error.code = result.code;
+    throw error;
+  };
+
+  const handleImageShare = useCallback(() => {
+    runWithBusy("image-share", async () => {
       try {
         const uri = await buildImage();
-        await openNativeShare(uri, { dialogTitle });
+        await openNativeShare(uri, { dialogTitle: getRunExportTemplateConfig(TEMPLATE.image).dialogTitle });
       } catch (error) {
-        showActionError("Não foi possível gerar a imagem para compartilhar.", error);
+        showActionError("Nao foi possivel gerar a imagem para compartilhar.", error);
       }
     });
   }, [buildImage, runWithBusy, showActionError]);
 
-  const handleTraceCopy = useCallback(() => {
-    runWithBusy("trace-copy", async () => {
+  const handleImageDownload = useCallback(() => {
+    runWithBusy("image-download", async () => {
+      try {
+        const uri = await buildImage();
+        await saveImageToGallery(uri, "Wayper");
+        Alert.alert("Imagem salva", getRunExportTemplateConfig(TEMPLATE.image).successMessage);
+      } catch (error) {
+        showActionError("Nao foi possivel baixar a imagem.", error);
+      }
+    });
+  }, [buildImage, runWithBusy, showActionError]);
+
+  const handleImageStory = useCallback(() => {
+    runWithBusy("image-story", async () => {
+      try {
+        const uri = await buildImage();
+        const status = assertStoryCreated(await createRunStoryFromRun(run, {
+          media: buildStoryMedia("image", uri, TEMPLATE.image),
+        }));
+        if (status === "duplicate") {
+          Alert.alert("Story ja existe", "Essa corrida ja esta no seu story local.");
+          return;
+        }
+        Alert.alert("Story adicionado", "Story salvo localmente com sync pendente.");
+      } catch (error) {
+        const message = error?.code === "RUN_NOT_FINISHED" || error?.message === "run_not_finished"
+          ? "Apenas corridas finalizadas podem virar story."
+          : "Nao foi possivel adicionar esta corrida ao story.";
+        showActionError(message, error);
+      }
+    });
+  }, [buildImage, buildStoryMedia, run, runWithBusy, showActionError]);
+
+  const handleTraceShare = useCallback(() => {
+    runWithBusy("trace-share", async () => {
       try {
         const uri = await buildTrace();
         if (!uri) return;
-        const result = await copyPngToClipboard(uri, { fallbackShare: true });
-        if (result?.ok) {
-          Alert.alert("PNG copiado", "PNG copiado para a área de transferência.");
-        }
+        await openNativeShare(uri, { dialogTitle: getRunExportTemplateConfig(TEMPLATE.tracePng).dialogTitle });
       } catch (error) {
-        showActionError("Não foi possível copiar o PNG.", error);
+        showActionError("Nao foi possivel compartilhar o PNG.", error);
       }
     });
   }, [buildTrace, runWithBusy, showActionError]);
@@ -307,51 +362,35 @@ function RunShareModal({
         const uri = await buildTrace();
         if (!uri) return;
         await saveImageToGallery(uri, "Wayper");
-        Alert.alert("PNG salvo", "O traçado PNG foi salvo.");
+        Alert.alert("PNG salvo", getRunExportTemplateConfig(TEMPLATE.tracePng).successMessage);
       } catch (error) {
-        showActionError("Não foi possível baixar o PNG.", error);
+        showActionError("Nao foi possivel baixar o PNG.", error);
       }
     });
   }, [buildTrace, runWithBusy, showActionError]);
 
-  const handleTraceShare = useCallback((key) => {
-    runWithBusy(key, async () => {
+  const handleTraceStory = useCallback(() => {
+    runWithBusy("trace-story", async () => {
       try {
         const uri = await buildTrace();
         if (!uri) return;
-        await openNativeShare(uri, { dialogTitle: "Compartilhar traçado Wayper" });
+        const status = assertStoryCreated(await createRunStoryFromRun(run, {
+          media: buildStoryMedia("trace", uri, TEMPLATE.tracePng),
+          type: "run_trace_png",
+        }));
+        if (status === "duplicate") {
+          Alert.alert("Story ja existe", "Essa corrida ja esta no seu story local.");
+          return;
+        }
+        Alert.alert("Story adicionado", "Tracado salvo no story local com sync pendente.");
       } catch (error) {
-        showActionError("Não foi possível compartilhar o PNG.", error);
+        const message = error?.code === "RUN_NOT_FINISHED" || error?.message === "run_not_finished"
+          ? "Apenas corridas finalizadas podem virar story."
+          : "Nao foi possivel adicionar o tracado ao story.";
+        showActionError(message, error);
       }
     });
-  }, [buildTrace, runWithBusy, showActionError]);
-
-  const handleSelectedShare = useCallback(() => {
-    const config = getRunExportTemplateConfig(selectedTemplate);
-    runWithBusy("share-selected", async () => {
-      try {
-        const uri = await buildSelectedExportImage();
-        if (!uri) return;
-        await openNativeShare(uri, { dialogTitle: config.dialogTitle });
-      } catch (error) {
-        showActionError("Nao foi possivel gerar a imagem para compartilhar.", error);
-      }
-    });
-  }, [buildSelectedExportImage, runWithBusy, selectedTemplate, showActionError]);
-
-  const handleSelectedDownload = useCallback(() => {
-    const config = getRunExportTemplateConfig(selectedTemplate);
-    runWithBusy("download-selected", async () => {
-      try {
-        const uri = await buildSelectedExportImage();
-        if (!uri) return;
-        await saveImageToGallery(uri, "Wayper");
-        Alert.alert("Imagem salva", config.successMessage);
-      } catch (error) {
-        showActionError("Nao foi possivel baixar a imagem.", error);
-      }
-    });
-  }, [buildSelectedExportImage, runWithBusy, selectedTemplate, showActionError]);
+  }, [buildStoryMedia, buildTrace, run, runWithBusy, showActionError]);
 
   const imagePreview = (
     <ScaledTemplate
@@ -389,11 +428,6 @@ function RunShareModal({
           segments={segments}
           zoneCoords={zoneCoords}
           isZone={isZone}
-          title={shareData.traceTitle}
-          distance={shareData.distance}
-          duration={shareData.duration}
-          pace={shareData.pace}
-          area={shareData.area}
         />
       </ScaledTemplate>
     </TransparentPreviewBackground>
@@ -414,73 +448,84 @@ function RunShareModal({
               <View style={styles.headerText}>
                 <Text style={styles.eyebrow}>Wayper share</Text>
                 <Text style={styles.title}>Compartilhar corrida</Text>
-                <Text style={styles.subtitle}>Escolha o visual para enviar ou baixar.</Text>
+                <Text style={styles.subtitle}>Escolha imagem completa ou tracado transparente.</Text>
               </View>
               <TouchableOpacity activeOpacity={0.84} style={styles.closeButton} onPress={onClose}>
                 <Ionicons name="close" size={22} color={WayperTheme.colors.text} />
               </TouchableOpacity>
             </View>
 
-            <View style={styles.previewShell}>
-              <View style={styles.previewHeader}>
-                <Text style={styles.previewTitle}>
-                  {selectedTemplate === TEMPLATE.image ? "Imagem completa" : "PNG transparente"}
-                </Text>
-                <Text style={styles.previewHint}>
-                  {selectedTemplate === TEMPLATE.image ? "Mapa, traçado e estatísticas" : "Somente traçado e stats"}
-                </Text>
-              </View>
-              <View style={styles.previewBody}>
-                {selectedTemplate === TEMPLATE.image ? imagePreview : tracePreview}
-              </View>
-            </View>
+            <ShareOption
+              icon="image-outline"
+              title="Imagem"
+              subtitle="Mapa, rota e estatisticas da corrida."
+              actions={(
+                <>
+                  <ActionButton
+                    icon="share-social-outline"
+                    label={busyAction === "image-share" ? "Compartilhando..." : "Compartilhar"}
+                    loading={busyAction === "image-share"}
+                    disabled={isBusy}
+                    primary
+                    onPress={handleImageShare}
+                  />
+                  <ActionButton
+                    icon="download-outline"
+                    label={busyAction === "image-download" ? "Baixando..." : "Baixar imagem"}
+                    loading={busyAction === "image-download"}
+                    disabled={isBusy}
+                    onPress={handleImageDownload}
+                  />
+                  <ActionButton
+                    icon="add-circle-outline"
+                    label={busyAction === "image-story" ? "Adicionando..." : "Adicionar ao story"}
+                    loading={busyAction === "image-story"}
+                    disabled={isBusy}
+                    onPress={handleImageStory}
+                  />
+                </>
+              )}
+            >
+              {imagePreview}
+            </ShareOption>
 
-            <View style={styles.tabs}>
-              <TemplateTab
-                selected={selectedTemplate === TEMPLATE.image}
-                title="Imagem"
-                subtitle="Mapa + stats"
-                icon="image-outline"
-                onPress={() => setSelectedTemplate(TEMPLATE.image)}
-              />
-              <TemplateTab
-                selected={selectedTemplate === TEMPLATE.tracePng}
-                title="Traçado PNG"
-                subtitle="Fundo transparente"
-                icon="git-branch-outline"
-                onPress={() => setSelectedTemplate(TEMPLATE.tracePng)}
-              />
-            </View>
-
-            <View style={styles.actionsSection}>
-              <Text style={styles.actionsTitle}>
-                Ações
-              </Text>
-
-              <View style={styles.actionsGrid}>
-                <ActionButton
-                  icon="share-social-outline"
-                  label={busyAction === "share-selected" ? "Compartilhando..." : "Compartilhar imagem"}
-                  loading={busyAction === "share-selected"}
-                  disabled={isBusy || (selectedTemplate === TEMPLATE.tracePng && !traceAvailability.available)}
-                  primary
-                  onPress={handleSelectedShare}
-                />
-                <ActionButton
-                  icon="download-outline"
-                  label={busyAction === "download-selected" ? "Baixando..." : "Baixar imagem"}
-                  loading={busyAction === "download-selected"}
-                  disabled={isBusy || (selectedTemplate === TEMPLATE.tracePng && !traceAvailability.available)}
-                  onPress={handleSelectedDownload}
-                />
-              </View>
-
-              {selectedTemplate === TEMPLATE.tracePng && !traceAvailability.available ? (
-                <Text style={styles.unavailableText}>Traçado indisponível para esta corrida.</Text>
+            <ShareOption
+              icon="git-branch-outline"
+              title="Tracado PNG"
+              subtitle="PNG transparente apenas com a rota ou zona."
+              actions={(
+                <>
+                  <ActionButton
+                    icon="share-social-outline"
+                    label={busyAction === "trace-share" ? "Compartilhando..." : "Compartilhar PNG"}
+                    loading={busyAction === "trace-share"}
+                    disabled={isBusy || !traceAvailability.available}
+                    primary
+                    onPress={handleTraceShare}
+                  />
+                  <ActionButton
+                    icon="download-outline"
+                    label={busyAction === "trace-download" ? "Baixando..." : "Baixar PNG"}
+                    loading={busyAction === "trace-download"}
+                    disabled={isBusy || !traceAvailability.available}
+                    onPress={handleTraceDownload}
+                  />
+                  <ActionButton
+                    icon="add-circle-outline"
+                    label={busyAction === "trace-story" ? "Adicionando..." : "Adicionar ao story"}
+                    loading={busyAction === "trace-story"}
+                    disabled={isBusy || !traceAvailability.available}
+                    onPress={handleTraceStory}
+                  />
+                </>
+              )}
+              footer={!traceAvailability.available ? (
+                <Text style={styles.unavailableText}>Tracado indisponivel para esta corrida.</Text>
               ) : null}
-            </View>
+            >
+              {tracePreview}
+            </ShareOption>
           </ScrollView>
-
         </View>
         <View pointerEvents="none" style={styles.captureHost}>
           <RunShareImageTemplate
@@ -504,11 +549,6 @@ function RunShareModal({
             segments={segments}
             zoneCoords={zoneCoords}
             isZone={isZone}
-            title={shareData.traceTitle}
-            distance={shareData.distance}
-            duration={shareData.duration}
-            pace={shareData.pace}
-            area={shareData.area}
           />
         </View>
       </View>
@@ -543,13 +583,13 @@ const styles = StyleSheet.create({
   content: {
     padding: 22,
     paddingBottom: 34,
+    gap: 18,
   },
   header: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 16,
-    marginBottom: 18,
   },
   headerText: {
     flex: 1,
@@ -558,7 +598,7 @@ const styles = StyleSheet.create({
     color: WayperTheme.colors.primary,
     fontSize: 12,
     fontWeight: "900",
-    letterSpacing: 0.6,
+    letterSpacing: 0,
     textTransform: "uppercase",
   },
   title: {
@@ -583,28 +623,45 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: WayperTheme.colors.primaryBorder,
   },
-  previewShell: {
+  optionCard: {
     borderRadius: 26,
     padding: 14,
     backgroundColor: WayperTheme.colors.surface,
     borderWidth: 1,
     borderColor: WayperTheme.colors.primaryBorder,
   },
-  previewHeader: {
+  optionHeader: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
     marginBottom: 12,
   },
-  previewTitle: {
+  optionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.primarySoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+  },
+  optionText: {
+    flex: 1,
+  },
+  optionTitle: {
     color: WayperTheme.colors.text,
     fontSize: 17,
     fontWeight: "900",
   },
-  previewHint: {
+  optionSubtitle: {
     color: WayperTheme.colors.textMuted,
     fontSize: 12,
     fontWeight: "700",
     marginTop: 3,
   },
-  previewBody: {
+  optionPreview: {
     alignItems: "center",
   },
   scaledFrame: {
@@ -621,75 +678,15 @@ const styles = StyleSheet.create({
   tracePreviewBackground: {
     borderRadius: 22,
   },
-  tabs: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 16,
-  },
-  templateTab: {
-    flex: 1,
-    minHeight: 76,
-    borderRadius: 22,
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: WayperTheme.colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: WayperTheme.colors.primaryBorder,
-  },
-  templateTabSelected: {
-    borderColor: WayperTheme.colors.borderStrong,
-    backgroundColor: WayperTheme.colors.primarySoft,
-  },
-  templateIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: WayperTheme.colors.surface,
-    borderWidth: 1,
-    borderColor: WayperTheme.colors.primaryBorder,
-  },
-  templateIconSelected: {
-    backgroundColor: WayperTheme.colors.primary,
-    borderColor: WayperTheme.colors.primary,
-  },
-  templateTextWrap: {
-    flex: 1,
-  },
-  templateTitle: {
-    color: WayperTheme.colors.text,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  templateTitleSelected: {
-    color: WayperTheme.colors.primary,
-  },
-  templateSubtitle: {
-    color: WayperTheme.colors.textMuted,
-    fontSize: 11,
-    fontWeight: "700",
-    marginTop: 2,
-  },
-  actionsSection: {
-    marginTop: 18,
-  },
-  actionsTitle: {
-    color: WayperTheme.colors.text,
-    fontSize: 16,
-    fontWeight: "900",
-    marginBottom: 12,
-  },
   actionsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
+    marginTop: 12,
   },
   actionButton: {
     flex: 1,
-    minWidth: 142,
+    minWidth: 120,
     minHeight: 86,
     borderRadius: 22,
     alignItems: "center",
@@ -698,10 +695,6 @@ const styles = StyleSheet.create({
     backgroundColor: WayperTheme.colors.surfaceElevated,
     borderWidth: 1,
     borderColor: WayperTheme.colors.primaryBorder,
-  },
-  actionButtonWide: {
-    width: "100%",
-    minHeight: 86,
   },
   actionButtonPrimary: {
     backgroundColor: WayperTheme.colors.primary,

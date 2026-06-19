@@ -14,12 +14,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "21-exemplos-de-comandos-ia.md",
+                "file": "wayper/13-problemas-conhecidos.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "21-exemplos-de-comandos-ia"
+              "title": "13-problemas-conhecidos"
             }
           }
         ]
@@ -202,30 +202,31 @@
   },
   "active": "3b4d653518ff2860",
   "lastOpenFiles": [
+    "wayper/13-problemas-conhecidos.md",
+    "wayper/12-ideias-futuras.md",
+    "15-workflow-obsidian-ia.md",
+    "15-corrida-por-zonas.md",
+    "14-instrucoes-para-ia.md",
+    "13-bugs-conhecidos.md",
+    "diagnostics.md",
+    "19-revisoes-de-implementacao.md",
     "21-exemplos-de-comandos-ia.md",
     "wayper/00-index.md",
     "wayper/03-mecanica-territorios.md",
     "wayper/07-telas-e-fluxos.md",
     "11-plano-de-deploy.md",
-    "13-bugs-conhecidos.md",
-    "wayper/12-ideias-futuras.md",
     "22-teste-real-corrida-background.md",
     "17-propostas-pendentes.md",
     "16-ideias-de-melhoria.md",
-    "15-corrida-por-zonas.md",
     "09-design-e-wireframes.md",
     "10-regras-de-negocio.md",
     "06-fluxos-de-usuario.md",
     "07-padroes-de-codigo.md",
     "wayper/11-prompts-para-ia.md",
     "00-fontes-do-projeto.md",
-    "15-workflow-obsidian-ia.md",
     "08-decisoes-tecnicas.md",
-    "wayper/13-problemas-conhecidos.md",
     "templates/template-revisao-implementacao.md",
     "templates/template-proposta-pendente.md",
-    "templates/template-changelog-produto.md",
-    "templates/template-decisao-tecnica.md",
-    "templates/template-ideia-wayper.md"
+    "templates/template-changelog-produto.md"
   ]
 }

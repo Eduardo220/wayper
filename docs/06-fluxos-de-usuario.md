@@ -106,3 +106,20 @@ Possível fluxo:
 3. Usuário cria grupo ou entra em grupo.
 4. Ranking do grupo é exibido.
 5. Corridas e zonas podem alimentar ranking social.
+
+## 11. Compartilhar corrida
+
+1. Usuario abre o detalhe de uma corrida finalizada local ou o resumo da corrida salva.
+2. Usuario toca em `Compartilhar corrida`.
+3. App abre `RunShareModal` sem pedir permissao de midia.
+4. Modal mostra duas opcoes:
+   - `Imagem`: preview com mapa/rota, estatisticas, modo livre/zonas e area real quando existir.
+   - `Tracado PNG`: preview transparente apenas com rota ou poligono real de zona.
+5. Em `Imagem`, usuario pode compartilhar, baixar imagem ou adicionar ao story.
+6. Em `Tracado PNG`, usuario pode compartilhar PNG, baixar PNG ou adicionar ao story quando houver pontos suficientes.
+7. Compartilhar nativo gera arquivo temporario local e abre share sheet, sem Firestore.
+8. Baixar imagem/PNG pede permissao de midia somente nesse momento; se falhar, mostra erro controlado e o usuario ainda pode compartilhar.
+9. Adicionar ao story usa corrida finalizada local, cria item em `wayper_run_stories_v1` com `PENDING_SYNC` e atualiza cache/feed local da Home.
+10. Tentar adicionar a mesma corrida de novo nao duplica story; o app informa que o story local ja existe.
+11. Corrida ativa, pausada, recuperando ou `FINISHING` nao pode virar story.
+12. Corrida livre nao mostra territorio falso; corrida por zonas so desenha poligono se `zoneCoords` existir.

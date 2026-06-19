@@ -304,12 +304,13 @@ const RunShareCard = forwardRef(function RunShareCard(
   const routeCoords = normalizeCoords(path);
   const segmentCoords = normalizeSegments(segments);
   const zoneShape = normalizeCoords(zoneCoords);
-  const useZoneShape = Boolean(isZone && (zoneShape.length >= 3 || routeCoords.length >= 3));
-  const artworkCoords = useZoneShape ? (zoneShape.length >= 3 ? zoneShape : routeCoords) : routeCoords;
+  const useZoneShape = Boolean(isZone && zoneShape.length >= 3);
+  const showZoneArea = Boolean(isZone && area && !/^0(?:\.0+)?\s*m2$/i.test(String(area).trim()));
+  const artworkCoords = useZoneShape ? zoneShape : routeCoords;
   const displayTitle = title || "Corrida Wayper";
   const displaySubtitle = subtitle && subtitle !== displayTitle
     ? subtitle
-    : (useZoneShape ? "Corrida por zonas" : "Corrida livre");
+    : (isZone ? "Corrida por zonas" : "Corrida livre");
 
   if (mode === "trace") {
     return (
@@ -367,7 +368,7 @@ const RunShareCard = forwardRef(function RunShareCard(
         <Metric label="Pace" value={pace} />
       </View>
 
-      {useZoneShape ? (
+      {showZoneArea ? (
         <View style={styles.zonePill}>
           <Text style={styles.zonePillLabel}>Area conquistada</Text>
           <Text style={styles.zonePillValue}>{area}</Text>

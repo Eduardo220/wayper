@@ -187,6 +187,52 @@ describe("socialHomeRepository", () => {
     expect(rawStories).toHaveLength(1);
   });
 
+  test("story local preserva midia segura sem rawPath", async () => {
+    listRuns.mockResolvedValue({
+      data: [finishedRun({ id: "run-media", localRunId: "run-media", rawPath: [{ latitude: 1, longitude: 2 }] })],
+      source: "local",
+      error: null,
+    });
+
+    const result = await repository.createRunStoryFromRun({ id: "run-media" }, {
+      now: new Date("2026-06-16T12:00:00.000Z"),
+      media: {
+        uri: "file:///tmp/wayper-run.png",
+        kind: "image",
+        mimeType: "image/png",
+        source: "local",
+        filenameBase: "wayper-corrida-livre",
+        rawPath: [{ latitude: 1, longitude: 2 }],
+      },
+    });
+
+    expect(result.data.media).toEqual(expect.objectContaining({
+      uri: "file:///tmp/wayper-run.png",
+      kind: "image",
+      type: "share_image",
+      mimeType: "image/png",
+      source: "local",
+      filenameBase: "wayper-corrida-livre",
+    }));
+    expect(result.data.media.rawPath).toBeUndefined();
+    expect(result.data.runSummary.rawPath).toBeUndefined();
+  });
+
+  test("nao cria story para corrida FINISHING", async () => {
+    listRuns.mockResolvedValue({
+      data: [finishedRun({ id: "finishing-story", localRunId: "finishing-story", status: "FINISHING" })],
+      source: "local",
+      error: null,
+    });
+
+    const result = await repository.createRunStoryFromRun({ id: "finishing-story" });
+    const rawStories = storage.get(repository.RUN_STORIES_STORAGE_KEY);
+
+    expect(result.code).toBe("RUN_NOT_FINISHED");
+    expect(result.data).toBeNull();
+    expect(rawStories).toBeUndefined();
+  });
+
   test("compoe stories locais, amigos reais e feed remoto sem promover demo", async () => {
     storage.set(repository.RUN_STORIES_STORAGE_KEY, JSON.stringify([
       {

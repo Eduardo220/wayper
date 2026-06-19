@@ -291,3 +291,16 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - Negar notificacao nao quebra corrida; negar background nao permite prometer tela bloqueada perfeita.
 - Firestore falhando deve mostrar local/cache/vazio honesto; demo/mock nunca e fallback silencioso.
 - Estados vazios de Home, Historico, Detalhe, Perfil, Ranking e Dashboard devem usar copy acionavel e componentes compartilhados quando possivel.
+
+## ADR-020: Compartilhamento de corridas local-first
+
+**Status:** aceito
+**Contexto:** corridas finalizadas ja ficam em `runs`/`RunRepository`, a Home social ja usa stories locais em `wayper_run_stories_v1`, e o app precisa compartilhar/baixar imagem e PNG sem depender de Firestore. O pipeline de GPS separa `trustedPath` para metricas, `renderPath` para visual e `segments` para pausas/gaps.
+**Decisao:** consolidar o fluxo visivel em `RunShareModal`, com opcoes `Imagem` e `Tracado PNG`. `Imagem` exporta card Wayper com mapa/rota e metricas salvas. `Tracado PNG` exporta PNG transparente apenas com rota ou poligono real de zona. Export visual deve usar `renderPath`/`segments` quando existirem e nunca conectar pausas/gaps. Corrida por zonas so desenha poligono se `zoneCoords` existir; rota de corrida por zonas sem poligono continua sendo rota, nao territorio inventado. Baixar imagem/PNG pede permissao de midia somente no clique de download. Story usa `socialHomeRepository.createRunStoryFromRun()` e salva item local `PENDING_SYNC` com `runSummary` seguro e `media` local opcional. `Copiar` fica fora da UI enquanto nao houver suporte confiavel para clipboard de imagem no build/plataforma.
+**Consequencias:**
+
+- GPS: nenhum recalc ou alteracao de path salvo.
+- Mapa: share usa renderizacao visual e fallback local; mapa tile indisponivel nao impede o trace PNG.
+- Firestore: nao participa de share/download/story local nesta etapa.
+- Performance: imagem/PNG sao gerados sob demanda; arquivos antigos de cache podem ser limpos pelo helper existente.
+- Experiencia do usuario: opcoes ficam claras, com loading/erro controlado e story local aparecendo na Home social.

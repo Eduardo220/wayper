@@ -203,6 +203,24 @@ function normalizeFeedItem(item = {}, source = SOCIAL_HOME_SOURCE.REMOTE) {
   };
 }
 
+function normalizeStoryMedia(media = null) {
+  if (!media || typeof media !== "object") return null;
+  const uri = typeof media.uri === "string" && media.uri.trim() ? media.uri.trim() : null;
+  if (!uri) return null;
+  const kind = media.kind === "trace" || media.type === "trace_png" ? "trace" : "image";
+  return {
+    type: kind === "trace" ? "trace_png" : "share_image",
+    kind,
+    uri,
+    mimeType: media.mimeType || "image/png",
+    source: media.source || SOCIAL_HOME_SOURCE.LOCAL,
+    filenameBase: media.filenameBase || null,
+    width: Number.isFinite(Number(media.width)) ? Number(media.width) : null,
+    height: Number.isFinite(Number(media.height)) ? Number(media.height) : null,
+    createdAt: toIso(media.createdAt, null),
+  };
+}
+
 function normalizeStory(record = {}, fallback = {}) {
   const createdAt = toIso(record.createdAt, fallback.createdAt || new Date().toISOString());
   const expiresAt = record.expiresAt ? toIso(record.expiresAt, null) : null;
@@ -225,7 +243,7 @@ function normalizeStory(record = {}, fallback = {}) {
     visibility: record.visibility || "friends",
     createdAt,
     expiresAt,
-    media: record.media || null,
+    media: normalizeStoryMedia(record.media),
     runSummary: normalizeRunSummaryForStory(runSummary),
     syncStatus: normalizeStatus(record.syncStatus || STORY_SYNC_STATUS.PENDING_SYNC),
     source: record.source || SOCIAL_HOME_SOURCE.LOCAL,

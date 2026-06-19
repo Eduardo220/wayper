@@ -415,6 +415,38 @@ Impactos:
 - Falha remota cai para cache/local/empty sem apagar stories ou feed cacheado.
 - Dashboard pessoal segue acessivel fora da Home social.
 
+### Compartilhamento de corridas local-first
+
+Status: aprovada.
+
+Contexto:
+
+- Corridas finalizadas ja ficam disponiveis localmente em `runs`/`RunRepository`.
+- O app precisa compartilhar imagem, baixar PNG e criar story local mesmo offline.
+- O pipeline de corrida separa `rawPath` para diagnostico, `trustedPath` para metrica, `renderPath` para visual e `segments` para pausas/gaps.
+- A Home social ja usa stories locais em `wayper_run_stories_v1` com `PENDING_SYNC`.
+
+Decisao:
+
+- `RunShareModal` e a superficie unica para compartilhar corrida finalizada.
+- O modal separa `Imagem` e `Tracado PNG`.
+- `Imagem` exporta card Wayper com mapa/rota, estatisticas salvas, modo livre/zonas e area real quando existir.
+- `Tracado PNG` exporta PNG transparente apenas com rota ou poligono real de zona.
+- Export visual usa `renderPath`/`segments` quando existirem e nao conecta pausas/gaps.
+- Corrida por zonas so desenha poligono quando `zoneCoords` existir; sem poligono, o share nao inventa territorio.
+- Baixar imagem/PNG pede permissao de midia somente no clique de download.
+- Compartilhar nativo usa arquivo local temporario e nao depende de Firestore.
+- Adicionar ao story cria item local `PENDING_SYNC` com `runSummary` seguro e `media` local opcional.
+- `Copiar` nao aparece enquanto nao houver suporte confiavel para clipboard de imagem.
+
+Impactos:
+
+- GPS/path salvo nao e recalculado nem alterado.
+- Historico/detalhe continuam usando `RunRepository` e dados locais.
+- Home social passa a exibir a midia local do story quando ela existir.
+- Firestore fica fora do caminho critico de compartilhar, baixar e adicionar story.
+- Duplicata de story da mesma corrida e bloqueada pelo repository local.
+
 ## Documentos relacionados
 
 - [[00-index]]

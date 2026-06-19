@@ -134,6 +134,34 @@ Elementos esperados:
 - Território conquistado.
 - Alertas se parte da rota foi inválida.
 
+## Compartilhamento de corrida
+
+Funcao:
+
+- Permitir que o usuario compartilhe corrida finalizada de forma bonita e local-first.
+- Separar imagem completa de tracado PNG transparente.
+- Integrar story local da Home social sem depender de Firestore.
+
+Elementos esperados:
+
+- Modal `RunShareModal` com duas opcoes: `Imagem` e `Tracado PNG`.
+- `Imagem`: preview com mapa/rota, identidade Wayper, distancia, tempo, pace, data, modo livre/zonas e area real quando existir.
+- `Tracado PNG`: preview transparente apenas com rota ou poligono real de zona.
+- Acoes dentro de cada opcao, sem botoes duplicados fora do bloco.
+- Loading por acao e erro controlado para geracao, download, share nativo e story.
+
+Comportamento local-first:
+
+- Abrir modal nao pede permissao de midia.
+- Baixar imagem/PNG pede permissao somente no clique de baixar.
+- Compartilhar nativo usa arquivo temporario local.
+- Story usa `wayper_run_stories_v1` com `PENDING_SYNC`.
+- Corrida ativa, pausada, recuperando ou `FINISHING` nao pode virar story.
+- Corrida livre nao mostra territorio falso.
+- Corrida por zonas so desenha poligono quando `zoneCoords` existe; area pode aparecer quando ja foi salva como dado real.
+- `Tracado PNG` usa `renderPath`/`segments` e nao conecta pausas/gaps.
+- `Copiar` fica fora da UI enquanto nao houver suporte confiavel a clipboard de imagem.
+
 ## Perfil
 
 Função:

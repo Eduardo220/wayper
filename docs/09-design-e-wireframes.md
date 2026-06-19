@@ -36,6 +36,27 @@ O Wayper deve parecer um app esportivo, competitivo e moderno, com foco em mapa,
 - Modal de resumo da corrida.
 - Alertas de permissao/localizacao.
 
+## Modal de compartilhamento de corrida
+
+`RunShareModal` deve manter o padrao visual escuro/verde da Wayper e separar claramente dois produtos diferentes:
+
+- `Imagem`: card completo com mapa/preview de rota, identidade Wayper, distancia, tempo, pace, data, modo livre/zonas e area conquistada quando houver dado real.
+- `Tracado PNG`: preview em fundo quadriculado/transparente; o arquivo exportado deve conter apenas o tracado/rota ou o poligono real de zona, sem card e sem fundo.
+
+Cada opcao carrega suas acoes dentro do proprio bloco:
+
+- Imagem: `Compartilhar`, `Baixar imagem`, `Adicionar ao story`.
+- Tracado PNG: `Compartilhar PNG`, `Baixar PNG`, `Adicionar ao story`.
+
+Nao criar botoes soltos duplicados fora das opcoes. `Copiar` nao deve aparecer enquanto o build/plataforma nao oferecer clipboard de imagem confiavel.
+
+Estados esperados:
+
+- Rota insuficiente: manter preview/fallback e desabilitar acoes do `Tracado PNG`.
+- Download em andamento: botao com loading e sem disparar segunda acao.
+- Permissao de midia negada: alerta com orientacao e caminho para configuracoes quando aplicavel.
+- Story duplicado: informar sem criar novo registro.
+
 ## Diretrizes de UX
 
 - Acao principal deve estar visivel.

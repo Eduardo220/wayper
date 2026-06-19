@@ -4021,7 +4021,7 @@ const MapScreen = ({ navigation, route }) => {
     .map((segment, index) => sanitizeSegmentPath(segment, index))
     .filter((segment) => segment.length >= 2);
   const savedOriginalPath = sanitizePath(lastSavedRun?.trustedPath || lastSavedRun?.path || savedRunPath);
-  const savedSharePath = savedOriginalPath.length > 1 ? savedOriginalPath : savedRunPath;
+  const savedSharePath = savedRunPath.length > 1 ? savedRunPath : savedOriginalPath;
   const savedRoutePoints = buildRouteSvgPoints(savedSharePath);
   const savedZoneCoords = sanitizePath(lastSavedRun?.zoneCoords || lastSavedRun?.zone?.coords || []);
   const savedRunIsZone = lastSavedRun?.mode === "zones" || Number(lastSavedRun?.area || 0) > 0 || savedZoneCoords.length >= 3;
@@ -4656,6 +4656,7 @@ const MapScreen = ({ navigation, route }) => {
         onClose={() => setSavedShareVisible(false)}
         run={lastSavedRun}
         path={savedSharePath}
+        segments={savedRunIsZone ? [] : savedRunSegments}
         zoneCoords={savedZoneCoords}
         isZone={savedRunIsZone}
         title={savedFullCardTitle}

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   Modal,
   Pressable,
   RefreshControl,
@@ -384,6 +385,7 @@ function StoryViewerModal({ story, onClose }) {
   const visible = !!story;
   const summary = story?.runSummary || {};
   const isZone = summary.mode === "zones";
+  const mediaUri = story?.media?.uri || null;
   return (
     <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
       <Pressable style={styles.viewerOverlay} onPress={onClose}>
@@ -399,7 +401,13 @@ function StoryViewerModal({ story, onClose }) {
             </Pressable>
           </View>
           <View style={styles.viewerPreview}>
-            {isZone ? <ZonePreview polygon={[]} /> : <RoutePreview path={[]} />}
+            {mediaUri ? (
+              <Image source={{ uri: mediaUri }} style={styles.viewerMedia} resizeMode={story?.media?.kind === "trace" ? "contain" : "cover"} />
+            ) : isZone ? (
+              <ZonePreview polygon={[]} />
+            ) : (
+              <RoutePreview path={[]} />
+            )}
           </View>
           <Text style={styles.viewerTitle} numberOfLines={2}>{summary.title || "Corrida Wayper"}</Text>
           <View style={styles.viewerMetrics}>
@@ -1344,6 +1352,11 @@ const styles = StyleSheet.create({
     backgroundColor: WayperTheme.colors.background,
     borderWidth: 1,
     borderColor: WayperTheme.colors.border,
+  },
+  viewerMedia: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: WayperTheme.colors.background,
   },
   viewerTitle: {
     color: WayperTheme.colors.text,

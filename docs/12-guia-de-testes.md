@@ -232,6 +232,38 @@ Cobertura automatizada esperada:
 - `feedService` nao injeta `DEV_MOCK_FRIENDS` sem opt-in explicito.
 - `homeDashboardRepository` continua testado como base de dashboard pessoal, nao como fonte principal da Home.
 
+## Compartilhamento de corridas
+
+Checklist manual:
+
+- [ ] Abrir detalhe de corrida livre finalizada local.
+- [ ] Abrir `Compartilhar corrida` e confirmar as opcoes `Imagem` e `Tracado PNG`.
+- [ ] Compartilhar `Imagem` e confirmar share sheet nativa com arquivo PNG.
+- [ ] Baixar `Imagem` e confirmar que a permissao de midia aparece somente nesse clique.
+- [ ] Compartilhar `Tracado PNG` e confirmar fundo transparente/sem card quando o app destino suportar transparencia.
+- [ ] Baixar `Tracado PNG` e confirmar arquivo nao vazio.
+- [ ] Confirmar que `Copiar` nao aparece enquanto clipboard de imagem nao for confiavel.
+- [ ] Adicionar `Imagem` ao story e abrir Home para ver story local `PENDING_SYNC`.
+- [ ] Tentar adicionar a mesma corrida novamente e confirmar que nao duplica.
+- [ ] Testar corrida por zonas com area e `zoneCoords`, confirmando poligono real.
+- [ ] Testar corrida por zonas sem `zoneCoords`, confirmando rota/metricas sem territorio inventado.
+- [ ] Testar rota com pausa/gap e confirmar que o PNG nao conecta os trechos.
+- [ ] Testar corrida sem rota suficiente e confirmar acao de `Tracado PNG` desabilitada/erro controlado.
+- [ ] Negar permissao de midia e confirmar alerta controlado com alternativa de compartilhar.
+- [ ] Cancelar share sheet e confirmar que nao aparece erro fatal.
+- [ ] Repetir offline/Firestore indisponivel.
+
+Cobertura automatizada esperada:
+
+- `runTraceSource` prefere `segments` visuais quando existem.
+- `runTraceSource` gera rota segmentada sem transformar path plano em ponte entre pausas.
+- Corrida por zonas so vira poligono quando `zoneCoords` existe.
+- Rota vazia falha com `TRACE_POINTS_INSUFFICIENT`.
+- `socialHomeRepository.createRunStoryFromRun` cria story local `PENDING_SYNC` com `media` segura.
+- Story nao carrega `rawPath`/debug/sync internals.
+- Corrida `FINISHING` nao vira story.
+- Duplicata da mesma corrida nao cria novo story.
+
 ## Perfil e ranking local-first
 
 Checklist manual:

@@ -178,6 +178,31 @@ Regras:
 - A Home nao reimplementa corrida ativa, GPS/path, sync de runs ou historico local.
 - A dashboard pessoal fica em `Dashboard` e `Perfil`, nao como conteudo principal de `Inicio`.
 
+## Compartilhamento de corridas local-first
+
+Desde 2026-06-18, o compartilhamento de corridas deve passar pelo `RunShareModal` e pelos helpers existentes de exportacao, sem criar fluxo paralelo de imagem.
+
+Fontes e responsabilidades:
+
+- `RunRepository` / `runs`: fonte local da corrida finalizada.
+- `runTracking.getRenderablePathForRun()` e `getRenderableSegmentsForRun()`: fonte visual para export, preservando pausas/gaps.
+- `trustedPath`: segue como base de metrica salva, nao como fonte visual primaria quando `renderPath/segments` existem.
+- `RunShareImageTemplate`: gera a imagem completa com mapa/rota e estatisticas.
+- `RunTracePngTemplate`: gera PNG transparente apenas com tracado/rota ou poligono real de zona.
+- `src/utils/share/runTraceSource.js`: normaliza path/segments/zoneCoords para export sem conectar segmentos.
+- `src/utils/shareImage.js` e `permissions.js`: salvamento na galeria so pede permissao no clique de baixar.
+- `socialHomeRepository.createRunStoryFromRun()`: cria story local `PENDING_SYNC` a partir de corrida finalizada.
+
+Regras:
+
+- Compartilhar e baixar nao dependem de Firestore.
+- Abrir o modal nao pede permissao de midia.
+- Baixar imagem/PNG pede midia apenas no momento da acao e oferece alternativa de compartilhar quando falhar.
+- Corrida livre nao mostra area/territorio falso.
+- Corrida por zonas mostra area quando a corrida ja carrega dado real e so desenha poligono quando `zoneCoords` existe.
+- PNG transparente nao recalcula metricas e nao altera path salvo.
+- Copiar imagem para clipboard nao deve aparecer enquanto nao houver suporte confiavel no build/plataforma.
+
 ## Dashboard pessoal local-first
 
 O trabalho de dashboard pessoal anterior continua util fora da Home. `homeDashboardRepository.js`, `profileStats.js`, `DashboardScreen` e `ProfileScreen` podem ser usados para resumo pessoal, XP, estatisticas, territorio, ranking e sync, desde que a primeira tela continue social.

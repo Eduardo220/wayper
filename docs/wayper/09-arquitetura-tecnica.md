@@ -109,6 +109,32 @@ O mapa deve:
 
 Performance de mapa deve ser acompanhada desde o MVP.
 
+## Compartilhamento de corridas
+
+O compartilhamento de corridas e local-first e nao depende obrigatoriamente de Firestore.
+
+Camadas:
+
+- `RunShareModal`: superficie unica visivel para compartilhar corrida finalizada.
+- `RunShareImageTemplate`/`RunShareCard`: imagem completa com mapa/rota e estatisticas.
+- `RunTracePngTemplate`: PNG transparente apenas com tracado/rota ou poligono real de zona.
+- `src/utils/share/runTraceSource.js`: normaliza `path`, `segments` e `zoneCoords` para export.
+- `src/utils/runShareImage.js` e `src/utils/share/runShareExport.js`: captura view, cria arquivo temporario, compartilha e salva.
+- `src/utils/shareImage.js`: integra `expo-sharing`, `expo-media-library` e fallback de pasta Android.
+- `src/services/permissions.js`: facade de permissao de midia, chamada somente no download.
+- `socialHomeRepository`: cria story local em `wayper_run_stories_v1`.
+
+Regras:
+
+- Visual usa `renderPath`/`segments` quando existirem; `rawPath` e diagnostico e nao fonte visual principal.
+- `trustedPath` continua sendo base de metricas salvas; export nao recalcula distancia.
+- `segments` preserva pausas/gaps e deve gerar linhas separadas.
+- Corrida por zonas so vira poligono quando `zoneCoords` existe; sem isso, exporta rota.
+- Corrida livre nunca recebe area/territorio falso.
+- Share nativo usa arquivo local temporario e pode funcionar offline.
+- Download pede midia no clique e trata negado/bloqueado com erro controlado.
+- Story local usa `runSummary` sanitizado e `media` opcional; nao copia path bruto nem campos internos.
+
 ## Território
 
 A lógica de território deve ficar isolada para permitir troca de estratégia.

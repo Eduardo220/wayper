@@ -319,6 +319,21 @@ Story local de corrida:
 
 `runSummary` deve conter apenas identificadores e metricas seguras: `id/localRunId/remoteRunId`, `mode`, `distanceMeters`, `durationSeconds`, `paceSecondsPerKm`, `territoryAreaM2` quando `mode=zones`, `finishedAt`, `syncStatus` e `source`. Nao duplicar rota bruta se um preview/resumo resolver.
 
+`media`, quando existir, deve ser referencia local segura criada pelo fluxo de compartilhamento:
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `type` | string | `share_image` ou `trace_png`. |
+| `kind` | string | `image` ou `trace`. |
+| `uri` | string | URI local do PNG gerado. |
+| `mimeType` | string | `image/png`. |
+| `source` | string | `local` nesta etapa. |
+| `filenameBase` | string/null | Nome base legivel usado no export. |
+| `width`/`height` | number/null | Dimensoes quando conhecidas. |
+| `createdAt` | ISO string/null | Criacao local da midia. |
+
+`media` nao deve carregar `rawPath`, `trustedPath`, `renderPath`, `segments`, erros de sync, storage keys ou payloads internos. Se a midia local expirar no cache, o story continua valido com `runSummary`.
+
 ### `wayper_activity_feed_cache_v1`
 
 Cache normalizado de feed para abrir a Home sem remoto:
