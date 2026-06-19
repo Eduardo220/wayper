@@ -78,6 +78,11 @@ src/
 - Não misturar regra de negócio pesada dentro de componente visual.
 - Não expor chave privada ou credencial.
 - Não escrever direto no Firestore sem validar permissão e estrutura.
+- Nao criar service, hook, repository ou storage paralelo quando ja existir facade/service oficial.
+- Preservar os caminhos local-first atuais: `activeRunTrackingService`/`activeRunState`, `sync.js`/`runSyncQueueService`, repositories e storages oficiais.
+- Tratar Firestore como remoto/best effort nos fluxos ja consolidados, nunca como requisito para preservar corrida, historico, share, diagnostico, XP/conquistas ou Home social.
+- Nao reativar `runService.js`, `zones`/`@wayper_zones`, `xpService` ou `MedalsWidget` como fonte oficial sem ADR e migracao explicita.
+- Demo/mock deve carregar origem explicita e nunca substituir dado real/cache/local silenciosamente.
 - Preferir funções pequenas e testáveis.
 - Código de mapa e GPS deve tratar erro, permissão negada e dados imprecisos.
 

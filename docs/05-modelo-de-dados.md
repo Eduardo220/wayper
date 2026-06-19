@@ -1,6 +1,6 @@
 # Modelo de Dados
 
-Modelo inicial proposto para Firestore. Deve ser ajustado conforme o código real evoluir.
+Modelo consolidado a partir do código atual. Firestore continua documentado como remoto/destino posterior, mas o app possui fontes locais oficiais para corrida ativa, histórico, territórios, XP/conquistas, stories, ranking/cache, perfil e diagnóstico.
 
 ## Coleções sugeridas
 
@@ -90,6 +90,37 @@ Regras locais:
 - A fila local de sync parte da mesma lista `runs`; nao existe storage paralelo oficial para runs finalizadas.
 - `remoteRunId` define o documento remoto quando existir; sem ele, `localRunId` e usado como chave idempotente depois de uma busca remota por `localRunId`.
 - A copia local preserva path completo. O payload remoto pode limitar arrays por `ROUTE_CAP` e registrar `remoteRouteLimits`.
+
+## corrida ativa local
+
+Durante a atividade, a fonte canonica e `wayper:activeRun:v2`, mantida por `activeRunTrackingService` e modelada por `activeRunState`.
+
+Campos esperados no snapshot canonico:
+
+| Campo | Tipo | Descricao |
+| --- | --- | --- |
+| `activeRunId`/`id`/`localRunId` | string | Identidade local estavel da corrida ativa. |
+| `userId` | string/null | Usuario dono quando autenticado. |
+| `status` | string | `RUNNING`, `PAUSED`, `RECOVERING`, `ERROR_RECOVERABLE`, `FINISHED` ou equivalente canonico. |
+| `startedAt` | ISO/number | Inicio da corrida. |
+| `pausedAt` | ISO/number/null | Momento da pausa atual, se existir. |
+| `finishedAt` | ISO/number/null | Momento de finalizacao. |
+| `elapsedMs`/`durationSeconds` | number | Duracao consolidada, protegida contra regressao. |
+| `distanceMeters` | number | Distancia oficial da corrida ativa, baseada em `trustedPath`. |
+| `rawPath` | array | Pontos normalizados para diagnostico. |
+| `trustedPath` | array | Pontos aceitos para metrica. |
+| `renderPath`/`displayPoints` | array | Pontos visuais/simplificados. |
+| `segments`/`routeSegments` | array | Segmentos para pausa/gap sem conectar linha falsa. |
+| `checkpointAt`/`lastUpdatedAt` | ISO/number | Controle de frescor para recovery. |
+| `schemaVersion` | number | Versao do schema local. |
+
+Regras:
+
+- `FINISHING` e estado terminal para recovery; nao pode voltar como corrida ativa.
+- `runRecoveryService` decide conflitos entre `wayper:activeRun:v2` e `wayper_active_offline_run_v1`.
+- Snapshot antigo nao deve reduzir tempo, distancia, pontos ou geometria viva.
+- O legado `wayper_active_offline_run_v1` e checkpoint/compatibilidade, nao fonte nova.
+- Firestore nao participa de start, pause, resume, ponto GPS, metrica ou finish da corrida ativa.
 
 ## route point
 
@@ -404,6 +435,9 @@ Storages locais preservados:
 | Eventos de XP | `wayper_xp_events_v1` | Auditoria local/idempotencia de XP. |
 | Conquistas desbloqueadas | `wayper_achievements_v1` | Fonte local atual via `AchievementRepository`. |
 | Progresso de conquistas | `wayper_achievement_progress_v1` | Progresso parcial local por conquista. |
+| Diagnostico/logs | `wayper-diagnostics` | Diretorio file-system com NDJSON e reports exportaveis. |
+| Diagnostico/testes | `wayper:diagnosticLogs:v1` | Storage usado em ambiente de teste/fallback para logs. |
+| Onboarding | `wayper:onboarding:v1:completed` | Flag local de onboarding concluido. |
 
 Storages legados marcados:
 
@@ -418,6 +452,25 @@ Storages legados marcados:
 | `@wayper:medals_awarded_v1` | Estado visual antigo do `MedalsWidget`. | Nao migrar automaticamente para conquista real. |
 
 Regra: migracoes locais nao apagam dados legados nesta fase. Elas apenas registram metadata e, quando chamadas explicitamente, podem copiar zonas antigas para territorios atuais.
+
+## diagnostico e logs
+
+O diagnostico local usa resumos pequenos e export ZIP sanitizado. A fonte consolidada e `src/services/diagnostics/localDiagnosticsService.js`, com persistencia em `src/services/diagnostics/logStorageService.js`.
+
+Campos/artefatos esperados:
+
+| Artefato | Uso |
+| --- | --- |
+| `*.ndjson` em `wayper-diagnostics` | Eventos categorizados de corrida, GPS, lifecycle, storage, sync e UI. |
+| `localDiagnostics-summary.json` | Resumo agregado por dominio para triagem. |
+| `reports/*` | Reports especificos de GPS, storage, notificacao/background, sync, Home social, share, territorio, perfil/ranking/XP. |
+| `manifest.json` | Metadata do export e ambiente. |
+
+Regras:
+
+- Coordenadas exatas ficam mascaradas por padrao.
+- `rawPath` completo, tokens, emails completos, imagens privadas e payloads completos de terceiros nao entram no resumo padrao.
+- Export local deve funcionar sem Firestore, Sentry, upload remoto ou rede.
 
 ## Cuidados
 

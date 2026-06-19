@@ -1,5 +1,27 @@
 # Prompts para IA
 
+## Prompt base obrigatorio
+
+Use antes de qualquer tarefa de implementacao ou documentacao do Wayper:
+
+```txt
+Voce esta trabalhando no projeto Wayper.
+
+Antes de implementar qualquer coisa:
+1. Analise o codigo atual da branch develop.
+2. Analise git status.
+3. Verifique se ja existe algo parecido implementado.
+4. Leia os arquivos relevantes em /docs, incluindo o resumo local-first quando aplicavel.
+5. Nao duplique services, hooks, repositories, componentes ou logica existente.
+6. Se algo ja existir parcialmente, refatore e complete em vez de criar implementacao paralela.
+7. Preserve padrao visual, arquitetura, nomenclatura e estrutura atual.
+8. Nao dependa obrigatoriamente de Firestore nos fluxos local-first.
+9. Nao reative runService.js, zones legado, xpService ou MedalsWidget como fonte oficial.
+10. Documente decisoes importantes e rode testes antes de concluir.
+```
+
+Para a rodada consolidada em 2026-06-19, consulte tambem `docs/24-resumo-rodada-local-first.md`.
+
 ## Como usar
 
 Use estes prompts com Codex, Claude ou GPT quando precisar evoluir a Wayper. Antes de executar qualquer prompt, informe que `docs/wayper` é a fonte de verdade e peça para a IA ler [[00-index]].
@@ -83,4 +105,3 @@ Crie uma nova proposta de decisão sobre o tema informado usando o template do d
 Inclua impactos em GPS, mapa, Firestore, performance e experiência do usuário.
 Não mova a proposta para decisões aprovadas sem confirmação explícita.
 ```
-

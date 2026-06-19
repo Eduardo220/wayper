@@ -30,6 +30,7 @@ Tudo que define produto, regras de negócio, mecânicas de território, decisõe
 - [[14-glossario]]: termos usados na documentação e no produto.
 - [[15-checklist-validacao-corrida-ativa]]: roteiro de validacao fisica para corrida ativa, background, tela bloqueada, notificacao, recovery e finalizacao.
 - `../23-onboarding-permissoes-estados-vazios.md`: politica atual de onboarding, permissoes, estados vazios, offline e checklist manual.
+- `../24-resumo-rodada-local-first.md`: resumo operacional da rodada local-first consolidada em 2026-06-19.
 
 ## Regra de atualização
 
@@ -42,3 +43,4 @@ Toda mudança relevante no comportamento do app deve atualizar a documentação 
 - Mudança em telas ou fluxo: atualize [[07-telas-e-fluxos]].
 - Mudança em Firestore: atualize [[08-firebase-firestore]] e registre decisão em [[10-decisoes-do-projeto]].
 - Mudança arquitetural: atualize [[09-arquitetura-tecnica]] e [[10-decisoes-do-projeto]].
+- Mudanca que afete local-first, fontes de verdade, storages, sync, diagnostico ou instrucoes para IA: atualize tambem `../24-resumo-rodada-local-first.md` quando o resumo ficar defasado.

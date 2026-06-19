@@ -9,15 +9,17 @@ Componentes principais:
 - React Native para interface mobile.
 - Expo para desenvolvimento, permissões e APIs nativas.
 - Firebase Authentication para login.
-- Firestore para persistência.
+- AsyncStorage e file-system local para fluxos local-first consolidados.
+- Firestore como remoto, cacheavel ou destino posterior de sincronizacao.
 - `expo-location` para localização.
-- Biblioteca de mapas para renderização do mapa e rotas.
+- MapLibre/OpenFreeMap para renderização do mapa e rotas.
 - Turf.js ou biblioteca geográfica semelhante para cálculos de distância, linhas, polígonos, buffers ou interseções.
 
 ## Princípios técnicos
 
 - Separar regra de negócio de componentes visuais.
 - Não acoplar Firestore diretamente às telas quando houver lógica reutilizável.
+- Preservar local-first em corrida ativa, historico, sync de runs, territorios, XP/conquistas, Home social, compartilhamento e diagnostico.
 - Tratar GPS como domínio próprio.
 - Centralizar cálculos de território em services ou módulos específicos.
 - Manter MVP simples e testável manualmente.
@@ -160,6 +162,12 @@ O acesso ao Firestore deve:
 - Manter agregados consistentes.
 
 Modelagem proposta em [[08-firebase-firestore]].
+
+Regra atual:
+
+- Firestore nao e fonte de verdade da corrida ativa.
+- Firestore nao e requisito para abrir historico/detalhes, Home social, Perfil/Ranking local/cache, compartilhar corrida, criar story local ou exportar diagnostico.
+- Chamadas Firestore que ainda existem em Feed/Friends/Groups e services sociais devem ser desacopladas por repositories quando esses fluxos forem alterados.
 
 ## Corrida offline-first
 
@@ -477,6 +485,27 @@ SQLite:
 
 - Nao foi adicionado nesta etapa. A decisao segue pendente de medicao de volume real de rotas, custo de parse do historico e impacto em Expo Dev Client/release Android.
 
+### Diagnostico local e export
+
+O diagnostico local faz parte da arquitetura local-first e deve funcionar sem Firestore obrigatorio.
+
+Camadas:
+
+- `src/screens/DiagnosticsScreen.js`: tela em `Configuracoes > Diagnostico`.
+- `src/services/diagnostics/localDiagnosticsService.js`: resumo consolidado por dominio.
+- `src/services/diagnostics/logStorageService.js`: logs NDJSON/file-system com fallback de teste.
+- `src/services/diagnostics/diagnosticExportService.js`: ZIP local com NDJSON, snapshots leves e `reports/*`.
+- `src/services/diagnostics/runDiagnosticsService.js`: eventos de corrida/GPS/recovery.
+- `src/utils/logger.js`: logger central, categorizado e sanitizado.
+
+Regras:
+
+- Nao criar logger/export/tela debug paralelos antes de integrar a central.
+- Coordenadas exatas ficam mascaradas por padrao.
+- `rawPath` completo, tokens, emails completos, imagens privadas e payloads de terceiros nao entram no resumo padrao.
+- Export local deve abrir mesmo sem Sentry, Firestore, upload remoto ou rede.
+- Acoes destrutivas precisam confirmacao e nao limpam corridas por padrao.
+
 ## Turf.js ou biblioteca geográfica
 
 Uma biblioteca geográfica pode ser usada para:
@@ -496,12 +525,13 @@ Antes de adicionar ou ampliar dependência geográfica, avaliar:
 
 ## Pontos pendentes
 
-- Biblioteca final de mapas.
-- Estratégia final de território.
+- Estratégia final de território social/disputa alem da captura local atual.
 - Onde calcular território: app, backend ou híbrido.
-- Estratégia de localização em segundo plano.
+- Validação física de localização em segundo plano, foreground service e notificacao em dev/release.
 - Estratégia de compactação de rota.
 - Uso de Cloud Functions para agregados e ranking.
+- Contratos remotos para stories, XP/conquistas e territorio.
+- Medição real para decidir SQLite.
 
 ## Documentos relacionados
 

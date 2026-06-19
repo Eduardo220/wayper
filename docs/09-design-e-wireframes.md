@@ -18,6 +18,8 @@ O Wayper deve parecer um app esportivo, competitivo e moderno, com foco em mapa,
 | Dashboard | Ver estatisticas pessoais, XP, territorio, ranking e sync. |
 | Amigos | Gerenciar conexoes sociais. |
 | Grupo | Competicao entre grupos/amigos. |
+| Onboarding | Explicar proposta, offline/local-first e permissoes sem pedir cedo demais. |
+| Diagnostico | Exportar evidencias locais e resumos tecnicos com privacidade. |
 
 ## Componentes importantes
 
@@ -35,6 +37,7 @@ O Wayper deve parecer um app esportivo, competitivo e moderno, com foco em mapa,
 - Linha de rota.
 - Modal de resumo da corrida.
 - Alertas de permissao/localizacao.
+- Central de diagnostico em Configuracoes.
 
 ## Modal de compartilhamento de corrida
 
@@ -82,6 +85,8 @@ Toda tela relevante deve prever:
 - Sem permissao de localizacao.
 - Dados incompletos.
 - Na Home: sem stories, sem amigos, sem feed, offline/cache, usuario novo, sem corridas para postar e story local pendente de sync.
+- Em Diagnostico: sem logs, export em andamento, export concluido, falha parcial de secao, dados mascarados por privacidade.
+- Em Onboarding/permissoes: educacao antes do pedido, permissao bloqueada com acao de configuracoes e permissao opcional negada como limitacao.
 
 Padrao visual:
 

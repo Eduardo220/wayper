@@ -75,7 +75,8 @@ Ao encerrar:
 - Processar rota.
 - Calcular XP.
 - Calcular conquista territorial inicial.
-- Persistir atividade e resumo no Firestore.
+- Persistir atividade e resumo localmente em `runs`.
+- Enfileirar sync remoto posterior quando aplicavel.
 - Mostrar tela de resumo.
 
 Atividades muito curtas podem ser salvas como rascunho, descartadas ou marcadas como inválidas. Essa regra ainda precisa ser decidida em [[10-decisoes-do-projeto]].

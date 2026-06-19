@@ -37,9 +37,12 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 | Bugs conhecidos | `docs/13-bugs-conhecidos.md` |
 | Instruções para IA | `docs/14-instrucoes-para-ia.md` |
 | Onboarding, permissoes e estados vazios | `docs/23-onboarding-permissoes-estados-vazios.md` |
+| Resumo da rodada local-first | `docs/24-resumo-rodada-local-first.md` |
 
 ## Como manter isso útil
 
 - Toda mudança grande no app deve atualizar pelo menos um documento desta pasta.
 - Toda decisão técnica relevante deve ser registrada em `docs/08-decisoes-tecnicas.md` ou em ADRs futuros.
 - Documentação desatualizada deve ser corrigida ou marcada como pendente.
+- Quando houver conflito entre documentacao antiga e codigo atual da branch `develop`, valide o codigo primeiro e atualize a documentacao.
+- Para o estado local-first consolidado em 2026-06-19, use `docs/24-resumo-rodada-local-first.md` como mapa rapido antes de aprofundar nos documentos especificos.

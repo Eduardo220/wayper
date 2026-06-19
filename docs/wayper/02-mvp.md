@@ -26,7 +26,7 @@ O MVP não deve tentar resolver clans, eventos, disputas complexas ou economia d
 - Nível do usuário com regra simples.
 - Histórico de atividades.
 - Perfil básico do usuário.
-- Persistência em Firebase/Firestore.
+- Persistencia local-first com sync posterior/best effort para Firebase/Firestore.
 - Mecânica inicial de território em formato simples, individual e documentado.
 
 ## O que fica fora do MVP
@@ -56,13 +56,13 @@ O MVP será considerado bem-sucedido se:
 - O mapa mostrar a rota de forma clara.
 - A conquista territorial for visível e compreensível.
 - A precisão do GPS for boa o suficiente para atividades urbanas comuns.
-- O custo de leitura e escrita no Firestore permanecer previsível.
+- O custo de leitura/escrita remota permanecer previsível porque os fluxos criticos nao gravam ponto a ponto no Firestore durante a corrida.
 - O app não consumir bateria de forma inaceitável em atividades curtas.
 
 ## Riscos do MVP
 
 - GPS impreciso gerar conquistas injustas.
-- Firestore ficar caro se cada ponto GPS for gravado de forma ineficiente.
+- Firestore ficar caro se sync remoto futuro tentar gravar ponto GPS de forma ineficiente.
 - Mapa ficar pesado com muitas rotas ou territórios.
 - Usuário não entender a diferença entre rota registrada e território conquistado.
 - Regras de conquista ficarem complexas cedo demais.

@@ -162,22 +162,25 @@ Repositories atuais:
 - `profileStats`: consolida estatisticas locais de perfil por `RunRepository`, `TerritoryRepository`, `ProgressionRepository` e `AchievementRepository`.
 - `UserProfileRepository`: retorna perfil local/cacheado quando remoto falha, mescla estatisticas locais reais e tenta Firestore/Storage como melhor esforco.
 - `RankingRepository`: retorna ranking remoto quando existir, cache quando disponivel, local quando aplicavel ou estado vazio identificado; mock/demo nao pode ser apresentado como ranking real.
+- `ProgressionRepository` e `AchievementRepository`: mantem XP/conquistas locais; sync remoto ainda e futuro.
+- `socialHomeRepository`: compoe Home social com feed/cache/stories locais sem Firestore direto na tela.
 
 Chamadas Firestore ainda existentes devem ficar em services/repositories ate serem desacopladas:
 
 - sync de runs e territorios;
 - perfil publico/avatar;
 - ranking remoto;
-- feed;
-- amigos;
-- grupos;
+- feed, amigos e grupos, ainda com partes Firestore-first;
 - notificacoes;
 - XP/agregados quando o service exigir remoto.
+- upload/sync futuro de stories.
 
 Regra de falha:
 
 - Falha de Firestore nao deve apagar dado local nem impedir leitura de historico/detalhe.
 - Erro remoto em perfil/ranking deve virar cache, local limitado, vazio controlado ou erro de repository identificado.
+- Story local em `wayper_run_stories_v1` continua `PENDING_SYNC` ate existir publicacao remota real.
+- XP/conquistas locais continuam validos mesmo sem sync remoto.
 - Mocks e demos precisam carregar `source: "demo"` ou equivalente, nunca serem tratados como dado real.
 - Cache de ranking precisa carregar `updatedAt`/`cachedAt`.
 - Upload de avatar por Storage e melhor esforco; falha nao deve apagar avatar local/cacheado nem gravar `file://` como avatar remoto.

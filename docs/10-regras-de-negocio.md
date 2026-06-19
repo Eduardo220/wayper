@@ -13,6 +13,12 @@
 - Uma corrida precisa ter duração mínima para evitar registros acidentais.
 - Pontos GPS com baixa precisão devem ser filtrados ou marcados.
 - Corridas com comportamento impossível devem ser invalidadas ou revisadas.
+- Pontos GPS devem ser classificados como `accepted`, `suspicious` ou `discarded`.
+- `rawPath` e diagnostico; pode conter ponto que nao entra em metrica.
+- `trustedPath` e a fonte de distancia, pace, XP, territorio e sync.
+- `renderPath` e visual; suavizacao/simplificacao nao altera distancia.
+- `segments` preserva pausas e gaps e nao deve conectar linha falsa.
+- Lotes de background devem ser ordenados por timestamp antes de entrar no pipeline.
 
 - Depois de finalizada e salva localmente, a corrida deve permanecer visivel no historico mesmo se o sync remoto estiver `PENDING_SYNC` ou `SYNC_FAILED`.
 - Firestore e destino posterior de sincronizacao; falha remota nao pode apagar `localRunId`, rota, segmentos ou resumo territorial local.
@@ -85,6 +91,21 @@ Regras atuais obrigatorias:
 - Cache remoto nao pode ser mostrado como ranking remoto atual e deve ter `updatedAt`/`cachedAt`.
 - Ranking local deve usar somente dados locais reais e nao inventar usuarios adversarios.
 - Demo/mock nunca pode ser fallback silencioso para erro remoto.
+
+## Home social e stories
+
+- Home/Início e social; dashboard pessoal fica fora da Home principal.
+- Stories locais de corrida ficam em `wayper_run_stories_v1`.
+- Story criado localmente usa `PENDING_SYNC` ate existir upload remoto real.
+- Corrida ativa, pausada, recuperando ou `FINISHING` nao pode virar story.
+- Feed/amigos/stories nao podem inventar usuarios, status online ou atividades demo.
+
+## Sync e estados offline
+
+- `PENDING_SYNC`, `SYNC_FAILED`, `LOCAL_ONLY`, `SYNCING` e `SYNCED` devem ser visiveis de forma honesta quando relevantes.
+- Falha remota nao apaga dado local.
+- Firestore e destino posterior/best effort nos fluxos local-first consolidados.
+- Usuario offline deve ver local/cache/vazio, nao spinner infinito.
 
 ## Antifraude
 

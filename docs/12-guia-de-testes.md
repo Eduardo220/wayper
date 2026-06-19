@@ -16,6 +16,26 @@ Para validacao completa local antes de fechar uma mudanca grande:
 npm test -- --runInBand
 ```
 
+## Validacao consolidada da rodada local-first
+
+Ultima rodada reportada em 2026-06-19:
+
+```bash
+npm test -- --runInBand
+git diff --check
+.\gradlew.bat :app:compileDevDebugKotlin --console=plain
+```
+
+Resultados reportados:
+
+- `npm test -- --runInBand`: 49 suites / 428 testes aprovados.
+- `git diff --check`: aprovado, com warnings LF/CRLF conhecidos quando aplicavel.
+- `compileDevDebugKotlin`: aprovado.
+- Checagem estatica simples de imports relativos: 234 arquivos verificados.
+- `lint`, `typecheck`, `test:ci` e `validate` nao existem no `package.json`; nao cite esses scripts como executados enquanto nao forem adicionados.
+
+Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam de validacao fisica Android dev/release.
+
 ## Testes unitários prioritários
 
 ### Corrida

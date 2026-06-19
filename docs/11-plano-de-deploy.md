@@ -34,7 +34,8 @@ npm test
 - [ ] Testar permissão de localização.
 - [ ] Testar corrida real ou simulada.
 - [ ] Testar mapa.
-- [ ] Testar salvamento no Firestore.
+- [ ] Testar salvamento local em `runs`.
+- [ ] Testar sync posterior/best effort com Firestore sem duplicar corrida.
 - [ ] Validar regras de segurança do Firebase.
 - [ ] Conferir pacote Android correto.
 - [ ] Conferir ambiente dev/prod.
@@ -44,6 +45,23 @@ npm test
 - [ ] Confirmar `EXPO_PUBLIC_SENTRY_DSN` no ambiente correto.
 - [ ] Confirmar `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` e `SENTRY_PROJECT` nos secrets do build.
 - [ ] Confirmar que o evento de teste nao contem coordenadas, rota, token, email ou telefone.
+
+## Checklist Android real antes de release
+
+- [ ] Rodar build dev em aparelho fisico.
+- [ ] Rodar build release assinado corretamente em aparelho fisico.
+- [ ] Conceder foreground location e validar inicio/retomada.
+- [ ] Conceder/negociar background location e validar tela bloqueada.
+- [ ] Conceder/negar notificacao Android 13+ e validar limitacao comunicada.
+- [ ] Iniciar corrida, bloquear tela, voltar pelo app e pela notificacao.
+- [ ] Pausar/retomar pelo app e pela notificacao.
+- [ ] Matar app durante corrida e validar recovery.
+- [ ] Finalizar offline e confirmar historico local `PENDING_SYNC`.
+- [ ] Voltar internet e confirmar sync sem duplicata.
+- [ ] Compartilhar `Imagem` e `Tracado PNG`; baixar deve pedir midia somente no clique.
+- [ ] Criar story local e confirmar `PENDING_SYNC`.
+- [ ] Exportar ZIP em `Configuracoes > Diagnostico` e validar dados mascarados.
+- [ ] Validar Sentry/debug com evento controlado e source maps autenticados.
 
 ## Build Android
 
@@ -115,6 +133,15 @@ Para validar source maps, use o evento controlado de um APK/AAB release ou previ
 - Corrida em tela bloqueada: o foreground service permaneceu ativo por 125 segundos; 36 localizacoes foram processadas localmente e nenhum evento Sentry foi criado por ponto GPS. Pausa e retomada pela mesma action nativa da notificacao funcionaram.
 - A corrida ficou pausada porque o keyguard seguro do aparelho exige desbloqueio manual. Finalizacao, salvamento e nova exportacao do ZIP nao foram concluidos nesta rodada.
 - Painel Sentry e simbolicacao final: a notificacao de alerta confirmou projeto, issue, release, dist e usuario anonimo, mas a inspecao autenticada do payload e a confirmacao de arquivo/linha original continuam pendentes.
+
+## Estado consolidado em 19/06/2026
+
+- `npm test -- --runInBand`: reportado como aprovado com 49 suites / 428 testes.
+- `git diff --check`: reportado como aprovado, mantendo apenas warnings LF/CRLF conhecidos quando aplicavel.
+- `.\gradlew.bat :app:compileDevDebugKotlin --console=plain`: reportado como aprovado.
+- Checagem estatica simples de imports relativos: 234 arquivos verificados.
+- Scripts `lint`, `typecheck`, `test:ci` e `validate` nao existem no `package.json`.
+- Esta validacao nao substitui teste real em aparelho fisico para GPS/background/notificacao/recovery/share.
 
 ### Assinatura Android
 

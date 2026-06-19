@@ -326,3 +326,16 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - A tela evita parse pesado por render e mostra counts/amostras pequenas.
 - Falha de uma secao do diagnostico nao derruba o export inteiro.
 - Novos dominios local-first devem registrar resumo e logs na central antes de criar debug paralelo.
+
+## ADR-022: Consolidar a rodada local-first na documentacao
+
+**Status:** aceito
+**Contexto:** depois das melhorias de corrida ativa, GPS/path, historico, sync, territorios, XP/conquistas, Perfil/Ranking, Home social, onboarding/permissoes, compartilhamento e diagnostico, parte da documentacao ainda descrevia o Wayper como Firestore-first ou deixava riscos pendentes espalhados. Isso aumentava a chance de futuras IAs ou implementacoes reativarem services legados, criarem repositories paralelos ou marcarem como concluido algo que ainda exige aparelho fisico/contrato remoto.
+**Decisao:** manter `docs/24-resumo-rodada-local-first.md` como resumo operacional da rodada, sem substituir os documentos especificos. Atualizar roadmap, backlog, arquitetura, modelo de dados, fluxos, regras, testes, riscos e instrucoes de IA para refletir o codigo atual da branch `develop`: local-first nos fluxos consolidados, Firestore como remoto/best effort, stories/XP/territorio remoto ainda futuros e background ainda dependente de validacao fisica.
+**Consequencias:**
+
+- Futura IA/Codex deve ler codigo e docs antes de implementar e nao duplicar services/hooks/repositories/componentes existentes.
+- `activeRunTrackingService`/`activeRunState`, `sync.js`/`runSyncQueueService`, repositories e storages oficiais ficam registrados como base atual.
+- `runService.js`, `zones`/`@wayper_zones`, `xpService` e `MedalsWidget` seguem documentados como legado, nao como fonte nova.
+- Roadmap/backlog passam a diferenciar implementado/avancado, pendente de validacao fisica e futuro remoto.
+- A documentacao nao deve afirmar que background esta 100% validado, que Firestore foi removido ou que stories/XP/territorio ja possuem sync remoto completo.

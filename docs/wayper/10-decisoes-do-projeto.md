@@ -447,6 +447,100 @@ Impactos:
 - Firestore fica fora do caminho critico de compartilhar, baixar e adicionar story.
 - Duplicata de story da mesma corrida e bloqueada pelo repository local.
 
+### Territorios locais antes do sync remoto completo
+
+Status: aprovada.
+
+Contexto:
+
+- Corrida por zonas precisava preservar captura real mesmo offline.
+- `zones` e `@wayper_zones` eram legados e nao podiam virar storage novo.
+- Sync territorial remoto social/completo ainda nao estava definido.
+
+Decisao:
+
+- Usar `TerritoryRepository`/`territoryStorageService` como facade/fonte local atual.
+- Territorios ficam em `wayper_territories_v1`.
+- Eventos ficam em `wayper_territory_events_v1`.
+- Leaderboards/cache ficam em `wayper_territory_leaderboards_v1`.
+- Corrida livre nao preserva territorio falso.
+- Corrida por zonas preserva `area`, `areaM2`, `geometry`, `zoneCoords`, `territorySummary`, `territoryEvents` e `capturedCells` quando a captura local existe.
+- Firestore e destino posterior/best effort e sync territorial segue separado do sync de runs.
+
+Impactos:
+
+- Historico/detalhe continuam abrindo com dados territoriais locais.
+- Falha remota nao apaga territorio local.
+- SQLite segue decisao futura apos medicao.
+
+### XP e conquistas locais antes do sync remoto
+
+Status: aprovada.
+
+Contexto:
+
+- `xpService`/`MedalsWidget` eram base legada/visual e nao garantiam progresso offline nem idempotencia.
+- Perfil precisava exibir progresso local real sem Firestore obrigatorio.
+
+Decisao:
+
+- `ProgressionRepository` e fonte de XP/nivel/progresso local em `wayper_user_progress_v1` e `wayper_xp_events_v1`.
+- `AchievementRepository` e fonte de conquistas/progresso em `wayper_achievements_v1` e `wayper_achievement_progress_v1`.
+- XP so entra apos corrida finalizada salva localmente.
+- Eventos de XP sao idempotentes por corrida/tipo.
+- Sync remoto de XP/conquistas fica futuro.
+
+Impactos:
+
+- Perfil/Dashboard podem abrir offline com XP e conquistas locais.
+- Corrida ativa, `FINISHING`, invalida, descartada ou suspeita nao gera XP.
+- `xpService`, `MedalsWidget`, `medals` e `@wayper:medals_awarded_v1` seguem legado, nao fonte oficial.
+
+### Diagnostico local seguro
+
+Status: aprovada.
+
+Contexto:
+
+- Bugs reais de corrida ativa, GPS, background, notificacao, share, sync, territorio e ranking precisam de evidencia local em aparelho fisico.
+- Firestore, Sentry ou adb nao podem ser requisitos para diagnosticar o app.
+
+Decisao:
+
+- Centralizar em `Configuracoes > Diagnostico`.
+- Usar `localDiagnosticsService`, `logStorageService`, `runDiagnosticsService`, `diagnosticExportService` e `logger.js`.
+- Export ZIP inclui NDJSON, snapshots leves, manifest e `reports/*`.
+- Coordenadas exatas ficam desligadas por padrao.
+- `rawPath` completo, tokens, emails completos, imagens privadas e payloads de terceiros nao entram no resumo padrao.
+
+Impactos:
+
+- Diagnostico abre offline e sem Firestore obrigatorio.
+- Sentry complementa, mas nao substitui o ZIP/NDJSON local.
+- Novos dominios local-first devem registrar resumo/logs ali antes de criar debug paralelo.
+
+### Rodada local-first consolidada na documentacao
+
+Status: aprovada.
+
+Contexto:
+
+- A rodada consolidou corrida ativa, GPS/path, historico, sync, territorios, XP/conquistas, Perfil/Ranking, Home social, onboarding/permissoes, compartilhamento e diagnostico.
+- Parte da documentacao antiga ainda parecia Firestore-first ou tratava itens avancados como "a fazer".
+
+Decisao:
+
+- Criar `docs/24-resumo-rodada-local-first.md`.
+- Atualizar docs principais para declarar Firestore como remoto/best effort nos fluxos consolidados.
+- Registrar riscos: validacao fisica Android, sync remoto futuro de stories/XP/territorio, AsyncStorage a medir, Feed/Friends/Groups ainda Firestore-first e servicos legados.
+
+Impactos:
+
+- Futuras IAs/Codex devem ler codigo develop e docs antes de implementar.
+- Nao documentar background como 100% validado sem teste fisico.
+- Nao documentar sync remoto de stories/XP/territorio como pronto enquanto for futuro.
+- Nao criar arquitetura paralela nem reativar legado como fonte nova.
+
 ## Documentos relacionados
 
 - [[00-index]]

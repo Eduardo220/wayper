@@ -49,7 +49,10 @@ Correr deixa de ser apenas exercício registrado e passa a ser uma experiência 
 ## Premissas atuais
 
 - O app é mobile e usa React Native com Expo.
-- O backend utiliza Firebase/Firebase Auth/Firestore.
+- Firebase Auth segue como autenticacao.
+- Firestore segue como remoto, cacheavel ou destino posterior de sync, mas os fluxos locais consolidados nao devem depender obrigatoriamente dele.
+- Corrida ativa, historico, territorios, XP/conquistas, Home social, compartilhamento e diagnostico possuem base local-first documentada.
 - O mapa utiliza MapLibre e OpenFreeMap.
 - A branch `develop` concentra desenvolvimento ativo.
 - A branch `main` representa a versão oficial.
+- Home/Início e social; dashboard pessoal fica em Dashboard/Perfil/Resumo.

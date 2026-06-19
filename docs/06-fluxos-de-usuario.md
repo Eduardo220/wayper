@@ -23,8 +23,9 @@
 1. Usuário abre o app.
 2. Informa credenciais.
 3. Firebase Auth valida.
-4. App carrega perfil do Firestore.
-5. Usuário entra na tela principal.
+4. App tenta carregar perfil remoto/cache/local via `UserProfileRepository`.
+5. Se Firestore falhar, app preserva perfil local/cacheado e estados honestos.
+6. Usuário entra na tela principal.
 
 ## 3. Home / Inicio
 
@@ -64,36 +65,45 @@
 ## 6. Finalizar corrida
 
 1. Usuário toca em finalizar.
-2. App para coleta de localização.
-3. App calcula métricas finais.
-4. App valida corrida mínima.
-5. App salva corrida.
-6. App calcula zonas conquistadas.
-7. App mostra resumo.
+2. App marca fluxo de finalizacao e impede duplo encerramento.
+3. App para coleta de localização e remove notificacao/foreground service ao concluir.
+4. App consolida métricas finais a partir de `trustedPath`, `renderPath` e `segments`.
+5. App valida corrida mínima.
+6. App salva corrida finalizada localmente em `runs` por `sync.saveLocalRun()`/`RunRepository`.
+7. App calcula XP/conquistas locais depois da corrida salva.
+8. Se for corrida por zonas, app preserva captura territorial local quando existir.
+9. App enfileira sync remoto posterior por `runSyncQueueService`.
+10. App mostra resumo.
+11. Se Firestore falhar, a corrida segue no historico local como pendente/falha de sync.
 
 ## 7. Visualizar mapa
 
 1. Usuário abre o mapa.
 2. App carrega localização atual.
-3. App carrega zonas próprias.
-4. App carrega zonas públicas/de outros usuários conforme regra.
+3. App carrega territorios locais atuais por `TerritoryRepository` quando o modo de zonas exigir.
+4. App pode tentar remoto/cache como best effort, sem apagar local quando falhar.
 5. App desenha áreas no mapa.
 6. Usuário pode explorar regiões.
+7. `zones` e `@wayper_zones` so entram por migracao/compatibilidade explicita.
 
 ## 8. Ranking
 
 1. Usuário acessa ranking.
-2. App carrega lista global ou por período.
-3. App destaca posição do usuário.
-4. App permite alternar critérios: área, zonas, distância.
+2. App usa `RankingRepository`.
+3. App identifica origem: `remote`, `cache`, `local`, `empty` ou `demo`.
+4. App destaca a posição/local do usuário quando houver dado real.
+5. App permite alternar critérios: área, zonas, distância ou XP quando suportado.
+6. Demo só aparece com opt-in/dev e nunca como fallback silencioso.
 
 ## 9. Perfil
 
 1. Usuário abre perfil.
-2. App mostra dados básicos.
-3. App mostra estatísticas.
-4. App mostra histórico/conquistas.
-5. Usuário pode editar dados permitidos.
+2. App usa `UserProfileRepository`.
+3. App mostra dados básicos locais/cacheados/remotos quando existirem.
+4. App mostra estatísticas reais por `profileStats`, incluindo runs locais pendentes/falhas.
+5. App mostra XP/conquistas locais por repositories.
+6. Usuário pode editar dados permitidos.
+7. Upload remoto de avatar e best effort; falha nao apaga avatar local/cacheado.
 
 ## 10. Grupos/amigos
 
@@ -123,3 +133,19 @@ Possível fluxo:
 10. Tentar adicionar a mesma corrida de novo nao duplica story; o app informa que o story local ja existe.
 11. Corrida ativa, pausada, recuperando ou `FINISHING` nao pode virar story.
 12. Corrida livre nao mostra territorio falso; corrida por zonas so desenha poligono se `zoneCoords` existir.
+
+## 12. Recovery de corrida
+
+1. App abre ou volta do background.
+2. `runRecoveryService` le `wayper:activeRun:v2`, checkpoint legado e evidencias recentes.
+3. Corrida viva valida e hidratada/migrada para snapshot canonico antes de chegar na UI.
+4. Corrida finalizada, pendente de sync ou `FINISHING` nao volta como ativa.
+5. UI mostra estado recuperado ou erro recuperavel, sem inventar `IDLE` enquanto existir evidencia de corrida.
+
+## 13. Diagnostico/export
+
+1. Usuario abre `Configuracoes > Diagnostico`.
+2. App carrega resumos pequenos por `localDiagnosticsService`.
+3. Usuario pode exportar ZIP local com logs, snapshots leves e reports.
+4. Coordenadas ficam mascaradas por padrao.
+5. Export funciona offline e nao exige Firestore, Sentry ou upload.

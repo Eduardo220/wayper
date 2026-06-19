@@ -29,7 +29,7 @@ No MVP, a conquista deve seguir uma regra simples:
 4. O sistema identifica trechos válidos da rota.
 5. Esses trechos geram território conquistado ou progresso territorial.
 6. O resumo mostra distância, duração, XP e conquista.
-7. O Firestore salva a atividade e os dados derivados necessários.
+7. O app salva a atividade e os dados derivados localmente e agenda sync remoto posterior quando aplicavel.
 
 No MVP, esse território deve representar progresso individual do usuário. Ele não deve definir posse global, disputa contra outros usuários ou controle compartilhado de áreas.
 
@@ -52,13 +52,13 @@ Para o MVP, existem duas abordagens possíveis:
 - Conquista por células de mapa: dividir o mapa em pequenas zonas e marcar células visitadas.
 - Conquista por buffer de rota: criar uma área ao redor da linha percorrida usando uma biblioteca geográfica.
 
-A decisão ainda precisa ser validada. Para implementação inicial, a abordagem deve priorizar simplicidade, custo baixo no Firestore e renderização rápida no mapa.
+A decisão final de disputa/social ainda precisa ser validada. Para implementação inicial, a abordagem deve priorizar simplicidade, persistencia local, custo remoto baixo e renderização rápida no mapa.
 
 ## Contenção para o MVP
 
 Até decisão humana sobre a estratégia final, a implementação deve tratar território como métrica individual derivada da rota validada. A versão inicial pode mostrar progresso territorial no resumo e no mapa, mas não deve criar mecânica de posse pública, disputa em tempo real, clans ou ranking territorial competitivo.
 
-Se a estratégia escolhida exigir entidades persistidas de território, a modelagem deve ser atualizada em [[08-firebase-firestore]] antes da implementação.
+Se a estratégia escolhida exigir novas entidades persistidas de território, a modelagem local e remota deve ser atualizada antes da implementação.
 
 ## Pontos em aberto
 
@@ -109,7 +109,6 @@ Disputa por território entre usuários deve ficar fora do MVP, conforme [[02-mv
 
 ## Conexões com Firestore
 
-Firestore deve salvar somente o necessário para reconstruir histórico, perfil e território. A modelagem inicial está em [[08-firebase-firestore]].
+Firestore deve salvar somente o necessario para remoto/sync, depois que o dado local estiver preservado. A modelagem inicial esta em [[08-firebase-firestore]].
 
 O app deve evitar gravar um documento por ponto GPS se isso gerar custo excessivo. Rotas longas podem exigir compactação, simplificação ou armazenamento agregado.
-

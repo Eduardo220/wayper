@@ -2,7 +2,9 @@
 
 ## Visão geral
 
-O Wayper é um aplicativo mobile construído com React Native e Expo. A persistência, autenticação e backend principal são baseados em Firebase, especialmente Firebase Auth e Firestore. O mapa utiliza MapLibre/OpenFreeMap, e cálculos geográficos podem usar Turf.
+O Wayper é um aplicativo mobile construído com React Native e Expo. A arquitetura atual da branch `develop` é local-first nos fluxos críticos: corrida ativa, histórico, sync de runs, territórios locais, XP/conquistas, Home social, compartilhamento e diagnóstico precisam funcionar sem Firestore obrigatório.
+
+Firebase Auth segue como autenticação. Firestore continua presente como remoto, cacheável ou destino posterior de sincronização em vários domínios, mas não é a fonte de verdade da corrida ativa nem requisito para preservar dados locais. O mapa utiliza MapLibre/OpenFreeMap, e cálculos geográficos podem usar Turf.
 
 ## Stack conhecida
 
@@ -11,8 +13,9 @@ O Wayper é um aplicativo mobile construído com React Native e Expo. A persist�
 | App mobile | React Native |
 | Build/dev | Expo e Expo Dev Client |
 | Autenticação | Firebase Auth |
-| Banco | Firestore |
-| Backend/serviços | Firebase e possíveis scripts Node.js |
+| Persistência local | AsyncStorage, file-system de diagnóstico e storages locais por domínio |
+| Remoto/sync | Firestore best effort, Firebase Storage quando aplicável |
+| Backend/serviços | Firebase, services locais e possíveis scripts Node.js |
 | Mapa | MapLibre React Native |
 | Base de mapa | OpenFreeMap |
 | Geolocalização | Expo Location |
@@ -37,7 +40,8 @@ Responsável por:
 - Navegação entre telas.
 - Exibição do mapa.
 - Registro de corrida.
-- Leitura e escrita de dados no Firebase.
+- Leitura/escrita local-first por services/repositories.
+- Sincronização posterior com Firebase quando aplicável.
 - Exibição de rankings, perfil, histórico e zonas.
 
 ### Firebase Auth
@@ -51,7 +55,7 @@ Responsável por:
 
 ### Firestore
 
-Responsável por armazenar:
+Responsável por remoto/best effort quando houver conexão, autenticação e regras válidas. Firestore ainda pode armazenar:
 
 - Dados de usuário.
 - Corridas.
@@ -59,6 +63,8 @@ Responsável por armazenar:
 - Zonas conquistadas.
 - Rankings agregados ou dados base para ranking.
 - Relações sociais, se existirem.
+
+Firestore não é responsável por iniciar, preservar, recuperar, finalizar ou listar a corrida local já salva. Falha remota deve virar cache/local/vazio ou `SYNC_FAILED`, sem apagar a cópia local.
 
 ### Mapa e localização
 
@@ -240,9 +246,11 @@ Desde 2026-06-18, onboarding, permissoes e estados vazios seguem uma politica un
 
 ## Pontos que precisam ser definidos
 
-- Regra exata de transformação de rota em zona.
-- Se ranking será calculado sob demanda ou pré-agregado.
-- Estratégia antifraude.
-- Modelo definitivo do Firestore.
+- Regra final de disputa territorial/social além da captura local atual.
+- Modelo remoto definitivo para stories, XP/conquistas e território.
+- Se ranking remoto será calculado sob demanda, por cache local ou por agregados backend.
+- Estratégia antifraude além dos filtros locais e diagnósticos atuais.
+- Modelo definitivo do Firestore para domínios ainda Firestore-first, como Feed/Friends/Groups.
 - Se haverá Cloud Functions ou apenas lógica client-side no início.
-- Politica final de sync remoto para XP e conquistas.
+- Política final de sync remoto para XP, conquistas, stories e território.
+- Medição real para decidir se AsyncStorage continua suficiente ou se SQLite/Expo SQLite entra em uma fase futura.

@@ -24,6 +24,7 @@ O Wayper é um app mobile de corrida gamificado. Usuários registram rotas reais
 
 Quando responder sobre o Wayper:
 
+- Comece analisando a branch `develop`, `git status`, codigo existente e docs relevantes.
 - Consulte o contexto do repositório antes de sugerir mudanças.
 - Não invente estrutura se o código mostrar outra.
 - Aponte arquivos prováveis de alteração.
@@ -32,11 +33,13 @@ Quando responder sobre o Wayper:
 - Priorize segurança, privacidade e consistência dos dados.
 - Não sugira expor credenciais, tokens ou arquivos `.env`.
 - Não trate documentação antiga como verdade se ela contradiz o código.
+- Use `docs/24-resumo-rodada-local-first.md` como resumo rapido do estado consolidado em 2026-06-19.
 
 ## Regras técnicas
 
 - Respeitar React Native/Expo.
 - Respeitar Firebase Auth e Firestore.
+- Tratar Firestore como remoto/best effort nos fluxos local-first consolidados; nao afirmar que foi removido.
 - Respeitar MapLibre/OpenFreeMap.
 - Usar Turf para geometrias quando fizer sentido.
 - Testar regras críticas de corrida, zona e ranking.
@@ -72,6 +75,25 @@ Quando responder sobre o Wayper:
 - Estados vazios/erro/offline/permissao devem reutilizar `src/components/states` quando possivel.
 - Usuario offline ou sem Firestore deve ver local/cache/vazio honesto, sem spinner infinito e sem mock como dado real.
 - Nao adicionar SQLite sem ADR, medicao e plano incremental.
+- Nao afirmar que background/tela bloqueada esta 100% validado sem teste fisico Android dev/release.
+- Nao afirmar que stories, XP/conquistas ou territorio ja possuem sync remoto completo enquanto os contratos forem futuros.
+- Nao alterar ou commitar `docs/.obsidian/workspace.json`, `docs/.obsidian/graph.json` ou arquivos com apenas ruído de line-ending.
+
+## Prompt base obrigatorio para IA/Codex
+
+```txt
+Antes de implementar qualquer coisa:
+1. Analise o codigo atual da branch develop.
+2. Verifique se ja existe algo parecido implementado.
+3. Leia os arquivos relevantes em /docs.
+4. Nao duplique services, hooks, repositories, componentes ou logica existente.
+5. Se algo ja existir parcialmente, refatore e complete em vez de criar implementacao paralela.
+6. Preserve padrao visual, arquitetura, nomenclatura e estrutura atual.
+7. Nao remova funcionalidades existentes sem justificar.
+8. Nao dependa obrigatoriamente de Firestore nos fluxos local-first.
+9. Atualize docs/ADRs quando criar ou consolidar decisao tecnica importante.
+10. Ao final, entregue resumo, arquivos alterados, decisoes, testes, riscos e como testar manualmente.
+```
 
 ## Estilo de implementação
 

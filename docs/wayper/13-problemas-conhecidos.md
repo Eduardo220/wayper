@@ -4,6 +4,19 @@
 
 Este arquivo registra riscos, problemas técnicos e limitações conhecidas. Itens daqui devem ser revisados antes de features que dependam de GPS, mapa, Firestore, território, XP ou ranking.
 
+## Riscos atuais da rodada local-first
+
+- Background/tela bloqueada ainda exige validacao fisica Android em build dev e release.
+- Fabricantes com economia agressiva de bateria podem matar processo mesmo com foreground service.
+- Feed/Friends/Groups ainda possuem trechos Firestore-first; novas alteracoes devem desacoplar por repositories/fallbacks locais.
+- Stories locais ficam `PENDING_SYNC`; upload/sync remoto ainda e futuro.
+- XP/conquistas locais nao possuem sync remoto completo.
+- Sync territorial remoto/social completo ainda e futuro e segue separado do sync de runs.
+- AsyncStorage pode pesar com historicos e rotas muito longos; SQLite depende de medicao real.
+- `runService.js`, `locationService`, `zonesStorage`, `zoneService`, `xpService` e `MedalsWidget` seguem legados e nao devem ser reativados como fonte oficial.
+- `console.*` legado ainda existe fora de fluxos criticos; migrar gradualmente para `logger.js`.
+- Source maps/Sentry autenticado e assinatura release real seguem pendentes antes de tratar release como publicavel.
+
 ## GPS impreciso
 
 Risco:
@@ -187,4 +200,3 @@ Mitigação inicial:
 - [[05-gps-e-validacao]]
 - [[08-firebase-firestore]]
 - [[09-arquitetura-tecnica]]
-
