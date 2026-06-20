@@ -1,6 +1,6 @@
 // MAIN NAVIGATOR — WAYPER (STABLE, OFFLINE-SAFE)
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, ActivityIndicator, Image, StyleSheet, Text, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -46,6 +46,7 @@ import {
   isLiveRecovery,
 } from "../services/run/runRecoveryService.js";
 import logger, { LOG_CATEGORIES } from "../utils/logger.js";
+import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
 import { subscribeCurrentUserProfile } from "../repositories/userProfileRepository.js";
 import { runLocalMigrationsOnce } from "../services/storage/storageMigrationService.js";
 import runSyncQueueRepository from "../repositories/runSyncQueueRepository.js";
@@ -63,6 +64,83 @@ function HeaderTitle({ title }) {
       <View style={styles.headerDivider} />
       <Text style={styles.headerText}>{title}</Text>
     </View>
+  );
+}
+
+function getDrawerStatusFromNavigation(navigation) {
+  const state = navigation?.getState?.();
+  const history = Array.isArray(state?.history) ? state.history : [];
+  const drawerEntry = [...history].reverse().find((entry) => entry?.type === "drawer");
+  return drawerEntry?.status || null;
+}
+
+function HeaderMenuButton({ navigation }) {
+  const openTimeoutRef = useRef(null);
+
+  const clearOpenTimeout = useCallback(() => {
+    if (openTimeoutRef.current) {
+      clearTimeout(openTimeoutRef.current);
+      openTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const unsubscribeOpen = navigation?.addListener?.("drawerOpen", () => {
+      clearOpenTimeout();
+      recordRunEvent("RUN_DRAWER_OPENED", {
+        source: "header_menu",
+        screen: "MainNavigator",
+      });
+    });
+    const unsubscribeClose = navigation?.addListener?.("drawerClose", clearOpenTimeout);
+    return () => {
+      clearOpenTimeout();
+      unsubscribeOpen?.();
+      unsubscribeClose?.();
+    };
+  }, [clearOpenTimeout, navigation]);
+
+  const handlePress = useCallback(() => {
+    recordRunEvent("RUN_DRAWER_OPEN_REQUESTED", {
+      source: "header_menu",
+      screen: "MainNavigator",
+    });
+    try {
+      navigation?.openDrawer?.();
+    } catch (error) {
+      recordRunEvent("RUN_DRAWER_OPEN_TIMEOUT", {
+        source: "header_menu",
+        reason: "openDrawer_threw",
+        error,
+        screen: "MainNavigator",
+      });
+      return;
+    }
+
+    clearOpenTimeout();
+    openTimeoutRef.current = setTimeout(() => {
+      const status = getDrawerStatusFromNavigation(navigation);
+      if (status === "open") return;
+      recordRunEvent("RUN_DRAWER_OPEN_TIMEOUT", {
+        source: "header_menu",
+        observedStatus: status || "unknown",
+        timeoutMs: 900,
+        screen: "MainNavigator",
+      });
+    }, 900);
+  }, [clearOpenTimeout, navigation]);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Abrir menu"
+      hitSlop={12}
+      style={styles.headerMenu}
+      onPress={handlePress}
+      testID="drawer-menu-button"
+    >
+      <Ionicons name="menu" size={28} color={WayperTheme.colors.text} />
+    </Pressable>
   );
 }
 
@@ -338,11 +416,7 @@ export default function MainNavigator() {
         headerTintColor: WayperTheme.colors.text,
         headerLeftContainerStyle: { paddingLeft: 10 },
         headerTitleContainerStyle: { marginLeft: 18 },
-        headerLeft: () => (
-          <Pressable style={styles.headerMenu} onPress={() => navigation.openDrawer()}>
-            <Ionicons name="menu" size={28} color={WayperTheme.colors.text} />
-          </Pressable>
-        ),
+        headerLeft: () => <HeaderMenuButton navigation={navigation} />,
         headerTitle: ({ children }) => <HeaderTitle title={children} />,
         headerTitleStyle: { fontWeight: "900", fontSize: 22 },
         drawerStyle: { backgroundColor: WayperTheme.colors.background, width: 315 },

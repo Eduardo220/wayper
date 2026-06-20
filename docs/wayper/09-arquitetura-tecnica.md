@@ -501,10 +501,13 @@ Camadas:
 Regras:
 
 - Nao criar logger/export/tela debug paralelos antes de integrar a central.
+- Corrida ativa deve ter diagnostico de emergencia direto na `MapScreen`, acessivel em `RUNNING` e `PAUSED`, sem depender de drawer/menu/configuracoes.
+- Snapshots `EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT` sao leves e periodicos: gravam status, timers, watcher, AppState, notificacao, counts de path/segments, motivos agregados de descarte, drawer attempts e stalls, sem path completo.
 - Coordenadas exatas ficam mascaradas por padrao.
 - `rawPath` completo, tokens, emails completos, imagens privadas e payloads de terceiros nao entram no resumo padrao.
 - Export local deve abrir mesmo sem Sentry, Firestore, upload remoto ou rede.
 - Acoes destrutivas precisam confirmacao e nao limpam corridas por padrao.
+- Acao de diagnostico na notificacao Android fica pendente enquanto o modulo nativo tiver uma unica acao contextual Pausar/Retomar; mudar isso exige validacao fisica separada.
 
 ## Turf.js ou biblioteca geográfica
 

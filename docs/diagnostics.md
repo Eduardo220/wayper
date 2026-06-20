@@ -77,6 +77,23 @@ A tela mostra:
 
 A fonte consolidada e `src/services/diagnostics/localDiagnosticsService.js`. Ela agrega apenas resumos, contadores e amostras pequenas por repository/service existente. Firestore e sempre melhor esforco: o diagnostico local nao precisa de rede, Firebase real, GPS real ou MapLibre real para montar o resumo.
 
+## Diagnostico de emergencia na corrida
+
+Durante uma corrida ativa, a tela `MapScreen` deve expor um atalho direto de diagnostico no card `Wayper live`, sem depender de drawer, menu lateral ou `Configuracoes`. O atalho fica disponivel em `RUNNING` e `PAUSED`, gera o mesmo ZIP local com escopo `ACTIVE_RUN` e abre o share sheet nativo. A corrida nao deve ser pausada, finalizada ou bloqueada para exportar o ZIP.
+
+O mesmo atalho registra eventos:
+
+- `RUN_EMERGENCY_DIAGNOSTICS_EXPORT_STARTED`;
+- `RUN_EMERGENCY_DIAGNOSTICS_EXPORT_SUCCESS`;
+- `RUN_EMERGENCY_DIAGNOSTICS_EXPORT_FAILED`;
+- `RUN_EMERGENCY_DIAGNOSTICS_LONG_PRESS`.
+
+Enquanto a corrida esta ativa, `MapScreen` tambem grava snapshots leves `EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT` em eventos criticos e a cada ~30s. O snapshot deve conter status, elapsed/distance, `lastUiTickAt`, `lastLocationReceivedAt`, `lastLocationAcceptedAt`, `lastRenderPathUpdatedAt`, watcher, AppState, notificacao, timer, counts de path/segments, motivos agregados de descarte, ultimo erro e contadores de stall. Ele nao deve salvar `rawPath` completo nem coordenadas exatas por padrao.
+
+Tentativas de abrir o drawer pelo header devem registrar `RUN_DRAWER_OPEN_REQUESTED`, `RUN_DRAWER_OPENED` e, quando nao houver confirmacao em tempo util, `RUN_DRAWER_OPEN_TIMEOUT`. Isso existe para separar falha de toque/drawer de travamento de GPS, timer ou render do mapa.
+
+A notificacao Android ainda nao possui acao de export de diagnostico. O modulo nativo atual usa uma acao contextual unica para Pausar/Retomar; adicionar uma segunda acao deve ser feito em uma etapa propria, com validacao fisica, para nao quebrar o contrato critico de controle da corrida.
+
 ## Acoes seguras
 
 A tela oferece acoes operacionais protegidas:
@@ -130,6 +147,8 @@ Cada exportacao gera um ZIP compartilhavel pelo Android. O ZIP inclui:
 - `backgroundTaskStatus.json`;
 - `foregroundWatcherStatus.json`;
 - `runtime-state.json`;
+- `emergencyRunDiagnostics.json`;
+- `uiInteractionEvents.json`;
 - `localDiagnostics-summary.json`;
 - `reports/app-build-device-metadata.json`;
 - `reports/gps-report.json`;
@@ -179,6 +198,7 @@ Diagnostico fica acessivel tambem em producao por `Menu lateral > Configuracoes 
 
 - Abrir Diagnostico sem corrida ativa e confirmar storage/permissoes.
 - Iniciar corrida e abrir Diagnostico para conferir status, `localRunId`, watcher, notification e contadores de path.
+- Durante corrida ativa, usar o atalho `Diagnostico` no card `Wayper live` e confirmar que o ZIP abre no share sheet sem pausar/finalizar a corrida.
 - Bloquear tela, voltar pelo app/notificacao e conferir background/lifecycle.
 - Gerar pontos GPS e comparar raw/accepted/rejected/gaps.
 - Pausar/retomar e conferir segmentos.
@@ -187,6 +207,7 @@ Diagnostico fica acessivel tambem em producao por `Menu lateral > Configuracoes 
 - Compartilhar imagem/PNG e conferir ultimo export em `Compartilhamento`.
 - Negar permissoes e conferir resumo normalizado.
 - Exportar ZIP, abrir `localDiagnostics-summary.json` e validar que coordenadas estao mascaradas.
+- Abrir `emergencyRunDiagnostics.json` e `uiInteractionEvents.json` e validar `lastUiTickAt`, watcher, timer, drawer attempts, stalls e counts de path.
 - Repetir em build dev Android e, quando possivel, em release.
 
 ## APK prod sem adb

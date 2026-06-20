@@ -323,6 +323,131 @@ describe("diagnostics logging", () => {
     });
   });
 
+  test("snapshot de emergencia resume corrida ativa sem coordenadas exatas", async () => {
+    diagnostics.recordEmergencyRunDiagnosticsSnapshot({
+      event: "ui_heartbeat",
+      runId: "run-emergency",
+      status: "RUNNING",
+      elapsedMs: 120000,
+      distanceMeters: 456.7,
+      lastUiTickAt: "2026-06-20T10:00:01.000Z",
+      lastLocationReceivedAt: "2026-06-20T10:00:02.000Z",
+      lastLocationAcceptedAt: "2026-06-20T10:00:03.000Z",
+      lastRenderPathUpdatedAt: "2026-06-20T10:00:04.000Z",
+      watcherStatus: "foreground_started",
+      notificationStatus: "visible",
+      timerStatus: "running",
+      appState: "active",
+      pathCounts: {
+        rawPointsCount: 4,
+        trustedPointsCount: 3,
+        renderPointsCount: 3,
+        segmentsCount: 1,
+      },
+      discardedPointReasons: { bad_accuracy: 1 },
+      stallCounters: { ui: 1, timer: 2, drawer: 1 },
+      snapshot: {
+        rawPath: [{ latitude: -30.1234567, longitude: -51.7654321 }],
+      },
+    });
+    await storageService.__flushLogWritesForTests();
+
+    const logs = await storageService.getLogs();
+    const event = logs.find((log) => log.event === "EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT");
+    const json = JSON.stringify(event);
+
+    expect(event.context).toMatchObject({
+      runId: "run-emergency",
+      status: "RUNNING",
+      lastUiTickAt: "2026-06-20T10:00:01.000Z",
+      timerStatus: "running",
+      watcherStatus: "foreground_started",
+      preciseCoordinatesIncluded: false,
+      pathCounts: {
+        rawPointsCount: 4,
+        trustedPointsCount: 3,
+        renderPointsCount: 3,
+        segmentsCount: 1,
+      },
+      discardedPointReasons: { bad_accuracy: 1 },
+    });
+    expect(json).not.toContain("-30.1234567");
+    expect(json).not.toContain("-51.7654321");
+  });
+
+  test("exportDiagnosticsBundle inclui snapshots de emergencia, drawer e stalls", async () => {
+    diagnostics.recordRunEvent("RUN_DRAWER_OPEN_REQUESTED", {
+      runId: "run-emergency",
+      source: "header_menu",
+    });
+    diagnostics.recordRunEvent("RUN_DRAWER_OPEN_TIMEOUT", {
+      runId: "run-emergency",
+      source: "header_menu",
+      timeoutMs: 900,
+    });
+    diagnostics.recordRunEvent("RUN_UI_TIMER_STALL", {
+      runId: "run-emergency",
+      elapsedSinceLastTickMs: 4200,
+    });
+    diagnostics.recordEmergencyRunDiagnosticsSnapshot({
+      runId: "run-emergency",
+      status: "RUNNING",
+      lastUiTickAt: "2026-06-20T10:00:01.000Z",
+      lastRenderPathUpdatedAt: "2026-06-20T10:00:02.000Z",
+      timerStatus: "running",
+      watcherStatus: "foreground_started",
+      pathCounts: {
+        rawPointsCount: 2,
+        trustedPointsCount: 2,
+        renderPointsCount: 2,
+        segmentsCount: 1,
+      },
+    });
+    await storageService.__flushLogWritesForTests();
+
+    const bundle = await diagnostics.exportDiagnosticsBundle({ limit: 50 });
+
+    expect(bundle.latestEmergencyRunDiagnosticsSnapshot).toMatchObject({
+      runId: "run-emergency",
+      lastUiTickAt: "2026-06-20T10:00:01.000Z",
+      timerStatus: "running",
+      watcherStatus: "foreground_started",
+    });
+    expect(bundle.drawerMenuAttempts).toMatchObject({
+      requested: 1,
+      timedOut: 1,
+    });
+    expect(bundle.stallCounters).toMatchObject({
+      timer: 1,
+      drawer: 1,
+    });
+    expect(bundle.uiInteractionEvents.map((event) => event.event)).toEqual(
+      expect.arrayContaining(["RUN_DRAWER_OPEN_REQUESTED", "RUN_DRAWER_OPEN_TIMEOUT", "RUN_UI_TIMER_STALL"])
+    );
+  });
+
+  test("MapScreen expoe diagnostico de emergencia sem navegar para Configuracoes", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+
+    expect(source).toContain('testID="emergency-diagnostics-button"');
+    expect(source).toContain("createDiagnosticsArchive({");
+    expect(source).toContain("scope: DIAGNOSTIC_EXPORT_SCOPE.ACTIVE_RUN");
+    expect(source).toContain("Sharing.shareAsync");
+    expect(source).toContain("RUN_EMERGENCY_DIAGNOSTICS_EXPORT_STARTED");
+    expect(source).toContain('recordEmergencyDiagnosticsSnapshot("ui_heartbeat"');
+    expect(source).toContain("hitSlop={EMERGENCY_DIAGNOSTICS_HIT_SLOP}");
+    expect(source).not.toContain('navigation.navigate("Diagnostico"');
+  });
+
+  test("MainNavigator registra tentativa e timeout do drawer", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/navigation/MainNavigator.js"), "utf8");
+
+    expect(source).toContain("RUN_DRAWER_OPEN_REQUESTED");
+    expect(source).toContain("RUN_DRAWER_OPEN_TIMEOUT");
+    expect(source).toContain("drawerOpen");
+    expect(source).toContain("hitSlop={12}");
+  });
+
   test("ErrorBoundary registra erro via errorReporter", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "src/components/ErrorBoundary.js"), "utf8");
     expect(source).toContain("reportError(error");

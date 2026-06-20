@@ -119,6 +119,51 @@ function summarizeLastCheckpoint(snapshot = {}, runtime = {}) {
   );
 }
 
+function latestLogByEvent(logs = [], eventName) {
+  return [...toArray(logs)].reverse().find((log) => log.event === eventName) || null;
+}
+
+function countLogsByEvent(logs = [], eventName) {
+  return toArray(logs).filter((log) => log.event === eventName).length;
+}
+
+function summarizeEmergencyRunDiagnostics(logs = []) {
+  const emergencyLogs = toArray(logs).filter((log) => log.event === "EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT");
+  const latestEmergency = emergencyLogs[emergencyLogs.length - 1] || null;
+  const latestHeartbeat = latestLogByEvent(logs, "RUN_UI_HEARTBEAT");
+  const latestTimerStall = latestLogByEvent(logs, "RUN_UI_TIMER_STALL");
+  const latestDrawerRequest = latestLogByEvent(logs, "RUN_DRAWER_OPEN_REQUESTED");
+  const latestDrawerTimeout = latestLogByEvent(logs, "RUN_DRAWER_OPEN_TIMEOUT");
+  const context = latestEmergency?.context || {};
+
+  return sanitizeLogContext({
+    emergencySnapshotsCount: emergencyLogs.length,
+    lastEmergencySnapshotAt: latestEmergency?.timestamp || context.updatedAt || null,
+    lastUiHeartbeatAt: latestHeartbeat?.timestamp || null,
+    lastUiTickAt: context.lastUiTickAt || latestHeartbeat?.context?.lastUiTickAt || null,
+    lastLocationReceivedAt: context.lastLocationReceivedAt || null,
+    lastLocationAcceptedAt: context.lastLocationAcceptedAt || null,
+    lastRenderPathUpdatedAt: context.lastRenderPathUpdatedAt || null,
+    timerStatus: context.timerStatus || latestHeartbeat?.context?.timerStatus || null,
+    watcherStatus: context.watcherStatus || null,
+    notificationStatus: context.notificationStatus || null,
+    appState: context.appState || null,
+    pathCounts: context.pathCounts || null,
+    discardedPointReasons: context.discardedPointReasons || {},
+    drawerOpenAttempts: countLogsByEvent(logs, "RUN_DRAWER_OPEN_REQUESTED"),
+    drawerOpenTimeouts: countLogsByEvent(logs, "RUN_DRAWER_OPEN_TIMEOUT"),
+    lastDrawerOpenRequestedAt: latestDrawerRequest?.timestamp || null,
+    lastDrawerOpenTimeoutAt: latestDrawerTimeout?.timestamp || null,
+    stallCounters: {
+      ui: countLogsByEvent(logs, "RUN_UI_STALL"),
+      timer: countLogsByEvent(logs, "RUN_UI_TIMER_STALL"),
+      drawer: countLogsByEvent(logs, "RUN_DRAWER_OPEN_TIMEOUT"),
+      eventLoop: toArray(logs).filter((log) => String(log.event || "").includes("JS_EVENT_LOOP_STALL")).length,
+    },
+    lastTimerStallAt: latestTimerStall?.timestamp || null,
+  });
+}
+
 function statusCounts(runs = []) {
   return toArray(runs).reduce((acc, run) => {
     const status = normalizeStatus(run.syncStatus || run.offlineStatus || (run.synced ? "SYNCED" : "PENDING"));
@@ -199,13 +244,15 @@ async function buildActiveRunSection() {
     import("../runTracking/activeRunRuntimeService.js"),
     import("../runTracking/activeRunTrackingService.js"),
   ]);
-  const [runtime, snapshot, storageDiagnostics] = await Promise.all([
+  const [runtime, snapshot, storageDiagnostics, recentLogs] = await Promise.all([
     runtimeService.getActiveRunRuntimeSnapshot?.("local_diagnostics").catch((error) => ({ error })),
     trackingService.getActiveRunSnapshot?.().catch(() => null),
     trackingService.getActiveRunStorageDiagnostics?.().catch(() => null),
+    getLogs({ limit: 300 }).catch(() => []),
   ]);
   const status = normalizeStatus(runtime?.status || snapshot?.status || "IDLE");
   const geometry = summarizeRunGeometry(snapshot || {}, runtime || {});
+  const emergencyDiagnostics = summarizeEmergencyRunDiagnostics(recentLogs);
 
   return {
     exists: LIVE_RUN_STATUSES.has(status) || Boolean(runtime?.activeRunId || snapshot?.activeRunId),
@@ -225,6 +272,16 @@ async function buildActiveRunSection() {
     notificationStatus: runtime?.notificationStatus || null,
     nativeNotificationActive: Boolean(runtime?.nativeNotificationState?.isActive || runtime?.nativeNotificationState?.hasForegroundService),
     canShowStartButton: runtime?.canShowStartButton ?? null,
+    emergencyDiagnostics,
+    lastEmergencySnapshotAt: emergencyDiagnostics.lastEmergencySnapshotAt,
+    lastUiTickAt: emergencyDiagnostics.lastUiTickAt,
+    lastLocationReceivedAt: emergencyDiagnostics.lastLocationReceivedAt,
+    lastLocationAcceptedAt: emergencyDiagnostics.lastLocationAcceptedAt,
+    lastRenderPathUpdatedAt: emergencyDiagnostics.lastRenderPathUpdatedAt,
+    timerStatus: emergencyDiagnostics.timerStatus,
+    drawerOpenAttempts: emergencyDiagnostics.drawerOpenAttempts,
+    drawerOpenTimeouts: emergencyDiagnostics.drawerOpenTimeouts,
+    stallCounters: emergencyDiagnostics.stallCounters,
   };
 }
 
@@ -442,7 +499,11 @@ async function buildNotificationBackgroundSection(activeRun = {}) {
       log.category === "RUN_RECOVERY" ||
       String(log.event || "").includes("WATCHER") ||
       String(log.event || "").includes("BACKGROUND_TASK") ||
-      String(log.event || "").includes("NOTIFICATION")
+      String(log.event || "").includes("NOTIFICATION") ||
+      String(log.event || "").startsWith("RUN_UI_") ||
+      String(log.event || "").startsWith("RUN_DRAWER_") ||
+      String(log.event || "").startsWith("RUN_EMERGENCY_DIAGNOSTICS_") ||
+      String(log.event || "") === "EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT"
     ))
     .slice(-20)
     .map((log) => ({

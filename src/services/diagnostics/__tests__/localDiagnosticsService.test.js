@@ -257,6 +257,7 @@ const config = await import("../../../config/diagnosticsConfig.js");
 const { logger, LOG_CATEGORIES } = await import("../../../utils/logger.js");
 const storageService = await import("../logStorageService.js");
 const diagnostics = await import("../localDiagnosticsService.js");
+const runDiagnostics = await import("../runDiagnosticsService.js");
 
 describe("localDiagnosticsService", () => {
   beforeEach(async () => {
@@ -298,6 +299,37 @@ describe("localDiagnosticsService", () => {
       generatedFilename: "wayper-run.png",
       fileInfo: { exists: true, size: 2048 },
     }, { forcePersist: true });
+    runDiagnostics.recordEmergencyRunDiagnosticsSnapshot({
+      runId: "run-active",
+      status: "RUNNING",
+      lastUiTickAt: "2026-06-20T10:00:01.000Z",
+      lastLocationReceivedAt: "2026-06-20T10:00:02.000Z",
+      lastLocationAcceptedAt: "2026-06-20T10:00:03.000Z",
+      lastRenderPathUpdatedAt: "2026-06-20T10:00:04.000Z",
+      timerStatus: "running",
+      watcherStatus: "foreground_started",
+      notificationStatus: "visible",
+      pathCounts: {
+        rawPointsCount: 2,
+        trustedPointsCount: 2,
+        renderPointsCount: 1,
+        segmentsCount: 1,
+      },
+      discardedPointReasons: { bad_accuracy: 1 },
+    });
+    runDiagnostics.recordRunEvent("RUN_DRAWER_OPEN_REQUESTED", {
+      runId: "run-active",
+      source: "header_menu",
+    });
+    runDiagnostics.recordRunEvent("RUN_DRAWER_OPEN_TIMEOUT", {
+      runId: "run-active",
+      source: "header_menu",
+      timeoutMs: 900,
+    });
+    runDiagnostics.recordRunEvent("RUN_UI_TIMER_STALL", {
+      runId: "run-active",
+      elapsedSinceLastTickMs: 4200,
+    });
     await storageService.__flushLogWritesForTests();
 
     const summary = await diagnostics.buildLocalDiagnosticsSummary({ logsLimit: 50 });
@@ -311,6 +343,17 @@ describe("localDiagnosticsService", () => {
       trustedPathCount: 2,
       renderPathCount: 1,
       segmentsCount: 1,
+      lastUiTickAt: "2026-06-20T10:00:01.000Z",
+      lastLocationReceivedAt: "2026-06-20T10:00:02.000Z",
+      lastLocationAcceptedAt: "2026-06-20T10:00:03.000Z",
+      lastRenderPathUpdatedAt: "2026-06-20T10:00:04.000Z",
+      timerStatus: "running",
+      drawerOpenAttempts: 1,
+      drawerOpenTimeouts: 1,
+      stallCounters: {
+        timer: 1,
+        drawer: 1,
+      },
     });
     expect(summary.gpsTracking).toMatchObject({
       rawPointsReceived: 1,

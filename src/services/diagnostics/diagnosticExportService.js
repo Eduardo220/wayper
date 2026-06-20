@@ -133,6 +133,12 @@ async function createDiagnosticsArchiveInternal(options = {}) {
     lastNotificationActionReceived: bundle.lastNotificationActionReceived,
   });
   addJson(zip, "gpsFilterReport.json", bundle.gpsFilterReport || {});
+  addJson(zip, "emergencyRunDiagnostics.json", bundle.emergencyRunDiagnostics || {});
+  addJson(zip, "uiInteractionEvents.json", {
+    events: bundle.uiInteractionEvents || [],
+    drawerMenuAttempts: bundle.drawerMenuAttempts || {},
+    stallCounters: bundle.stallCounters || {},
+  });
   addJson(zip, "localDiagnostics-summary.json", bundle.localDiagnostics || {});
   addJson(zip, "reports/app-build-device-metadata.json", bundle.localDiagnostics?.metadata || bundle.metadata || {});
   addJson(zip, "reports/gps-report.json", bundle.localDiagnostics?.gpsTracking || bundle.gpsFilterReport || {});

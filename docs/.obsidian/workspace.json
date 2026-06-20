@@ -14,12 +14,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "11-plano-de-deploy.md",
+                "file": "13-bugs-conhecidos.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "11-plano-de-deploy"
+              "title": "13-bugs-conhecidos"
             }
           }
         ]
@@ -202,31 +202,31 @@
   },
   "active": "3b4d653518ff2860",
   "lastOpenFiles": [
+    "13-bugs-conhecidos.md",
+    "16-ideias-de-melhoria.md",
+    "17-propostas-pendentes.md",
+    "14-instrucoes-para-ia.md",
+    "10-regras-de-negocio.md",
+    "12-guia-de-testes.md",
     "11-plano-de-deploy.md",
     "09-design-e-wireframes.md",
     "19-revisoes-de-implementacao.md",
     "20-backlog-ia.md",
-    "10-regras-de-negocio.md",
     "06-fluxos-de-usuario.md",
     "wayper/13-problemas-conhecidos.md",
     "wayper/12-ideias-futuras.md",
     "15-workflow-obsidian-ia.md",
     "15-corrida-por-zonas.md",
-    "14-instrucoes-para-ia.md",
-    "13-bugs-conhecidos.md",
     "diagnostics.md",
     "21-exemplos-de-comandos-ia.md",
     "wayper/00-index.md",
     "wayper/03-mecanica-territorios.md",
     "wayper/07-telas-e-fluxos.md",
     "22-teste-real-corrida-background.md",
-    "17-propostas-pendentes.md",
-    "16-ideias-de-melhoria.md",
     "07-padroes-de-codigo.md",
     "wayper/11-prompts-para-ia.md",
     "00-fontes-do-projeto.md",
     "08-decisoes-tecnicas.md",
-    "templates/template-revisao-implementacao.md",
-    "templates/template-proposta-pendente.md"
+    "templates/template-revisao-implementacao.md"
   ]
 }

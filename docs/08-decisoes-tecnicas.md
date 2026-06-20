@@ -339,3 +339,24 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - `runService.js`, `zones`/`@wayper_zones`, `xpService` e `MedalsWidget` seguem documentados como legado, nao como fonte nova.
 - Roadmap/backlog passam a diferenciar implementado/avancado, pendente de validacao fisica e futuro remoto.
 - A documentacao nao deve afirmar que background esta 100% validado, que Firestore foi removido ou que stories/XP/territorio ja possuem sync remoto completo.
+
+## ADR-023: Diagnostico de emergencia durante corrida ativa
+
+**Status:** aceito
+**Contexto:** em corridas reais no Android, bugs de freeze podem travar parcial ou totalmente a UI da `MapScreen`, impedindo o usuario de abrir drawer/menu e navegar ate `Configuracoes > Diagnostico`. Sem um caminho direto, o bug mais critico fica sem evidencia local no momento em que acontece.
+**Decisao:** adicionar um atalho de diagnostico de emergencia no overlay da corrida ativa (`MapScreen`), disponivel em `RUNNING` e `PAUSED`, usando o export ZIP existente com escopo `ACTIVE_RUN` e share sheet nativo. A corrida nao deve ser pausada/finalizada pelo export. Durante a corrida, salvar snapshots leves `EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT` no storage de diagnostico file-backed, com heartbeat de UI, timer, watcher, AppState, notificacao, counts de path/segments, motivos agregados de descarte, drawer attempts, stalls e ultimo erro. Coordenadas exatas e paths completos continuam fora do padrao.
+**Politica:**
+
+- Nao criar tracker GPS, storage, logger ou export paralelos.
+- Firestore nao e requisito para diagnostico ou export.
+- O atalho da corrida deve ficar acima do mapa e usar `hitSlop`/prioridade de toque clara.
+- Gerar ZIP deve mostrar loading e erro controlado, sem bloquear a corrida nem depender de navegacao complexa.
+- Drawer/header deve registrar `RUN_DRAWER_OPEN_REQUESTED`, `RUN_DRAWER_OPENED` e `RUN_DRAWER_OPEN_TIMEOUT` quando possivel.
+- A acao de diagnostico na notificacao Android fica pendente enquanto o modulo nativo possuir uma unica acao contextual Pausar/Retomar.
+
+**Consequencias:**
+
+- Mesmo se o drawer travar, o usuario tem caminho direto para exportar evidencia da corrida ativa.
+- O ZIP passa a incluir `emergencyRunDiagnostics.json` e `uiInteractionEvents.json`.
+- Travamentos futuros devem diferenciar timer/UI stall, watcher morto, GPS sem pontos aceitos, drawer nao abrindo e render path sem atualizacao.
+- A notificacao continua segura para Pausar/Retomar ate haver validacao fisica especifica para uma segunda acao.

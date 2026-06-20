@@ -16,6 +16,7 @@ import {
   Platform,
 } from "react-native";
 import * as Location from "expo-location";
+import * as Sharing from "expo-sharing";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import Svg, {
@@ -135,9 +136,14 @@ import {
 import logger, { LOG_CATEGORIES } from "../utils/logger.js";
 import {
   recordLocationPointEvent,
+  recordEmergencyRunDiagnosticsSnapshot,
   recordRunEvent,
   recordRunSnapshotEvent,
 } from "../services/diagnostics/runDiagnosticsService.js";
+import {
+  createDiagnosticsArchive,
+  DIAGNOSTIC_EXPORT_SCOPE,
+} from "../services/diagnostics/diagnosticExportService.js";
 import {
   RUN_START_COUNTDOWN_SECONDS,
   RUN_START_COUNTDOWN_TICK_MS,
@@ -165,6 +171,9 @@ const TERRITORY_VIEWPORT_DEBOUNCE_MS = 950;
 const TERRITORY_INITIAL_BBOX_DELTA = 0.018;
 const TERRITORY_FETCH_LIMIT = 180;
 const TERRITORY_MAX_VIEWPORT_CELLS = 140;
+const EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS = 30000;
+const UI_TIMER_STALL_THRESHOLD_MS = 2500;
+const EMERGENCY_DIAGNOSTICS_HIT_SLOP = { top: 12, right: 12, bottom: 12, left: 12 };
 
 const requestReplayAnimationFrame = (callback) => {
   if (typeof globalThis.requestAnimationFrame === "function") {
@@ -554,9 +563,11 @@ const MapScreen = ({ navigation, route }) => {
   const [savedShareVisible, setSavedShareVisible] = useState(false);
   const [lastSavedRun, setLastSavedRun] = useState(null);
   const [shareLoading, setShareLoading] = useState(null);
+  const [emergencyDiagnosticsLoading, setEmergencyDiagnosticsLoading] = useState(false);
 
   const savedFullShareRef = useRef(null);
   const savedRouteShareRef = useRef(null);
+  const emergencyDiagnosticsInFlightRef = useRef(false);
 
   const watcherRef = useRef(null);
   const timerRef = useRef(null);
@@ -615,6 +626,17 @@ const MapScreen = ({ navigation, route }) => {
   const lastNotificationOpenRequestRef = useRef(null);
   const lastMapRouteDiagnosticRef = useRef("");
   const lastMapRouteRenderAtRef = useRef(0);
+  const lastEmergencySnapshotAtRef = useRef(0);
+  const lastUiTickAtRef = useRef(null);
+  const lastUiHeartbeatAtRef = useRef(0);
+  const lastLocationReceivedAtRef = useRef(null);
+  const lastLocationAcceptedAtRef = useRef(null);
+  const lastRenderPathUpdatedAtRef = useRef(null);
+  const timerStallCountRef = useRef(0);
+  const uiStallCountRef = useRef(0);
+  const watcherRestartCountRef = useRef(0);
+  const discardedPointReasonsRef = useRef({});
+  const lastRunDiagnosticErrorRef = useRef(null);
 
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
@@ -960,6 +982,145 @@ const MapScreen = ({ navigation, route }) => {
     return permission;
   }, []);
 
+  const getEmergencyRunStatus = useCallback(() => {
+    if (runStatusRef.current === "active") return ACTIVE_RUN_STATUS.RUNNING;
+    if (runStatusRef.current === "paused") return ACTIVE_RUN_STATUS.PAUSED;
+    return runStatusRef.current || null;
+  }, []);
+
+  const buildEmergencyDiagnosticsContext = useCallback((event, extra = {}) => {
+    const runtime = activeRunTrackingService.getTrackingRuntimeStatus?.() || {};
+    return {
+      event,
+      runId: currentRunIdRef.current,
+      status: getEmergencyRunStatus(),
+      elapsedMs: (timeSecRef.current || 0) * 1000,
+      distanceMeters: distanceRef.current || 0,
+      runtime,
+      appState: appStateRef.current,
+      notificationStatus: runtime.notificationStatus || null,
+      watcherStatus: runtime.foregroundWatcherStatus || runtime.watcherStatus || (watcherRef.current ? "foreground_active" : "stopped"),
+      backgroundTaskStatus: runtime.backgroundTaskStatus || runtime.backgroundTaskProbe?.status || null,
+      timerStatus: timerRef.current ? "running" : runStatusRef.current === "paused" ? "paused" : "stopped",
+      lastUiTickAt: lastUiTickAtRef.current,
+      lastLocationReceivedAt: lastLocationReceivedAtRef.current || runtime.lastRawPointReceivedAt || null,
+      lastLocationAcceptedAt: lastLocationAcceptedAtRef.current || runtime.lastAcceptedPointAt || null,
+      lastRenderPathUpdatedAt: lastRenderPathUpdatedAtRef.current,
+      pathCounts: {
+        rawPointsCount: rawPathRef.current?.length || runtime.rawPointsCount || 0,
+        trustedPointsCount: savedPathRef.current?.length || routeStateRef.current?.length || runtime.acceptedPointsCount || 0,
+        renderPointsCount: displayPathRef.current?.length || runtime.displayPointsCount || 0,
+        segmentsCount: displaySegmentsRef.current?.length || runtime.segmentsCount || 0,
+        routeChunksCount: runtime.routeChunksCount || runtime.routeChunksIndex?.chunks?.length || 0,
+      },
+      discardedPointReasons: discardedPointReasonsRef.current,
+      lastError: lastRunDiagnosticErrorRef.current,
+      stallCounters: {
+        ui: uiStallCountRef.current,
+        timer: timerStallCountRef.current,
+        watcher: watcherRestartCountRef.current,
+      },
+      screen: "MapScreen",
+      ...extra,
+    };
+  }, [getEmergencyRunStatus]);
+
+  const recordEmergencyDiagnosticsSnapshot = useCallback((event, extra = {}, options = {}) => {
+    const hasLiveRun = Boolean(currentRunIdRef.current || runningRef.current || runStatusRef.current === "paused");
+    if (!hasLiveRun && options.allowWithoutRun !== true) return null;
+
+    const now = Date.now();
+    const minIntervalMs = Number(options.minIntervalMs ?? EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS);
+    if (!options.force && minIntervalMs > 0 && now - lastEmergencySnapshotAtRef.current < minIntervalMs) {
+      return null;
+    }
+    lastEmergencySnapshotAtRef.current = now;
+    return recordEmergencyRunDiagnosticsSnapshot(
+      buildEmergencyDiagnosticsContext(event, extra),
+      { forcePersist: true }
+    );
+  }, [buildEmergencyDiagnosticsContext]);
+
+  const exportEmergencyDiagnostics = useCallback(async (trigger = "run_panel_button") => {
+    if (emergencyDiagnosticsInFlightRef.current) return;
+    emergencyDiagnosticsInFlightRef.current = true;
+    setEmergencyDiagnosticsLoading(true);
+    recordRunEvent("RUN_EMERGENCY_DIAGNOSTICS_EXPORT_STARTED", {
+      runId: currentRunIdRef.current,
+      status: getEmergencyRunStatus(),
+      trigger,
+      screen: "MapScreen",
+    });
+    recordEmergencyDiagnosticsSnapshot("export_started", { trigger }, { force: true });
+
+    try {
+      const archive = await createDiagnosticsArchive({
+        scope: DIAGNOSTIC_EXPORT_SCOPE.ACTIVE_RUN,
+      });
+      const sharingAvailable = await Sharing.isAvailableAsync();
+      if (sharingAvailable) {
+        await Sharing.shareAsync(archive.uri, {
+          mimeType: "application/zip",
+          dialogTitle: "Exportar diagnostico Wayper",
+        });
+      } else {
+        Alert.alert(
+          "Diagnostico gerado",
+          `Arquivo salvo em ${archive.filename || archive.uri}. Compartilhamento nativo indisponivel neste aparelho.`
+        );
+      }
+      recordRunEvent("RUN_EMERGENCY_DIAGNOSTICS_EXPORT_SUCCESS", {
+        runId: currentRunIdRef.current,
+        status: getEmergencyRunStatus(),
+        trigger,
+        uri: archive.uri,
+        filename: archive.filename,
+        size: archive.size,
+        shared: sharingAvailable,
+        screen: "MapScreen",
+      });
+      recordEmergencyDiagnosticsSnapshot("export_success", {
+        trigger,
+        archive: {
+          filename: archive.filename,
+          size: archive.size,
+          shared: sharingAvailable,
+        },
+      }, { force: true });
+    } catch (error) {
+      lastRunDiagnosticErrorRef.current = {
+        message: error?.message || String(error),
+        code: error?.code || null,
+        at: new Date().toISOString(),
+      };
+      recordRunEvent("RUN_EMERGENCY_DIAGNOSTICS_EXPORT_FAILED", {
+        runId: currentRunIdRef.current,
+        status: getEmergencyRunStatus(),
+        trigger,
+        error,
+        screen: "MapScreen",
+      });
+      recordEmergencyDiagnosticsSnapshot("export_failed", { trigger }, { force: true });
+      Alert.alert("Falha no diagnostico", "Nao foi possivel gerar o ZIP agora. A corrida continua ativa.");
+    } finally {
+      emergencyDiagnosticsInFlightRef.current = false;
+      if (mountedRef.current) setEmergencyDiagnosticsLoading(false);
+    }
+  }, [getEmergencyRunStatus, recordEmergencyDiagnosticsSnapshot]);
+
+  const handleEmergencyDiagnosticsPress = useCallback(() => {
+    exportEmergencyDiagnostics("run_panel_button");
+  }, [exportEmergencyDiagnostics]);
+
+  const handleEmergencyDiagnosticsLongPress = useCallback(() => {
+    recordRunEvent("RUN_EMERGENCY_DIAGNOSTICS_LONG_PRESS", {
+      runId: currentRunIdRef.current,
+      status: getEmergencyRunStatus(),
+      screen: "MapScreen",
+    });
+    exportEmergencyDiagnostics("run_panel_long_press");
+  }, [exportEmergencyDiagnostics, getEmergencyRunStatus]);
+
   /* ===== INIT ===== */
   useEffect(() => {
     mountedRef.current = true;
@@ -1030,6 +1191,9 @@ const MapScreen = ({ navigation, route }) => {
               appState: next,
               screen: "MapScreen",
             });
+            recordEmergencyDiagnosticsSnapshot("app_state_background", {
+              appState: next,
+            }, { force: true });
             recordRunEvent("APP_BACKGROUND", {
               runId: currentRunIdRef.current,
               status: runStatusRef.current,
@@ -1047,6 +1211,9 @@ const MapScreen = ({ navigation, route }) => {
               appState: next,
               screen: "MapScreen",
             });
+            recordEmergencyDiagnosticsSnapshot("app_state_active", {
+              appState: next,
+            }, { force: true });
             recordRunEvent("APP_ACTIVE", {
               runId: currentRunIdRef.current,
               status: runStatusRef.current,
@@ -1155,11 +1322,19 @@ const MapScreen = ({ navigation, route }) => {
       setRuntimeSurfaceState({
         foregroundWatcherStatus: "stopped",
       });
+      recordRunEvent("LOCATION_WATCHER_STOPPED", {
+        runId: currentRunIdRef.current,
+        watcherStatus: "foreground_stopped",
+        screen: "MapScreen",
+      });
+      recordEmergencyDiagnosticsSnapshot("watcher_stop", {
+        watcherStatus: "foreground_stopped",
+      }, { force: true });
       debugTracking("watcher_stopped", { runSessionId: currentRunIdRef.current });
     } catch (e) {
       debug("stopWatcher caught", e);
     }
-  }, []);
+  }, [recordEmergencyDiagnosticsSnapshot]);
 
   const resetTrackingPipeline = useCallback((options = {}) => {
     trackingSessionRef.current = createTrackingSession({
@@ -1280,11 +1455,20 @@ const MapScreen = ({ navigation, route }) => {
     }
   }, [updateActiveZonePreview]);
 
+  const noteDiscardedPointReason = useCallback((reason = "unknown") => {
+    const key = String(reason || "unknown");
+    discardedPointReasonsRef.current = {
+      ...discardedPointReasonsRef.current,
+      [key]: (discardedPointReasonsRef.current[key] || 0) + 1,
+    };
+  }, []);
+
   /* ===== Core location update ===== */
   const handleLocationUpdate = useCallback(
     (locObj = {}) => {
       try {
         if (locObj.source === "background" && appStateRef.current === "active" && watcherRef.current) {
+          noteDiscardedPointReason("background_point_ignored_foreground_watcher_alive");
           recordLocationPointEvent("LOCATION_POINT_REJECTED", locObj, {
             runId: currentRunIdRef.current,
             status: runStatusRef.current,
@@ -1300,6 +1484,7 @@ const MapScreen = ({ navigation, route }) => {
             pointSession: locObj.runSessionId,
             currentSession: currentRunIdRef.current,
           });
+          noteDiscardedPointReason("stale_session");
           recordLocationPointEvent("LOCATION_POINT_REJECTED", locObj, {
             runId: currentRunIdRef.current,
             reason: "stale_session",
@@ -1313,12 +1498,29 @@ const MapScreen = ({ navigation, route }) => {
         const point = normalizeLocation(locObj);
         if (!point) {
           debugTracking("reject:normalize_failed", locObj);
+          noteDiscardedPointReason("invalid_coordinate");
           recordLocationPointEvent("LOCATION_POINT_REJECTED", locObj, {
             runId: currentRunIdRef.current,
             reason: "invalid_coordinate",
             screen: "MapScreen",
           });
           return;
+        }
+
+        const receivedAt = new Date().toISOString();
+        lastLocationReceivedAtRef.current = receivedAt;
+        if (currentRunIdRef.current || runningRef.current) {
+          recordLocationPointEvent("LOCATION_POINT_RECEIVED", point, {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            source: locObj.source || point.source || null,
+            appState: appStateRef.current,
+            receivedAt,
+            screen: "MapScreen",
+          }, { forcePersist: true });
+          recordEmergencyDiagnosticsSnapshot("location_point_received", {
+            lastLocationReceivedAt: receivedAt,
+          }, { minIntervalMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS });
         }
 
         if (!runningRef.current) {
@@ -1332,6 +1534,7 @@ const MapScreen = ({ navigation, route }) => {
             status: runStatusRef.current,
             source: locObj.source,
           });
+          noteDiscardedPointReason("inactive_run");
           recordLocationPointEvent("LOCATION_POINT_REJECTED", point, {
             runId: currentRunIdRef.current,
             status: runStatusRef.current,
@@ -1347,6 +1550,7 @@ const MapScreen = ({ navigation, route }) => {
             status: runStatusRef.current,
             source: locObj.source,
           });
+          noteDiscardedPointReason("invalid_run_status");
           recordLocationPointEvent("LOCATION_POINT_REJECTED", point, {
             runId: currentRunIdRef.current,
             status: runStatusRef.current,
@@ -1386,6 +1590,7 @@ const MapScreen = ({ navigation, route }) => {
         rawPathRef.current = result.rawPath || rawPathRef.current;
 
         if (!result.accepted) {
+          noteDiscardedPointReason(result.reason || "not_accepted");
           if (Number(point.accuracy) > TRACKING_CONFIG.GPS_ACCURACY_ACCEPTABLE_M) {
             setGpsQualityWarning(
               Number(point.accuracy) > TRACKING_CONFIG.GPS_ACCURACY_MAX_M
@@ -1427,6 +1632,7 @@ const MapScreen = ({ navigation, route }) => {
         displaySegmentsRef.current = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
         routeBufferRef.current = result.point ? [result.point] : [];
         lastAcceptedLocationRef.current = trustedPath[trustedPath.length - 1] || null;
+        lastLocationAcceptedAtRef.current = new Date().toISOString();
         lastPointRef.current = lastAcceptedLocationRef.current;
         lastSmoothedLocationRef.current = result.currentPosition || livePath[livePath.length - 1] || null;
         pendingSuspiciousPointRef.current = null;
@@ -1465,6 +1671,9 @@ const MapScreen = ({ navigation, route }) => {
             distance: distanceRef.current,
             screen: "MapScreen",
           });
+          recordEmergencyDiagnosticsSnapshot("location_point_accepted", {
+            lastLocationAcceptedAt: lastLocationAcceptedAtRef.current,
+          }, { minIntervalMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS });
           setRouteState(limitPathForRendering(trustedPath, ROUTE_CAP));
           setDisplayRouteState(livePath);
           setDisplayRouteSegments(displaySegmentsRef.current);
@@ -1474,6 +1683,12 @@ const MapScreen = ({ navigation, route }) => {
         }
       } catch (e) {
         debug("handleLocationUpdate", e);
+        noteDiscardedPointReason("handler_error");
+        lastRunDiagnosticErrorRef.current = {
+          message: e?.message || String(e),
+          code: e?.code || null,
+          at: new Date().toISOString(),
+        };
         recordRunEvent("LOCATION_POINT_REJECTED", {
           runId: currentRunIdRef.current,
           status: runStatusRef.current,
@@ -1488,7 +1703,7 @@ const MapScreen = ({ navigation, route }) => {
         });
       }
     },
-    [updateActiveZonePreview]
+    [noteDiscardedPointReason, recordEmergencyDiagnosticsSnapshot, updateActiveZonePreview]
   );
 
   const stopBackgroundLocationService = useCallback(async () => {
@@ -1581,21 +1796,33 @@ const MapScreen = ({ navigation, route }) => {
         watcherStatus: "background_start_requested",
         screen: "MapScreen",
       });
+      recordEmergencyDiagnosticsSnapshot("watcher_start", {
+        watcherStatus: "background_start_requested",
+      }, { minIntervalMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS });
     } catch (e) {
       debug("startBackgroundLocationService", e);
+      watcherRestartCountRef.current += 1;
+      lastRunDiagnosticErrorRef.current = {
+        message: e?.message || String(e),
+        code: e?.code || null,
+        at: new Date().toISOString(),
+      };
       recordRunEvent("LOCATION_WATCHER_RESTARTED", {
         runId: currentRunIdRef.current,
         watcherStatus: "background_start_failed",
         error: e,
         screen: "MapScreen",
       });
+      recordEmergencyDiagnosticsSnapshot("watcher_restart", {
+        watcherStatus: "background_start_failed",
+      }, { force: true });
       checkpointOnLocationError(e, {
         phase: "background_location_service",
       }).catch((checkpointError) => {
         debug("background location checkpoint failed", checkpointError);
       });
     }
-  }, []);
+  }, [recordEmergencyDiagnosticsSnapshot]);
 
   const startLocationWatcher = useCallback(async () => {
     if (watcherRef.current) {
@@ -1607,6 +1834,9 @@ const MapScreen = ({ navigation, route }) => {
         watcherStatus: "foreground_watcher_alive",
         screen: "MapScreen",
       });
+      recordEmergencyDiagnosticsSnapshot("watcher_start", {
+        watcherStatus: "foreground_watcher_alive",
+      }, { minIntervalMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS });
       devLog("RunRecovery", "watcher alive", {
         activeRunId: currentRunIdRef.current,
       });
@@ -1614,11 +1844,15 @@ const MapScreen = ({ navigation, route }) => {
       setRuntimeSurfaceState({
         foregroundWatcherStatus: "restarting",
       });
+      watcherRestartCountRef.current += 1;
       recordRunEvent("LOCATION_WATCHER_RESTARTED", {
         runId: currentRunIdRef.current,
         watcherStatus: "foreground_restarting",
         screen: "MapScreen",
       });
+      recordEmergencyDiagnosticsSnapshot("watcher_restart", {
+        watcherStatus: "foreground_restarting",
+      }, { force: true });
       devLog("RunRecovery", "restarting watcher without clearing path", {
         activeRunId: currentRunIdRef.current,
       });
@@ -1689,6 +1923,9 @@ const MapScreen = ({ navigation, route }) => {
             timeInterval: WATCH_TIME_INTERVAL_MS,
             screen: "MapScreen",
           });
+          recordEmergencyDiagnosticsSnapshot("watcher_start", {
+            watcherStatus: "foreground_started",
+          }, { minIntervalMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS });
           break;
         } catch (watchError) {
           lastWatchError = watchError;
@@ -1715,6 +1952,12 @@ const MapScreen = ({ navigation, route }) => {
           debugTracking("watcher_started", { runSessionId, distanceInterval: WATCH_DISTANCE_INTERVAL, timeInterval: WATCH_TIME_INTERVAL_MS });
     } catch (e) {
       debug("watchPositionAsync failed, fallback polling", e);
+      watcherRestartCountRef.current += 1;
+      lastRunDiagnosticErrorRef.current = {
+        message: e?.message || String(e),
+        code: e?.code || null,
+        at: new Date().toISOString(),
+      };
       checkpointOnLocationError(e, {
         phase: "watch_position_start",
       }).catch((checkpointError) => {
@@ -1761,8 +2004,11 @@ const MapScreen = ({ navigation, route }) => {
         timeInterval: WATCH_TIME_INTERVAL_MS,
         screen: "MapScreen",
       });
+      recordEmergencyDiagnosticsSnapshot("watcher_start", {
+        watcherStatus: "fallback_polling_started",
+      }, { force: true });
     }
-  }, [handleLocationUpdate, stopWatcherAndPolling]);
+  }, [handleLocationUpdate, recordEmergencyDiagnosticsSnapshot, stopWatcherAndPolling]);
 
   const startElapsedTimer = useCallback(() => {
     if (timerRef.current) {
@@ -1771,6 +2017,32 @@ const MapScreen = ({ navigation, route }) => {
     }
 
     const updateElapsed = () => {
+      const nowMs = Date.now();
+      const previousTickMs = lastUiTickAtRef.current ? Date.parse(lastUiTickAtRef.current) : null;
+      if (
+        runningRef.current &&
+        runStatusRef.current === "active" &&
+        Number.isFinite(previousTickMs) &&
+        nowMs - previousTickMs > UI_TIMER_STALL_THRESHOLD_MS
+      ) {
+        timerStallCountRef.current += 1;
+        recordRunEvent("RUN_UI_TIMER_STALL", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          elapsedSinceLastTickMs: nowMs - previousTickMs,
+          thresholdMs: UI_TIMER_STALL_THRESHOLD_MS,
+          stallCount: timerStallCountRef.current,
+          screen: "MapScreen",
+        });
+        recordEmergencyDiagnosticsSnapshot("timer_stall", {
+          elapsedSinceLastTickMs: nowMs - previousTickMs,
+        }, { force: true });
+      }
+      lastUiTickAtRef.current = new Date(nowMs).toISOString();
+      setRuntimeSurfaceState({
+        lastUiTickAt: lastUiTickAtRef.current,
+        timerStatus: "running",
+      });
       const next = activeRunTrackingService.getCurrentDurationSeconds?.() || timeSecRef.current || 0;
       timeSecRef.current = next;
       setTimeSec(next);
@@ -1778,14 +2050,53 @@ const MapScreen = ({ navigation, route }) => {
 
     updateElapsed();
     timerRef.current = setInterval(updateElapsed, 1000);
-  }, []);
+  }, [recordEmergencyDiagnosticsSnapshot]);
 
   const stopElapsedTimer = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    setRuntimeSurfaceState({
+      lastUiTickAt: lastUiTickAtRef.current,
+      timerStatus: runStatusRef.current === "paused" ? "paused" : "stopped",
+    });
   }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next !== "active") return;
+      if (!currentRunIdRef.current || runStatusRef.current !== "active") return;
+
+      const timerWasStopped = !timerRef.current;
+      const watcherWasStopped = !watcherRef.current;
+      if (timerWasStopped) startElapsedTimer();
+      if (watcherWasStopped) {
+        startLocationWatcher().catch((error) => {
+          lastRunDiagnosticErrorRef.current = {
+            message: error?.message || String(error),
+            code: error?.code || null,
+            at: new Date().toISOString(),
+          };
+          debug("app active watcher restart failed", error);
+        });
+      }
+      if (timerWasStopped || watcherWasStopped) {
+        recordRunEvent("RUN_APP_ACTIVE_REARMED", {
+          runId: currentRunIdRef.current,
+          timerWasStopped,
+          watcherWasStopped,
+          appState: next,
+          screen: "MapScreen",
+        });
+        recordEmergencyDiagnosticsSnapshot("app_state_active_rearmed", {
+          timerWasStopped,
+          watcherWasStopped,
+        }, { force: true });
+      }
+    });
+    return () => subscription?.remove?.();
+  }, [recordEmergencyDiagnosticsSnapshot, startElapsedTimer, startLocationWatcher]);
 
   const applyActiveRunSnapshotToUi = useCallback((snapshot, options = {}) => {
     if (!snapshot?.activeRunId) return;
@@ -1968,6 +2279,12 @@ const MapScreen = ({ navigation, route }) => {
       recovered: Boolean(options.recovered),
       screen: "MapScreen",
     });
+    if (options.recovered) {
+      recordEmergencyDiagnosticsSnapshot("recovery", {
+        source: options.source || snapshot.source || null,
+        recovered: true,
+      }, { force: true });
+    }
 
     if (status === ACTIVE_RUN_STATUS.RUNNING) {
       startElapsedTimer();
@@ -1995,6 +2312,7 @@ const MapScreen = ({ navigation, route }) => {
     startBackgroundLocationService,
     startElapsedTimer,
     startLocationWatcher,
+    recordEmergencyDiagnosticsSnapshot,
     stopBackgroundLocationService,
     stopElapsedTimer,
     stopWatcherAndPolling,
@@ -2424,6 +2742,11 @@ const MapScreen = ({ navigation, route }) => {
           status: "RUNNING",
           screen: "MapScreen",
         });
+        recordEmergencyDiagnosticsSnapshot("start", {
+          runId,
+          status: ACTIVE_RUN_STATUS.RUNNING,
+          trigger: "start_run",
+        }, { force: true });
         try {
           const activeSnapshot = await activeRunTrackingService.startActiveRun?.({
             activeRunId: runId,
@@ -2535,7 +2858,7 @@ const MapScreen = ({ navigation, route }) => {
         return { ok: false, reason: "exception", error: e };
       }
     },
-    [applyActiveRunSnapshotToUi, closeSelectedTerritory, handleLocationUpdate, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher, stopElapsedTimer, stopWatcherAndPolling]
+    [applyActiveRunSnapshotToUi, closeSelectedTerritory, handleLocationUpdate, recordEmergencyDiagnosticsSnapshot, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher, stopElapsedTimer, stopWatcherAndPolling]
   );
 
   const pauseRun = useCallback(async () => {
@@ -2546,6 +2869,9 @@ const MapScreen = ({ navigation, route }) => {
       paused,
       screen: "MapScreen",
     });
+    recordEmergencyDiagnosticsSnapshot("pause", {
+      trigger: "pause_pressed",
+    }, { force: true });
     if (!running || paused) {
       recordRunEvent("PAUSE_FAILED", {
         runId: currentRunIdRef.current,
@@ -2601,7 +2927,10 @@ const MapScreen = ({ navigation, route }) => {
       distance: distanceRef.current,
       screen: "MapScreen",
     });
-  }, [applyActiveRunSnapshotToUi, flushRouteBufferToState, paused, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
+    recordEmergencyDiagnosticsSnapshot("pause_success", {
+      status: ACTIVE_RUN_STATUS.PAUSED,
+    }, { force: true });
+  }, [applyActiveRunSnapshotToUi, flushRouteBufferToState, paused, recordEmergencyDiagnosticsSnapshot, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
 
   const resumeRun = useCallback(async () => {
     recordRunEvent("RESUME_PRESSED", {
@@ -2611,6 +2940,9 @@ const MapScreen = ({ navigation, route }) => {
       paused,
       screen: "MapScreen",
     });
+    recordEmergencyDiagnosticsSnapshot("resume", {
+      trigger: "resume_pressed",
+    }, { force: true });
     if (!running || !paused) {
       recordRunEvent("RESUME_FAILED", {
         runId: currentRunIdRef.current,
@@ -2699,6 +3031,9 @@ const MapScreen = ({ navigation, route }) => {
         segmentsCount: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
         screen: "MapScreen",
       });
+      recordEmergencyDiagnosticsSnapshot("resume_success", {
+        status: ACTIVE_RUN_STATUS.RUNNING,
+      }, { force: true });
     } catch (e) {
       debug("resumeRun catch", e);
       recordRunEvent("RESUME_FAILED", {
@@ -2708,7 +3043,7 @@ const MapScreen = ({ navigation, route }) => {
         screen: "MapScreen",
       });
     }
-  }, [applyActiveRunSnapshotToUi, paused, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]);
+  }, [applyActiveRunSnapshotToUi, paused, recordEmergencyDiagnosticsSnapshot, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]);
 
   const fadeOutRoute = useCallback(() => {
     return new Promise((resolve) => {
@@ -2755,6 +3090,11 @@ const MapScreen = ({ navigation, route }) => {
           fromRecovery: Boolean(opts.fromRecovery),
           screen: "MapScreen",
         });
+        recordEmergencyDiagnosticsSnapshot("finish_requested", {
+          trigger: "finish_pressed",
+          force: Boolean(opts.force),
+          fromRecovery: Boolean(opts.fromRecovery),
+        }, { force: true });
         if (finishInFlightRef.current) {
           recordRunEvent("FINISH_FAILED", {
             runId: currentRunIdRef.current,
@@ -3091,7 +3431,7 @@ const MapScreen = ({ navigation, route }) => {
         finishInFlightRef.current = false;
       }
     },
-    [running, location, timeSec, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, flushRouteBufferToState, mode, territories]
+    [running, location, timeSec, recordEmergencyDiagnosticsSnapshot, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, flushRouteBufferToState, mode, territories]
   );
 
   const restoreRecoveryCandidateToUi = useCallback(
@@ -3913,6 +4253,10 @@ const MapScreen = ({ navigation, route }) => {
       ? renderedAt - lastMapRouteRenderAtRef.current
       : null;
     lastMapRouteRenderAtRef.current = renderedAt;
+    lastRenderPathUpdatedAtRef.current = new Date(renderedAt).toISOString();
+    setRuntimeSurfaceState({
+      lastRenderPathUpdatedAt: lastRenderPathUpdatedAtRef.current,
+    });
 
     recordRunEvent("MAP_ROUTE_RENDERED", {
       runId: currentRunIdRef.current,
@@ -3926,7 +4270,58 @@ const MapScreen = ({ navigation, route }) => {
       pendingRouteBufferPoints: routeBufferRef.current?.length || 0,
       screen: "MapScreen",
     });
-  }, [displayRouteSegments, displayRouteState, paused, replaying, routeState, running]);
+    recordEmergencyDiagnosticsSnapshot("render_path_update", {
+      routePointsCount,
+      routeSegmentsCount,
+      displayPointsCount,
+      lastRenderPathUpdatedAt: lastRenderPathUpdatedAtRef.current,
+    }, { minIntervalMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS });
+  }, [displayRouteSegments, displayRouteState, paused, recordEmergencyDiagnosticsSnapshot, replaying, routeState, running]);
+
+  useEffect(() => {
+    if (!running && !paused) return undefined;
+
+    const emitHeartbeat = () => {
+      const now = Date.now();
+      const previousHeartbeatAt = lastUiHeartbeatAtRef.current;
+      if (
+        previousHeartbeatAt &&
+        now - previousHeartbeatAt > EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS * 2
+      ) {
+        uiStallCountRef.current += 1;
+        recordRunEvent("RUN_UI_STALL", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          elapsedSinceLastHeartbeatMs: now - previousHeartbeatAt,
+          thresholdMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS * 2,
+          stallCount: uiStallCountRef.current,
+          screen: "MapScreen",
+        });
+        recordEmergencyDiagnosticsSnapshot("ui_stall", {
+          elapsedSinceLastHeartbeatMs: now - previousHeartbeatAt,
+        }, { force: true });
+      }
+
+      lastUiHeartbeatAtRef.current = now;
+      recordRunEvent("RUN_UI_HEARTBEAT", {
+        runId: currentRunIdRef.current,
+        status: runStatusRef.current,
+        lastUiTickAt: lastUiTickAtRef.current,
+        lastRenderPathUpdatedAt: lastRenderPathUpdatedAtRef.current,
+        timerStatus: timerRef.current ? "running" : runStatusRef.current === "paused" ? "paused" : "stopped",
+        watcherStatus: watcherRef.current ? "foreground_active" : "stopped",
+        appState: appStateRef.current,
+        screen: "MapScreen",
+      });
+      recordEmergencyDiagnosticsSnapshot("ui_heartbeat", {}, {
+        minIntervalMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS,
+      });
+    };
+
+    emitHeartbeat();
+    const heartbeat = setInterval(emitHeartbeat, EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS);
+    return () => clearInterval(heartbeat);
+  }, [paused, recordEmergencyDiagnosticsSnapshot, running]);
 
   /* ============= RENDER GUARD (corrigido) ============= */
   // Não travar a UI apenas por falta de location. Se permissões negadas, mostrar mensagem/fallback.
@@ -4123,16 +4518,43 @@ const MapScreen = ({ navigation, route }) => {
       )}
 
       {(running || replaying) && (
-        <View style={[styles.runPanel, paused && styles.runPanelPaused]}>
+        <View pointerEvents="box-none" style={[styles.runPanel, paused && styles.runPanelPaused]}>
           <View pointerEvents="none" style={styles.runPanelGlow} />
           <View style={styles.runHeaderRow}>
-            <View>
+            <View style={styles.runTitleBlock}>
               <Text style={styles.runEyebrow}>{paused ? "Pausada" : running ? "Wayper live" : "Replay"}</Text>
               <Text style={styles.runTitle}>{running ? (mode === "zones" ? "Capturando Zonas" : "Corrida Livre") : "Reproduzindo"}</Text>
             </View>
-            <View style={[styles.runStatusPill, paused && styles.runStatusPillPaused]}>
-              <View style={[styles.runStatusDot, paused && styles.runStatusDotPaused]} />
-              <Text style={styles.runStatusText}>{paused ? "Pausa" : running ? "Ativa" : "Replay"}</Text>
+            <View style={styles.runStatusActions}>
+              {running ? (
+                <TouchableOpacity
+                  testID="emergency-diagnostics-button"
+                  activeOpacity={0.86}
+                  disabled={emergencyDiagnosticsLoading}
+                  hitSlop={EMERGENCY_DIAGNOSTICS_HIT_SLOP}
+                  accessibilityRole="button"
+                  accessibilityLabel="Exportar diagnostico da corrida"
+                  style={[
+                    styles.emergencyDiagnosticsButton,
+                    emergencyDiagnosticsLoading && styles.emergencyDiagnosticsButtonBusy,
+                  ]}
+                  onPress={handleEmergencyDiagnosticsPress}
+                  onLongPress={handleEmergencyDiagnosticsLongPress}
+                >
+                  {emergencyDiagnosticsLoading ? (
+                    <ActivityIndicator size="small" color={WayperTheme.colors.text} />
+                  ) : (
+                    <Ionicons name="document-text-outline" size={16} color={WayperTheme.colors.text} />
+                  )}
+                  <Text style={styles.emergencyDiagnosticsText}>
+                    {emergencyDiagnosticsLoading ? "Exportando" : "Diagnostico"}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+              <View style={[styles.runStatusPill, paused && styles.runStatusPillPaused]}>
+                <View style={[styles.runStatusDot, paused && styles.runStatusDotPaused]} />
+                <Text style={styles.runStatusText}>{paused ? "Pausa" : running ? "Ativa" : "Replay"}</Text>
+              </View>
             </View>
           </View>
           <View style={styles.runMetricsRow}>
@@ -4250,10 +4672,11 @@ const MapScreen = ({ navigation, route }) => {
       )}
 
       {running && (
-        <View style={styles.runActionDock}>
+        <View pointerEvents="box-none" style={styles.runActionDock}>
           <View pointerEvents="none" style={styles.runActionDockGlow} />
           <TouchableOpacity
             activeOpacity={0.9}
+            hitSlop={EMERGENCY_DIAGNOSTICS_HIT_SLOP}
             style={[styles.runControlButton, paused ? styles.resumeControlButton : styles.pauseControlButton]}
             onPress={paused ? resumeRun : pauseRun}
           >
@@ -4265,7 +4688,12 @@ const MapScreen = ({ navigation, route }) => {
             <Text style={[styles.runControlText, paused && styles.resumeControlText]}>{paused ? "Retomar" : "Pausar"}</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity activeOpacity={0.9} style={[styles.runControlButton, styles.finishControlButton]} onPress={stopRun}>
+          <TouchableOpacity
+            activeOpacity={0.9}
+            hitSlop={EMERGENCY_DIAGNOSTICS_HIT_SLOP}
+            style={[styles.runControlButton, styles.finishControlButton]}
+            onPress={stopRun}
+          >
             <Ionicons name="stop" size={20} color={WayperTheme.colors.text} />
             <Text style={[styles.runControlText, styles.finishControlText]}>Finalizar</Text>
           </TouchableOpacity>
@@ -5112,6 +5540,8 @@ const styles = StyleSheet.create({
     top: 18,
     left: 18,
     right: 18,
+    zIndex: 30,
+    elevation: 30,
     padding: 15,
     borderRadius: WayperTheme.radius.xxl,
     backgroundColor: "rgba(8, 16, 24, 0.86)",
@@ -5139,6 +5569,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 13,
+    gap: 10,
+  },
+  runTitleBlock: {
+    flex: 1,
+    minWidth: 0,
   },
   runEyebrow: {
     color: WayperTheme.colors.primary,
@@ -5151,6 +5586,34 @@ const styles = StyleSheet.create({
   runTitle: {
     ...WayperTheme.typography.subtitle,
     letterSpacing: 0.2,
+  },
+  runStatusActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+    flexShrink: 0,
+  },
+  emergencyDiagnosticsButton: {
+    minHeight: 34,
+    paddingHorizontal: 10,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: "rgba(16, 27, 37, 0.94)",
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.borderStrong,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  emergencyDiagnosticsButtonBusy: {
+    opacity: 0.82,
+  },
+  emergencyDiagnosticsText: {
+    color: WayperTheme.colors.text,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
   },
   runStatusPill: {
     minHeight: 34,
@@ -5372,6 +5835,8 @@ const styles = StyleSheet.create({
     bottom: 28,
     left: 22,
     right: 22,
+    zIndex: 25,
+    elevation: 25,
     borderRadius: WayperTheme.radius.xxl,
     padding: 10,
     backgroundColor: "rgba(8, 16, 24, 0.9)",
@@ -5415,6 +5880,8 @@ const styles = StyleSheet.create({
     bottom: 28,
     left: 22,
     right: 22,
+    zIndex: 30,
+    elevation: 30,
     minHeight: 86,
     borderRadius: WayperTheme.radius.xxl,
     padding: 10,
