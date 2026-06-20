@@ -1,50 +1,29 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
-# dependencies
+# Node / npm / yarn / pnpm
 node_modules/
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
 
-# Expo
+# Expo / React Native
 .expo/
-dist/
-web-build/
 expo-env.d.ts
+.metro-health-check*
+*.jsbundle
 
-# Native
+# Android / Gradle
 .kotlin/
 *.orig.*
-*.jks
-*.keystore
-*.p8
-*.p12
-*.key
-*.mobileprovision
+*.class
+*.dex
+*.hprof
 
-# Metro
-.metro-health-check*
-
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
-
-# macOS
-.DS_Store
-*.pem
-
-# local env files
-.env
-.env*.local
-credentials.json
-scripts/serviceAccountKey.json
-
-# typescript
-*.tsbuildinfo
-
-# generated native folders
-/ios
-/android
-
-# Native source kept because Wayper has a custom Android run notification module.
+# Expo prebuild output is generated. Wayper keeps the custom Android
+# notification/run module below as source, so those files are unignored.
+/android/
 !/android/
 /android/*
 !/android/app/
@@ -66,3 +45,97 @@ scripts/serviceAccountKey.json
 !/android/app/src/main/java/com/wayper/app/MainApplication.kt
 !/android/app/src/main/java/com/wayper/app/run/
 !/android/app/src/main/java/com/wayper/app/run/**
+
+# iOS / Xcode
+/ios/
+DerivedData/
+*.xcuserstate
+
+# Logs
+/logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env / secrets / signing
+.env
+.env.local
+.env.*.local
+credentials.json
+scripts/serviceAccountKey.json
+*.pem
+*.key
+*.p8
+*.p12
+*.jks
+*.keystore
+*.mobileprovision
+
+# Builds / artifacts
+/dist/
+/web-build/
+/build/
+*.tsbuildinfo
+*.apk
+*.aab
+*.ap_
+
+# Coverage / test output
+/coverage/
+/.nyc_output/
+/test-results/
+/playwright-report/
+/jest-cache/
+
+# Editor / IDE
+.idea/
+.vscode/.react/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Obsidian local state
+docs/.obsidian/workspace.json
+docs/.obsidian/workspace-mobile.json
+docs/.obsidian/graph.json
+docs/.obsidian/cache/
+docs/.obsidian/plugins/
+docs/.obsidian/themes/
+docs/.obsidian/snippets/
+docs/.trash/
+docs/wayper/.obsidian/workspace.json
+docs/wayper/.obsidian/workspace-mobile.json
+docs/wayper/.obsidian/graph.json
+docs/wayper/.obsidian/cache/
+docs/wayper/.obsidian/plugins/
+docs/wayper/.obsidian/themes/
+docs/wayper/.obsidian/snippets/
+docs/wayper/.trash/
+
+# Wayper diagnostics / temporary exports
+/tmp/
+/temp/
+/wayper-diagnostics/
+/diagnostic-export/
+/diagnostic-exports/
+/diagnostics-export/
+/diagnostics-exports/
+/share-exports/
+/screenshots/
+/wayper-share/
+/wayper-*.zip
+/wayper_zone_*.geojson
+/wayper_zone_coords_*.txt
