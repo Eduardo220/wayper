@@ -20,6 +20,151 @@ O Wayper é um app mobile de corrida gamificado. Usuários registram rotas reais
 5. Issues e PRs.
 6. Conhecimento geral, apenas quando faltar informação no projeto.
 
+## Protocolo Obsidian como mente do projeto
+
+O Obsidian e os arquivos Markdown em `/docs` funcionam como a memoria viva do Wayper. O codigo mostra o que esta implementado na branch atual; os Markdown registram intencao, planejamento, decisoes, bugs, ideias, propostas, riscos e proximos caminhos. Uma alteracao relevante no app so fica completa quando o codigo e a documentacao contam a mesma historia.
+
+### Papel das fontes
+
+1. `develop` e a fonte da verdade implementada: antes de afirmar que algo existe, leia o codigo atual e o estado do worktree.
+2. `main` representa a referencia estavel/producao quando a pergunta for sobre release.
+3. `/docs` e a fonte da intencao, memoria, historico, decisoes, riscos e planejamento do projeto.
+4. Conversas externas, notas soltas e conhecimento geral so podem complementar quando nao contradizem codigo e docs.
+5. Propostas novas precisam de validacao do Eduardo antes de virar implementacao.
+
+### Arquivos para consultar sempre
+
+- `docs/00-fontes-do-projeto.md`
+- `docs/14-instrucoes-para-ia.md`
+- `docs/24-resumo-rodada-local-first.md`
+- `docs/13-bugs-conhecidos.md`
+- `docs/16-ideias-de-melhoria.md`
+- `docs/17-propostas-pendentes.md`
+- `docs/wayper/12-ideias-futuras.md`
+- `docs/04-arquitetura.md`
+- `docs/08-decisoes-tecnicas.md`
+- `docs/10-regras-de-negocio.md`
+- `docs/12-guia-de-testes.md`
+- `docs/wayper/00-index.md`
+- `docs/wayper/09-arquitetura-tecnica.md`
+- `docs/wayper/10-decisoes-do-projeto.md`
+
+Consulte tambem docs de dominio conforme a tarefa: roadmap, backlog, modelo de dados, fluxos, padroes de codigo, permissoes/onboarding, GPS, corrida, Firestore, sharing, diagnostico ou qualquer arquivo citado por uma decisao anterior.
+
+### Antes de alterar
+
+- Confirmar branch `develop` e revisar `git status --short`.
+- Ler o codigo atual envolvido e procurar implementacao parecida.
+- Ler os docs relevantes do dominio afetado.
+- Verificar `docs/13-bugs-conhecidos.md`.
+- Verificar `docs/16-ideias-de-melhoria.md`.
+- Verificar `docs/17-propostas-pendentes.md`.
+- Verificar `docs/wayper/12-ideias-futuras.md`.
+- Verificar se a tarefa ja esta registrada no backlog, roadmap, decisoes tecnicas ou decisoes do projeto.
+- Identificar services, hooks, repositories, componentes, storages e helpers existentes antes de propor qualquer novo arquivo.
+
+### Durante a alteracao
+
+- Implementar apenas o que foi pedido ou aprovado explicitamente.
+- Nao executar ideia pendente sem autorizacao do Eduardo.
+- Nao transformar ideia em tarefa ativa sem decisao humana.
+- Nao criar feature paralela, service paralelo, repository paralelo, hook paralelo, storage paralelo ou componente duplicado.
+- Refatorar/completar o caminho existente quando ja houver implementacao parcial.
+- Preservar local-first e Firestore como remoto/best effort nos fluxos ja consolidados.
+- Preservar diferenca entre implementado, em validacao, pendente de decisao, ideia futura, bug conhecido, proposta aprovada e proposta rejeitada.
+- Nao alterar arquivos locais/visuais do Obsidian, como `docs/.obsidian/workspace.json`, `graph.json`, cache, plugins, temas ou arquivos equivalentes.
+
+### Depois da alteracao
+
+- Atualizar docs tecnicos afetados pelo comportamento alterado.
+- Atualizar bug conhecido se corrigiu, reproduziu ou encontrou problema.
+- Registrar decisao tecnica quando houver mudanca de arquitetura, regra, sync, dados, permissao, diagnostico ou fluxo critico.
+- Registrar em `docs/16-ideias-de-melhoria.md` pelo menos uma oportunidade real relacionada a uma alteracao relevante, salvo mudanca puramente mecanica e justificada.
+- Registrar em `docs/17-propostas-pendentes.md` quando a oportunidade ja tiver escopo de proxima tarefa e precisar de decisao do Eduardo.
+- Registrar em `docs/wayper/12-ideias-futuras.md` quando a oportunidade for maior, de medio/longo prazo ou depender de backend/sync remoto/validacao real.
+- Documentar testes, validacao manual, riscos e pendencias.
+- Deixar claro o que esta implementado, em validacao, pendente ou apenas sugerido.
+
+### Convencao de status
+
+Use estes status em bugs, ideias, propostas, decisoes e docs de acompanhamento:
+
+- `AGUARDANDO_VALIDAÇÃO_EDU`: sugestao registrada; Eduardo ainda nao decidiu.
+- `APROVADO`: Eduardo aprovou a proposta ou decisao.
+- `EM_IMPLEMENTAÇÃO`: trabalho autorizado esta em andamento.
+- `IMPLEMENTADO`: codigo ou documentacao foi entregue.
+- `EM_VALIDAÇÃO`: entregue, mas ainda precisa validacao manual, real ou de produto.
+- `REJEITADO`: Eduardo rejeitou ou a ideia foi descartada com motivo.
+- `ADIADO`: valido, mas fora da rodada atual.
+- `BLOQUEADO`: depende de credencial, aparelho, decisao, backend, dado real ou contexto externo.
+- `LEGADO`: existe para compatibilidade/historico; nao e fonte oficial nova.
+- `CORRIGIDO`: bug corrigido com evidencia registrada.
+- `PRECISA_TESTE_REAL`: nao pode ser encerrado sem teste fisico ou ambiente real.
+- `PENDENTE_DECISÃO`: proposta com escopo claro aguardando decisao do Eduardo.
+
+Quando o arquivo precisar ficar 100% ASCII por consistencia local, use as grafias sem acento `AGUARDANDO_VALIDACAO_EDU` e `PENDENTE_DECISAO` como equivalentes operacionais.
+
+### Bugs
+
+Bugs pertencem a `docs/13-bugs-conhecidos.md`. Nao apague bug conhecido sem registrar motivo. Ao corrigir, mova para "Bugs corrigidos" ou altere o status para `CORRIGIDO`, incluindo correcao aplicada, evidencia e teste necessario. Se o bug exige aparelho fisico, build release, credenciais ou ambiente externo, mantenha como `PRECISA_TESTE_REAL`, `BLOQUEADO` ou `EM_VALIDAÇÃO` ate haver evidencia.
+
+### Ideias
+
+Ideias pertencem a `docs/16-ideias-de-melhoria.md`. Ideia nao e tarefa aprovada. Toda ideia criada pela IA deve ter origem, tarefa relacionada, arquivos afetados quando conhecidos, data, status, proximo passo e, quando util, prompt futuro sugerido. Ideias geradas ao final de uma alteracao relevante devem ser uteis, especificas e relacionadas ao que mudou.
+
+### Propostas pendentes
+
+Propostas pertencem a `docs/17-propostas-pendentes.md`. Use proposta quando a ideia ja tem escopo executavel, criterios de aceite e decisao necessaria do Eduardo. Proposta pendente nao pode ser implementada automaticamente. Se Eduardo aprovar, registre a decisao, atualize status para `APROVADO` ou mova para "Propostas aprovadas", e so entao implemente quando solicitado.
+
+### Ideias futuras
+
+Ideias maiores, de medio/longo prazo, dependentes de backend/sync remoto, validacao real ou mudanca de produto pertencem a `docs/wayper/12-ideias-futuras.md`. Elas nao entram no backlog ativo sem aprovacao explicita. Nao documente sync remoto como implementado quando existe apenas estrutura local `PENDING_SYNC`.
+
+### Regra da ideia final obrigatoria
+
+Ao final de toda alteracao relevante no app, registre uma oportunidade de melhoria em `docs/16-ideias-de-melhoria.md`:
+
+- A ideia deve estar relacionada ao que foi alterado.
+- A ideia deve ter utilidade real para produto, qualidade, operacao, diagnostico ou UX.
+- O status inicial deve ser `AGUARDANDO_VALIDAÇÃO_EDU`.
+- A ideia nao pode ser implementada automaticamente na mesma rodada.
+- O proximo passo deve deixar claro como Eduardo valida, rejeita ou converte em proposta.
+
+Se a mudanca for puramente mecanica, formatacao, renomeacao sem impacto de produto ou ajuste sem aprendizado novo, registre na entrega que nao houve ideia relevante e explique o motivo.
+
+### Regra de decisao do Eduardo
+
+- Codex pode sugerir.
+- Codex pode registrar.
+- Codex pode organizar.
+- Codex nao pode aprovar sozinho.
+- Codex nao pode transformar proposta em implementacao sem pedido explicito.
+- Eduardo decide o que entra na proxima rodada, o que fica adiado e o que e rejeitado.
+
+### Rastreabilidade
+
+Use IDs previsiveis quando registrar novas entradas:
+
+- `BUG-YYYYMMDD-001`
+- `IDEA-YYYYMMDD-001`
+- `PROP-YYYYMMDD-001`
+- `FUTURE-YYYYMMDD-001`
+
+Toda ideia/proposta/bug/futuro deve mencionar origem, tarefa relacionada, arquivos afetados quando souber, data, status e proxima acao.
+
+### Checklist pos-alteracao
+
+- [ ] Atualizei docs tecnicos afetados?
+- [ ] Atualizei bugs conhecidos, se corrigi/encontrei bug?
+- [ ] Registrei decisao tecnica, se houve mudanca de arquitetura?
+- [ ] Registrei pelo menos uma ideia de melhoria relacionada?
+- [ ] Se a ideia exige aprovacao como proxima tarefa, deixei em propostas pendentes?
+- [ ] Marquei claramente o que esta implementado vs pendente?
+- [ ] Rodei testes relevantes?
+- [ ] Documentei riscos?
+- [ ] Nao alterei `.obsidian` local/visual?
+- [ ] Nao implementei ideia nao aprovada?
+
 ## Regras de resposta
 
 Quando responder sobre o Wayper:

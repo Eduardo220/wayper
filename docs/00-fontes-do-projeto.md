@@ -11,6 +11,15 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 5. Issues, pull requests e decisões registradas no GitHub.
 6. Conversas e anotações externas, somente quando não contradizem o código ou a documentação.
 
+## Papel do Obsidian e dos Markdown
+
+- O codigo atual em `develop` continua sendo a fonte da verdade implementada.
+- Os Markdown em `/docs` e `docs/wayper` sao a memoria do projeto no Obsidian: registram intencao, planejamento, historico, decisoes, bugs, propostas, ideias e riscos.
+- Quando codigo e docs divergirem, valide o codigo atual primeiro e atualize a documentacao relevante em vez de criar uma narrativa paralela.
+- Conversas externas, mensagens soltas e conhecimento geral so valem se nao contradizem o codigo e os documentos oficiais.
+- Propostas novas precisam de validacao do Eduardo antes de entrarem como implementacao, backlog ativo ou decisao aprovada.
+- Ideias registradas pela IA devem ficar como sugestao ate Eduardo aprovar, rejeitar ou pedir uma proxima tarefa.
+
 ## Branches oficiais
 
 | Branch | Uso |
@@ -36,6 +45,10 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 | Testes | `docs/12-guia-de-testes.md` |
 | Bugs conhecidos | `docs/13-bugs-conhecidos.md` |
 | Instruções para IA | `docs/14-instrucoes-para-ia.md` |
+| Workflow Obsidian + IA | `docs/15-workflow-obsidian-ia.md` |
+| Ideias de melhoria | `docs/16-ideias-de-melhoria.md` |
+| Propostas pendentes | `docs/17-propostas-pendentes.md` |
+| Ideias futuras | `docs/wayper/12-ideias-futuras.md` |
 | Onboarding, permissoes e estados vazios | `docs/23-onboarding-permissoes-estados-vazios.md` |
 | Resumo da rodada local-first | `docs/24-resumo-rodada-local-first.md` |
 
@@ -46,3 +59,5 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 - Documentação desatualizada deve ser corrigida ou marcada como pendente.
 - Quando houver conflito entre documentacao antiga e codigo atual da branch `develop`, valide o codigo primeiro e atualize a documentacao.
 - Para o estado local-first consolidado em 2026-06-19, use `docs/24-resumo-rodada-local-first.md` como mapa rapido antes de aprofundar nos documentos especificos.
+- Para o protocolo "Obsidian como mente do projeto", use `docs/14-instrucoes-para-ia.md` como regra operacional e preserve a diferenca entre implementado, em validacao, pendente de decisao, ideia futura, bug conhecido, proposta aprovada e proposta rejeitada.
+- Nao mova ideia para backlog ativo, changelog de implementacao ou decisao aprovada sem validacao explicita do Eduardo.

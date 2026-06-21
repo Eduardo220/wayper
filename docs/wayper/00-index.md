@@ -29,6 +29,10 @@ Tudo que define produto, regras de negócio, mecânicas de território, decisõe
 - [[13-problemas-conhecidos]]: riscos técnicos e problemas conhecidos.
 - [[14-glossario]]: termos usados na documentação e no produto.
 - [[15-checklist-validacao-corrida-ativa]]: roteiro de validacao fisica para corrida ativa, background, tela bloqueada, notificacao, recovery e finalizacao.
+- `../13-bugs-conhecidos.md`: bugs, riscos e itens que exigem teste real.
+- `../14-instrucoes-para-ia.md`: protocolo operacional, incluindo "Obsidian como mente do projeto".
+- `../16-ideias-de-melhoria.md`: ideias aguardando avaliacao do Eduardo.
+- `../17-propostas-pendentes.md`: propostas que precisam de decisao antes de implementacao.
 - `../23-onboarding-permissoes-estados-vazios.md`: politica atual de onboarding, permissoes, estados vazios, offline e checklist manual.
 - `../24-resumo-rodada-local-first.md`: resumo operacional da rodada local-first consolidada em 2026-06-19.
 
@@ -44,3 +48,5 @@ Toda mudança relevante no comportamento do app deve atualizar a documentação 
 - Mudança em Firestore: atualize [[08-firebase-firestore]] e registre decisão em [[10-decisoes-do-projeto]].
 - Mudança arquitetural: atualize [[09-arquitetura-tecnica]] e [[10-decisoes-do-projeto]].
 - Mudanca que afete local-first, fontes de verdade, storages, sync, diagnostico ou instrucoes para IA: atualize tambem `../24-resumo-rodada-local-first.md` quando o resumo ficar defasado.
+- Mudanca relevante deve consultar bugs, ideias, propostas pendentes e ideias futuras antes de implementar, e registrar novas oportunidades sem executa-las automaticamente.
+- Eduardo aprova, rejeita ou adia propostas; IA/Codex apenas sugere, registra e organiza.

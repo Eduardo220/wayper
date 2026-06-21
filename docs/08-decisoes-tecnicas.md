@@ -360,3 +360,23 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - O ZIP passa a incluir `emergencyRunDiagnostics.json` e `uiInteractionEvents.json`.
 - Travamentos futuros devem diferenciar timer/UI stall, watcher morto, GPS sem pontos aceitos, drawer nao abrindo e render path sem atualizacao.
 - A notificacao continua segura para Pausar/Retomar ate haver validacao fisica especifica para uma segunda acao.
+
+## ADR-024: Obsidian como mente do projeto
+
+**Status:** aceito
+**Contexto:** o Wayper usa Markdown em `/docs` e `docs/wayper` como base de conhecimento integrada ao Obsidian. Rodadas anteriores consolidaram local-first, mas futuras alteracoes ainda poderiam atualizar codigo sem registrar bugs, ideias, propostas, decisoes ou riscos correspondentes.
+**Decisao:** tratar os Markdown como memoria operacional do projeto. O codigo em `develop` continua sendo a fonte do que esta implementado; os docs registram intencao, historico, decisoes, bugs, ideias, propostas e proximos caminhos. Toda alteracao relevante deve consultar os docs antes de implementar, atualizar os documentos afetados depois e registrar pelo menos uma oportunidade real de melhoria relacionada quando houver impacto de produto/arquitetura/UX/operacao.
+**Politica:**
+
+- Codex pode sugerir, registrar e organizar.
+- Codex nao pode aprovar sozinho, mover ideia para backlog ativo ou implementar proposta sem pedido explicito.
+- Eduardo decide o que entra na proxima rodada.
+- Bugs, ideias, propostas e ideias futuras usam IDs previsiveis e status rastreavel.
+- Arquivos locais/visuais do Obsidian, como `workspace.json`, `graph.json`, cache, plugins e temas, ficam fora de escopo de commits.
+
+**Consequencias:**
+
+- `docs/14-instrucoes-para-ia.md` passa a conter o protocolo operacional completo.
+- `docs/13-bugs-conhecidos.md`, `docs/16-ideias-de-melhoria.md`, `docs/17-propostas-pendentes.md` e `docs/wayper/12-ideias-futuras.md` viram registros estruturados.
+- Futuras entregas precisam diferenciar implementado, em validacao, pendente de decisao, ideia futura, bug conhecido, proposta aprovada e proposta rejeitada.
+- A documentacao nao deve afirmar validacao fisica, sync remoto ou decisao aprovada sem evidencia correspondente.

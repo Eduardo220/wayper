@@ -102,6 +102,14 @@ Este documento nao substitui os demais arquivos em `/docs`; ele resume o estado 
 - Adicionar ao story cria story local `PENDING_SYNC` e nao publica remoto silenciosamente.
 - Diagnostico/export deve funcionar sem Firestore, Sentry ou upload.
 
+## Continuidade via Obsidian
+
+Daqui para frente, toda alteracao relevante no Wayper deve manter codigo e Markdown sincronizados. O codigo em `develop` continua sendo a fonte do que esta implementado; os docs/Obsidian registram memoria, intencao, decisoes, bugs, ideias, propostas, riscos e proximos caminhos.
+
+Novas ideias geradas durante uma rodada devem ser registradas em `docs/16-ideias-de-melhoria.md` como `AGUARDANDO_VALIDAÇÃO_EDU`, sem implementacao automatica. Propostas com escopo de proxima tarefa devem ficar em `docs/17-propostas-pendentes.md` ate Eduardo aprovar, rejeitar ou adiar. Ideias maiores ou dependentes de backend/sync remoto/validacao real devem ficar em `docs/wayper/12-ideias-futuras.md`.
+
+Codex pode sugerir, registrar e organizar. Eduardo decide o que entra na proxima rodada.
+
 ## Validacoes realizadas
 
 Ultima rodada reportada:
