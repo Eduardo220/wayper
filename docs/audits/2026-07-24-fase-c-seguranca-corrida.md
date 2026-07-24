@@ -92,6 +92,13 @@ A Fase D pode avançar com testes automatizados por ser uma extração compatív
 mas deve preservar rollback e não será considerada validada em produção até a
 matriz física ser concluída.
 
+## Nota posterior
+
+Durante a Fase D, o mesmo aparelho autorizou ADB e recebeu um smoke test básico
+de instalação/abertura do Dev Client. Não houve corrida ativa, bloqueio de tela,
+kill, reentrada ou teste de rua; portanto, o resultado original e o gate físico
+da Fase C permanecem pendentes.
+
 ## Commit sugerido
 
 `docs(test): registrar gate automatizado da fase c`

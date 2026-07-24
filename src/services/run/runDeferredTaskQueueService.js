@@ -8,7 +8,8 @@ import {
 } from "../diagnostics/runDiagnosticsService.js";
 
 export const RUN_DEFERRED_TASK_QUEUE_KEY = "wayper_run_deferred_tasks_v1";
-export const RUN_DEFERRED_TASK_SCHEMA_VERSION = 1;
+export const RUN_DEFERRED_TASK_SCHEMA_VERSION = 2;
+export const EXPEDITION_PROCESSING_SCHEMA_VERSION = 1;
 
 export const RUN_DEFERRED_TASK_TYPE = Object.freeze({
   RUN_FULL_SAVE_FINALIZE: "RUN_FULL_SAVE_FINALIZE",
@@ -29,6 +30,36 @@ export const RUN_DEFERRED_TASK_STATUS = Object.freeze({
   FAILED_RETRYABLE: "failed_retryable",
   FAILED_PERMANENT: "failed_permanent",
   CANCELLED: "cancelled",
+});
+
+export const EXPEDITION_PROCESSING_MODULE = Object.freeze({
+  METRICS: "metrics",
+  TERRITORY: "territory",
+  PROGRESSION: "progression",
+  RANKING: "ranking",
+  SOCIAL: "social",
+  SYNC: "sync",
+  CHALLENGES: "challenges",
+  REWARDS: "rewards",
+});
+
+export const EXPEDITION_PROCESSING_STATUS = Object.freeze({
+  PENDING: "pending",
+  PROCESSING: "processing",
+  READY: "ready",
+  FAILED_RETRYABLE: "failed_retryable",
+  FAILED_PERMANENT: "failed_permanent",
+  NOT_APPLICABLE: "not_applicable",
+  CANCELLED: "cancelled",
+});
+
+const TASK_MODULE_BY_TYPE = Object.freeze({
+  [RUN_DEFERRED_TASK_TYPE.RUN_FULL_SAVE_FINALIZE]: EXPEDITION_PROCESSING_MODULE.METRICS,
+  [RUN_DEFERRED_TASK_TYPE.RUN_TERRITORY_CAPTURE]: EXPEDITION_PROCESSING_MODULE.TERRITORY,
+  [RUN_DEFERRED_TASK_TYPE.RUN_XP_UPDATE]: EXPEDITION_PROCESSING_MODULE.PROGRESSION,
+  [RUN_DEFERRED_TASK_TYPE.RUN_RANKING_UPDATE]: EXPEDITION_PROCESSING_MODULE.RANKING,
+  [RUN_DEFERRED_TASK_TYPE.RUN_FEED_UPDATE]: EXPEDITION_PROCESSING_MODULE.SOCIAL,
+  [RUN_DEFERRED_TASK_TYPE.RUN_REMOTE_SYNC]: EXPEDITION_PROCESSING_MODULE.SYNC,
 });
 
 const TERMINAL_STATUSES = new Set([
@@ -164,6 +195,22 @@ function sanitizeError(error) {
   });
 }
 
+function summarizeRunForQueueResult(run = {}) {
+  return {
+    runId: run.runId || run.localRunId || run.id || null,
+    localRunId: run.localRunId || run.id || null,
+    remoteRunId: run.remoteRunId || null,
+    status: run.status || null,
+    syncStatus: run.syncStatus || null,
+    offlineStatus: run.offlineStatus || null,
+    territoryCaptureStatus: run.territoryCaptureStatus || null,
+    distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
+    durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
+    areaM2: Number(run.areaM2 ?? run.area ?? 0),
+    updatedAt: run.updatedAt || null,
+  };
+}
+
 function sanitizeQueuePayload(payload = {}) {
   const output = {};
   Object.entries(payload || {}).forEach(([key, value]) => {
@@ -179,6 +226,14 @@ function sanitizeQueuePayload(payload = {}) {
       return;
     }
     if (value && typeof value === "object") {
+      if (key === "run") {
+        output[key] = sanitizeLogContext(summarizeRunForQueueResult(value));
+        return;
+      }
+      if (key === "lastResult") {
+        output[key] = sanitizeQueuePayload(value);
+        return;
+      }
       output[key] = sanitizeLogContext(value);
       return;
     }
@@ -218,7 +273,16 @@ function normalizeTask(input = {}) {
     priority: Number(input.priority ?? getDefaultPriority(type)) || getDefaultPriority(type),
     dependencies: Array.isArray(input.dependencies) ? input.dependencies.map(String).filter(Boolean) : [],
     metadata: sanitizeQueuePayload(input.metadata || {}),
-    schemaVersion: Number(input.schemaVersion || RUN_DEFERRED_TASK_SCHEMA_VERSION),
+    result: input.result
+      ? sanitizeQueuePayload(input.result)
+      : input.metadata?.lastResult
+        ? sanitizeQueuePayload(input.metadata.lastResult)
+        : null,
+    resultVersion: Math.max(1, Number(input.resultVersion || 1) || 1),
+    schemaVersion: Math.max(
+      RUN_DEFERRED_TASK_SCHEMA_VERSION,
+      Number(input.schemaVersion || RUN_DEFERRED_TASK_SCHEMA_VERSION)
+    ),
   };
 }
 
@@ -377,6 +441,308 @@ export async function enqueueDefaultPostRunTasks(run = {}, options = {}) {
     runId,
     source: options.source || "finish",
   });
+}
+
+function getExpectedProcessingTaskTypes(run = {}) {
+  const expected = [
+    RUN_DEFERRED_TASK_TYPE.RUN_FULL_SAVE_FINALIZE,
+    RUN_DEFERRED_TASK_TYPE.RUN_XP_UPDATE,
+    RUN_DEFERRED_TASK_TYPE.RUN_REMOTE_SYNC,
+    RUN_DEFERRED_TASK_TYPE.RUN_RANKING_UPDATE,
+    RUN_DEFERRED_TASK_TYPE.RUN_FEED_UPDATE,
+  ];
+  if (getRunMode(run) === "zones") {
+    expected.push(RUN_DEFERRED_TASK_TYPE.RUN_TERRITORY_CAPTURE);
+  }
+  return expected;
+}
+
+function toExpeditionTaskStatus(task = {}) {
+  switch (task.status) {
+    case RUN_DEFERRED_TASK_STATUS.RUNNING:
+      return EXPEDITION_PROCESSING_STATUS.PROCESSING;
+    case RUN_DEFERRED_TASK_STATUS.SUCCEEDED:
+      return EXPEDITION_PROCESSING_STATUS.READY;
+    case RUN_DEFERRED_TASK_STATUS.FAILED_RETRYABLE:
+      return EXPEDITION_PROCESSING_STATUS.FAILED_RETRYABLE;
+    case RUN_DEFERRED_TASK_STATUS.FAILED_PERMANENT:
+      return EXPEDITION_PROCESSING_STATUS.FAILED_PERMANENT;
+    case RUN_DEFERRED_TASK_STATUS.CANCELLED:
+      return EXPEDITION_PROCESSING_STATUS.CANCELLED;
+    default:
+      return EXPEDITION_PROCESSING_STATUS.PENDING;
+  }
+}
+
+function createNotApplicableModule(module, reason) {
+  return {
+    module,
+    status: EXPEDITION_PROCESSING_STATUS.NOT_APPLICABLE,
+    taskId: null,
+    type: null,
+    attempts: 0,
+    updatedAt: null,
+    result: null,
+    error: null,
+    reason,
+  };
+}
+
+function createPendingModule(module) {
+  return {
+    module,
+    status: EXPEDITION_PROCESSING_STATUS.PENDING,
+    taskId: null,
+    type: null,
+    attempts: 0,
+    updatedAt: null,
+    result: null,
+    error: null,
+    reason: "task_not_enqueued_yet",
+  };
+}
+
+function buildModuleFromTask(module, task) {
+  if (!task) return createPendingModule(module);
+  return {
+    module,
+    status: toExpeditionTaskStatus(task),
+    taskId: task.id,
+    type: task.type,
+    attempts: Number(task.attempts || 0),
+    maxAttempts: Number(task.maxAttempts || 0),
+    updatedAt: task.updatedAt || null,
+    startedAt: task.lastStartedAt || null,
+    finishedAt: task.lastFinishedAt || null,
+    nextRunAt: task.nextRunAt || null,
+    result: task.result || task.metadata?.lastResult || null,
+    error: task.lastError || null,
+    reason: task.lastError?.reason || task.result?.reason || task.metadata?.lastResult?.reason || null,
+  };
+}
+
+function deriveOverallProcessingStatus(modules = {}) {
+  const values = Object.values(modules).filter(
+    (module) => module.status !== EXPEDITION_PROCESSING_STATUS.NOT_APPLICABLE
+  );
+  const readyCount = values.filter(
+    (module) => module.status === EXPEDITION_PROCESSING_STATUS.READY
+  ).length;
+  const allReady = values.length > 0 && readyCount === values.length;
+  if (allReady) return "ready";
+  if (readyCount > 0) return "partial";
+  if (values.some((module) => module.status === EXPEDITION_PROCESSING_STATUS.PROCESSING)) {
+    return "processing";
+  }
+  if (values.some((module) => (
+    module.status === EXPEDITION_PROCESSING_STATUS.FAILED_RETRYABLE ||
+    module.status === EXPEDITION_PROCESSING_STATUS.FAILED_PERMANENT ||
+    module.status === EXPEDITION_PROCESSING_STATUS.CANCELLED
+  ))) {
+    return "partial";
+  }
+  return "pending";
+}
+
+export async function getRunExpeditionProcessingState(runId, options = {}) {
+  const requestedRunId = String(runId || options.run?.localRunId || options.run?.id || "");
+  const queue = Array.isArray(options.queue) ? options.queue : await loadQueueRaw();
+  let run = options.run || null;
+  if (!run && requestedRunId) {
+    try {
+      const sync = await import("../../utils/sync.js");
+      run = await sync.findLocalRunById?.({
+        id: requestedRunId,
+        localRunId: requestedRunId,
+        runId: requestedRunId,
+        remoteRunId: requestedRunId,
+      });
+    } catch {
+      run = null;
+    }
+  }
+
+  const runIdentities = new Set([
+    requestedRunId,
+    run?.id,
+    run?.localRunId,
+    run?.runId,
+    run?.remoteRunId,
+    run?.legacyId,
+  ].filter(Boolean).map(String));
+  const tasks = queue.filter((task) => [
+    task.runId,
+    task.localRunId,
+    task.remoteRunId,
+  ].filter(Boolean).some((id) => runIdentities.has(String(id))));
+  const normalizedRunId = String(
+    run?.localRunId ||
+    run?.runId ||
+    run?.id ||
+    tasks[0]?.runId ||
+    requestedRunId
+  );
+  const taskByModule = new Map();
+  tasks.forEach((task) => {
+    const module = TASK_MODULE_BY_TYPE[task.type];
+    if (!module) return;
+    const previous = taskByModule.get(module);
+    if (!previous || toTimestamp(task.updatedAt, 0) >= toTimestamp(previous.updatedAt, 0)) {
+      taskByModule.set(module, task);
+    }
+  });
+
+  const isZoneRun = getRunMode(run || tasks[0]?.payload || {}) === "zones";
+  const metricsTask = taskByModule.get(EXPEDITION_PROCESSING_MODULE.METRICS);
+  const modules = {
+    [EXPEDITION_PROCESSING_MODULE.METRICS]: metricsTask
+      ? buildModuleFromTask(EXPEDITION_PROCESSING_MODULE.METRICS, metricsTask)
+      : isFinishedLocalRunForProcessing(run)
+        ? {
+            ...createPendingModule(EXPEDITION_PROCESSING_MODULE.METRICS),
+            status: EXPEDITION_PROCESSING_STATUS.READY,
+            reason: "minimum_run_saved",
+            updatedAt: run.minimumSavedAt || run.finishedAt || run.updatedAt || null,
+            result: {
+              runId: run.localRunId || run.id || normalizedRunId,
+              distanceMeters: Number(run.distanceMeters ?? run.distance ?? 0),
+              durationSeconds: Number(run.durationSeconds ?? run.duration ?? 0),
+            },
+          }
+        : createPendingModule(EXPEDITION_PROCESSING_MODULE.METRICS),
+    [EXPEDITION_PROCESSING_MODULE.TERRITORY]: isZoneRun
+      ? buildModuleFromTask(
+          EXPEDITION_PROCESSING_MODULE.TERRITORY,
+          taskByModule.get(EXPEDITION_PROCESSING_MODULE.TERRITORY)
+        )
+      : createNotApplicableModule(EXPEDITION_PROCESSING_MODULE.TERRITORY, "free_run"),
+    [EXPEDITION_PROCESSING_MODULE.PROGRESSION]: buildModuleFromTask(
+      EXPEDITION_PROCESSING_MODULE.PROGRESSION,
+      taskByModule.get(EXPEDITION_PROCESSING_MODULE.PROGRESSION)
+    ),
+    [EXPEDITION_PROCESSING_MODULE.RANKING]: buildModuleFromTask(
+      EXPEDITION_PROCESSING_MODULE.RANKING,
+      taskByModule.get(EXPEDITION_PROCESSING_MODULE.RANKING)
+    ),
+    [EXPEDITION_PROCESSING_MODULE.SOCIAL]: buildModuleFromTask(
+      EXPEDITION_PROCESSING_MODULE.SOCIAL,
+      taskByModule.get(EXPEDITION_PROCESSING_MODULE.SOCIAL)
+    ),
+    [EXPEDITION_PROCESSING_MODULE.SYNC]: buildModuleFromTask(
+      EXPEDITION_PROCESSING_MODULE.SYNC,
+      taskByModule.get(EXPEDITION_PROCESSING_MODULE.SYNC)
+    ),
+    [EXPEDITION_PROCESSING_MODULE.CHALLENGES]: createNotApplicableModule(
+      EXPEDITION_PROCESSING_MODULE.CHALLENGES,
+      "not_implemented"
+    ),
+    [EXPEDITION_PROCESSING_MODULE.REWARDS]: createNotApplicableModule(
+      EXPEDITION_PROCESSING_MODULE.REWARDS,
+      "not_implemented"
+    ),
+  };
+  const sortedUpdateTimes = tasks
+    .map((task) => task.updatedAt)
+    .filter(Boolean)
+    .sort();
+  const updatedAt = sortedUpdateTimes[sortedUpdateTimes.length - 1] ||
+    run?.minimumSavedAt ||
+    run?.updatedAt ||
+    nowIso();
+  const overallStatus = deriveOverallProcessingStatus(modules);
+
+  return {
+    runId: normalizedRunId,
+    schemaVersion: EXPEDITION_PROCESSING_SCHEMA_VERSION,
+    overallStatus,
+    status: overallStatus,
+    updatedAt,
+    modules,
+  };
+}
+
+function isFinishedLocalRunForProcessing(run = {}) {
+  const value = run || {};
+  const status = String(value.status || "").toLowerCase();
+  return Boolean(
+    value &&
+    (status === "completed" || status === "finished") &&
+    (value.finishedAt || value.endedAt || value.date)
+  );
+}
+
+async function persistRunExpeditionProcessingState(runId, options = {}) {
+  if (!runId) return null;
+  try {
+    const sync = await import("../../utils/sync.js");
+    const run = options.run || await sync.findLocalRunById?.({
+      id: runId,
+      localRunId: runId,
+      runId,
+    });
+    if (!run) return null;
+    const state = await getRunExpeditionProcessingState(runId, {
+      ...options,
+      run,
+    });
+    return sync.saveLocalRun?.({
+      ...run,
+      expeditionProcessingVersion: EXPEDITION_PROCESSING_SCHEMA_VERSION,
+      expeditionProcessingStatus: String(state.overallStatus || "pending").toUpperCase(),
+      expeditionProcessing: state,
+      expeditionProcessingUpdatedAt: state.updatedAt,
+    });
+  } catch (error) {
+    logger.warn(LOG_CATEGORIES.RUN_SESSION, "RUN_EXPEDITION_STATE_PERSIST_FAILED", {
+      runId,
+      error,
+    });
+    return null;
+  }
+}
+
+export async function reconcilePendingRunExpeditionProcessing(options = {}) {
+  const sync = await import("../../utils/sync.js");
+  const runs = await sync.loadLocalRuns?.();
+  const queue = await loadQueueRaw();
+  const candidates = (Array.isArray(runs) ? runs : []).filter((run) => (
+    Number(run.minimumSavedRunVersion || 0) >= 1 &&
+    String(run.expeditionProcessingStatus || run.expeditionProcessing?.status || "PENDING").toUpperCase() !== "READY"
+  ));
+  const reconciled = [];
+
+  for (const run of candidates) {
+    const runId = resolveRunId(run);
+    if (!runId) continue;
+    const existingTypes = new Set(
+      queue
+        .filter((task) => String(task.runId) === String(runId))
+        .map((task) => task.type)
+    );
+    const expectedTypes = getExpectedProcessingTaskTypes(run);
+    const missingTypes = expectedTypes.filter((type) => !existingTypes.has(type));
+    if (missingTypes.length > 0) {
+      const result = await enqueueDefaultPostRunTasks(run, {
+        includeTerritory: getRunMode(run) === "zones",
+        source: options.source || "expedition_reconcile",
+      });
+      reconciled.push({
+        runId,
+        missingTypes,
+        queued: result.queued?.length || 0,
+      });
+    }
+    await persistRunExpeditionProcessingState(runId, { run }).catch(() => null);
+  }
+
+  if (reconciled.length > 0) {
+    recordRunEvent("RUN_EXPEDITION_PROCESSING_RECONCILED", {
+      count: reconciled.length,
+      runIds: reconciled.map((item) => item.runId).slice(0, 20),
+      source: options.source || "expedition_reconcile",
+    });
+  }
+  return { reconciled, candidates: candidates.length };
 }
 
 function dependencySatisfied(queue = [], dependency) {
@@ -823,6 +1189,9 @@ async function executeTask(task) {
 }
 
 function markTerminalResult(task, result, status = RUN_DEFERRED_TASK_STATUS.SUCCEEDED) {
+  const sanitizedResult = sanitizeQueuePayload(result || {});
+  const metadata = { ...(task.metadata || {}) };
+  delete metadata.lastResult;
   return normalizeTask({
     ...task,
     status,
@@ -838,9 +1207,10 @@ function markTerminalResult(task, result, status = RUN_DEFERRED_TASK_STATUS.SUCC
           permanent: true,
         },
     metadata: {
-      ...(task.metadata || {}),
-      lastResult: sanitizeQueuePayload(result || {}),
+      ...metadata,
     },
+    result: sanitizedResult,
+    resultVersion: 1,
   });
 }
 
@@ -999,6 +1369,14 @@ export async function processRunDeferredTaskQueue(options = {}) {
     }
 
     queue = await loadQueueRaw();
+    const affectedRunIds = [...new Set(
+      [...processed, ...failed].map((task) => task.runId).filter(Boolean)
+    )];
+    await Promise.all(
+      affectedRunIds.map((runId) =>
+        persistRunExpeditionProcessingState(runId, { queue }).catch(() => null)
+      )
+    );
     return {
       processed,
       failed,
@@ -1099,6 +1477,11 @@ export async function startRunDeferredTaskAutoProcessing(options = {}) {
     });
   };
 
+  await reconcilePendingRunExpeditionProcessing({
+    source: "auto_start",
+  }).catch((error) => {
+    logger.warn(LOG_CATEGORIES.RUN_SESSION, "RUN_EXPEDITION_RECONCILE_FAILED", { error });
+  });
   await recoverStaleRunDeferredTasks({ trigger: "auto_start", force: true }).catch(() => null);
   setTimeout(() => triggerProcess("auto_start"), Number(options.initialDelayMs || 1200));
   autoProcessTimer = setInterval(() => triggerProcess("auto_interval"), intervalMs);
@@ -1153,12 +1536,17 @@ export default {
   RUN_DEFERRED_TASK_SCHEMA_VERSION,
   RUN_DEFERRED_TASK_TYPE,
   RUN_DEFERRED_TASK_STATUS,
+  EXPEDITION_PROCESSING_SCHEMA_VERSION,
+  EXPEDITION_PROCESSING_MODULE,
+  EXPEDITION_PROCESSING_STATUS,
   enqueueRunDeferredTasks,
   enqueueDefaultPostRunTasks,
   loadRunDeferredTasks,
   processRunDeferredTaskQueue,
   retryRunDeferredTasks,
   recoverStaleRunDeferredTasks,
+  getRunExpeditionProcessingState,
+  reconcilePendingRunExpeditionProcessing,
   getRunDeferredTaskQueueSummary,
   startRunDeferredTaskAutoProcessing,
   stopRunDeferredTaskAutoProcessing,

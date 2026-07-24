@@ -26,6 +26,64 @@ Origem:
 ### Riscos restantes
 ```
 
+## 2026-07-24 - Núcleo de finalização e pipeline da Expedição
+
+Status: Implementado, validado localmente e com smoke físico básico; matriz de
+corrida Android pendente
+
+Origem: Solicitação humana — Fase D
+
+Área: Corrida, finalização, offline, pós-corrida e arquitetura
+
+### O que mudou
+
+- freeze, lock e salvamento mínimo saíram da `MapScreen` para
+  `runFinalizationService`;
+- o registro mínimo em `runs` passou a ter contrato e seed versionados;
+- a interface é liberada antes da criação e execução das tarefas derivadas;
+- a fila existente evoluiu para persistir resultados e estado por módulo;
+- o startup reconcilia corridas mínimas pendentes sem criar fila paralela.
+
+### Por que mudou
+
+Para garantir que território, XP, ranking, social e sync não sejam parte da
+transação crítica da corrida e para preparar o Relatório da Expedição reabrível.
+
+### Impacto no usuário
+
+A corrida é confirmada localmente antes do trabalho derivado. Uma interrupção
+entre a confirmação e a fila pode ser reconciliada na próxima abertura. Ainda não
+há uma nova interface visual do Relatório da Expedição.
+
+### Impacto técnico
+
+- `minimumSavedRunVersion=1`;
+- `expeditionProcessingVersion=1`;
+- fila local preservada em `wayper_run_deferred_tasks_v1`, schema 2;
+- resultados legíveis por módulo via repository existente;
+- Firestore continua fora do caminho crítico.
+
+### Documentos relacionados
+
+- `docs/architecture/adrs-direcao-oficial.md`;
+- `docs/04-arquitetura.md`;
+- `docs/05-modelo-de-dados.md`;
+- `docs/product/08-relatorio-da-expedicao.md`;
+- `docs/audits/2026-07-24-fase-d-finalizacao-expedicao.md`.
+
+### Arquivos alterados
+
+Serviços/repository de finalização e fila, `MapScreen`, testes de contrato e
+documentação correspondente.
+
+### Riscos restantes
+
+- validação Android física continua pendente;
+- o smoke em aparelho cobriu apenas instalação, bootstrap e carga do bundle;
+- resumo/detalhe ainda não renderizam o contrato modular;
+- desafios e recompensas continuam fora de escopo;
+- processamento local existente ainda precisa medição com históricos longos.
+
 ## 2026-07-24 - Direção oficial de produto, negócio e arquitetura
 
 Status: Implementado na documentação; código de produção inalterado

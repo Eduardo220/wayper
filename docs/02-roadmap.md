@@ -7,7 +7,7 @@ Este roadmap organiza a evolucao do Wayper por fases. O status deve refletir o c
 | Fase | Objetivo | Estado em 2026-07-24 |
 | --- | --- | --- |
 | 1 — Fundação confiável | Tracking, offline, background, recovery, finalização e validação física | Parcialmente implementada; Android físico pendente |
-| 2 — Pipeline da Expedição | Extrair finalização, formalizar save mínimo e resultados idempotentes | Planejada |
+| 2 — Pipeline da Expedição | Extrair finalização, formalizar save mínimo e resultados idempotentes | Núcleo implementado na Fase D; validação física e adaptação do relatório pendentes |
 | 3 — Relatório da Expedição | Experiência modular, parcial, persistente e reabrível | Planejada |
 | 4 — Retenção | Progressão, conquistas, streaks e desafios com regras consolidadas | Parcial na base; expansão planejada |
 | 5 — Wayper Plus | Entitlements e benefícios positivos | Aprovada conceitualmente |
@@ -17,8 +17,11 @@ Este roadmap organiza a evolucao do Wayper por fases. O status deve refletir o c
 | 9 — Ecossistema | Eventos, criadores, temporadas e marketplace futuro | Hipóteses/planejamento futuro |
 
 Fases posteriores não autorizam antecipar SDK, schema remoto ou UI comercial. O
-gate entre as fases 1 e 2 é evidência de corrida segura e recuperável; entre as
-fases 2 e 3, é um pipeline persistente e idempotente.
+gate físico da fase 1 continua aberto. A Fase D foi executada por solicitação
+humana explícita como extração local, reversível e coberta por testes
+automatizados; isso não equivale a validar produção. Entre as fases 2 e 3, o gate
+continua sendo um pipeline persistente e idempotente, agora implementado no
+núcleo e ainda pendente de validação física e integração visual.
 
 ## Base técnica atual: funcional
 

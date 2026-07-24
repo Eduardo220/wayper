@@ -69,7 +69,6 @@ import {
 } from "../services/runTracking/activeRunRuntimeService.js";
 import {
   checkpointOnLocationError,
-  flushActiveRunCheckpoint,
   forceCheckpointForAppState,
 } from "../services/run/runAutoSaveService.js";
 import {
@@ -80,8 +79,12 @@ import {
   isFinishedRecovery,
   isLiveRecovery,
   markRecoveredRunLocallySaved,
-  persistFinishedRunDraft,
 } from "../services/run/runRecoveryService.js";
+import {
+  enqueuePostRunProcessing,
+  freezeActiveRunForFinalization,
+  persistMinimumFinishedRun,
+} from "../services/run/runFinalizationService.js";
 import { enqueueFinishedRun, schedulePendingRunsSync } from "../services/run/runSyncQueueService.js";
 import sync from "../utils/sync";
 import {
@@ -168,9 +171,6 @@ const TERRITORY_MAX_VIEWPORT_CELLS = 140;
 const EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS = 30000;
 const EMERGENCY_DIAGNOSTICS_EXPORT_TIMEOUT_MS = 5000;
 const EMERGENCY_DIAGNOSTICS_SHARE_TIMEOUT_MS = 15000;
-const FINISH_CHECKPOINT_TIMEOUT_MS = 5000;
-const FINISH_SNAPSHOT_TIMEOUT_MS = 7000;
-const FINISH_LOCAL_SAVE_TIMEOUT_MS = 8000;
 const FINISH_UI_RELEASE_TIMEOUT_MS = 2500;
 const UI_TIMER_STALL_THRESHOLD_MS = 2500;
 const EMERGENCY_DIAGNOSTICS_HIT_SLOP = { top: 12, right: 12, bottom: 12, left: 12 };
@@ -3206,74 +3206,14 @@ const MapScreen = ({ navigation, route }) => {
         );
 
         const finishedAtMs = Date.now();
-        await withTimeout(
-          () => activeRunTrackingService.markActiveRunFinishing?.({
-            nowMs: finishedAtMs,
-            reason: "finish_pressed",
-            source: "MapScreen",
-          }),
-          FINISH_CHECKPOINT_TIMEOUT_MS,
-          "finish_mark_finishing_timeout"
-        ).catch((finishingError) => {
-          recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-            runId: currentRunIdRef.current,
-            stage: "mark_finishing",
-            error: finishingError,
-            timeoutMs: FINISH_CHECKPOINT_TIMEOUT_MS,
-            screen: "MapScreen",
-            level: "warn",
-          });
-        });
-        recordRunEvent("RUN_FINISH_LOCAL_MIN_SAVE_STARTED", {
+        const freezeResult = await freezeActiveRunForFinalization({
           runId: currentRunIdRef.current,
-          status: runStatusRef.current,
-          checkpointAtMs: finishedAtMs,
+          finishedAtMs,
+          reason: "finish_pressed",
+          source: "MapScreen",
           screen: "MapScreen",
         });
-        await withTimeout(
-          () => flushActiveRunCheckpoint({
-            reason: "before_finish",
-            checkpointAtMs: finishedAtMs,
-          }),
-          FINISH_CHECKPOINT_TIMEOUT_MS,
-          "finish_checkpoint_timeout"
-        ).catch((checkpointError) => {
-          recordRunEvent("RUN_FINISH_TIMEOUT_FALLBACK", {
-            runId: currentRunIdRef.current,
-            stage: "before_finish_checkpoint",
-            error: checkpointError,
-            timeoutMs: FINISH_CHECKPOINT_TIMEOUT_MS,
-            screen: "MapScreen",
-            level: "warn",
-          });
-        });
-        let activeFinalSnapshot = null;
-        try {
-          activeFinalSnapshot = await withTimeout(
-            () => activeRunTrackingService.finishActiveRun?.({ finishedAtMs }),
-            FINISH_SNAPSHOT_TIMEOUT_MS,
-            "finish_active_snapshot_timeout"
-          );
-        } catch (finishSnapshotError) {
-          recordRunEvent("RUN_FINISH_TIMEOUT_FALLBACK", {
-            runId: currentRunIdRef.current,
-            stage: "active_run_finish_snapshot",
-            error: finishSnapshotError,
-            timeoutMs: FINISH_SNAPSHOT_TIMEOUT_MS,
-            screen: "MapScreen",
-            level: "warn",
-          });
-          activeFinalSnapshot = await activeRunTrackingService.getActiveRunSnapshot?.().catch((snapshotReadError) => {
-            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-              runId: currentRunIdRef.current,
-              stage: "read_snapshot_after_finish_failure",
-              error: snapshotReadError,
-              screen: "MapScreen",
-              level: "error",
-            });
-            return null;
-          });
-        }
+        const activeFinalSnapshot = freezeResult.snapshot;
         const startedAtMs = Number(activeFinalSnapshot?.startedAtMs) ||
           Date.parse(activeFinalSnapshot?.startedAt || trackingSessionRef.current?.state?.startedAt || "") ||
           null;
@@ -3393,146 +3333,21 @@ const MapScreen = ({ navigation, route }) => {
           setCaptureResult(null);
         }
 
-        try {
-          await withTimeout(
-            () => persistFinishedRunDraft(runData, {
-              userId: auth.currentUser?.uid || "offline",
-              status: ACTIVE_RUN_STATUS.FINISHED,
-              syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-            }),
-            FINISH_LOCAL_SAVE_TIMEOUT_MS,
-            "finish_draft_save_timeout"
-          );
-        } catch (storageError) {
-          debug("persistFinishedRunDraft failed", storageError);
-          recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-            runId,
-            stage: "finished_draft",
-            reason: storageError?.code === "finish_draft_save_timeout" ? "finished_draft_timeout" : "finished_draft_failed",
-            error: storageError,
-            level: "warn",
-            screen: "MapScreen",
-          });
-        }
-
         let savedLocalRun = null;
         try {
-          savedLocalRun = await withTimeout(
-            () => sync.saveLocalRun?.({
-              ...runData,
-              synced: false,
-              pendingSync: true,
-              syncStatus: ACTIVE_RUN_SYNC_STATUS.PENDING,
-              offlineStatus: "PENDING_SYNC",
-            }),
-            FINISH_LOCAL_SAVE_TIMEOUT_MS,
-            "finish_local_history_save_timeout"
-          );
-          const localSaveConfirmed = Boolean(
-            savedLocalRun?.id && String(savedLocalRun.id) === String(runData.id)
-          );
-          if (localSaveConfirmed) {
-            recordRunSnapshotEvent("RUN_FINISH_SAVED", savedLocalRun, {
-              runId,
-              sessionId: stoppedRunSessionId || runId,
-              distanceMeters: totalDistance,
-              elapsedMs: totalDuration * 1000,
-              pointsCount: path.length,
-              segmentsCount: runData.segments.length,
-              savedLocal: true,
-              queuedSync: true,
-              screen: "MapScreen",
-            });
-            recordRunEvent("RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED", {
-              runId,
-              localRunId: savedLocalRun.localRunId || savedLocalRun.id || null,
-              distanceMeters: totalDistance,
-              elapsedMs: totalDuration * 1000,
-              queuedSync: true,
-              screen: "MapScreen",
-            });
-            sync.scheduleRunsSync?.();
-            recordRunSnapshotEvent("RUN_SYNC_QUEUED", savedLocalRun, {
-              source: "finish",
-              screen: "MapScreen",
-            });
-            const cleanupResult = await withTimeout(
-              () => markRecoveredRunLocallySaved({ reason: "finish_local_run_saved" }),
-              FINISH_UI_RELEASE_TIMEOUT_MS,
-              "finish_recovery_mark_saved_timeout"
-            ).catch((recoveryMarkError) => ({ ok: false, error: recoveryMarkError }));
-            if (cleanupResult?.ok === false) {
-              recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-                runId,
-                stage: "mark_recovered_locally_saved",
-                error: cleanupResult.error || new Error("active run cleanup was not confirmed"),
-                level: "warn",
-                screen: "MapScreen",
-              });
-            }
-          } else {
-            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-              runId,
-              stage: "save_local_run",
-              reason: "local_save_not_confirmed",
-              returnedRunId: savedLocalRun?.id || null,
-              level: "warn",
-              screen: "MapScreen",
-            });
-            savedLocalRun = null;
-          }
-        } catch (saveLocalError) {
-          debug("final local run save failed; keeping active snapshot", saveLocalError);
-          recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-            runId,
-            stage: "save_local_run",
-            reason: "save_local_failed",
-            error: saveLocalError,
-            level: "warn",
+          const minimumSaveResult = await persistMinimumFinishedRun(runData, {
+            userId: auth.currentUser?.uid || "offline",
+            sessionId: stoppedRunSessionId || runId,
+            source: "MapScreen",
             screen: "MapScreen",
           });
-        }
-
-        let deferredQueueResult = null;
-        let deferredQueuedTasks = [];
-        if (savedLocalRun) {
-          const currentUser = auth.currentUser || {};
-          const emailName = currentUser.email ? currentUser.email.split("@")[0] : null;
-          deferredQueueResult = await withTimeout(
-            () => runDeferredTaskQueueRepository.enqueuePostRun(savedLocalRun, {
-              userId: currentUser.uid || "offline",
-              userName: currentUser.displayName || emailName || "Atleta Wayper",
-              userAvatar: currentUser.photoURL || null,
-              includeTerritory: activeMode === "zones",
-              source: "finish",
-            }),
-            FINISH_LOCAL_SAVE_TIMEOUT_MS,
-            "finish_deferred_queue_enqueue_timeout"
-          ).catch((queueError) => {
-            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-              runId,
-              stage: "deferred_queue_enqueue",
-              reason: queueError?.code === "finish_deferred_queue_enqueue_timeout"
-                ? "deferred_queue_enqueue_timeout"
-                : "deferred_queue_enqueue_failed",
-              error: queueError,
-              level: "warn",
-              screen: "MapScreen",
-            });
-            return { error: queueError, data: { queued: [] } };
-          });
-          if (deferredQueueResult?.error) {
-            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-              runId,
-              stage: "deferred_queue_enqueue",
-              error: deferredQueueResult.error,
-              level: "warn",
-              screen: "MapScreen",
-            });
-          }
-          deferredQueuedTasks = Array.isArray(deferredQueueResult?.data?.queued)
-            ? deferredQueueResult.data.queued
-            : [];
+          savedLocalRun = minimumSaveResult.savedLocalRun;
+        } catch (saveLocalError) {
+          debug("final local run save failed; keeping active snapshot", saveLocalError);
+          Alert.alert(
+            "Corrida preservada",
+            "Não foi possível confirmar o salvamento mínimo. O rascunho recuperável foi mantido; use Salvar para tentar novamente."
+          );
         }
 
         await withTimeout(
@@ -3586,18 +3401,24 @@ const MapScreen = ({ navigation, route }) => {
           hasDeferredTerritory: activeMode === "zones",
           screen: "MapScreen",
         });
-        recordRunEvent("RUN_FINISH_DEFERRED_TASKS_SCHEDULED", {
-          runId,
-          localRunId: initialRunForUi.localRunId || initialRunForUi.id || null,
-          queued: deferredQueuedTasks.length,
-          queueStatus: deferredQueueResult?.queueStatus || (deferredQueueResult?.error ? "failed" : "queued"),
-          types: deferredQueuedTasks.map((task) => task.type),
-          screen: "MapScreen",
-        });
 
         if (savedLocalRun) {
           runDeferred(async () => {
-            const deferredRunId = deferredQueuedTasks[0]?.runId || savedLocalRun.localRunId || savedLocalRun.id || runId;
+            const currentUser = auth.currentUser || {};
+            const emailName = currentUser.email ? currentUser.email.split("@")[0] : null;
+            const queueResult = await enqueuePostRunProcessing(savedLocalRun, {
+              userId: currentUser.uid || "offline",
+              userName: currentUser.displayName || emailName || "Atleta Wayper",
+              userAvatar: currentUser.photoURL || null,
+              includeTerritory: activeMode === "zones",
+              source: "finish_ui_released",
+              screen: "MapScreen",
+            });
+            if (!queueResult.ok) return;
+            const deferredRunId = queueResult.queued[0]?.runId ||
+              savedLocalRun.localRunId ||
+              savedLocalRun.id ||
+              runId;
             const processResult = await runDeferredTaskQueueRepository.process({
               trigger: "finish_ui_released",
               runId: deferredRunId,

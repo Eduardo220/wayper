@@ -480,45 +480,67 @@ Regras:
 - Considerar simplificação/compressão de rota.
 - Validar se cálculo de ranking deve ficar no client ou em backend controlado.
 
-## Modelo planejado do processamento da Expedição
+## Modelo implementado do processamento da Expedição
 
-**Status:** planejado; estas chaves ainda não representam storage implementado.
+**Status:** núcleo local implementado na Fase D; relatório visual ainda pendente.
 
-O schema definitivo deve evoluir a fila `wayper_run_deferred_tasks_v1`, não criar
-um segundo mecanismo concorrente.
+O contrato evolui a fila `wayper_run_deferred_tasks_v1`, sem criar um segundo
+mecanismo concorrente. A chave física foi preservada para migração compatível; as
+tarefas agora usam `schemaVersion=2`.
 
 ```js
 expeditionProcessing = {
   runId,
-  version,
-  status, // pending | processing | partial | ready | failed_retryable | failed_permanent
-  createdAt,
+  schemaVersion: 1,
+  status, // pending | processing | partial | ready
   updatedAt,
   modules: {
     metrics: {
       status,
-      version,
+      taskId,
+      type,
       attempts,
+      maxAttempts,
       updatedAt,
-      resultRef,
-      errorCode,
+      startedAt,
+      finishedAt,
+      nextRunAt,
+      result,
+      error,
+      reason,
     },
     territory: { /* mesmo envelope */ },
     progression: { /* mesmo envelope */ },
     ranking: { /* mesmo envelope */ },
+    social: { /* mesmo envelope */ },
+    sync: { /* mesmo envelope */ },
     challenges: { /* mesmo envelope */ },
     rewards: { /* mesmo envelope */ },
   },
 }
 ```
 
-Requisitos:
+Os módulos usam `pending`, `processing`, `ready`, `failed_retryable`,
+`failed_permanent`, `cancelled` ou `not_applicable`; o agregado usa `partial`
+quando há mistura de resultados ou falhas.
 
-- chave idempotente por `runId + module + version`;
+O registro mínimo salvo em `runs` recebe:
+
+- `minimumSavedRunVersion=1`;
+- `minimumSavedAt`;
+- `finalizationStatus=MINIMUM_SAVED`;
+- `expeditionProcessingVersion=1`;
+- `expeditionProcessingStatus=PENDING`;
+- `expeditionProcessing` com seed local recuperável.
+
+Cada item da fila mantém:
+
+- chave idempotente por `runId + task type`;
 - payload mínimo e sanitizado na fila;
-- resultado persistido separado do estado transitório;
+- `result` e `resultVersion` separados do status transitório;
 - falha de um módulo não altera a corrida finalizada;
-- migração lê tarefas atuais e evita duplicação.
+- leitura compatível de `metadata.lastResult` do schema anterior;
+- reconciliação de corrida mínima sem tarefas no próximo startup.
 
 ## Modelo planejado do Relatório da Expedição
 

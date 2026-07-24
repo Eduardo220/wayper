@@ -139,6 +139,34 @@ Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam
 - [ ] Confirmar que `Iniciar Corrida` nao aparece enquanto `Finalizando...` esta ativo.
 - [ ] Repetir offline/Firestore indisponivel e confirmar que save local, resumo e historico continuam funcionando.
 
+### Finalização mínima e pipeline da Expedição
+
+Cobertura automatizada obrigatória:
+
+- contrato mínimo versionado com seed `PENDING`;
+- save local confirmado antes da limpeza do recovery;
+- falha de save preserva o snapshot recuperável;
+- duas finalizações concorrentes compartilham o mesmo lock no serviço;
+- reentrada não regrava uma corrida mínima já confirmada;
+- freeze/checkpoint funciona fora do ciclo de vida da `MapScreen`;
+- falha ao criar tarefas derivadas não invalida o save mínimo;
+- fila persiste `result`, versão, tentativas e estado por módulo;
+- falha retryable de sync produz relatório parcial sem apagar métricas;
+- startup reconcilia seed mínimo cuja criação de tarefas foi interrompida;
+- verificações estruturais confirmam save antes de liberação da UI e fila depois
+  dela.
+
+Evidência local da Fase D em 2026-07-24:
+
+- conjunto focado final: 4 suites / 50 testes aprovados;
+- suíte completa final: 52 suites / 468 testes aprovados;
+- export Android por Metro: 2.334 módulos empacotados com sucesso;
+- build `devDebug` concluído e Dev Client reinstalado em Samsung SM-A546E,
+  Android 16/API 36;
+- smoke físico de abertura carregou 2.440 módulos via Metro e manteve o processo
+  ativo, sem iniciar corrida;
+- isso não substitui teste físico de background, kill, reentrada e bateria.
+
 ## Cobertura automatizada de GPS/path
 
 Os testes nao usam GPS real, MapLibre, Firebase real ou rede. Eles devem cobrir:

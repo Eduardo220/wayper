@@ -136,6 +136,10 @@ describe("active run persistence state", () => {
 
   test("desmontar MapScreen nao para background tracking da corrida ativa", () => {
     const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const finalizationService = fs.readFileSync(
+      path.join(process.cwd(), "src/services/run/runFinalizationService.js"),
+      "utf8"
+    );
     const cleanupStart = mapScreen.indexOf("return () => {", mapScreen.indexOf("/* ===== INIT ===== */"));
     const cleanupEnd = mapScreen.indexOf("}, [refreshForegroundLocation]", cleanupStart);
     const cleanup = mapScreen.slice(cleanupStart, cleanupEnd);
@@ -145,7 +149,8 @@ describe("active run persistence state", () => {
     expect(mapScreen).toContain("activeRunTrackingService.startActiveRun");
     expect(mapScreen).toContain("restoreActiveRunForReentry");
     expect(mapScreen).toContain("checkpointOnLocationError");
-    expect(mapScreen).toContain('reason: "before_finish"');
+    expect(mapScreen).toContain("freezeActiveRunForFinalization");
+    expect(finalizationService).toContain('reason: "before_finish"');
     expect(mapScreen).toContain("hydrated route points count");
     expect(mapScreen).toContain("hydrateActiveRunFromRuntime");
     expect(mapScreen).toContain("useFocusEffect");
@@ -163,8 +168,10 @@ describe("active run persistence state", () => {
     expect(locationHandler).toContain("activeRunTrackingService.recordLocation");
     expect(locationHandler).not.toContain("trackingSessionRef.current.processLocationPoint");
     expect(mapScreen).toContain("!running && !replaying && !runtimeRecovering");
-    expect(mapScreen).toContain('"RUN_FINISH_SAVED"');
-    expect(mapScreen.indexOf('"RUN_FINISH_SAVED"')).toBeLessThan(mapScreen.indexOf("markRecoveredRunLocallySaved({ reason: \"finish_local_run_saved\" })"));
+    expect(finalizationService).toContain('"RUN_FINISH_SAVED"');
+    expect(finalizationService.indexOf('"RUN_FINISH_SAVED"')).toBeLessThan(
+      finalizationService.indexOf("markRecoveredRunLocallySaved?.({")
+    );
   });
 
   test("task de localizacao e registrada no bootstrap fora da interface", () => {

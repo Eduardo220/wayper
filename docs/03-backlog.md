@@ -7,10 +7,7 @@ Backlog vivo de funcionalidades, melhorias e pendencias. Nao usar este arquivo p
 | Item | Tipo | Status | Observacao |
 | --- | --- | --- | --- |
 | Validacao real Android de corrida/background/notificacao | QA | Pendente | Repetir em aparelho fisico dev e release; emulador nao fecha o risco. |
-| Validar finalização/reentrada em Android físico | QA/bug | Pendente | Fechar evidência do `BUG-20260621-001` antes de refatorar UI crítica. |
-| Contrato do salvamento mínimo | Arquitetura | Planejado | Formalizar snapshot/estado confirmado sem alterar tracking. |
-| Extrair orquestração de finalização de `MapScreen` | Arquitetura | Planejado | Serviço idempotente; UI apenas comanda e observa. |
-| Evoluir fila pós-corrida para pipeline da Expedição | Arquitetura | Planejado | Reusar `runDeferredTaskQueueService`; persistir estados/resultados por módulo. |
+| Validar finalização/reentrada em Android físico | QA/bug | Pendente | Fechar evidência do `BUG-20260621-001`; a extração da Fase D não fecha o gate físico. |
 | Modo foco da corrida | Produto/UX | Planejado | Tempo, distância, pace, estado, GPS crítico e controles; mapa opcional. |
 | Contrato do Relatório da Expedição | Produto/dados | Planejado | Reabrível, parcial e compatível com `RunSummaryModal`/`RunDetailScreen`. |
 | Assinatura Android release real | Build | Pendente | APK prod debug-signed nao e publicavel. |
@@ -59,11 +56,14 @@ Backlog vivo de funcionalidades, melhorias e pendencias. Nao usar este arquivo p
 | Onboarding/permissoes/estados vazios | Avancado | Sem prompt infinito; estados compartilhados. |
 | Compartilhamento imagem/trace PNG/story local | Avancado | Sem copiar imagem ate suporte confiavel. |
 | Diagnostico local/export ZIP | Avancado | Funciona offline e mascara coordenadas por padrao. |
+| Contrato do salvamento mínimo | Implementado | `runFinalizationService` confirma `minimumSavedRunVersion=1` antes de limpar a sessão ativa. |
+| Orquestração de finalização fora da tela | Implementado | `MapScreen` comanda o serviço; lock/idempotência não dependem do componente. |
+| Núcleo do pipeline da Expedição | Implementado | A fila existente persiste resultado/status por módulo e reconcilia seeds pendentes no startup. |
 
 ## Como priorizar
 
 1. Primeiro, validar em aparelho real que corrida ativa, GPS, background, notificacao, recovery e finalizacao preservam dados.
-2. Depois, formalizar e extrair finalização mínima e pipeline da Expedição.
+2. Depois, validar e endurecer a finalização mínima e o pipeline já extraídos.
 3. Depois, entregar o Relatório da Expedição e modo foco por rollout reversível.
 4. Em paralelo apenas quando não aumentar risco, fechar build, Sentry e assinatura.
 5. Depois, desacoplar social/grupos e ampliar retenção.

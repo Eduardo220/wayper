@@ -34,6 +34,7 @@ const findLocalRunById = jest.fn(async (lookup = {}) => {
   ].filter(Boolean).map(String);
   return ids.map((id) => localRuns.get(id)).find(Boolean) || null;
 });
+const loadLocalRuns = jest.fn(async () => Array.from(new Set(localRuns.values())));
 const saveLocalRun = jest.fn(async (run = {}) => {
   const saved = {
     ...run,
@@ -102,6 +103,7 @@ jest.unstable_mockModule("../../runTracking/activeRunTrackingService.js", () => 
 
 jest.unstable_mockModule("../../../utils/sync.js", () => ({
   findLocalRunById,
+  loadLocalRuns,
   saveLocalRun,
   scheduleRunsSync,
   syncRunsToFirestore,
@@ -143,11 +145,14 @@ const {
   RUN_DEFERRED_TASK_QUEUE_KEY,
   RUN_DEFERRED_TASK_STATUS,
   RUN_DEFERRED_TASK_TYPE,
+  EXPEDITION_PROCESSING_STATUS,
   __resetRunDeferredTaskQueueForTests,
   enqueueDefaultPostRunTasks,
   enqueueRunDeferredTasks,
+  getRunExpeditionProcessingState,
   loadRunDeferredTasks,
   processRunDeferredTaskQueue,
+  reconcilePendingRunExpeditionProcessing,
   recoverStaleRunDeferredTasks,
 } = queue;
 
@@ -177,6 +182,7 @@ describe("runDeferredTaskQueueService", () => {
     storage.clear();
     jest.clearAllMocks();
     syncRunsToFirestore.mockResolvedValue({ synced: 1, failed: 0 });
+    loadLocalRuns.mockImplementation(async () => Array.from(new Set(localRuns.values())));
     addXpFromRun.mockResolvedValue({ applied: true });
     listTerritories.mockResolvedValue({ data: [] });
     processRunTerritoryCapture.mockResolvedValue({
@@ -301,6 +307,12 @@ describe("runDeferredTaskQueueService", () => {
 
     expect(tasks[0].status).toBe(RUN_DEFERRED_TASK_STATUS.FAILED_PERMANENT);
     expect(tasks[0].lastError.reason).toBe("not_enough_points");
+    expect(tasks[0].result.run).toEqual(expect.objectContaining({
+      runId: "run-territory",
+      territoryCaptureStatus: "FAILED",
+    }));
+    expect(tasks[0].result.run.path).toBeUndefined();
+    expect(tasks[0].metadata.lastResult).toBeUndefined();
     expect(saveLocalRun).toHaveBeenCalledWith(expect.objectContaining({
       territoryCaptureStatus: "FAILED",
       territoryCaptureFailedReason: "not_enough_points",
@@ -339,5 +351,110 @@ describe("runDeferredTaskQueueService", () => {
     expect(remoteSyncTask.status).toBe(RUN_DEFERRED_TASK_STATUS.PENDING);
     expect(Date.parse(remoteSyncTask.nextRunAt)).toBeLessThan(Date.parse("2099-01-01T00:00:00.000Z"));
     expect(retryTask.status).toBe(RUN_DEFERRED_TASK_STATUS.SUCCEEDED);
+  });
+
+  test("persiste resultados por modulo e materializa Expedicao pronta", async () => {
+    const run = makeRun({
+      id: "run-expedition-ready",
+      localRunId: "run-expedition-ready",
+      remoteRunId: "remote-expedition-ready",
+      minimumSavedRunVersion: 1,
+      expeditionProcessingStatus: "PENDING",
+    });
+    localRuns.set(run.id, run);
+    localRuns.set(run.remoteRunId, run);
+    await enqueueDefaultPostRunTasks(run, { source: "test" });
+
+    await processRunDeferredTaskQueue({
+      trigger: "test",
+      ignoreActiveRun: true,
+      runId: run.id,
+      limit: 8,
+    });
+    const tasks = await loadRunDeferredTasks();
+    const rankingTask = tasks.find(
+      (task) => task.type === RUN_DEFERRED_TASK_TYPE.RUN_RANKING_UPDATE
+    );
+    const state = await getRunExpeditionProcessingState(run.id);
+    const stateByRemoteId = await getRunExpeditionProcessingState(run.remoteRunId);
+    const persistedRun = localRuns.get(run.id);
+
+    expect(rankingTask.result).toEqual(expect.objectContaining({
+      runId: run.id,
+    }));
+    expect(state.overallStatus).toBe("ready");
+    expect(stateByRemoteId).toMatchObject({
+      runId: run.localRunId,
+      overallStatus: "ready",
+    });
+    expect(state.modules.metrics.status).toBe(EXPEDITION_PROCESSING_STATUS.READY);
+    expect(state.modules.progression.status).toBe(EXPEDITION_PROCESSING_STATUS.READY);
+    expect(state.modules.ranking.status).toBe(EXPEDITION_PROCESSING_STATUS.READY);
+    expect(state.modules.sync.status).toBe(EXPEDITION_PROCESSING_STATUS.READY);
+    expect(state.modules.territory.status).toBe(
+      EXPEDITION_PROCESSING_STATUS.NOT_APPLICABLE
+    );
+    expect(persistedRun.expeditionProcessingStatus).toBe("READY");
+    expect(persistedRun.expeditionProcessing.modules.ranking.status).toBe("ready");
+  });
+
+  test("resultado parcial preserva falha retryable sem bloquear outros modulos", async () => {
+    const run = makeRun({
+      id: "run-expedition-partial",
+      localRunId: "run-expedition-partial",
+      minimumSavedRunVersion: 1,
+      expeditionProcessingStatus: "PENDING",
+    });
+    localRuns.set(run.id, run);
+    syncRunsToFirestore.mockResolvedValue({ offline: true });
+    await enqueueDefaultPostRunTasks(run, { source: "test" });
+
+    await processRunDeferredTaskQueue({
+      trigger: "test",
+      ignoreActiveRun: true,
+      runId: run.id,
+      limit: 8,
+    });
+    const state = await getRunExpeditionProcessingState(run.id);
+
+    expect(state.overallStatus).toBe("partial");
+    expect(state.modules.metrics.status).toBe(EXPEDITION_PROCESSING_STATUS.READY);
+    expect(state.modules.progression.status).toBe(EXPEDITION_PROCESSING_STATUS.READY);
+    expect(state.modules.sync.status).toBe(
+      EXPEDITION_PROCESSING_STATUS.FAILED_RETRYABLE
+    );
+  });
+
+  test("reconcilia semente salva quando o app reinicia antes do enqueue", async () => {
+    const run = makeRun({
+      id: "run-reconcile",
+      localRunId: "run-reconcile",
+      minimumSavedRunVersion: 1,
+      minimumSavedAt: "2026-07-24T12:00:00.000Z",
+      expeditionProcessingStatus: "PENDING",
+      expeditionProcessing: {
+        schemaVersion: 1,
+        status: "pending",
+      },
+    });
+    localRuns.set(run.id, run);
+
+    const result = await reconcilePendingRunExpeditionProcessing({
+      source: "test_restart",
+    });
+    const tasks = await loadRunDeferredTasks();
+
+    expect(result.reconciled).toHaveLength(1);
+    expect(tasks.map((task) => task.type)).toEqual(expect.arrayContaining([
+      RUN_DEFERRED_TASK_TYPE.RUN_FULL_SAVE_FINALIZE,
+      RUN_DEFERRED_TASK_TYPE.RUN_XP_UPDATE,
+      RUN_DEFERRED_TASK_TYPE.RUN_REMOTE_SYNC,
+      RUN_DEFERRED_TASK_TYPE.RUN_RANKING_UPDATE,
+      RUN_DEFERRED_TASK_TYPE.RUN_FEED_UPDATE,
+    ]));
+    expect(recordRunEvent).toHaveBeenCalledWith(
+      "RUN_EXPEDITION_PROCESSING_RECONCILED",
+      expect.objectContaining({ count: 1 })
+    );
   });
 });

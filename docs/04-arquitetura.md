@@ -257,15 +257,15 @@ Desde 2026-06-18, onboarding, permissoes e estados vazios seguem uma politica un
 
 ## Arquitetura-alvo da Expedição
 
-Esta separação é conceitual. Antes de criar arquivos, consolidar os serviços
-existentes indicados na coluna “base atual”.
+Esta separação orienta a implementação incremental. Cada evolução deve consolidar
+os serviços indicados na coluna “base atual”, sem criar mecanismos paralelos.
 
 | Domínio | Responsabilidade | Base atual |
 | --- | --- | --- |
 | Run Tracking | sessão, GPS, métricas, pausa, checkpoint e recovery | `src/services/runTracking`, `src/tasks/activeRunLocationTask.js` |
-| Run Finalization | snapshot, trava, save mínimo e criação do processamento | `stopRun` em `MapScreen`, `sync.js`, `RunRepository` |
-| Expedition Processing | território, XP, ranking, conquistas, desafios e recompensas | `runDeferredTaskQueueService` e repositories |
-| Expedition Report | combinar módulos, pendências, reabertura, replay e share | `RunSummaryModal` e `RunDetailScreen`, ainda sem contrato |
+| Run Finalization | snapshot, trava e save mínimo confirmado | `runFinalizationService`, `sync.js` e recovery existente |
+| Expedition Processing | território, XP, ranking, social, sync e resultados modulares | `runDeferredTaskQueueService` e `runDeferredTaskQueueRepository` |
+| Expedition Report | combinar módulos, pendências, reabertura, replay e share | contrato de estado disponível; adaptação de `RunSummaryModal`/`RunDetailScreen` pendente |
 | Progression | XP, níveis, conquistas, streaks e desbloqueios | `ProgressionRepository`, `AchievementRepository` |
 | Entitlements | Free, Plus, acesso temporário e capabilities | planejado |
 | Commercial | parceiros, campanhas, elegibilidade e métricas | planejado |
@@ -279,12 +279,25 @@ tracking e da persistência local, mas apenas cria trabalho para
 `Expedition Processing`. O relatório lê resultados; não os concede. Commercial,
 Payments e Ads nunca são dependências de tracking/finalização.
 
+Desde a Fase D de 2026-07-24:
+
+- `MapScreen` congela a corrida por `freezeActiveRunForFinalization()` e persiste
+  por `persistMinimumFinishedRun()`;
+- o lock de salvamento mínimo fica no serviço, não no ciclo de vida da tela;
+- o registro em `runs` recebe seed versionado de processamento antes da limpeza
+  da sessão ativa;
+- a interface é liberada antes de `enqueuePostRunProcessing()`;
+- a fila `wayper_run_deferred_tasks_v1` permanece única e evoluiu para schema 2,
+  com `result`, `resultVersion` e projeção persistida por módulo;
+- o startup reconcilia corridas mínimas pendentes que tenham sido interrompidas
+  antes da criação das tarefas.
+
 ### Evolução segura
 
 1. preservar formatos e leitura atuais;
-2. extrair orquestração de `MapScreen` sem alterar o pipeline de GPS;
-3. evoluir a fila existente com versão/status/resultado por módulo;
-4. adaptar resumo e detalhe ao contrato;
+2. manter a extração da `MapScreen` sem alterar o pipeline de GPS;
+3. validar em aparelho físico save mínimo, interrupção e reconciliação;
+4. adaptar resumo e detalhe ao contrato já persistido;
 5. remover caminhos legados apenas após inventário, migração e rollback.
 
 Para providers e reuso, consultar

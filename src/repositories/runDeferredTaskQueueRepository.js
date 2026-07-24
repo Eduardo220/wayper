@@ -1,8 +1,10 @@
 import {
   enqueueDefaultPostRunTasks,
+  getRunExpeditionProcessingState,
   getRunDeferredTaskQueueSummary,
   loadRunDeferredTasks,
   processRunDeferredTaskQueue,
+  reconcilePendingRunExpeditionProcessing,
   recoverStaleRunDeferredTasks,
   retryRunDeferredTasks,
   startRunDeferredTaskAutoProcessing,
@@ -44,6 +46,28 @@ export async function listPending() {
 export async function summary() {
   try {
     return ok(await getRunDeferredTaskQueueSummary(), { queueStatus: "summarized" });
+  } catch (error) {
+    return fail(error, null, { queueStatus: "failed" });
+  }
+}
+
+export async function getProcessingState(runId, options = {}) {
+  try {
+    return ok(
+      await getRunExpeditionProcessingState(runId, options),
+      { queueStatus: "processing_state" }
+    );
+  } catch (error) {
+    return fail(error, null, { queueStatus: "failed" });
+  }
+}
+
+export async function reconcile(options = {}) {
+  try {
+    return ok(
+      await reconcilePendingRunExpeditionProcessing(options),
+      { queueStatus: "reconciled" }
+    );
   } catch (error) {
     return fail(error, null, { queueStatus: "failed" });
   }
@@ -97,6 +121,8 @@ export default {
   enqueuePostRun,
   listPending,
   summary,
+  getProcessingState,
+  reconcile,
   process,
   retry,
   recover,

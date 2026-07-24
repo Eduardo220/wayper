@@ -458,23 +458,29 @@ describe("diagnostics logging", () => {
   });
 
   test("finalizacao da corrida salva local antes de tarefas pesadas", () => {
-    const source = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
-    const localSaved = source.indexOf("RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED");
-    const uiReleased = source.indexOf("RUN_FINISH_UI_RELEASED");
-    const deferredQueueProcessing = source.indexOf(
+    const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const finalizationService = fs.readFileSync(
+      path.join(process.cwd(), "src/services/run/runFinalizationService.js"),
+      "utf8"
+    );
+    const minimumSaveCall = mapScreen.indexOf("await persistMinimumFinishedRun(runData");
+    const uiReleased = mapScreen.indexOf("RUN_FINISH_UI_RELEASED");
+    const deferredEnqueue = mapScreen.indexOf("await enqueuePostRunProcessing(savedLocalRun", uiReleased);
+    const deferredQueueProcessing = mapScreen.indexOf(
       "const processResult = await runDeferredTaskQueueRepository.process({",
       uiReleased
     );
 
-    expect(source).toContain("RUN_FINISH_LOCAL_MIN_SAVE_STARTED");
-    expect(source).toContain("territoryCaptureStatus = \"PENDING\"");
-    expect(source).toContain("RUN_FINISH_DEFERRED_TASKS_SCHEDULED");
-    expect(source).toContain("runDeferredTaskQueueRepository.enqueuePostRun");
-    expect(source).toContain('includeTerritory: activeMode === "zones"');
-    expect(source).toContain('trigger: "finish_ui_released"');
-    expect(source).toContain("isFinishingRun ? \"Finalizando...\"");
-    expect(localSaved).toBeGreaterThan(-1);
-    expect(uiReleased).toBeGreaterThan(localSaved);
+    expect(finalizationService).toContain("RUN_FINISH_LOCAL_MIN_SAVE_STARTED");
+    expect(finalizationService).toContain("RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED");
+    expect(finalizationService).toContain("RUN_FINISH_DEFERRED_TASKS_SCHEDULED");
+    expect(mapScreen).toContain("territoryCaptureStatus = \"PENDING\"");
+    expect(mapScreen).toContain('includeTerritory: activeMode === "zones"');
+    expect(mapScreen).toContain('trigger: "finish_ui_released"');
+    expect(mapScreen).toContain("isFinishingRun ? \"Finalizando...\"");
+    expect(minimumSaveCall).toBeGreaterThan(-1);
+    expect(uiReleased).toBeGreaterThan(minimumSaveCall);
+    expect(deferredEnqueue).toBeGreaterThan(uiReleased);
     expect(deferredQueueProcessing).toBeGreaterThan(uiReleased);
   });
 

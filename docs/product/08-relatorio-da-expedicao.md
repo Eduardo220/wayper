@@ -1,7 +1,8 @@
 # Relatório da Expedição
 
 **Status:** aprovado  
-**Situação atual:** não implementado como contrato unificado
+**Situação atual:** estado modular persistente implementado; experiência visual
+unificada ainda não implementada
 
 O Relatório da Expedição é a principal experiência pós-corrida. Ele transforma
 uma atividade já salva em descoberta.
@@ -33,6 +34,12 @@ Nem todos os módulos são escopo imediato.
 Cada bloco deve representar, no mínimo, `pending`, `processing`, `ready`,
 `failed_retryable`, `failed_permanent` ou `not_applicable`, com versão e horário.
 O relatório geral não espera todos os blocos.
+
+Desde a Fase D, `runDeferredTaskQueueService` projeta e persiste esses estados
+para métricas, território, progressão, ranking, social e sync. Desafios e
+recompensas aparecem como `not_applicable` até suas fases próprias. O contrato
+pode ser lido por `runDeferredTaskQueueRepository.getProcessingState()`; a
+migração visual de `RunSummaryModal` e `RunDetailScreen` permanece como Fase 3.
 
 Exemplos de texto honesto:
 

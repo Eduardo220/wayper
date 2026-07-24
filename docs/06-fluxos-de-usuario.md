@@ -76,12 +76,16 @@ principal começa depois do salvamento, no Relatório da Expedição.
 5. App valida e persiste localmente o registro mínimo em `runs`.
 6. App confirma que a corrida está finalizada antes de limpar a sessão ativa.
 7. App devolve confirmação à interface.
-8. App cria/atualiza tarefas persistentes de processamento da Expedição.
+8. Depois da liberação da interface, app cria/atualiza tarefas persistentes de
+   processamento da Expedição.
 9. Território, XP, ranking, conquistas e sync executam depois e podem falhar
    independentemente.
 10. App abre o resumo atual; futuramente ele será o Relatório da Expedição.
 11. Se Firestore falhar, a corrida segue no histórico local e os estados pendentes
    permanecem recuperáveis.
+12. Se o processo terminar entre os passos 7 e 8, o seed
+    `expeditionProcessingStatus=PENDING` faz o startup recriar idempotentemente as
+    tarefas ausentes.
 
 ## 6.1 Relatório da Expedição
 

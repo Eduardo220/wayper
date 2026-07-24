@@ -55,6 +55,11 @@ de produção.
 
 **Status:** aceito
 
+**Evidência de implementação (2026-07-24):**
+`runFinalizationService` concentra freeze, lock idempotente, confirmação do
+registro mínimo versionado e limpeza posterior da sessão ativa. A criação da fila
+acontece somente após `RUN_FINISH_UI_RELEASED`.
+
 - **Contexto:** a finalização atual já salva localmente antes da fila derivada.
 - **Problema:** território, XP, ranking, sync ou animação podem falhar/demorar.
 - **Decisão:** congelar snapshot, persistir e confirmar o mínimo, marcar a corrida
@@ -73,6 +78,11 @@ de produção.
 ## ADR-031 — Processamento da Expedição idempotente
 
 **Status:** aceito
+
+**Evidência de implementação (2026-07-24):** a fila local existente evoluiu para
+schema 2, mantém resultado por tarefa, projeta estado por módulo e reconcilia no
+startup corridas mínimas pendentes sem tarefas. Não foi criado storage de fila
+paralelo.
 
 - **Contexto:** a fila pós-corrida possui tentativas e idempotência parcial.
 - **Problema:** reinício ou rede instável pode repetir território, XP e recompensa.

@@ -32,6 +32,52 @@ Classificação: Alinhado | Parcialmente alinhado | Desalinhado
 ### Ações recomendadas
 ```
 
+## 2026-07-24 - Revisão da Fase D
+
+### Documentos consultados
+
+Direção oficial, princípios de corrida, Relatório da Expedição, arquitetura,
+modelo de dados, fluxos, ADR-030/031, testes, bugs e relatório da Fase C.
+
+### Arquivos analisados
+
+`MapScreen`, tracking canônico, autosave, recovery, `sync.js`,
+`runDeferredTaskQueueService`, repository da fila e testes relacionados.
+
+### Resultado
+
+Classificação: Alinhado
+
+O núcleo implementa save mínimo local-first, lock fora da UI, liberação da
+interface antes do trabalho derivado, resultados modulares e reconciliação no
+startup sem duplicar fila ou alterar o pipeline de GPS.
+
+### Problemas encontrados
+
+Os testes estruturais antigos ainda procuravam diagnósticos e checkpoint dentro
+da `MapScreen`; foram atualizados para validar o novo limite arquitetural.
+
+### Riscos
+
+O Samsung SM-A546E autorizou ADB e abriu o Dev Client, mas a matriz de corrida
+ativa não foi executada. `RunSummaryModal` e `RunDetailScreen` ainda não
+apresentam os módulos; desafios/recompensas seguem `not_applicable`.
+
+### Melhorias sugeridas
+
+Executar a matriz física, instrumentar duração real do save mínimo e iniciar a
+Fase 3 adaptando as experiências existentes ao contrato, sem criar terceira tela.
+
+### Documentação atualizada
+
+Arquitetura, dados, fluxo, roadmap, backlog, ADRs, testes, bugs, diagnóstico,
+produto, changelog e auditoria da fase.
+
+### Ações recomendadas
+
+Autorizar ADB no aparelho, validar interrupção em cada etapa e manter a Fase 3
+atrás de rollout reversível.
+
 ## 2026-07-24 - Revisão da direção oficial
 
 ### Documentos consultados

@@ -95,6 +95,14 @@ O mesmo atalho registra eventos:
 
 Se o usuario finalizar a corrida enquanto o diagnostico leve esta em andamento, a finalizacao tem prioridade. A MapScreen deve cancelar/liberar o estado visual do export, registrar `RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH` e seguir para o save local. Se o share sheet falhar ou demorar demais, o arquivo leve permanece salvo localmente e o ZIP completo pode ser exportado depois pela tela de Diagnostico.
 
+Na finalização, a ordem diagnóstica esperada é
+`RUN_FINISH_LOCAL_MIN_SAVE_STARTED` ->
+`RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED` -> `RUN_FINISH_UI_RELEASED` ->
+`RUN_FINISH_DEFERRED_TASKS_SCHEDULED`. Reentrada que encontra seed mínimo sem
+tarefas registra `RUN_EXPEDITION_PROCESSING_RECONCILED`; falha ao persistir a
+projeção modular registra `RUN_EXPEDITION_STATE_PERSIST_FAILED`. Esses eventos
+carregam IDs e contadores sanitizados, nunca a rota bruta.
+
 Enquanto a corrida esta ativa, `MapScreen` tambem grava snapshots leves `EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT` em eventos criticos e a cada ~30s. O snapshot deve conter status, elapsed/distance, `lastUiTickAt`, `lastLocationReceivedAt`, `lastLocationAcceptedAt`, `lastRenderPathUpdatedAt`, watcher, AppState, notificacao, timer, counts de path/segments, motivos agregados de descarte, ultimo erro e contadores de stall. Ele nao deve salvar `rawPath` completo nem coordenadas exatas por padrao.
 
 Tentativas de abrir o drawer pelo header devem registrar `RUN_DRAWER_OPEN_REQUESTED`, `RUN_DRAWER_OPENED` e, quando nao houver confirmacao em tempo util, `RUN_DRAWER_OPEN_TIMEOUT`. Isso existe para separar falha de toque/drawer de travamento de GPS, timer ou render do mapa.
