@@ -654,13 +654,25 @@ export async function persistFinishedRunDraft(runData = {}, options = {}) {
 export async function markRecoveredRunLocallySaved(options = {}) {
   try {
     const service = await getTrackingService();
-    const canonicalCleared = await service.markActiveRunLocallySaved?.();
+    const expectedRunId = options.expectedRunId || options.runId || options.localRunId || null;
+    const canonicalCleared = await service.markActiveRunLocallySaved?.({
+      expectedRunId,
+      reason: options.reason || "local_run_saved",
+    });
     if (canonicalCleared === false) {
       const error = new Error("canonical active run cleanup was not confirmed");
       error.code = "ACTIVE_RUN_CLEANUP_NOT_CONFIRMED";
       throw error;
     }
-    await clearActiveRun();
+    const legacyCleared = await clearActiveRun({
+      expectedRunId,
+      reason: options.reason || "local_run_saved",
+    });
+    if (legacyCleared === false) {
+      const error = new Error("legacy active run cleanup was not confirmed");
+      error.code = "ACTIVE_RUN_CLEANUP_NOT_CONFIRMED";
+      throw error;
+    }
     logRecovery("active_run_state_cleared_after_local_save", {
       reason: options.reason || "local_run_saved",
     });

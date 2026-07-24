@@ -235,11 +235,37 @@ describe("activeRunTrackingService lifecycle", () => {
     const chunkKeys = raw.routeChunksIndex.chunks.map((chunk) => chunk.key);
     expect(chunkKeys.some((key) => storage.has(key))).toBe(true);
 
-    await service.markActiveRunLocallySaved();
+    await service.markActiveRunLocallySaved({
+      expectedRunId: "run-clean-chunks",
+      reason: "test",
+    });
 
     expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(false);
     expect(storage.has(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)).toBe(false);
     expect(chunkKeys.some((key) => storage.has(key))).toBe(false);
+  });
+
+  test("nao limpa snapshot nem chunks quando o ID esperado e de outra corrida", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-protected-cleanup",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+    await service.flushPendingActiveRunCheckpoint({ reason: "test", force: true });
+    const raw = getStoredActiveRun();
+    const chunkKeys = raw.routeChunksIndex.chunks.map((chunk) => chunk.key);
+
+    const cleared = await service.markActiveRunLocallySaved({
+      expectedRunId: "another-run",
+      reason: "test_mismatch",
+    });
+
+    expect(cleared).toBe(false);
+    expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(true);
+    expect(storage.has(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)).toBe(true);
+    expect(chunkKeys.some((key) => storage.has(key))).toBe(true);
+    expect((await service.getActiveRunSnapshot()).activeRunId).toBe("run-protected-cleanup");
   });
 
   test("falha de escrita do AsyncStorage nao apaga snapshot em memoria nem backup anterior", async () => {
@@ -874,6 +900,32 @@ describe("activeRunTrackingService lifecycle", () => {
       startedAtMs: BASE_TIME + 10_000,
     });
     expect(protectedSnapshot.activeRunId).toBe("run-finishing-protected");
+  });
+
+  test("finalizar durante pausa acumula a pausa aberta antes de congelar o tempo", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-finish-while-paused",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+    await service.pauseActiveRun({ endedAtMs: BASE_TIME + 10_000 });
+
+    const finishing = await service.markActiveRunFinishing({
+      nowMs: BASE_TIME + 70_000,
+      reason: "test_finish_while_paused",
+    });
+    const finished = await service.finishActiveRun({
+      finishedAtMs: BASE_TIME + 70_000,
+    });
+
+    expect(finishing).toMatchObject({
+      status: ACTIVE_RUN_STATUS.FINISHING,
+      pausedDurationMs: 60_000,
+      totalPausedMs: 60_000,
+    });
+    expect(finished.durationSeconds).toBe(10);
+    expect(finished.totalPausedMs).toBe(60_000);
   });
 
   test("snapshot FINISHED sem save confirmado impede nova corrida silenciosa", async () => {

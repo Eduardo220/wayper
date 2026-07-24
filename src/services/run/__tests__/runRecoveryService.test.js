@@ -412,11 +412,38 @@ describe("runRecoveryService", () => {
       schemaVersion: 1,
     }));
 
-    const result = await markRecoveredRunLocallySaved({ reason: "test" });
+    const result = await markRecoveredRunLocallySaved({
+      reason: "test",
+      expectedRunId: "clean-me",
+    });
 
     expect(result.ok).toBe(true);
-    expect(trackingService.markActiveRunLocallySaved).toHaveBeenCalled();
+    expect(trackingService.markActiveRunLocallySaved).toHaveBeenCalledWith({
+      expectedRunId: "clean-me",
+      reason: "test",
+    });
     expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(false);
+  });
+
+  test("nao limpa legado quando o ID esperado pertence a outra corrida", async () => {
+    storage.set(ACTIVE_RUN_STORAGE_KEY, JSON.stringify({
+      localRunId: "legacy-protected",
+      userId: "user-1",
+      mode: "free",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAt: BASE_RUN.startedAt,
+      points: BASE_RUN.trustedPath,
+      schemaVersion: 1,
+    }));
+
+    const result = await markRecoveredRunLocallySaved({
+      reason: "cleanup_mismatch",
+      expectedRunId: "another-run",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("ACTIVE_RUN_CLEANUP_NOT_CONFIRMED");
+    expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(true);
   });
 
   test("falha ao limpar canonico nao apaga checkpoint legado", async () => {

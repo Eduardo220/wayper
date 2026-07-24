@@ -381,4 +381,21 @@ describe("active run persistence state", () => {
       /FINISH_FAILED[\s\S]{0,250}finish_already_in_flight/
     );
   });
+
+  test("tela exige transicao confirmada e preserva retry do resumo final", () => {
+    const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const summaryModal = fs.readFileSync(
+      path.join(process.cwd(), "src/components/Runs/RunSummaryModal.js"),
+      "utf8"
+    );
+
+    expect(mapScreen).toContain("RUN_PAUSE_NOT_CONFIRMED");
+    expect(mapScreen).toContain("RUN_RESUME_NOT_CONFIRMED");
+    expect(mapScreen).toContain("resolveFinalRunTiming");
+    expect(mapScreen).toContain("forceWrite: true");
+    expect(mapScreen).toMatch(/onSave=\{async[\s\S]+catch \(e\) \{[\s\S]+throw e;/);
+    expect(summaryModal).toContain("setSaveError(");
+    expect(summaryModal).toContain("A corrida continua preservada");
+    expect(summaryModal).toContain("Salvar detalhes");
+  });
 });

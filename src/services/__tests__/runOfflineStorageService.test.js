@@ -59,6 +59,28 @@ describe("runOfflineStorageService", () => {
     expect(shouldRestoreActiveRun(loaded)).toBe(true);
   });
 
+  test("limpeza por ID nao apaga uma corrida ativa diferente", async () => {
+    await createActiveRun({
+      localRunId: "run-protected",
+      userId: "user-1",
+      mode: "free",
+    });
+
+    await expect(clearActiveRun({
+      expectedRunId: "another-run",
+      reason: "test_mismatch",
+    })).resolves.toBe(false);
+    await expect(loadActiveRun()).resolves.toMatchObject({
+      localRunId: "run-protected",
+    });
+
+    await expect(clearActiveRun({
+      expectedRunId: "run-protected",
+      reason: "test_match",
+    })).resolves.toBe(true);
+    await expect(loadActiveRun()).resolves.toBeNull();
+  });
+
   test("snapshot salva pontos e limita volume local", async () => {
     await createActiveRun({ localRunId: "run-2", userId: "user-1", mode: "free" });
     const points = Array.from({ length: ACTIVE_RUN_MAX_POINTS + 4 }, (_, index) => ({

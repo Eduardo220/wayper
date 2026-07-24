@@ -510,12 +510,31 @@ export async function finishActiveRun(runData = {}, options = {}) {
   return saveActiveRun(buildOfflineRunFromRunData(runData, options));
 }
 
-export async function clearActiveRun() {
+export async function clearActiveRun(options = {}) {
   return enqueueWrite(async () => {
+    const expectedRunId = String(
+      options.expectedRunId || options.runId || options.localRunId || ""
+    ).trim() || null;
+    if (expectedRunId) {
+      const current = await loadActiveRun();
+      const currentRunId = current?.localRunId || current?.activeRunId || current?.id || null;
+      if (currentRunId && String(currentRunId) !== expectedRunId) {
+        recordRunEvent("RUN_ACTIVE_CLEANUP_ID_MISMATCH_BLOCKED", {
+          expectedRunId,
+          activeRunId: currentRunId,
+          source: "offline_storage",
+          reason: options.reason || "clear_active_run",
+          level: "warn",
+        });
+        return false;
+      }
+    }
     await AsyncStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
     recordRunEvent("ACTIVE_RUN_CLEARED", {
       source: "offline_storage",
+      reason: options.reason || "clear_active_run",
     });
+    return true;
   });
 }
 

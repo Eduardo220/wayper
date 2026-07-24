@@ -547,14 +547,25 @@ async function runNotificationActionThroughRuntime(action) {
       endedAtMs: Date.now(),
       source: "notification",
     });
-    snapshot = paused || snapshot;
-    if (paused) {
+    const pauseConfirmed =
+      paused?.activeRunId === snapshot.activeRunId &&
+      String(paused?.status || "").toUpperCase() === ACTIVE_RUN_STATUS.PAUSED;
+    if (pauseConfirmed) {
+      snapshot = paused;
       await flushActiveRunCheckpoint({
         reason: "notification_pause",
         checkpointAtMs: Date.now(),
       });
       recordRunSnapshotEvent("PAUSE_SUCCESS", paused, {
         source: "notification",
+      });
+    } else {
+      recordRunSnapshotEvent("PAUSE_FAILED", paused || snapshot, {
+        source: "notification",
+        reason: "transition_not_confirmed",
+        expectedStatus: ACTIVE_RUN_STATUS.PAUSED,
+        returnedStatus: paused?.status || null,
+        level: "warn",
       });
     }
     await updateRunNotification(buildRunNotificationPayloadFromSnapshot(snapshot), {
@@ -579,14 +590,25 @@ async function runNotificationActionThroughRuntime(action) {
       startedAtMs: Date.now(),
       source: "notification",
     });
-    snapshot = resumed || snapshot;
-    if (resumed) {
+    const resumeConfirmed =
+      resumed?.activeRunId === snapshot.activeRunId &&
+      String(resumed?.status || "").toUpperCase() === ACTIVE_RUN_STATUS.RUNNING;
+    if (resumeConfirmed) {
+      snapshot = resumed;
       await flushActiveRunCheckpoint({
         reason: "notification_resume",
         checkpointAtMs: Date.now(),
       });
       recordRunSnapshotEvent("RESUME_SUCCESS", resumed, {
         source: "notification",
+      });
+    } else {
+      recordRunSnapshotEvent("RESUME_FAILED", resumed || snapshot, {
+        source: "notification",
+        reason: "transition_not_confirmed",
+        expectedStatus: ACTIVE_RUN_STATUS.RUNNING,
+        returnedStatus: resumed?.status || null,
+        level: "warn",
       });
     }
     await updateRunNotification(buildRunNotificationPayloadFromSnapshot(snapshot), {

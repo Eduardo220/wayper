@@ -290,6 +290,46 @@ describe("run notification service", () => {
     expect(payload.distanceKm).toBeCloseTo(1.42);
   });
 
+  test("nao confirma pausa quando o tracking devolve estado ainda RUNNING", async () => {
+    currentSnapshot = runningSnapshot();
+    await service.startRunNotification({
+      elapsedTimeSeconds: 503,
+      distanceKm: 1.42,
+      isPaused: false,
+    }, { scheduleTimer: false });
+    nativeModule.updateRunNotification.mockClear();
+    trackingService.pauseActiveRun.mockImplementationOnce(async () => currentSnapshot);
+
+    const result = await service.pauseRunFromNotification();
+
+    expect(result.status).toBe("RUNNING");
+    expect(flushActiveRunCheckpoint).not.toHaveBeenCalled();
+    expect(nativeModule.updateRunNotification.mock.calls.at(-1)[0]).toMatchObject({
+      isPaused: false,
+      actionLabel: "Pausar",
+    });
+  });
+
+  test("nao confirma retomada quando o tracking devolve estado ainda PAUSED", async () => {
+    currentSnapshot = pausedSnapshot();
+    await service.startRunNotification({
+      elapsedTimeSeconds: 503,
+      distanceKm: 1.42,
+      isPaused: true,
+    }, { scheduleTimer: false });
+    nativeModule.updateRunNotification.mockClear();
+    trackingService.resumeActiveRun.mockImplementationOnce(async () => currentSnapshot);
+
+    const result = await service.resumeRunFromNotification();
+
+    expect(result.status).toBe("PAUSED");
+    expect(flushActiveRunCheckpoint).not.toHaveBeenCalled();
+    expect(nativeModule.updateRunNotification.mock.calls.at(-1)[0]).toMatchObject({
+      isPaused: true,
+      actionLabel: "Retomar",
+    });
+  });
+
   test("acao duplicada de pausar pela notificacao e idempotente", async () => {
     currentSnapshot = runningSnapshot();
 

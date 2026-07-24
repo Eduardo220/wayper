@@ -94,6 +94,14 @@ const listeners = {
   error: new Set(),
 };
 
+function toOptionalTimestampMs(value) {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function log(event, payload = {}) {
   if (!debugEnabled) return;
   logger.debug(LOG_CATEGORIES.RUN_TRACKING, event, payload);
@@ -2011,8 +2019,36 @@ async function markActiveRunFinishingInternal(options = {}) {
       return activeSnapshot;
     }
     const nowMs = Number(options.nowMs || Date.now());
+    const wasPaused = activeSnapshot.status === ACTIVE_RUN_STATUS.PAUSED;
+    const lastSegment = Array.isArray(activeSnapshot.segments)
+      ? activeSnapshot.segments[activeSnapshot.segments.length - 1]
+      : null;
+    const pauseStartedAtMs = wasPaused
+      ? toOptionalTimestampMs(
+          activeSnapshot.pausedAtMs ??
+          activeSnapshot.pausedAt ??
+          activeSnapshot.pauseStartedAt ??
+          lastSegment?.endedAt ??
+          lastSegment?.endTimestamp
+        )
+      : null;
+    const priorPausedMs = Math.max(
+      0,
+      Number(
+        activeSnapshot.pausedDurationMs ??
+        activeSnapshot.totalPausedMs ??
+        activeSnapshot.totalPausedTime ??
+        0
+      ) || 0
+    );
+    const finishingPausedMs = wasPaused && pauseStartedAtMs != null
+      ? priorPausedMs + Math.max(0, nowMs - pauseStartedAtMs)
+      : priorPausedMs;
     const snapshot = createSnapshotFromTrackingSession(session, {
       ...activeSnapshot,
+      pausedDurationMs: finishingPausedMs,
+      totalPausedMs: finishingPausedMs,
+      totalPausedTime: finishingPausedMs,
       recoveryPending: true,
     }, {
       status: ACTIVE_RUN_STATUS.FINISHING,
@@ -2090,9 +2126,22 @@ export async function buildFinishedRunData(overrides = {}) {
   return buildRunDataFromActiveSnapshot(snapshot, overrides);
 }
 
-async function markActiveRunLocallySavedInternal() {
+async function markActiveRunLocallySavedInternal(options = {}) {
   try {
-    const activeRunId = activeSnapshot?.activeRunId || (await loadPersistedSnapshot())?.activeRunId || null;
+    const persistedSnapshot = activeSnapshot || (await loadPersistedSnapshot());
+    const activeRunId = persistedSnapshot?.activeRunId || persistedSnapshot?.localRunId || persistedSnapshot?.id || null;
+    const expectedRunId = String(
+      options.expectedRunId || options.runId || options.localRunId || ""
+    ).trim() || null;
+    if (expectedRunId && activeRunId && String(activeRunId) !== expectedRunId) {
+      recordRunEvent("RUN_ACTIVE_CLEANUP_ID_MISMATCH_BLOCKED", {
+        expectedRunId,
+        activeRunId,
+        reason: options.reason || "local_run_saved",
+        level: "warn",
+      });
+      return false;
+    }
     await enqueueStorageWrite(async () => {
       await removeRouteChunksForRun(activeRunId);
       await storage.removeItem(ACTIVE_RUN_STORAGE_KEY);
@@ -2129,8 +2178,8 @@ async function markActiveRunLocallySavedInternal() {
   }
 }
 
-export function markActiveRunLocallySaved() {
-  return enqueueLocationIngestion(() => markActiveRunLocallySavedInternal());
+export function markActiveRunLocallySaved(options = {}) {
+  return enqueueLocationIngestion(() => markActiveRunLocallySavedInternal(options));
 }
 
 async function cancelActiveRunInternal(options = {}) {

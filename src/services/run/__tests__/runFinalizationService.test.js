@@ -13,6 +13,7 @@ const finalization = await import("../runFinalizationService.js");
 const {
   RUN_MINIMUM_SAVE_SCHEMA_VERSION,
   buildMinimumSavedRun,
+  resolveFinalRunTiming,
   freezeActiveRunForFinalization,
   persistMinimumFinishedRun,
   enqueuePostRunProcessing,
@@ -93,6 +94,59 @@ describe("runFinalizationService", () => {
     });
   });
 
+  test("injeta usuario conhecido ao formalizar corrida offline sem userId", () => {
+    const result = buildMinimumSavedRun(makeRun({ userId: undefined }), {
+      userId: "user-from-session",
+      preparedAt: "2026-07-24T12:00:01.000Z",
+    });
+
+    expect(result.userId).toBe("user-from-session");
+  });
+
+  test("calcula duracao final descontando pausa mesmo com UI inflada", () => {
+    const startedAtMs = 1_700_000_000_000;
+    const result = resolveFinalRunTiming({
+      startedAtMs,
+      finishedAt: new Date(startedAtMs + 120_000).toISOString(),
+      totalPausedMs: 60_000,
+      durationSeconds: 120,
+      trustedPath: [
+        { timestamp: startedAtMs },
+        { timestamp: new Date(startedAtMs + 60_000).toISOString() },
+      ],
+      segments: [{
+        startedAt: startedAtMs,
+        endedAt: startedAtMs + 60_000,
+        endReason: "pause",
+      }],
+    }, {
+      uiDurationMs: 120_000,
+    });
+
+    expect(result).toMatchObject({
+      durationMs: 60_000,
+      durationSeconds: 60,
+      totalPausedMs: 60_000,
+      pausedDurationSeconds: 60,
+      usedPauseTimeline: true,
+    });
+  });
+
+  test("sem evidencia de pausa preserva o maior fallback seguro de duracao", () => {
+    const startedAtMs = 1_700_000_000_000;
+    const result = resolveFinalRunTiming({
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAtMs: startedAtMs + 70_000,
+      durationSeconds: 65,
+      trustedPath: [{ timestamp: startedAtMs + 60_000 }],
+    }, {
+      uiDurationMs: 80_000,
+    });
+
+    expect(result.durationSeconds).toBe(80);
+    expect(result.usedPauseTimeline).toBe(false);
+  });
+
   test("confirma save antes de limpar a corrida ativa", async () => {
     const { dependencies, order } = makePersistenceDependencies();
 
@@ -110,6 +164,11 @@ describe("runFinalizationService", () => {
     expect(order.indexOf("save")).toBeLessThan(order.indexOf("cleanup"));
     expect(dependencies.persistFinishedRunDraft).not.toHaveBeenCalled();
     expect(dependencies.markRecoveredRunLocallySaved).toHaveBeenCalledTimes(1);
+    expect(dependencies.markRecoveredRunLocallySaved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedRunId: "run-1",
+      })
+    );
     expect(recordRunEvent).toHaveBeenCalledWith(
       "RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED",
       expect.objectContaining({ runId: "run-1" })
@@ -189,6 +248,27 @@ describe("runFinalizationService", () => {
     expect(right.savedLocalRun.id).toBe("run-1");
     expect(dependencies.saveLocalRun).toHaveBeenCalledTimes(1);
     expect(dependencies.markRecoveredRunLocallySaved).toHaveBeenCalledTimes(1);
+  });
+
+  test("forceWrite permite atualizar detalhes de corrida ja salva", async () => {
+    const existing = buildMinimumSavedRun(makeRun({ title: "Antes" }), {
+      preparedAt: "2026-07-24T12:00:01.000Z",
+    });
+    const { dependencies } = makePersistenceDependencies({
+      findLocalRunById: jest.fn(async () => existing),
+    });
+
+    const result = await persistMinimumFinishedRun(makeRun({ title: "Depois" }), {
+      ...dependencies,
+      forceWrite: true,
+      timeouts: { LOCAL_SAVE_MS: 1000, CLEANUP_MS: 1000 },
+    });
+
+    expect(result.alreadySaved).toBe(false);
+    expect(dependencies.saveLocalRun).toHaveBeenCalledTimes(1);
+    expect(dependencies.saveLocalRun).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Depois" })
+    );
   });
 
   test("reentrada com minimo ja confirmado nao regrava a corrida", async () => {

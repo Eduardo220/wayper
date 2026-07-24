@@ -78,14 +78,14 @@ import {
   hydrateRecoverableRunCandidate,
   isFinishedRecovery,
   isLiveRecovery,
-  markRecoveredRunLocallySaved,
 } from "../services/run/runRecoveryService.js";
 import {
   enqueuePostRunProcessing,
   freezeActiveRunForFinalization,
   persistMinimumFinishedRun,
+  resolveFinalRunTiming,
 } from "../services/run/runFinalizationService.js";
-import { enqueueFinishedRun, schedulePendingRunsSync } from "../services/run/runSyncQueueService.js";
+import { schedulePendingRunsSync } from "../services/run/runSyncQueueService.js";
 import sync from "../utils/sync";
 import {
   assertTraceHasEnoughPoints,
@@ -2920,8 +2920,15 @@ const MapScreen = ({ navigation, route }) => {
         endedAtMs: Date.now(),
         source: "MapScreen",
       });
-      if (!pausedSnapshot?.activeRunId) {
-        throw new Error("activeRunTrackingService.pauseActiveRun returned empty snapshot");
+      if (
+        !pausedSnapshot?.activeRunId ||
+        String(pausedSnapshot.status || "").toUpperCase() !== ACTIVE_RUN_STATUS.PAUSED ||
+        (currentRunIdRef.current &&
+          String(pausedSnapshot.activeRunId) !== String(currentRunIdRef.current))
+      ) {
+        const error = new Error("activeRunTrackingService.pauseActiveRun did not confirm PAUSED");
+        error.code = "RUN_PAUSE_NOT_CONFIRMED";
+        throw error;
       }
       applyActiveRunSnapshotToUi(pausedSnapshot, {
         source: "pause_button",
@@ -3006,8 +3013,15 @@ const MapScreen = ({ navigation, route }) => {
         startedAtMs: Date.now(),
         source: "MapScreen",
       });
-      if (!resumedSnapshot?.activeRunId) {
-        throw new Error("activeRunTrackingService.resumeActiveRun returned empty snapshot");
+      if (
+        !resumedSnapshot?.activeRunId ||
+        String(resumedSnapshot.status || "").toUpperCase() !== ACTIVE_RUN_STATUS.RUNNING ||
+        (currentRunIdRef.current &&
+          String(resumedSnapshot.activeRunId) !== String(currentRunIdRef.current))
+      ) {
+        const error = new Error("activeRunTrackingService.resumeActiveRun did not confirm RUNNING");
+        error.code = "RUN_RESUME_NOT_CONFIRMED";
+        throw error;
       }
       applyActiveRunSnapshotToUi(resumedSnapshot, {
         source: "resume_button",
@@ -3210,33 +3224,24 @@ const MapScreen = ({ navigation, route }) => {
           screen: "MapScreen",
         });
         const activeFinalSnapshot = freezeResult.snapshot;
-        const startedAtMs = Number(activeFinalSnapshot?.startedAtMs) ||
-          Date.parse(activeFinalSnapshot?.startedAt || trackingSessionRef.current?.state?.startedAt || "") ||
-          null;
-        const totalPausedMs = Number(
-          activeFinalSnapshot?.totalPausedMs ??
-          activeFinalSnapshot?.pausedDurationMs ??
-          activeFinalSnapshot?.totalPausedTime ??
-          0
-        ) || 0;
-        const lastLocationAtMs = Date.parse(
-          activeFinalSnapshot?.currentLocation?.timestamp ||
-          lastAcceptedLocationRef.current?.timestamp ||
-          ""
-        ) || null;
-        const storedDurationMs = Number(activeFinalSnapshot?.durationMs || activeFinalSnapshot?.elapsedMs || 0) ||
-          Number(activeFinalSnapshot?.durationSeconds || activeFinalSnapshot?.duration || 0) * 1000 ||
-          0;
-        const finishedElapsedMs = startedAtMs ? Math.max(0, finishedAtMs - startedAtMs - totalPausedMs) : 0;
-        const lastLocationElapsedMs = startedAtMs && lastLocationAtMs
-          ? Math.max(0, lastLocationAtMs - startedAtMs - totalPausedMs)
-          : 0;
-        const totalDuration = Math.round(Math.max(
-          storedDurationMs,
-          (timeSecRef.current || timeSec || 0) * 1000,
-          finishedElapsedMs,
-          lastLocationElapsedMs
-        ) / 1000);
+        const finalTiming = resolveFinalRunTiming({
+          ...(activeFinalSnapshot || {}),
+          startedAtMs:
+            activeFinalSnapshot?.startedAtMs ||
+            activeFinalSnapshot?.startedAt ||
+            trackingSessionRef.current?.state?.startedAt ||
+            null,
+          currentLocation:
+            activeFinalSnapshot?.currentLocation ||
+            lastAcceptedLocationRef.current ||
+            null,
+        }, {
+          finishedAtMs,
+          uiDurationMs: (timeSecRef.current || timeSec || 0) * 1000,
+        });
+        const startedAtMs = finalTiming.startedAtMs;
+        const totalPausedMs = finalTiming.totalPausedMs;
+        const totalDuration = finalTiming.durationSeconds;
         const trackingFinish = trackingSessionRef.current?.finishTrackingSession?.({
           durationMs: totalDuration * 1000,
           finishedAt: finishedAtMs,
@@ -3301,10 +3306,15 @@ const MapScreen = ({ navigation, route }) => {
           avgSpeed: avgSpeedKmh,
           maxSpeed: maxSpeedKmh,
           date: finishedAt,
-          startedAt: activeFinalSnapshot?.startedAt || trackingSessionRef.current?.state?.startedAt || null,
+          startedAt:
+            activeFinalSnapshot?.startedAt ||
+            trackingSessionRef.current?.state?.startedAt ||
+            (startedAtMs ? new Date(startedAtMs).toISOString() : null),
           endedAt: finishedAt,
           finishedAt,
-          pausedDurationSeconds: null,
+          pausedDurationSeconds: finalTiming.pausedDurationSeconds,
+          pausedDurationMs: totalPausedMs,
+          totalPausedMs,
           status: "completed",
           mode: activeMode,
           area: 0,
@@ -3843,33 +3853,37 @@ const MapScreen = ({ navigation, route }) => {
       setRecoveryModalVisible(false);
       if (isFinishedRecovery(pendingRecovery)) {
         const runData = buildRunDataFromRecoveredRun(pendingRecovery);
-        const saved = await enqueueFinishedRun(runData, {
+        const minimumSaveResult = await persistMinimumFinishedRun(runData, {
           userId: auth.currentUser?.uid || "offline",
-          delayMs: 0,
+          sessionId: pendingRecovery.localRunId || pendingRecovery.id,
+          source: "recovery_modal_finished",
+          screen: "MapScreen",
         });
+        const saved = minimumSaveResult.savedLocalRun;
         const currentUser = auth.currentUser || {};
-        const recoveredRun = saved || runData;
-        const recoveredQueue = await runDeferredTaskQueueRepository.enqueuePostRun(recoveredRun, {
-          userId: currentUser.uid || "offline",
-          userName: currentUser.displayName || currentUser.email?.split("@")?.[0] || "Atleta Wayper",
-          userAvatar: currentUser.photoURL || null,
-          includeTerritory: String(recoveredRun.mode || "").toLowerCase() === "zones",
-          source: "recovery_finished",
-        });
-        if (recoveredQueue?.error) {
-          recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-            runId: pendingRecovery.id,
-            stage: "recovery_deferred_queue_enqueue",
-            error: recoveredQueue.error,
-            level: "warn",
+        const recoveredRun = saved;
+        runDeferred(async () => {
+          const queueResult = await enqueuePostRunProcessing(recoveredRun, {
+            userId: currentUser.uid || "offline",
+            userName: currentUser.displayName || currentUser.email?.split("@")?.[0] || "Atleta Wayper",
+            userAvatar: currentUser.photoURL || null,
+            includeTerritory: String(recoveredRun.mode || "").toLowerCase() === "zones",
+            source: "recovery_finished",
             screen: "MapScreen",
           });
-        } else {
-          runDeferred(() => runDeferredTaskQueueRepository.process({
+          if (!queueResult.ok) return;
+          const queueRunId =
+            queueResult.queued[0]?.runId ||
+            recoveredRun.localRunId ||
+            recoveredRun.id ||
+            pendingRecovery.id;
+          const processResult = await runDeferredTaskQueueRepository.process({
             trigger: "recovery_finished",
-            runId: recoveredQueue.data?.queued?.[0]?.runId || recoveredRun.localRunId || recoveredRun.id || pendingRecovery.id,
+            runId: queueRunId,
             limit: 8,
-          }), (deferredError) => {
+          });
+          if (processResult?.error) throw processResult.error;
+        }, (deferredError) => {
             recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
               runId: pendingRecovery.id,
               stage: "recovery_deferred_task_queue_process",
@@ -3877,14 +3891,7 @@ const MapScreen = ({ navigation, route }) => {
               level: "warn",
               screen: "MapScreen",
             });
-          });
-        }
-        const cleanupResult = await markRecoveredRunLocallySaved({
-          reason: "finished_recovery_enqueued",
         });
-        if (cleanupResult?.ok === false) {
-          throw cleanupResult.error || new Error("active run cleanup was not confirmed");
-        }
         setCurrentRunData(recoveredRun);
         setShowRunModal(true);
         setPendingRecovery(null);
@@ -5322,7 +5329,6 @@ const MapScreen = ({ navigation, route }) => {
         captureResult={captureResult}
         onClose={() => setShowRunModal(false)}
         onSave={async (payload) => {
-          let closeSummaryAfterSave = false;
           try {
             const trustedPath = sanitizePath(payload.trustedPath || payload.path || payload.coords || currentRunData?.trustedPath || currentRunData?.path || []);
             const renderPath = sanitizePath(
@@ -5357,8 +5363,9 @@ const MapScreen = ({ navigation, route }) => {
               schemaVersion: 1,
             };
 
+            let territoryPatch = null;
             if (normalized.mode === "zones" && normalized.zoneId && normalized.color) {
-              const territoryPatch = {
+              territoryPatch = {
                 ...(territories.find((territory) => String(territory.id) === String(normalized.zoneId)) || {}),
                 id: normalized.zoneId,
                 geometry: normalized.geometry || normalized.zoneGeometry || currentRunData?.geometry || null,
@@ -5371,41 +5378,16 @@ const MapScreen = ({ navigation, route }) => {
                 pendingSync: true,
                 synced: false,
               };
-              if (territoryPatch.geometry) {
-                setTerritories((prev) =>
-                  (Array.isArray(prev) ? prev : []).map((territory) =>
-                    String(territory.id) === String(normalized.zoneId)
-                      ? { ...territory, ...territoryPatch }
-                      : territory
-                  )
-                );
-                setCompletedZonePreview((prev) =>
-                  (Array.isArray(prev) ? prev : []).map((zone) =>
-                    String(zone.id) === String(normalized.zoneId)
-                      ? { ...zone, color: normalized.color, strokeColor: normalized.strokeColor || normalized.color, fillOpacity: normalized.fillOpacity ?? 0.24 }
-                      : zone
-                  )
-                );
-                await territoryRepository.save(territoryPatch, {
-                  preserveVersion: false,
-                  scheduleSync: true,
-                });
-              }
             }
 
-            const saved = await sync.saveLocalRun?.(normalized);
-            if (!saved?.id || String(saved.id) !== String(normalized.id)) {
-              const saveError = new Error("local run save was not confirmed for the expected id");
-              saveError.code = "RUN_LOCAL_SAVE_NOT_CONFIRMED";
-              throw saveError;
-            }
-            const cleanupResult = await markRecoveredRunLocallySaved({
-              reason: "summary_modal_local_run_saved",
+            const minimumSaveResult = await persistMinimumFinishedRun(normalized, {
+              userId: auth.currentUser?.uid || normalized.userId || "offline",
+              sessionId: normalized.localRunId || normalized.id,
+              source: "summary_modal_save",
+              screen: "MapScreen",
+              forceWrite: true,
             });
-            if (cleanupResult?.ok === false) {
-              throw cleanupResult.error || new Error("active run cleanup was not confirmed");
-            }
-            sync.scheduleRunsSync?.();
+            const saved = minimumSaveResult.savedLocalRun;
 
             setRunsList((prev) => {
               const seen = new Set();
@@ -5419,42 +5401,74 @@ const MapScreen = ({ navigation, route }) => {
                 return true;
               });
             });
+            setCurrentRunData(saved);
             setLastSavedRun(saved);
             setShowSavedModal(true);
-            closeSummaryAfterSave = true;
 
             const currentUser = auth.currentUser || {};
-            const queuedRun = saved || normalized;
-            const queueResult = await runDeferredTaskQueueRepository.enqueuePostRun(queuedRun, {
-              userId: currentUser.uid || "offline",
-              userName: currentUser.displayName || currentUser.email?.split("@")?.[0] || "Atleta Wayper",
-              userAvatar: currentUser.photoURL || null,
-              includeTerritory: String(queuedRun.mode || "").toLowerCase() === "zones",
-              source: "summary_modal_save",
-            });
-            if (queueResult?.error) {
-              recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-                runId: queuedRun.id || queuedRun.localRunId || null,
-                stage: "summary_modal_deferred_queue_enqueue",
-                error: queueResult.error,
-                level: "warn",
-                screen: "MapScreen",
-              });
-            } else {
-              runDeferred(() => runDeferredTaskQueueRepository.process({
-                trigger: "summary_modal_save",
-                runId: queueResult.data?.queued?.[0]?.runId || queuedRun.localRunId || queuedRun.id || null,
-                limit: 8,
-              }), (deferredError) => {
+            if (territoryPatch?.geometry) {
+              const deferredTerritoryPatch = territoryPatch;
+              setTerritories((prev) =>
+                (Array.isArray(prev) ? prev : []).map((territory) =>
+                  String(territory.id) === String(normalized.zoneId)
+                    ? { ...territory, ...deferredTerritoryPatch }
+                    : territory
+                )
+              );
+              setCompletedZonePreview((prev) =>
+                (Array.isArray(prev) ? prev : []).map((zone) =>
+                  String(zone.id) === String(normalized.zoneId)
+                    ? {
+                        ...zone,
+                        color: normalized.color,
+                        strokeColor: normalized.strokeColor || normalized.color,
+                        fillOpacity: normalized.fillOpacity ?? 0.24,
+                      }
+                    : zone
+                )
+              );
+              runDeferred(() => territoryRepository.save(deferredTerritoryPatch, {
+                preserveVersion: false,
+                scheduleSync: true,
+              }), (territoryError) => {
                 recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-                  runId: queuedRun.id || queuedRun.localRunId || null,
-                  stage: "summary_modal_deferred_task_queue_process",
-                  error: deferredError,
+                  runId: saved.id || saved.localRunId || null,
+                  stage: "summary_modal_territory_update",
+                  error: territoryError,
                   level: "warn",
                   screen: "MapScreen",
                 });
               });
             }
+
+            runDeferred(async () => {
+              const queueResult = await enqueuePostRunProcessing(saved, {
+                userId: currentUser.uid || "offline",
+                userName: currentUser.displayName || currentUser.email?.split("@")?.[0] || "Atleta Wayper",
+                userAvatar: currentUser.photoURL || null,
+                includeTerritory: String(saved.mode || "").toLowerCase() === "zones",
+                source: "summary_modal_save",
+                screen: "MapScreen",
+              });
+              if (!queueResult.ok) return;
+              const processResult = await runDeferredTaskQueueRepository.process({
+                trigger: "summary_modal_save",
+                runId: queueResult.queued[0]?.runId || saved.localRunId || saved.id || null,
+                limit: 8,
+              });
+              if (processResult?.error) throw processResult.error;
+            }, (deferredError) => {
+              recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+                runId: saved.id || saved.localRunId || null,
+                stage: "summary_modal_deferred_task_queue_process",
+                error: deferredError,
+                level: "warn",
+                screen: "MapScreen",
+              });
+            });
+
+            setShowRunModal(false);
+            return saved;
           } catch (e) {
             debug("RunSummaryModal onSave failed", e);
             recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
@@ -5469,8 +5483,7 @@ const MapScreen = ({ navigation, route }) => {
               "Corrida preservada",
               "Não foi possível confirmar o salvamento. O rascunho recuperável foi mantido; tente salvar novamente."
             );
-          } finally {
-            if (closeSummaryAfterSave) setShowRunModal(false);
+            throw e;
           }
         }}
       />

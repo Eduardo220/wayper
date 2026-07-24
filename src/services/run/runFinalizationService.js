@@ -76,6 +76,107 @@ function isFinishedLocalRun(run = {}) {
   );
 }
 
+function toOptionalTimestampMs(value) {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getLatestPointTimestampMs(snapshot = {}) {
+  const paths = [
+    snapshot.trustedPath,
+    snapshot.path,
+    snapshot.rawPath,
+    snapshot.rawPoints,
+  ];
+  let latest = 0;
+  for (const path of paths) {
+    for (const point of Array.isArray(path) ? path : []) {
+      const timestamp = toOptionalTimestampMs(
+        point?.timestamp ?? point?.time ?? point?.t ?? point?.createdAt
+      );
+      if (timestamp != null) latest = Math.max(latest, timestamp);
+    }
+  }
+  return Math.max(
+    latest,
+    toOptionalTimestampMs(snapshot.currentLocation?.timestamp) || 0,
+    toOptionalTimestampMs(snapshot.lastValidPoint?.timestamp) || 0,
+    toOptionalTimestampMs(snapshot.lastLocationAt) || 0
+  ) || null;
+}
+
+function hasPauseEvidence(snapshot = {}) {
+  if (Number(snapshot.pausedDurationMs ?? snapshot.totalPausedMs ?? snapshot.totalPausedTime) > 0) {
+    return true;
+  }
+  if (snapshot.pausedAtMs || snapshot.pausedAt || snapshot.pauseStartedAt) return true;
+  return (Array.isArray(snapshot.segments) ? snapshot.segments : []).some((segment) => {
+    const reason = String(segment?.reason || "").toLowerCase();
+    const endReason = String(segment?.endReason || "").toLowerCase();
+    return reason === "resume" || endReason === "pause";
+  });
+}
+
+export function resolveFinalRunTiming(snapshot = {}, options = {}) {
+  const finishedAtMs = toOptionalTimestampMs(
+    options.finishedAtMs ?? snapshot.finishedAtMs ?? snapshot.finishedAt ?? snapshot.endedAt
+  );
+  const startedAtMs = toOptionalTimestampMs(
+    snapshot.startedAtMs ?? snapshot.startedAt ?? options.startedAtMs
+  );
+  const totalPausedMs = Math.max(
+    0,
+    Number(
+      snapshot.totalPausedMs ??
+      snapshot.pausedDurationMs ??
+      snapshot.totalPausedTime ??
+      options.totalPausedMs ??
+      0
+    ) || 0
+  );
+  const storedDurationMs = Math.max(
+    0,
+    Number(snapshot.durationMs ?? snapshot.elapsedMs) ||
+      Number(snapshot.durationSeconds ?? snapshot.duration) * 1000 ||
+      0
+  );
+  const uiDurationMs = Math.max(0, Number(options.uiDurationMs || 0) || 0);
+  const latestPointAtMs = getLatestPointTimestampMs(snapshot);
+  const derivedCandidates = [];
+
+  if (startedAtMs != null && finishedAtMs != null) {
+    derivedCandidates.push(Math.max(0, finishedAtMs - startedAtMs - totalPausedMs));
+  }
+  if (startedAtMs != null && latestPointAtMs != null) {
+    const boundedPointAtMs = finishedAtMs == null
+      ? latestPointAtMs
+      : Math.min(latestPointAtMs, finishedAtMs);
+    derivedCandidates.push(Math.max(0, boundedPointAtMs - startedAtMs - totalPausedMs));
+  }
+
+  const derivedDurationMs = derivedCandidates.length > 0
+    ? Math.max(...derivedCandidates)
+    : 0;
+  const durationMs = hasPauseEvidence(snapshot) && derivedCandidates.length > 0
+    ? derivedDurationMs
+    : Math.max(storedDurationMs, uiDurationMs, derivedDurationMs);
+  const durationSeconds = Math.max(0, Math.round(durationMs / 1000));
+
+  return {
+    startedAtMs,
+    finishedAtMs,
+    latestPointAtMs,
+    totalPausedMs,
+    pausedDurationSeconds: Math.round(totalPausedMs / 1000),
+    durationMs: durationSeconds * 1000,
+    durationSeconds,
+    usedPauseTimeline: hasPauseEvidence(snapshot) && derivedCandidates.length > 0,
+  };
+}
+
 export function buildMinimumSavedRun(runData = {}, options = {}) {
   const runId = resolveRunId(runData);
   if (!runId) {
@@ -100,6 +201,7 @@ export function buildMinimumSavedRun(runData = {}, options = {}) {
     ...runData,
     id: runData.id || runId,
     localRunId: runData.localRunId || runData.id || runId,
+    userId: runData.userId || options.userId || "offline",
     finishedAt,
     endedAt: finishedAt,
     date: runData.date || finishedAt,
@@ -279,6 +381,7 @@ async function persistMinimumFinishedRunInternal(runData = {}, options = {}) {
   }
 
   const existingAlreadyConfirmed =
+    options.forceWrite !== true &&
     isFinishedLocalRun(existing) &&
     hasSharedIdentity(existing, minimumRun) &&
     Number(existing.minimumSavedRunVersion || 0) >= RUN_MINIMUM_SAVE_SCHEMA_VERSION;
@@ -391,6 +494,7 @@ async function persistMinimumFinishedRunInternal(runData = {}, options = {}) {
     cleanupResult = await withTimeout(
       () => dependencies.markRecoveredRunLocallySaved?.({
         reason: "finish_local_run_saved",
+        expectedRunId: runId,
       }),
       timeouts.CLEANUP_MS,
       "finish_recovery_mark_saved_timeout"
@@ -510,6 +614,7 @@ export default {
   EXPEDITION_PROCESSING_SCHEMA_VERSION,
   RUN_FINALIZATION_TIMEOUTS,
   buildMinimumSavedRun,
+  resolveFinalRunTiming,
   freezeActiveRunForFinalization,
   persistMinimumFinishedRun,
   enqueuePostRunProcessing,
