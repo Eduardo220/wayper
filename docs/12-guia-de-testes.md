@@ -36,6 +36,27 @@ Resultados reportados:
 
 Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam de validacao fisica Android dev/release.
 
+## Gate físico das Fases C/D — 2026-07-24
+
+O teste no Samsung SM-A546E, Android 16/API 36, foi **reprovado**. Tela apagada
+por 12 min 32 s, foreground service, checkpoints e reentrada pela notificação
+funcionaram; pausar/retomar pela notificação, consistência de duração/rota no
+recovery e persistência da finalização falharam. A finalização única abriu o
+resumo, mas registrou `SQLITE_FULL` e não confirmou o histórico.
+
+Antes de aprovar:
+
+- instalar nova build Dev Client, pois o limite nativo de 32 MB exige rebuild;
+- usar uma corrida nova, sem reutilizar o artefato incompleto anterior;
+- validar pausa/retomada pela notificação com usuário autenticado;
+- validar pausa longa sem somar o período pausado;
+- tocar duas vezes em finalizar e confirmar uma única transação;
+- confirmar resumo rápido, item no histórico e notificação removida;
+- reabrir e confirmar que rota/distância não duplicam.
+
+Registro detalhado:
+`docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`.
+
 ## Testes unitários prioritários
 
 ### Corrida

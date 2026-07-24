@@ -18,6 +18,17 @@ Este roteiro valida o fluxo critico de corrida ativa, snapshot local, background
 
 O resultado esperado em todos os cenarios e preservar `localRunId`, status, tempo, distancia, path, rawPath, renderPath e segments. Corrida finalizada ou em `FINISHING` nao pode voltar como ativa.
 
+## Execução registrada em 2026-07-24
+
+O gate no Samsung SM-A546E, Android 16/API 36, foi reprovado. Tela apagada,
+foreground service e reentrada passaram; ações da notificação,
+pausa/duração/recovery e save final falharam. Correções foram aplicadas, mas
+exigem uma nova build e reteste. Não reutilizar o artefato final incompleto como
+base do novo teste.
+
+Evidência sanitizada:
+`docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`.
+
 ## Preparacao
 
 - Usar Android real com build dev e repetir em build release.

@@ -374,7 +374,7 @@ Elas complementam, e não apagam, as decisões local-first abaixo.
 **Status:** aceito
 **Contexto:** finalizar uma corrida ativa precisa ser a operacao mais confiavel do fluxo. Se a UI aguarda captura territorial, XP, sync remoto, parada de background service, fade visual ou export de diagnostico antes de salvar localmente, o usuario pode ficar preso em estado intermediario e a corrida pode parecer perdida.
 
-**Decisao:** a `MapScreen` deve priorizar o save minimo local da corrida finalizada. Ao tocar em `Finalizar`, o app registra `FINISHING`, cancela/libera diagnostico ativo em andamento, faz checkpoint/snapshot com timeout curto, persiste o rascunho final e salva em `sync.saveLocalRun()` antes de iniciar captura territorial, XP ou sync. Corrida por zonas pode ser salva com `territoryCaptureStatus: "PENDING"` e campos territoriais pendentes; captura territorial, progressao local e sync ficam como tarefas deferidas e recuperaveis.
+**Decisao:** a `MapScreen` deve priorizar o save minimo local da corrida finalizada. Ao tocar em `Finalizar`, o app registra `FINISHING`, cancela/libera diagnostico ativo em andamento, faz checkpoint/snapshot com timeout curto e salva em `sync.saveLocalRun()` antes de iniciar captura territorial, XP ou sync. O rascunho final legado é fallback quando o histórico oficial não confirma o save. Corrida por zonas pode ser salva com `territoryCaptureStatus: "PENDING"` e campos territoriais pendentes; captura territorial, progressao local e sync ficam como tarefas deferidas e recuperaveis.
 
 **Politica:**
 
@@ -458,3 +458,21 @@ Elas complementam, e não apagam, as decisões local-first abaixo.
 - Foreground e background entram no mesmo pipeline e duplicatas nao inflam distancia.
 - Menos writes e menos reconstrucoes GeoJSON reduzem pressao sobre JS/UI em corridas longas.
 - AsyncStorage/chunks permanecem por compatibilidade; volume extremo e comportamento de fabricantes ainda exigem medicao e teste fisico antes de considerar SQLite ou declarar o risco encerrado.
+
+### Adendo de validação física — 2026-07-24
+
+Um teste real revelou retroalimentação do checkpoint legado, payloads com aliases
+de rota repetidos e `SQLITE_FULL` no limite padrão do AsyncStorage Android. A
+decisão foi refinada sem trocar a fonte oficial:
+
+- checkpoint canônico continua em aproximadamente 5 s/lote;
+- checkpoint legado passa a janela de 15 s e ignora seus próprios eventos;
+- `runs` persiste schema compacto v2 e reidrata aliases na leitura;
+- o build Android declara `AsyncStorage_db_size_in_MB=32` por config plugin;
+- o aumento de limite não autoriza escrita por fix nem encerra a avaliação de
+  SQLite;
+- a notificação usa ticker nativo para segundos e coalescência de starts;
+- dedupe de recovery normaliza timestamps ISO/numéricos;
+- lock de finalização só é liberado pela chamada que o adquiriu.
+
+O gate físico permanece reprovado até nova build comprovar as correções.

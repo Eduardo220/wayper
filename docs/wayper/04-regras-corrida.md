@@ -124,8 +124,8 @@ Regra vigente desde 2026-06-17:
 - Segmento ativo `RUNNING` deve permanecer aberto; `endedAt` so existe em pausa, cancelamento, encerramento ou fim real de segmento.
 - Restore de route chunks, abertura por notificacao e hydrate legado nao podem sobrescrever estado mais novo com snapshot velho.
 - Distancia canonica vem de `trustedPath` deduplicado ou de valor canonico monotonicamente preservado; rota visual limitada nao pode reduzir a distancia real.
-- Foreground e background podem entregar pontos proximos, mas o merge deve deduplicar por timestamp/coordenada/accuracy antes de recalcular distancia.
-- Ao finalizar, o tempo salvo deve ser o maior valor seguro entre storage, UI viva, `finishedAt - startedAt - totalPausedMs` e `lastLocationAt - startedAt - totalPausedMs`.
+- Foreground e background podem entregar pontos proximos, mas o merge deve normalizar timestamps ISO/numericos e deduplicar por timestamp/coordenada/accuracy antes de recalcular distancia.
+- Quando existe timeline de pausas/segmentos, o tempo final deve ser derivado de `finishedAt - startedAt - totalPausedMs`; duração armazenada que incluiu pausa não pode vencer esse cálculo. Sem timeline confiável, usar o maior valor seguro entre storage, UI viva e último ponto.
 - Se o storage falhar por falta de espaco, a corrida em memoria e o ultimo backup valido devem ser preservados e o erro precisa ficar auditavel.
 
 ### Auto-save e estados offline
@@ -142,6 +142,7 @@ Estados praticos da corrida:
 Politica de protecao:
 
 - Checkpoints acontecem por eventos de lifecycle, por AppState, por falhas recuperaveis de GPS e periodicamente durante a corrida ativa.
+- O checkpoint legado de compatibilidade não deve ecoar seus próprios eventos de persistência nem duplicar todos os aliases da rota.
 - Um checkpoint antigo nao pode sobrescrever checkpoint mais recente do mesmo `localRunId`.
 - Se o app fechar durante a finalizacao, a recuperacao deve tratar a corrida como rascunho finalizado/pendente, nao como ativa.
 - Se Firestore falhar, a corrida permanece no historico local com status pendente ou falho de sync.

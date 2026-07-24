@@ -6,15 +6,15 @@ Backlog vivo de funcionalidades, melhorias e pendencias. Nao usar este arquivo p
 
 | Item | Tipo | Status | Observacao |
 | --- | --- | --- | --- |
-| Validacao real Android de corrida/background/notificacao | QA | Pendente | Repetir em aparelho fisico dev e release; emulador nao fecha o risco. |
-| Validar finalização/reentrada em Android físico | QA/bug | Pendente | Fechar evidência do `BUG-20260621-001`; a extração da Fase D não fecha o gate físico. |
+| Retestar correções de corrida/background/notificação | QA | Alta | Gate Dev Client reprovado em 2026-07-24; gerar nova build e repetir ações da notificação, pausa, recovery e finalização. |
+| Validar finalização/reentrada em Android preview/release | QA/bug | Pendente | Dev Client revelou falhas e recebeu correções; ainda falta confirmar histórico, lock e rota sem duplicação em nova build. |
 | Modo foco da corrida | Produto/UX | Planejado | Tempo, distância, pace, estado, GPS crítico e controles; mapa opcional. |
 | Contrato do Relatório da Expedição | Produto/dados | Planejado | Reabrível, parcial e compatível com `RunSummaryModal`/`RunDetailScreen`. |
 | Assinatura Android release real | Build | Pendente | APK prod debug-signed nao e publicavel. |
 | Source maps/Sentry autenticado | Observabilidade | Pendente | Precisa credenciais e evidencia no painel. |
 | Feed/Friends/Groups local-first | Arquitetura | Pendente | Ainda ha chamadas Firestore-first em telas/services, incluindo grupos. |
 | Regras de seguranca do Firestore | Seguranca | A validar | Firestore segue remoto/best effort e precisa regras consistentes. |
-| Teste de volume AsyncStorage | Performance | A medir | Medir rotas/historico longos antes de decidir SQLite. |
+| Teste de volume AsyncStorage | Performance | Em validação | Caso real atingiu limite padrão; schema compacto v2 e limite Android de 32 MB precisam medição antes de decidir SQLite. |
 
 ## Media prioridade
 

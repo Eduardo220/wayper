@@ -32,6 +32,52 @@ Classificação: Alinhado | Parcialmente alinhado | Desalinhado
 ### Ações recomendadas
 ```
 
+## 2026-07-24 - Revisão das remediações do gate físico C/D
+
+### Documentos consultados
+
+Arquitetura, regras da corrida, guia de testes, roteiro Android real, bugs,
+roadmap, backlog e auditorias C/D.
+
+### Arquivos analisados
+
+Notificação/runtime, autosave/storage, histórico/sync, finalização,
+`activeRunState`, `MapScreen`, testes e configuração Expo/Android.
+
+### Resultado
+
+Classificação: Parcialmente alinhado
+
+As correções respeitam local-first, não adicionam processamento no GPS, não
+duplicam serviços e mantêm tarefas derivadas fora da finalização. A classificação
+continua parcial porque a nova build ainda não foi retestada fisicamente.
+
+### Problemas encontrados
+
+Identidade offline indevida na ação nativa, churn/feedback do checkpoint,
+histórico redundante, limite do AsyncStorage, ownership incorreto do lock, dedupe
+incompatível com timestamps mistos e precedência incorreta da duração armazenada.
+
+### Riscos
+
+Persistência antiga incompleta no aparelho, stall de UI, preview/release,
+economia agressiva, kill/force-stop, zonas e reconexão ainda sem comprovação.
+
+### Melhorias sugeridas
+
+Medir tempo da finalização, crescimento do banco e stalls na nova build; considerar
+SQLite apenas com evidência de volume/parse após a compactação.
+
+### Documentação atualizada
+
+Auditorias C/D, arquitetura, regras, testes, bugs, roadmap, backlog, decisões,
+changelog e resumo local-first.
+
+### Ações recomendadas
+
+Instalar nova build, usar corrida nova e executar o roteiro curto antes de seguir
+para a camada visual do Relatório da Expedição.
+
 ## 2026-07-24 - Revisão da Fase D
 
 ### Documentos consultados

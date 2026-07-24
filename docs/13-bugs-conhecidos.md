@@ -63,10 +63,90 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
 - Arquivos relacionados: `src/screens/MapScreen.js`, `src/services/diagnostics/diagnosticExportService.js`, `src/services/runTracking/activeRunTrackingService.js`, `src/services/runTracking/activeRunRuntimeService.js`, `src/services/run/runNotificationService.js`, `src/services/run/runAutoSaveService.js`, `src/services/runOfflineStorageService.js`, `src/services/monitoring/sentryService.js`, `src/services/diagnostics/performanceDiagnosticsService.js`.
 - Correcao aplicada: instrumentacao Sentry/local adicionada para start/countdown/permissao, watcher, background task, notificacao, AppState, restore/reconcile, snapshot canonico, finish lock, UI heartbeat, event-loop freeze provavel e map render stall, com sanitizacao e GPS throttled. O atalho ativo passou a gerar JSON leve com timeout/cancelamento em vez de ZIP pesado; finalizar cancela/libera export em andamento, salva localmente antes de territorio/XP/sync e defere tarefas pesadas com logs recuperaveis. Em 2026-07-21, a task de GPS foi extraida para bootstrap headless, ingestao/transicoes/escritas passaram a ser serializadas, checkpoint canonico virou lote de ~5 segundos/limite de pontos, `MapScreen` deixou de processar o mesmo fix em paralelo e atualiza mapa em ate ~1 Hz, previa territorial passou a 5 segundos e o checkpoint so e limpo apos confirmacao do mesmo `localRunId` no historico. Em 2026-07-24, freeze, lock idempotente, save mínimo confirmado e limpeza foram extraídos para `runFinalizationService`; a UI passou a ser liberada antes da criação/processamento da fila, e o seed da Expedição permite reconciliação após reinício.
 - Teste necessario: repetir em aparelho fisico Android dev e preview/release com `EXPO_PUBLIC_SENTRY_DSN` e `SENTRY_AUTH_TOKEN` configurados; confirmar evento `RUN_UI_POSSIBLE_FREEZE_DETECTED` ou breadcrumbs de reentrada sem coordenadas cruas; executar a matriz `docs/12-guia-de-testes.md` (kill de processo, force-stop, tela bloqueada, offline, GPS perdido, zonas e corrida longa); validar que `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED` ocorre antes de tarefas deferidas e que finalizar durante export registra `RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH`.
-- Evidencia da Fase C em 2026-07-24: 7 suites criticas/87 testes automatizados passaram. Um Android fisico `RQCW306MRLM` foi detectado por ADB, mas permaneceu `unauthorized`; nenhum teste foi executado no aparelho e o status do bug nao muda.
+- Evidencia da Fase C em 2026-07-24: 7 suites criticas/87 testes automatizados passaram. Um Android fisico foi inicialmente detectado por ADB como `unauthorized`; naquele momento nenhum teste foi executado no aparelho e o status do bug não mudou.
 - Evidencia da Fase D em 2026-07-24: 52 suites/468 testes passaram e o bundle Android com 2.334 módulos foi exportado. O Dev Client também abriu no Samsung SM-A546E com Android 16/API 36 e carregou o bundle atual, mas nenhuma corrida ativa, tela bloqueada, kill ou reentrada foi testada; o smoke básico não altera `EM_VALIDACAO`.
+- Evidencia física posterior em 2026-07-24: o mesmo aparelho manteve coleta/foreground service por 12 min 32 s com tela apagada e reabriu pela notificação sem crash/ANR. O gate continuou reprovado por falhas de ação da notificação, storage/finalização e recovery, registradas abaixo. O stall `RUN_UI_POSSIBLE_FREEZE_DETECTED` de 11,87 s deve ser medido novamente após reduzir o I/O.
 - Data: 2026-06-21
 - Decisao/observacao: Sentry complementa o ZIP/NDJSON local. O bug nao pode ser marcado como corrigido ate haver reproducao/validacao fisica e simbolicacao autenticada no painel.
+
+### BUG-20260724-001 - Pausar/retomar pela notificação perde a identidade
+
+- ID: BUG-20260724-001
+- Titulo: Pausar/retomar pela notificação perde a identidade
+- Status: EM_VALIDACAO
+- Severidade: critica
+- Area: Notificação Android, runtime headless, recovery
+- Descricao: a ação nativa é recebida, mas a reconciliação pode usar
+  `userId: "offline"` e rejeitar a corrida autenticada com `user_mismatch`.
+- Evidencia: reprodução no Samsung SM-A546E, Android 16/API 36. Pausa/retomada
+  no app funcionou; pela notificação falhou.
+- Causa confirmada: o runtime não preservava/resolvia o `userId` do snapshot
+  atual antes do fallback offline.
+- Correcao aplicada: snapshot/runtime carregam `userId`; a ação consulta o
+  snapshot atual; starts concorrentes são coalescidos e o ticker nativo assume
+  os segundos para reduzir reinícios do foreground service.
+- Arquivos relacionados: `src/services/run/runNotificationService.js`,
+  `src/services/runTracking/activeRunRuntimeService.js`.
+- Teste necessario: nova build física; pausar/retomar pela notificação com tela
+  bloqueada e confirmar o mesmo `localRunId`, path e segmentos.
+- Data: 2026-07-24
+- Decisao/observacao: commit `307f1df`; não marcar como corrigido antes do reteste.
+
+### BUG-20260724-002 - Finalização excede o limite do AsyncStorage
+
+- ID: BUG-20260724-002
+- Titulo: Finalização excede o limite do AsyncStorage
+- Status: EM_VALIDACAO
+- Severidade: critica
+- Area: Autosave, checkpoint legado, histórico, Android
+- Descricao: a finalização única levou aproximadamente 47 segundos, abriu o
+  resumo com métricas incoerentes e falhou em salvar o histórico com
+  `SQLITE_FULL[13]`, apesar de haver espaço livre no aparelho.
+- Evidencia: banco RKStorage próximo do limite padrão e payload da corrida
+  serializado repetidamente; eventos de persistência podiam retroalimentar o
+  autosave.
+- Causa confirmada: redundância de aliases/path no checkpoint/histórico, janela
+  legada agressiva e feedback de evento, combinados com o limite padrão do banco.
+- Correcao aplicada: checkpoint legado em 15 s e sem eco próprio; envelope final
+  compacto; histórico schema v2 compacto com reidratação na leitura; limite
+  Android de 32 MB por config plugin; save oficial antes do rascunho fallback.
+- Arquivos relacionados: `app.json`,
+  `plugins/withAsyncStorageDatabaseSize.cjs`,
+  `src/services/run/runAutoSaveService.js`,
+  `src/services/runOfflineStorageService.js`, `src/utils/sync.js`,
+  `src/services/run/runFinalizationService.js`.
+- Teste necessario: instalar nova build, finalizar corrida nova, medir tempo e
+  confirmar item no histórico após reabrir o app.
+- Data: 2026-07-24
+- Decisao/observacao: commit `c3acc03`; SQLite continua opção condicionada a
+  medição, não correção automática.
+
+### BUG-20260724-003 - Toque duplicado e recovery corrompem o resultado final
+
+- ID: BUG-20260724-003
+- Titulo: Toque duplicado e recovery corrompem o resultado final
+- Status: EM_VALIDACAO
+- Severidade: critica
+- Area: Finalização, lock, recovery, duração, rota
+- Descricao: o segundo toque era ignorado, mas seu `finally` liberava o lock da
+  primeira finalização. Depois, recovery duplicou a rota/distância ao comparar
+  timestamps ISO e numéricos como chaves diferentes; a duração armazenada ainda
+  incorporou o tempo pausado.
+- Evidencia: reprodução física com corrida recuperada apresentando
+  aproximadamente o dobro de pontos/distância e duração incompatível com a
+  timeline da pausa.
+- Causa confirmada: ownership do lock não era local à chamada, dedupe não
+  normalizava timestamp e a duração armazenada tinha precedência excessiva.
+- Correcao aplicada: apenas a chamada proprietária libera o lock; dedupe usa
+  timestamp normalizado + coordenada; timeline de pausa vence storage; timeouts
+  da finalização foram reduzidos.
+- Arquivos relacionados: `src/screens/MapScreen.js`,
+  `src/services/run/runFinalizationService.js`,
+  `src/services/runTracking/activeRunState.js`.
+- Teste necessario: duplo toque, pausa longa, finalização única e reabertura sem
+  duplicar rota/distância.
+- Data: 2026-07-24
+- Decisao/observacao: commit `ec8d236`; não marcar como corrigido antes do reteste.
 
 ## Bugs corrigidos
 
@@ -89,7 +169,7 @@ Nenhum bug corrigido registrado neste arquivo no momento.
 | Stories sem upload remoto | ADIADO | Story local permanece `PENDING_SYNC`. | Definir contrato remoto e fila de upload antes de implementar sync. |
 | XP/conquistas sem sync remoto | ADIADO | Progresso e local por enquanto. | Definir contrato remoto idempotente. |
 | Sync territorial remoto incompleto | ADIADO | Territorio local nao vira social/remoto completo. | Definir fila/contrato separados do sync de runs. |
-| AsyncStorage com rotas/historicos longos | EM_VALIDAÇÃO | Parse/carregamento pode pesar. | Medir volume real antes de decidir SQLite. |
+| AsyncStorage com rotas/historicos longos | EM_VALIDAÇÃO | O limite padrão foi atingido em teste físico; schema compacto v2 e limite Android de 32 MB ainda precisam reteste. | Medir nova build antes de decidir SQLite. |
 | Janela de checkpoint canonico de ate ~5 segundos | PRECISA_TESTE_REAL | Kill abrupto pode perder os fixes ainda apenas em memoria; lote background concluido faz flush imediato. | Medir em aparelho real e ajustar limites somente com evidencia de I/O/bateria. |
 | Servicos legados presentes | LEGADO | Reativacao acidental pode duplicar arquitetura. | Manter docs/IA e testes bloqueando uso como fonte nova. |
 | `console.*` legado fora de fluxos criticos | ADIADO | Pode poluir logs ou Sentry se reconfigurado. | Migrar gradualmente para `logger.js`. |

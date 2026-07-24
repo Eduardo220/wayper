@@ -26,6 +26,56 @@ Origem:
 ### Riscos restantes
 ```
 
+## 2026-07-24 - Remediação do gate físico das Fases C/D
+
+Status: Implementado e validado automaticamente; reteste físico pendente
+
+Origem: Teste Android real conduzido com o usuário
+
+Área: Corrida ativa, notificação, storage, recovery e finalização
+
+### O que mudou
+
+- ações da notificação preservam a identidade da corrida e coalescem starts;
+- autosave legado deixou de ecoar sua própria persistência;
+- histórico local usa representação compacta v2, reidratada na leitura;
+- build Android declara limite de 32 MB para o banco do AsyncStorage;
+- lock, dedupe de timestamps, duração com pausa e timeouts foram corrigidos;
+- rascunho final virou fallback do save no histórico oficial.
+
+### Por que mudou
+
+O teste físico manteve background/reentrada, mas falhou nas ações da notificação,
+atingiu `SQLITE_FULL`, duplicou rota no recovery e não confirmou o histórico na
+finalização.
+
+### Impacto no usuário
+
+A correção busca preservar pausa, duração, rota e finalização local sem exigir
+internet. O impacto físico ainda precisa ser comprovado em nova build.
+
+### Impacto técnico
+
+Não foi criada fonte paralela nem dependência de Firestore. Checkpoints e
+histórico foram compactados; o contrato público é preservado na leitura.
+
+### Documentos relacionados
+
+- `docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`;
+- `docs/13-bugs-conhecidos.md`;
+- `docs/wayper/09-arquitetura-tecnica.md`.
+
+### Arquivos alterados
+
+Services existentes de notificação, runtime, autosave, storage, sync,
+finalização/recovery, testes, config plugin e documentação correspondente.
+
+### Riscos restantes
+
+- nova build e reteste físico;
+- preview/release, kill/force-stop, zonas e offline/reconexão;
+- medir stall de UI e volume/parse antes de decidir SQLite.
+
 ## 2026-07-24 - Núcleo de finalização e pipeline da Expedição
 
 Status: Implementado, validado localmente e com smoke físico básico; matriz de

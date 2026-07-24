@@ -40,7 +40,9 @@ Para produto, negócio e arquitetura-alvo, consultar `AGENTS.md`,
 - A fonte oficial de historico finalizado e `runs`, acessada por `RunRepository` e `sync.js`.
 - Sync de runs nao usa fila paralela; ele parte da copia local e preserva `localRunId`/`remoteRunId`.
 - `runService.js`, `locationService`, `zonesStorage`, `zoneService`, `xpService` e `MedalsWidget` seguem como legado/documentados, nao como base nova.
-- SQLite nao foi adotado; so deve entrar apos medicao real de volume, parse e custo de rotas/historico.
+- SQLite nao foi adotado. Depois de um `SQLITE_FULL` físico, `runs` usa schema
+  compacto v2 e o build Android declara 32 MB; SQLite só deve entrar após medir
+  volume, parse e custo com essa correção.
 - Home e social. Dashboard pessoal fica em `Dashboard`, `Perfil` ou resumo dedicado.
 - Stories de corrida sao locais em `wayper_run_stories_v1` e ficam `PENDING_SYNC`; upload remoto ainda e futuro.
 - Demo/mock so aparece com origem explicita e nunca como dado real.
@@ -52,10 +54,10 @@ Para produto, negócio e arquitetura-alvo, consultar `AGENTS.md`,
 | --- | --- | --- |
 | Corrida ativa | `activeRunTrackingService` / `activeRunState` | Estado canonico em `wayper:activeRun:v2`. |
 | Recovery | `runRecoveryService` | Decide entre canonico e legado; impede finalizada voltar como ativa. |
-| Autosave | `runAutoSaveService` | Checkpoints periodicos, AppState, erro recuperavel e pre-finish. |
+| Autosave | `runAutoSaveService` | Canônico em lote; legado em 15 s, sem eco de persistência. |
 | GPS/path | `src/services/tracking` | Classificacao, distancia, render path e segmentos. |
 | Notificacao | `runNotificationService` + modulo nativo Android | Pausar/retomar; finalizar permanece no app. |
-| Historico | `RunRepository` + `sync.js` | Chave local `runs`. |
+| Historico | `RunRepository` + `sync.js` | Chave `runs`, persistência compacta v2 e contrato reidratado. |
 | Sync de runs | `runSyncQueueService` + `sync.syncRunsToFirestore()` | Idempotente, com lock contra concorrencia. |
 | Territorio | `TerritoryRepository` + `territoryStorageService` | Storage local atual, sync remoto separado. |
 | XP/conquistas | `ProgressionRepository` / `AchievementRepository` | Idempotente por corrida/evento. |
@@ -116,17 +118,18 @@ Codex pode sugerir, registrar e organizar. Eduardo decide o que entra na proxima
 
 ## Validacoes realizadas
 
-Ultima rodada reportada:
+Ultima rodada reportada em 2026-07-24:
 
-- `npm test -- --runInBand`: 49 suites / 428 testes.
+- `npm test -- --runInBand`: 52 suites / 476 testes, 0 snapshots.
 - `git diff --check`: passou, com warnings LF/CRLF conhecidos quando aplicavel.
-- `.\gradlew.bat :app:compileDevDebugKotlin --console=plain`: passou.
-- Checagem estatica simples de imports relativos: 234 arquivos verificados.
+- `npx expo config --type prebuild`: passou e registrou o config plugin do
+  AsyncStorage.
 - `lint`, `typecheck`, `test:ci` e `validate` nao existem no `package.json`.
 
 ## Riscos pendentes
 
-- Validacao real em aparelho fisico Android/dev/release para GPS, background, notificacao, recovery, share e export.
+- Gate físico Dev Client reprovado: background/reentrada passaram, mas
+  notificação, recovery e finalização aguardam reteste da nova build.
 - Fabricantes com economia agressiva de bateria podem matar o processo mesmo com foreground service.
 - Feed/Friends/Groups ainda possuem trechos Firestore-first, incluindo componentes de grupo como `CreateGroupModal`.
 - Upload/sync remoto de stories ainda nao existe.
@@ -139,8 +142,9 @@ Ultima rodada reportada:
 
 ## Proximos passos recomendados
 
-1. Executar checklist Android real em aparelho fisico com build dev e release.
-2. Validar background/tela bloqueada com economia de bateria ligada/desligada.
+1. Gerar nova build Dev Client e retestar notificação, pausa, recovery e
+   finalização em corrida nova.
+2. Repetir depois em preview/release e com economia de bateria ligada/desligada.
 3. Fechar assinatura release real e source maps autenticados antes de tratar APK como publicavel.
 4. Desacoplar Feed/Friends/Groups de chamadas Firestore-first por repositories, sem quebrar o social atual.
 5. Implementar sync remoto de stories, XP/conquistas e territorios apenas depois de definir contratos e testes.

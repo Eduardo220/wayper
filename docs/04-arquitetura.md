@@ -115,7 +115,15 @@ Desde 2026-06-06, os dominios principais passam a ter facades/repositories finos
 
 Firestore ainda existe em services de sync, perfil, ranking, feed, amigos, grupos, notificacoes e territorio remoto. A regra nova e mover chamadas diretas de tela para repository/service quando o fluxo for alterado, sem refatorar social/grupos de uma vez.
 
-SQLite nao foi adicionado nesta etapa. AsyncStorage segue aceitavel para a camada atual; SQLite/Expo SQLite deve ser reavaliado se historicos com rotas longas causarem custo perceptivel de parse/carregamento.
+SQLite nao foi adicionado nesta etapa. Depois de um teste físico atingir o limite
+padrão do banco Android, a chave `runs` passou a persistir um schema compacto v2:
+uma única cópia canônica de `trustedPath`, `rawPath`, `renderPath` e metadados de
+segmentos. Os aliases públicos são reidratados na leitura. O config plugin
+`plugins/withAsyncStorageDatabaseSize.cjs` fixa
+`AsyncStorage_db_size_in_MB=32` em builds Android. O aumento é margem
+operacional, não autorização para payload duplicado nem escrita por ponto.
+SQLite/Expo SQLite deve ser reavaliado se históricos longos ainda causarem custo
+perceptível de parse, I/O ou volume.
 
 ## Diagnostico local e observabilidade
 

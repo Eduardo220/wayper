@@ -8,8 +8,7 @@
 
 **Escopo executado:** extração da finalização, contrato mínimo e evolução da fila
 
-**Status:** implementado, validado localmente e com smoke físico básico; matriz
-de corrida Android pendente
+**Status:** implementado; gate físico reprovado e correções aguardando reteste
 
 ## Diagnóstico
 
@@ -143,9 +142,22 @@ corrigidos para validar o serviço extraído e a execução final passou integra
 - desafios/recompensas explicitamente `not_applicable`;
 - reconciliação automática de seeds pendentes.
 
+### Validação física posterior
+
+Uma corrida real no Samsung SM-A546E, Android 16/API 36, confirmou coleta com
+tela apagada e reentrada, mas revelou `user_mismatch` nas ações da notificação,
+pressão de storage até `SQLITE_FULL`, liberação indevida do lock por toque
+duplicado, rota duplicada no recovery e duração com pausa incorreta. A
+finalização única abriu o resumo depois de aproximadamente 47 segundos, porém o
+save local falhou. O gate da Fase D está reprovado até o reteste das correções.
+
+Registro sanitizado:
+`docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`.
+
 ## Riscos restantes
 
-- houve somente smoke físico de instalação/bootstrap, sem corrida ativa;
+- a corrida física revelou falhas críticas; as correções ainda não foram
+  validadas em nova build;
 - lock em memória evita concorrência no processo atual; após crash, a proteção é
   a confirmação idempotente no histórico;
 - o relatório visual ainda não consome o contrato modular;
@@ -161,13 +173,13 @@ corrigidos para validar o serviço extraído e a execução final passou integra
 - repetir em corrida livre e por zonas, dev client e preview/release;
 - validar economia agressiva de bateria.
 
-O aparelho `RQCW306MRLM` foi autorizado durante a Fase D. O resultado físico
-declarado limita-se ao smoke descrito acima; nenhum cenário crítico da matriz é
+O aparelho foi autorizado durante a Fase D. A execução física posterior está
+registrada no relatório de remediação; nenhum cenário crítico reprovado é
 declarado aprovado.
 
 ## Próximos passos
 
-1. autorizar ADB e executar as matrizes físicas;
+1. gerar nova build e executar o reteste físico das correções;
 2. medir duração do freeze/save mínimo e crescimento do storage;
 3. adaptar `RunSummaryModal` e `RunDetailScreen` ao estado modular na Fase 3;
 4. manter integrações comerciais fora do fluxo.

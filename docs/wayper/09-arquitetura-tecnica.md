@@ -210,7 +210,7 @@ Regra de conflito entre `wayper:activeRun:v2` e `wayper_active_offline_run_v1`:
 
 Fluxo consolidado:
 
-`bootstrap da task -> start -> snapshot canonico -> ingestao serializada -> checkpoint canonico em lote + checkpoint legado de compatibilidade -> pause/resume canonicos -> AppState/background checkpoint -> recovery via runRecoveryService -> FINISHING/finish canonico -> rascunho final legado -> saveLocalRun confirmado pelo mesmo id -> limpeza dos storages ativos -> sync posterior`.
+`bootstrap da task -> start -> snapshot canonico -> ingestao serializada -> checkpoint canonico em lote + checkpoint legado de compatibilidade -> pause/resume canonicos -> AppState/background checkpoint -> recovery via runRecoveryService -> FINISHING/finish canonico -> saveLocalRun compacto confirmado pelo mesmo id -> rascunho final apenas como fallback -> limpeza dos storages ativos -> sync posterior`.
 
 ### Reconciliacao canonica da corrida ativa
 
@@ -231,7 +231,7 @@ Regras invariantes:
 - `RUNNING` nunca calcula tempo por `segment.endedAt` ou `segment.endTimestamp`.
 - Tempo de `RUNNING` vem de `now - startedAt - totalPausedMs`; em recovery de GPS pode usar `lastLocationAt - startedAt - totalPausedMs`.
 - Tempo de `PAUSED` vem de `pausedAt - startedAt - totalPausedMs`.
-- Tempo final usa o maior valor seguro entre storage, `finishedAt`, `lastLocationAt` e UI viva.
+- Tempo final com timeline de pausa usa `finishedAt - startedAt - totalPausedMs`; duração armazenada só participa como fallback quando não há timeline confiável.
 - Segmento ativo `RUNNING` com `reason: active`/`resume`/`gps_gap` e `endReason: null` deve ficar aberto, sem `endedAt`/`endTimestamp`.
 - Restore que encontrar segmento ativo fechado indevidamente deve limpar o fim e registrar `ACTIVE_SEGMENT_STALE_END_CLEARED` e `ACTIVE_SEGMENT_NORMALIZED`.
 - Snapshot antigo nao pode reduzir `elapsedMs`, `distanceMeters`, contagem de pontos ou geometria viva.
@@ -258,7 +258,8 @@ Desde 2026-06-04, `runAutoSaveService` tambem protege a corrida ativa contra que
 
 - Checkpoints canonicos sao disparados por lote: aproximadamente a cada 5 segundos, 5 pontos aceitos ou 10 pontos brutos. Um lote da task background sempre faz flush ao terminar.
 - Start, pause, resume, `FINISHING`, snapshot final, erro importante e AppState critico forcam checkpoint imediato; as escritas sao serializadas para snapshot antigo nao vencer o novo.
-- `runAutoSaveService` gera o checkpoint legado de compatibilidade em janela padrao de 5 segundos, depois de forcar o canonico quando necessario.
+- `runAutoSaveService` gera o checkpoint legado de compatibilidade em janela padrao de 15 segundos, depois de forcar o canonico quando necessario.
+- Eventos emitidos pela própria persistência do checkpoint legado são ignorados; somente checkpoints forçados pendentes entram novamente na fila.
 - `MapScreen` forca checkpoint ao entrar em `background` ou `inactive`, antes de finalizar a corrida e quando falhas recuperaveis de localizacao aparecem.
 - Falhas repetidas de localizacao usam throttle para evitar escrita excessiva no AsyncStorage.
 - Todo checkpoint carrega `checkpointAtMs`; `runOfflineStorageService` ignora escrita viva mais antiga do mesmo `localRunId`.
@@ -270,7 +271,7 @@ Desde 2026-06-04, `runAutoSaveService` tambem protege a corrida ativa contra que
 
 Fluxo reforcado:
 
-`bootstrap headless -> start/checkpoint -> pontos em memoria -> checkpoint por tempo/lote -> pause/resume flush -> AppState flush -> recovery consolidado -> FINISHING/before_finish flush -> finish canonico -> rascunho final -> saveLocalRun confirmado e pending sync -> limpeza ativa -> sync idempotente`.
+`bootstrap headless -> start/checkpoint -> pontos em memoria -> checkpoint por tempo/lote -> pause/resume flush -> AppState flush -> recovery consolidado -> FINISHING/before_finish flush -> finish canonico -> saveLocalRun compacto confirmado e pending sync -> rascunho final somente em fallback -> limpeza ativa -> sync idempotente`.
 
 ### Notificacao persistente Android da corrida ativa
 
@@ -292,6 +293,12 @@ Comportamento esperado:
 - Ao finalizar/cancelar/limpar o snapshot ativo, a notificacao e removida para evitar notificacao orfa.
 - Toque no corpo da notificacao reabre a tela de corrida ativa por deep link, sem empilhar nova rota.
 - Updates JS para o native module sao limitados por throttle; o foreground service continua atualizando visualmente o tempo enquanto a corrida esta rodando.
+- O ticker nativo é responsável pelos segundos. A chave de atualização JS muda
+  somente com status ou distância arredondada, e starts concorrentes são
+  coalescidos para não reiniciar o service em rajada.
+- A ação nativa resolve o `userId` pelo snapshot canônico atual antes de
+  reconciliar; `offline` só é fallback quando nenhuma evidência de identidade
+  existe.
 - Atualizar texto da notificacao nao chama `Location.startLocationUpdatesAsync`; o registro de localizacao consulta `hasStartedLocationUpdatesAsync` e so inicia quando ausente.
 - Se o Android recriar o `RunNotificationForegroundService` com `intent=null`, o service restaura de `SharedPreferences` apenas status/tempo/distancia necessarios para voltar a foreground; coordenadas e trajeto continuam exclusivamente no checkpoint canonico.
 - Mesmo sem concessao de `POST_NOTIFICATIONS`, o modulo inicia o foreground service. Nessa condicao o Android 13+ pode esconder a notificacao da gaveta, mas mantem o service em `Active apps`/Task Manager.
@@ -323,7 +330,7 @@ Responsabilidades:
 - `trackingPathService`: mantem a sessao incremental, `rawPath`, `trustedPath`, `renderPath`, `segments`, distancia e contadores de qualidade.
 - `trackingRenderPath` / `trackingSmoothing`: preparam a rota visual sem alterar distancia nem `trustedPath`.
 - `activeRunTrackingService`: alimenta a sessao canonica, ordena lotes de background por timestamp e ignora pontos em estados que nao aceitam tracking.
-- Foreground watcher e task background entregam ao mesmo metodo serializado; dedupe por identidade temporal/coordenada impede que o mesmo fix infle path ou distancia.
+- Foreground watcher e task background entregam ao mesmo metodo serializado; dedupe normaliza timestamp ISO/numerico e compara identidade temporal/coordenada para impedir que o mesmo fix infle path ou distancia.
 - `trackSegments` / `trackGeojson`: sanitizam segmentos e produzem `LineString` ou `MultiLineString` para mapa, historico e replay.
 - `MapScreen` aplica o snapshot visual no maximo em torno de 1 Hz e usa `liveRenderPath`/segments limitados. A previa territorial so roda a cada 5 segundos e com novos pontos suficientes.
 - `WayperMapLibre`: mantem GeoJSON da rota e marcador em sources memoizados separados; mover somente o marcador nao deve reconstruir a linha.
@@ -350,6 +357,8 @@ Desde 2026-06-05, o historico oficial de corridas finalizadas tambem e local-fir
 Fonte oficial:
 
 - Storage: chave `runs` no AsyncStorage.
+- Persistência: schema compacto v2, sem repetir aliases de rota em cada registro.
+  A leitura reidrata aliases e segmentos esperados pelas telas/services.
 - Escrita: `sync.saveLocalRun()`.
 - Listagem: `sync.loadLocalRunHistory()` ou `sync.loadLocalRuns()`.
 - Detalhe: `sync.findLocalRunById()`.
@@ -380,7 +389,11 @@ Uso nas telas:
 
 Limite atual:
 
-- A lista ainda usa AsyncStorage. O risco principal e volume de rota em historicos longos; migrar para SQLite/Expo SQLite se parse/carregamento de JSON ficar perceptivelmente pesado.
+- A lista ainda usa AsyncStorage. O banco Android recebe limite explícito de
+  32 MB por `plugins/withAsyncStorageDatabaseSize.cjs`, depois de um caso físico
+  de `SQLITE_FULL` no limite padrão. Isso não elimina o risco de parse/I/O:
+  migrar para SQLite/Expo SQLite se históricos longos continuarem
+  perceptivelmente pesados.
 
 ### Fila local de sync de corridas finalizadas
 
