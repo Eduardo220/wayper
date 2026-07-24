@@ -42,6 +42,10 @@ Origem: Teste Android real conduzido com o usuário
 - build Android declara limite de 32 MB para o banco do AsyncStorage;
 - lock, dedupe de timestamps, duração com pausa e timeouts foram corrigidos;
 - rascunho final virou fallback do save no histórico oficial.
+- pausa/retomada agora exigem confirmação do mesmo ID e estado;
+- finalizar durante pausa consolida o intervalo pausado;
+- limpeza pós-save bloqueia IDs divergentes;
+- detalhes do resumo reutilizam o save oficial e permanecem em retry se falhar.
 
 ### Por que mudou
 
@@ -58,6 +62,8 @@ internet. O impacto físico ainda precisa ser comprovado em nova build.
 
 Não foi criada fonte paralela nem dependência de Firestore. Checkpoints e
 histórico foram compactados; o contrato público é preservado na leitura.
+Transições e limpeza passaram a ter confirmação explícita de identidade, e
+território/fila continuam fora do caminho bloqueante do resumo.
 
 ### Documentos relacionados
 

@@ -57,6 +57,42 @@ Antes de aprovar:
 Registro detalhado:
 `docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`.
 
+### Hardening adicional antes do reteste
+
+Depois da primeira build instalada, uma nova auditoria bloqueou a etapa seguinte
+e cobriu os detalhes residuais do fluxo crítico:
+
+- transição de pausa/retomada exige mesmo ID e estado esperado;
+- finalização durante pausa acumula a pausa aberta;
+- limpeza canônica/legada é condicionada ao ID salvo;
+- cálculo final normaliza timestamps ISO/numéricos e respeita a timeline;
+- save do resumo usa o serviço oficial, mantém retry e não aguarda território
+  ou fila derivada.
+
+Evidência automatizada desta rodada:
+
+```bash
+npm test -- --runInBand \
+  src/services/run/__tests__/runFinalizationService.test.js \
+  src/services/run/__tests__/runNotificationService.test.js \
+  src/services/run/__tests__/runRecoveryService.test.js \
+  src/services/__tests__/runOfflineStorageService.test.js \
+  src/services/runTracking/__tests__/activeRunTrackingService.test.js \
+  src/services/runTracking/__tests__/activeRunState.test.js
+```
+
+Resultado: 6 suítes e 109 testes aprovados.
+
+```bash
+npm test -- --runInBand
+```
+
+Resultado: 52 suítes e 487 testes aprovados, 0 snapshots.
+
+O export Android processou 2.334 módulos e `npm run android:build:dev`
+concluiu 631 tarefas em 1 min 51 s. Esses resultados não substituem o reteste
+funcional no aparelho.
+
 ## Testes unitários prioritários
 
 ### Corrida

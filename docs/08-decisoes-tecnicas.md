@@ -476,3 +476,43 @@ decisão foi refinada sem trocar a fonte oficial:
 - lock de finalização só é liberado pela chamada que o adquiriu.
 
 O gate físico permanece reprovado até nova build comprovar as correções.
+
+## ADR-028: Transições confirmadas e limpeza vinculada à identidade
+
+**Status:** aceito
+
+**Contexto:** os serviços de tracking preservam o último snapshot quando uma
+operação falha. Consumidores que tratam qualquer retorno não nulo como sucesso
+podem exibir pausa ou retomada inexistente. Na finalização, uma limpeza sem
+identidade também pode remover uma corrida diferente em caso de reentrada ou
+concorrência. O resumo ainda possuía um caminho duplicado de save que fechava a
+tela quando o erro era absorvido pelo componente pai.
+
+**Decisão:** toda pausa/retomada crítica confirma estado e identidade. O
+encerramento consolida a pausa aberta antes de mudar para `FINISHING`.
+`persistMinimumFinishedRun()` propaga o `runId` salvo para a limpeza canônica e
+legada; mismatch bloqueia a remoção e deixa evidência diagnóstica. O resumo
+reutiliza o mesmo serviço oficial com `forceWrite` para editar metadados e mantém
+retry visível se o save não for confirmado.
+
+**Política:**
+
+- sucesso de pausa exige mesmo `activeRunId` e estado `PAUSED`;
+- sucesso de retomada exige mesmo `activeRunId` e estado `RUNNING`;
+- retorno não nulo com estado incorreto é falha recuperável, não sucesso;
+- `expectedRunId` é obrigatório quando a limpeza sucede um save conhecido;
+- mismatch registra `RUN_ACTIVE_CLEANUP_ID_MISMATCH_BLOCKED` e preserva
+  snapshot, backup e route chunks;
+- edição do resumo pode regravar uma corrida mínima já existente, mas tarefas
+  derivadas continuam deferidas;
+- falha de detalhes não reverte a corrida mínima nem fecha silenciosamente o
+  resumo.
+
+**Consequências:**
+
+- UI, notificação e storage não anunciam transições que o serviço não confirmou;
+- finalizar durante pausa não incorpora o intervalo parado;
+- uma finalização atrasada não apaga uma nova corrida;
+- recuperação e edição convergem no serviço oficial em vez de criar caminhos
+  paralelos;
+- o gate continua dependente de reteste físico Android.

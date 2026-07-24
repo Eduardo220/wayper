@@ -35,6 +35,14 @@
   conquista, recompensa, replay, exportação, share, anúncio e sync remoto.
 - Finalização concorrente é bloqueada por chave/estado idempotente.
 - Lógica crítica de finalização não depende do ciclo de vida de uma tela.
+- Pausa e retomada só alteram a experiência quando o mesmo `activeRunId`
+  confirma respectivamente `PAUSED` ou `RUNNING`.
+- Finalizar durante pausa deve acumular a pausa aberta antes de calcular a
+  duração ativa.
+- Limpeza após save é vinculada ao ID salvo e nunca pode apagar snapshot de
+  outra corrida.
+- Falha ao salvar detalhes opcionais mantém o registro mínimo e oferece retry;
+  território, XP, fila, replay, share e sync continuam fora do bloqueio da tela.
 
 ## Processamento e Relatório da Expedição
 

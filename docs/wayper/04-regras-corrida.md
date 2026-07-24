@@ -113,6 +113,8 @@ Regra vigente desde 2026-06-04:
 - Corrida finalizada ou pendente de sync nao pode voltar como ativa.
 - Legado vivo so pode ser aplicado depois de migrado para o snapshot canonico.
 - Depois que uma corrida finalizada entra no historico/fila local, os storages de corrida ativa devem ser limpos.
+- A limpeza pós-save deve receber o `runId` confirmado; se o snapshot atual
+  pertencer a outra corrida, a limpeza é bloqueada e os dados são preservados.
 
 ### Consistencia visual e canonica
 
@@ -126,6 +128,8 @@ Regra vigente desde 2026-06-17:
 - Distancia canonica vem de `trustedPath` deduplicado ou de valor canonico monotonicamente preservado; rota visual limitada nao pode reduzir a distancia real.
 - Foreground e background podem entregar pontos proximos, mas o merge deve normalizar timestamps ISO/numericos e deduplicar por timestamp/coordenada/accuracy antes de recalcular distancia.
 - Quando existe timeline de pausas/segmentos, o tempo final deve ser derivado de `finishedAt - startedAt - totalPausedMs`; duração armazenada que incluiu pausa não pode vencer esse cálculo. Sem timeline confiável, usar o maior valor seguro entre storage, UI viva e último ponto.
+- Se a finalização começar em `PAUSED`, a pausa ainda aberta deve ser acumulada
+  antes da transição para `FINISHING`.
 - Se o storage falhar por falta de espaco, a corrida em memoria e o ultimo backup valido devem ser preservados e o erro precisa ficar auditavel.
 
 ### Auto-save e estados offline
@@ -156,6 +160,9 @@ Regras vigentes desde 2026-06-05 para Android:
 - Corrida `RUNNING` mostra status `Correndo` e acao `Pausar`.
 - Corrida `PAUSED` mostra status `Pausada` e acao `Retomar`.
 - Pausar ou retomar pela notificacao deve chamar `activeRunTrackingService`, preservar `localRunId`, path e segments, e disparar checkpoint via `runAutoSaveService`.
+- Pausa só é confirmada com o mesmo `activeRunId` em `PAUSED`; retomada só é
+  confirmada com o mesmo ID em `RUNNING`. Retorno divergente preserva o estado e
+  registra falha recuperável.
 - A notificacao deve abrir o app na tela de corrida ativa por deep link, sem criar corrida nova e sem empilhar telas.
 - Ao finalizar, cancelar ou limpar o snapshot ativo, a notificacao deve ser removida.
 - Finalizar pela notificacao nao faz parte desta etapa; o usuario deve abrir o app para confirmar/salvar o resumo.

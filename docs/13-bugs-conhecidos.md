@@ -84,11 +84,15 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
   atual antes do fallback offline.
 - Correcao aplicada: snapshot/runtime carregam `userId`; a ação consulta o
   snapshot atual; starts concorrentes são coalescidos e o ticker nativo assume
-  os segundos para reduzir reinícios do foreground service.
+  os segundos para reduzir reinícios do foreground service. A ação agora só
+  confirma sucesso quando o mesmo `activeRunId` retorna `PAUSED`/`RUNNING`; caso
+  contrário preserva o estado anterior e não grava checkpoint de sucesso.
 - Arquivos relacionados: `src/services/run/runNotificationService.js`,
   `src/services/runTracking/activeRunRuntimeService.js`.
 - Teste necessario: nova build física; pausar/retomar pela notificação com tela
   bloqueada e confirmar o mesmo `localRunId`, path e segmentos.
+- Evidencia automatizada adicional: testes rejeitam retorno `RUNNING` após pausa
+  e retorno `PAUSED` após retomada; a suíte completa ficou em 52/487.
 - Data: 2026-07-24
 - Decisao/observacao: commit `307f1df`; não marcar como corrigido antes do reteste.
 
@@ -110,6 +114,8 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
 - Correcao aplicada: checkpoint legado em 15 s e sem eco próprio; envelope final
   compacto; histórico schema v2 compacto com reidratação na leitura; limite
   Android de 32 MB por config plugin; save oficial antes do rascunho fallback.
+  O resumo reutiliza o save mínimo oficial com `forceWrite`, mantém retry em
+  falha e não aguarda território nem fila derivada.
 - Arquivos relacionados: `app.json`,
   `plugins/withAsyncStorageDatabaseSize.cjs`,
   `src/services/run/runAutoSaveService.js`,
@@ -117,6 +123,9 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
   `src/services/run/runFinalizationService.js`.
 - Teste necessario: instalar nova build, finalizar corrida nova, medir tempo e
   confirmar item no histórico após reabrir o app.
+- Evidencia automatizada adicional: save de detalhes força atualização do
+  registro existente e falha preserva o fluxo de retry; export e build Android
+  passaram. Persistência física continua pendente.
 - Data: 2026-07-24
 - Decisao/observacao: commit `c3acc03`; SQLite continua opção condicionada a
   medição, não correção automática.
@@ -139,12 +148,17 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
   normalizava timestamp e a duração armazenada tinha precedência excessiva.
 - Correcao aplicada: apenas a chamada proprietária libera o lock; dedupe usa
   timestamp normalizado + coordenada; timeline de pausa vence storage; timeouts
-  da finalização foram reduzidos.
+  da finalização foram reduzidos. Finalizar em `PAUSED` consolida a pausa aberta,
+  e a limpeza recebe o ID esperado e bloqueia mismatch sem remover snapshot,
+  backup ou chunks.
 - Arquivos relacionados: `src/screens/MapScreen.js`,
   `src/services/run/runFinalizationService.js`,
   `src/services/runTracking/activeRunState.js`.
 - Teste necessario: duplo toque, pausa longa, finalização única e reabertura sem
   duplicar rota/distância.
+- Evidencia automatizada adicional: finalização após 60 s de pausa manteve 10 s
+  ativos; testes de limpeza por ID preservaram as corridas divergentes; suíte
+  focada 6/109 e suíte completa 52/487 aprovadas.
 - Data: 2026-07-24
 - Decisao/observacao: commit `ec8d236`; não marcar como corrigido antes do reteste.
 

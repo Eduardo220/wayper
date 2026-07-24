@@ -292,9 +292,19 @@ Desde a Fase D de 2026-07-24:
 - `MapScreen` congela a corrida por `freezeActiveRunForFinalization()` e persiste
   por `persistMinimumFinishedRun()`;
 - o lock de salvamento mínimo fica no serviço, não no ciclo de vida da tela;
+- pausa e retomada só são confirmadas quando o snapshot devolve o mesmo
+  `activeRunId` e o estado esperado; a UI e a notificação preservam o estado
+  anterior se a transição falhar;
+- finalizar uma corrida `PAUSED` consolida primeiro a pausa aberta para que ela
+  não entre na duração ativa;
 - o registro em `runs` recebe seed versionado de processamento antes da limpeza
   da sessão ativa;
+- a limpeza canônica e legada recebe o `runId` esperado e se recusa a apagar
+  snapshot de outra corrida;
 - a interface é liberada antes de `enqueuePostRunProcessing()`;
+- salvar ou editar os detalhes do resumo reutiliza
+  `persistMinimumFinishedRun({ forceWrite: true })`; falha mantém o resumo
+  aberto para retry e não desfaz o registro mínimo já confirmado;
 - a fila `wayper_run_deferred_tasks_v1` permanece única e evoluiu para schema 2,
   com `result`, `resultVersion` e projeção persistida por módulo;
 - o startup reconcilia corridas mínimas pendentes que tenham sido interrompidas

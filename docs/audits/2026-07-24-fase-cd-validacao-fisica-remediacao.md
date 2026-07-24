@@ -4,8 +4,9 @@
 **Branch:** `develop`  
 **Aparelho:** Samsung SM-A546E, Android 16/API 36  
 **Perfil:** Dev Client (`com.wayper.app.dev`)  
-**Status:** gate físico reprovado; correções automatizadas aprovadas; nova build
-instalada; reteste físico pendente
+**Status:** gate físico reprovado; correções automatizadas aprovadas; build
+anterior instalada; hardening adicional buildado; instalação e reteste
+funcional pendentes
 
 Este registro não contém coordenadas, rota, identificador da corrida ou
 identificador pessoal. Os logs brutos usados no diagnóstico permanecem somente
@@ -256,3 +257,120 @@ Commit sugerido para este registro:
 
 - consolidação: `docs(test): registrar gate fisico e remediacoes`;
 - evidência da build: `docs(test): registrar build do reteste fisico`.
+
+## Adendo — hardening antes da próxima etapa
+
+### Diagnóstico
+
+A etapa seguinte foi suspensa para revisar os detalhes do fluxo principal. A
+auditoria encontrou quatro riscos residuais:
+
+1. consumidores aceitavam snapshot não nulo como sucesso mesmo quando a pausa
+   ou retomada não havia mudado de estado;
+2. finalizar enquanto `PAUSED` podia mudar para `FINISHING` sem acumular a pausa
+   aberta;
+3. a limpeza canônica/legada não validava explicitamente o ID confirmado no
+   histórico;
+4. o save do resumo duplicava persistência/cleanup/fila, absorvia erro no pai e
+   permitia que o modal fechasse como se houvesse sucesso.
+
+### Arquivos analisados
+
+- `src/screens/MapScreen.js`;
+- `src/components/Runs/RunSummaryModal.js`;
+- `src/services/run/runFinalizationService.js`;
+- `src/services/run/runNotificationService.js`;
+- `src/services/run/runRecoveryService.js`;
+- `src/services/runOfflineStorageService.js`;
+- `src/services/runTracking/activeRunState.js`;
+- `src/services/runTracking/activeRunTrackingService.js`;
+- testes de finalização, notificação, recovery, storage e tracking;
+- arquitetura, decisões, regras, testes, bugs, checklist físico e changelog.
+
+### Arquivos alterados
+
+- os sete arquivos de código listados acima, exceto
+  `activeRunState.js`, que foi analisado e não precisou mudança;
+- seis suítes de teste correspondentes;
+- documentação de arquitetura, decisão, regra, gate, bugs, checklist,
+  changelog e este relatório.
+
+### Justificativas
+
+- Transição crítica precisa provar estado e identidade.
+- Duração ativa não pode incorporar pausa em andamento.
+- Save de uma corrida não concede autorização para limpar outra.
+- O resumo deve reutilizar o serviço oficial e permanecer reexecutável.
+- Território e tarefas pós-corrida não podem bloquear o save de detalhes.
+
+### Testes executados e resultados
+
+```bash
+node --check <services e testes JavaScript alterados>
+```
+
+Resultado: aprovado nos arquivos sem JSX.
+
+```bash
+npm test -- --runInBand \
+  src/services/run/__tests__/runFinalizationService.test.js \
+  src/services/run/__tests__/runNotificationService.test.js \
+  src/services/run/__tests__/runRecoveryService.test.js \
+  src/services/__tests__/runOfflineStorageService.test.js \
+  src/services/runTracking/__tests__/activeRunTrackingService.test.js \
+  src/services/runTracking/__tests__/activeRunState.test.js
+```
+
+Resultado: 6 suítes e 109 testes aprovados.
+
+```bash
+npm test -- --runInBand
+```
+
+Resultado: 52 suítes e 487 testes aprovados, 0 snapshots, em 19,243 s
+informados pelo Jest.
+
+```bash
+node scripts/with-env.cjs .env.development -- \
+  ./node_modules/.bin/expo export --platform android \
+  --output-dir /tmp/wayper-run-hardening-export
+```
+
+Resultado: bundle Android aprovado, 2.334 módulos.
+
+```bash
+npm run android:build:dev
+```
+
+Resultado: `BUILD SUCCESSFUL` em 1 min 51 s; 631 tarefas, 65 executadas e
+566 atualizadas.
+
+### Riscos restantes
+
+- Nenhuma dessas novas correções foi exercitada funcionalmente no aparelho.
+- O build foi gerado, mas ainda não foi instalado para o reteste deste adendo.
+- Preview/release, economia agressiva, force-stop, zonas, offline/reconexão,
+  replay e compartilhamento continuam fora desta evidência.
+- O stall físico de 11,87 s e a persistência após `SQLITE_FULL` anterior ainda
+  precisam ser medidos com corrida nova.
+
+### Validações físicas pendentes
+
+- pausa/retomada no app e na notificação com o mesmo ID;
+- finalização ainda em pausa sem inflar duração;
+- toque duplo com uma única finalização;
+- save/retry do resumo em poucos segundos;
+- histórico e reabertura sem duplicar rota ou distância.
+
+### Próximos passos
+
+1. instalar/abrir o build atual no aparelho;
+2. executar o reteste curto descrito no checklist;
+3. manter o gate C/D e a etapa seguinte bloqueados até a evidência física;
+4. atualizar os bugs sem marcá-los como corrigidos antes do resultado real.
+
+### Commit
+
+- código: `58c16d8 fix(run): endurecer transicoes e salvamento final`;
+- documentação sugerida:
+  `docs(run): registrar hardening do fluxo critico`.

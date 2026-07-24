@@ -12,6 +12,30 @@ Este roteiro valida a corrida ativa em aparelho real Android, principalmente seg
 - Antes do teste, limpar corridas ativas antigas ou registrar se existe recovery esperado.
 - Ativar/exportar diagnostico ao final em `Configuracoes > Diagnostico`.
 
+## Reteste curto do hardening C/D
+
+Este reteste não exige repetir imediatamente a caminhada longa já aprovada para
+tela apagada. Ele valida as regressões críticas na nova build:
+
+1. iniciar uma corrida nova e confirmar o ID/status ativo;
+2. pausar no app, aguardar pelo menos 20 segundos e retomar;
+3. pausar pela notificação e retomar pela notificação;
+4. finalizar ainda em pausa em uma repetição curta;
+5. tocar duas vezes rapidamente em `Finalizar`;
+6. salvar os detalhes e confirmar uma única corrida no histórico;
+7. reabrir o app e conferir duração, rota, distância e ausência de recovery
+   duplicado.
+
+Critérios obrigatórios:
+
+- nenhuma ação muda apenas o rótulo: snapshot, app e notificação concordam;
+- o período pausado não entra no tempo ativo;
+- apenas o ID salvo é limpo;
+- o resumo não fecha se o save de detalhes falhar;
+- território, XP e fila não atrasam a confirmação local;
+- `RUN_ACTIVE_CLEANUP_ID_MISMATCH_BLOCKED`, se ocorrer, reprova o cenário e
+  exige investigação antes de nova feature.
+
 ## Cenario 1: Primeiro plano por 5 minutos
 
 1. Abrir `Mapa`.
