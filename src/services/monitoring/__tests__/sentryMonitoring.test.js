@@ -17,6 +17,7 @@ const sentryMock = {
   init: jest.fn(),
   setContext: jest.fn(),
   setTag: jest.fn(),
+  setUser: jest.fn(),
   startInactiveSpan: jest.fn(() => span),
   startSpan: jest.fn((_options, callback) => callback(span)),
   withScope: jest.fn((callback) => callback(scope)),
@@ -107,7 +108,7 @@ describe("Sentry monitoring", () => {
       dsn: "dsn",
       environment: "preview",
     })).toMatchObject({
-      environment: "staging",
+      environment: "preview",
       enabled: true,
       tracesSampleRate: 0.15,
       release: "com.wayper.app@1.2.3+42",
@@ -264,7 +265,7 @@ describe("Sentry monitoring", () => {
     expect(sentryMock.addBreadcrumb).toHaveBeenCalled();
   });
 
-  test("GPS de alta frequencia nao gera breadcrumbs, spans ou eventos remotos", () => {
+  test("GPS de alta frequencia e agregado antes de virar breadcrumb", () => {
     monitoring.initializeMonitoring(enabledConfig());
     const initialBreadcrumbs = sentryMock.addBreadcrumb.mock.calls.length;
     const initialSpans = sentryMock.startInactiveSpan.mock.calls.length;
@@ -285,6 +286,21 @@ describe("Sentry monitoring", () => {
     expect(sentryMock.startInactiveSpan).toHaveBeenCalledTimes(initialSpans);
     expect(sentryMock.captureMessage).not.toHaveBeenCalled();
     expect(sentryMock.captureException).not.toHaveBeenCalled();
+
+    monitoring.__flushLocationBreadcrumbsForTests();
+    const breadcrumb = sentryMock.addBreadcrumb.mock.calls
+      .map(([item]) => item)
+      .find((item) => item.message === "LOCATION_UPDATES_THROTTLED");
+    expect(breadcrumb).toMatchObject({
+      category: "wayper.location",
+      data: expect.objectContaining({
+        counts: expect.objectContaining({
+          LOCATION_POINT_RECEIVED: 1,
+          LOCATION_POINT_ACCEPTED: 1,
+          LOCATION_POINT_REJECTED: 1,
+        }),
+      }),
+    });
   });
 
   test("breadcrumbs cobrem lifecycle, corrida, background, mapa e compartilhamento", () => {
@@ -300,6 +316,9 @@ describe("Sentry monitoring", () => {
       "APP_BACKGROUND",
       "RUN_BACKGROUND_TASK_STARTED",
       "RUN_NOTIFICATION_STARTED",
+      "RUN_NOTIFICATION_OPEN_RESTORE_STARTED",
+      "RUN_RECONCILE_STARTED",
+      "RUN_UI_POSSIBLE_FREEZE_DETECTED",
       "MAP_ERROR",
       "SHARE_FAILED",
     ];
@@ -407,6 +426,42 @@ describe("Sentry monitoring", () => {
       event: "SDK_FAILURE",
     })).not.toThrow();
     expect(monitoring.captureException(new Error("next error"))).toBe("exception-event-id");
+  });
+
+  test("captureRunError envia contexto de corrida sanitizado", () => {
+    monitoring.initializeMonitoring(enabledConfig());
+
+    const eventId = monitoring.captureRunError(new Error("watcher failed"), {
+      event: "FOREGROUND_WATCHER_FAILED",
+      runId: "run-sensitive",
+      runStatus: "RUNNING",
+      latitude: -30.123456,
+      longitude: -51.123456,
+      tags: {
+        appState: "background",
+      },
+    });
+
+    expect(eventId).toBe("exception-event-id");
+    expect(scope.setTag).toHaveBeenCalledWith("feature", "run_tracking");
+    expect(scope.setTag).toHaveBeenCalledWith("runStatus", "RUNNING");
+    const contextCall = scope.setContext.mock.calls.find(([name]) => name === "wayper");
+    const json = JSON.stringify(contextCall?.[1]);
+    expect(json).not.toContain("run-sensitive");
+    expect(json).not.toContain("-30.123456");
+    expect(json).not.toContain("-51.123456");
+  });
+
+  test("setMonitoringUser anonimiza usuario antes de enviar ao SDK", () => {
+    monitoring.initializeMonitoring(enabledConfig());
+
+    expect(monitoring.setMonitoringUser({ uid: "firebase-user-123", email: "runner@example.com" })).toBe(true);
+
+    expect(sentryMock.setUser).toHaveBeenCalledWith({
+      id: expect.stringMatching(/^user_/),
+    });
+    expect(JSON.stringify(sentryMock.setUser.mock.calls[0][0])).not.toContain("firebase-user-123");
+    expect(JSON.stringify(sentryMock.setUser.mock.calls[0][0])).not.toContain("runner@example.com");
   });
 
   test("traceAsync executa operacao mesmo se o SDK falhar", async () => {

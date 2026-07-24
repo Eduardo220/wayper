@@ -8,7 +8,11 @@
       "distribution": "internal",
       "environment": "development",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "development"
+        "EXPO_PUBLIC_APP_ENV": "development",
+        "EXPO_PUBLIC_BUILD_PROFILE": "development",
+        "EXPO_PUBLIC_APP_VARIANT": "dev",
+        "EXPO_PUBLIC_APPLICATION_ID": "com.wayper.app.dev",
+        "EXPO_PUBLIC_EAS_UPDATE_CHANNEL": "development"
       },
       "android": {
         "buildType": "apk"
@@ -18,7 +22,11 @@
       "distribution": "internal",
       "environment": "preview",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "staging"
+        "EXPO_PUBLIC_APP_ENV": "preview",
+        "EXPO_PUBLIC_BUILD_PROFILE": "preview",
+        "EXPO_PUBLIC_APP_VARIANT": "preview",
+        "EXPO_PUBLIC_APPLICATION_ID": "com.wayper.app",
+        "EXPO_PUBLIC_EAS_UPDATE_CHANNEL": "preview"
       },
       "android": {
         "buildType": "apk"
@@ -27,7 +35,11 @@
     "production": {
       "environment": "production",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "production"
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_BUILD_PROFILE": "production",
+        "EXPO_PUBLIC_APP_VARIANT": "production",
+        "EXPO_PUBLIC_APPLICATION_ID": "com.wayper.app",
+        "EXPO_PUBLIC_EAS_UPDATE_CHANNEL": "production"
       },
       "android": {
         "buildType": "app-bundle"

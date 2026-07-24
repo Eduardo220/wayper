@@ -188,6 +188,11 @@ export function log(level, category, event, context = {}, options = {}) {
 
   if (config.consoleEnabled && isLogLevelEnabled(normalizedLevel, config.minLevel)) writeToConsole(logEvent);
 
+  const sentryEventId = forwardLogToMonitoring(logEvent, context, options);
+  if (sentryEventId) {
+    logEvent.sentryEventId = sentryEventId;
+  }
+
   const shouldPersist =
     config.persistEnabled &&
     (
@@ -200,8 +205,6 @@ export function log(level, category, event, context = {}, options = {}) {
   if (shouldPersist) {
     appendLog(logEvent).catch(() => null);
   }
-
-  forwardLogToMonitoring(logEvent, context, options);
 
   return logEvent;
 }

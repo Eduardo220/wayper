@@ -210,6 +210,11 @@ Quando responder sobre o Wayper:
 - Para diagnostico/debug, usar `src/screens/DiagnosticsScreen.js`, `localDiagnosticsService`, `runDiagnosticsService`, `diagnosticExportService`, `logStorageService` e `logger.js`; nao criar logger, export ZIP, service de storage ou tela debug paralelos.
 - Diagnostico local deve funcionar offline e sem Firestore obrigatorio.
 - Logs novos devem passar pelo logger central, com categoria adequada e contexto sanitizado.
+- Para Sentry/observabilidade remota, usar `src/services/monitoring/sentryService.js`, `sentrySanitizer.js` e `monitoringBridge.js`; nao criar observability service paralelo.
+- Erro de corrida deve usar `captureRunError` ou logger central com contexto resumido; freeze provavel deve seguir o watchdog de `performanceDiagnosticsService`.
+- Eventos de GPS de alta frequencia devem ser agregados/throttled antes de virar breadcrumb remoto.
+- Sentry event deve carregar `release`, `dist`, `environment`, `buildProfile`, `appVariant` e `sentryEventId` correlacionavel com o log local quando houver envio.
+- `SENTRY_AUTH_TOKEN` nunca deve aparecer em docs com valor real, logs, `.env.example`, `app.json`, `sentry.properties` commitado ou commits.
 - Coordenadas exatas, `rawPath` completo, tokens, emails completos, imagens privadas e payload completo de terceiros nao devem entrar em export/resumo padrao.
 - Debug de alta frequencia deve usar buffer/file-system existente; nao gravar ponto GPS por evento no AsyncStorage.
 - Acoes destrutivas em debug exigem confirmacao explicita e nao devem limpar corridas/runs por padrao.

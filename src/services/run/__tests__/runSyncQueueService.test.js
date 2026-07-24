@@ -31,6 +31,7 @@ describe("runSyncQueueService", () => {
     syncRunsToFirestore.mockClear();
     isRunQueuedForSync.mockClear();
     loadLocalRunHistory.mockResolvedValue([]);
+    saveLocalRun.mockImplementation(async (run) => run);
   });
 
   test("enfileira corrida finalizada mantendo runId idempotente", async () => {
@@ -71,6 +72,23 @@ describe("runSyncQueueService", () => {
       localRunId: "run-recovery-dedup",
       pendingSync: true,
     });
+  });
+
+  test("nao confirma nem agenda quando o historico devolve outro id", async () => {
+    saveLocalRun.mockResolvedValueOnce({
+      id: "fallback-write-failure",
+      localRunId: "fallback-write-failure",
+      path: [],
+    });
+
+    await expect(enqueueFinishedRun({
+      id: "run-must-stay-recoverable",
+      localRunId: "run-must-stay-recoverable",
+      userId: "user-1",
+    })).rejects.toMatchObject({
+      code: "RUN_LOCAL_SAVE_NOT_CONFIRMED",
+    });
+    expect(scheduleRunsSync).not.toHaveBeenCalled();
   });
 
   test("carrega pendentes usando a regra oficial do sync.js", async () => {

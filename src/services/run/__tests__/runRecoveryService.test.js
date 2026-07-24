@@ -419,6 +419,25 @@ describe("runRecoveryService", () => {
     expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(false);
   });
 
+  test("falha ao limpar canonico nao apaga checkpoint legado", async () => {
+    currentSnapshot = { ...BASE_RUN, activeRunId: "keep-recovery" };
+    storage.set(ACTIVE_RUN_STORAGE_KEY, JSON.stringify({
+      localRunId: "keep-recovery",
+      userId: "user-1",
+      mode: "free",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAt: BASE_RUN.startedAt,
+      points: BASE_RUN.trustedPath,
+      schemaVersion: 1,
+    }));
+    trackingService.markActiveRunLocallySaved.mockResolvedValueOnce(false);
+
+    const result = await markRecoveredRunLocallySaved({ reason: "cleanup_failed" });
+
+    expect(result.ok).toBe(false);
+    expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(true);
+  });
+
   test("recusa recovery de outro usuario", () => {
     const validation = validateRecoverableRun(BASE_RUN, {
       source: RUN_RECOVERY_SOURCE.TRACKING,

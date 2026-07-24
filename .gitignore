@@ -62,7 +62,13 @@ pnpm-debug.log*
 # Env / secrets / signing
 .env
 .env.local
+.env.development
+.env.production
+.env.preview
+.env.staging
+.env.test
 .env.*.local
+!.env.example
 credentials.json
 scripts/serviceAccountKey.json
 *.pem

@@ -124,3 +124,57 @@ Nenhuma ideia movida para implementada neste arquivo no momento. Quando uma idei
 - Proximo passo sugerido: Eduardo decidir se quer transformar a ideia em proposta pendente para um script `docs:check` ou manter apenas como pratica manual.
 - Prompt futuro sugerido: "Avaliar e, se aprovado, criar proposta para um validador leve de consistencia entre alteracoes de codigo e Markdown do Wayper, sem aprovar ideias automaticamente."
 - Data: 2026-06-20
+
+### IDEA-20260621-001 - Painel local de correlacao Sentry e diagnostico
+
+- ID: IDEA-20260621-001
+- Titulo: Painel local de correlacao Sentry e diagnostico
+- Origem: Codex
+- Relacionada a qual alteracao: hardening de Sentry/observabilidade para freeze de corrida ativa
+- Arquivos afetados ou provaveis: `src/screens/DiagnosticsScreen.js`, `src/services/diagnostics/localDiagnosticsService.js`, `src/services/diagnostics/diagnosticExportService.js`, `src/services/monitoring/sentryService.js`, `docs/12-guia-de-testes.md`
+- Problema/oportunidade: o ZIP local passa a carregar `sentryEventId` quando ha envio remoto, mas a tela de Diagnostico ainda pode nao destacar claramente os ultimos IDs/eventos Sentry relacionados a uma corrida ativa.
+- Proposta: criar futuramente uma secao "Correlacao Sentry" na tela/ZIP de Diagnostico mostrando ultimos `sentryEventId`, eventos criticos, runId anonimizado, ambiente, release/dist e instrucoes curtas para comparar com o painel Sentry.
+- Impacto esperado: reduzir tempo de investigacao quando usuario envia ZIP local e a equipe tambem tem evento Sentry.
+- Complexidade: media
+- Risco: confundir usuario final ou expor identificadores demais se a UI nao for bem resumida.
+- Dependencias: validacao real de eventos Sentry em preview/producao e decisao do Eduardo sobre mostrar essa secao na UI ou apenas no ZIP.
+- Status: AGUARDANDO_VALIDACAO_EDU
+- Proximo passo sugerido: Eduardo decidir se quer transformar em proposta depois da primeira rodada de eventos reais do bug de freeze.
+- Prompt futuro sugerido: "Criar proposta para uma secao de correlacao Sentry no Diagnostico local do Wayper, sem expor PII e sem substituir o ZIP."
+- Data: 2026-06-21
+
+### IDEA-20260621-002 - Fila persistente para tarefas pos-finalizacao
+
+- ID: IDEA-20260621-002
+- Titulo: Fila persistente para tarefas pos-finalizacao
+- Origem: Codex
+- Relacionada a qual alteracao: finalizacao local-first nao bloqueada por captura territorial, XP e sync
+- Arquivos afetados ou provaveis: `src/screens/MapScreen.js`, `src/services/sync.js`, `src/repositories/RunRepository.js`, `src/services/territoryCaptureService.js`, `src/repositories/ProgressionRepository.js`, `docs/08-decisoes-tecnicas.md`
+- Problema/oportunidade: a corrida agora salva localmente antes das tarefas pesadas, mas uma fila persistente dedicada poderia reprocessar captura territorial e progressao depois de app kill, timeout ou falta de memoria, sem depender da tela ficar aberta.
+- Proposta: criar futuramente uma fila local idempotente de tarefas pos-finalizacao por `localRunId`, com estados `PENDING`, `RUNNING`, `FAILED`, `COMPLETED`, retry manual em Diagnostico e execucao em AppState/reabertura.
+- Impacto esperado: tornar captura territorial, XP e sync ainda mais recuperaveis sem recolocar esses trabalhos no caminho critico do botao `Finalizar`.
+- Complexidade: media
+- Risco: duplicar fila de sync existente, gerar corrida enriquecida duas vezes ou esconder erro de territorio se os estados nao forem claros.
+- Dependencias: validacao fisica da finalizacao atual e decisao do Eduardo sobre escopo de retry automatico.
+- Status: AGUARDANDO_VALIDACAO_EDU
+- Proximo passo sugerido: Eduardo decidir se a fila vira proposta apos a rodada de teste real do finish/export.
+- Prompt futuro sugerido: "Criar proposta para fila persistente de tarefas pos-finalizacao no Wayper, reaproveitando repositories atuais e sem bloquear o save local."
+- Data: 2026-06-21
+
+### IDEA-20260721-001 - Telemetria local de custo e janela adaptativa de checkpoint
+
+- ID: IDEA-20260721-001
+- Titulo: Telemetria local de custo e janela adaptativa de checkpoint
+- Origem: Codex
+- Relacionada a qual alteracao: task headless, checkpoint canonico em lote e reducao de renderizacao da corrida ativa
+- Arquivos afetados ou provaveis: `src/services/runTracking/activeRunTrackingService.js`, `src/services/diagnostics/localDiagnosticsService.js`, `src/screens/DiagnosticsScreen.js`, `docs/12-guia-de-testes.md`
+- Problema/oportunidade: a janela fixa de aproximadamente 5 segundos limita writes sem gravar por ponto, mas aparelhos, duracao de corrida e tamanho de chunks variam. Ainda falta evidencia real de latencia, bytes, falhas e consumo para saber se o intervalo ideal deve mudar ou se AsyncStorage deve migrar.
+- Proposta: medir localmente, de forma agregada e sem coordenadas, duracao/bytes de checkpoint, pontos pendentes, maior janela sem flush, falhas e memoria aproximada. Depois de validacao, avaliar uma politica adaptativa limitada (por exemplo 3-10 segundos) ou SQLite, sem alterar a interface canonica.
+- Impacto esperado: equilibrar perda maxima em kill, I/O, bateria e desempenho de corridas longas com decisao baseada em dados reais.
+- Complexidade: media
+- Risco: tornar o checkpoint complexo, aumentar logs ou ajustar agressivamente sem amostra representativa.
+- Dependencias: testes fisicos dev/release, corridas longas e aprovacao do Eduardo antes de mudar intervalo/storage.
+- Status: AGUARDANDO_VALIDACAO_EDU
+- Proximo passo sugerido: coletar primeiro metricas agregadas na matriz Android real e decidir se a ideia vira proposta.
+- Prompt futuro sugerido: "Criar proposta de telemetria local e politica adaptativa de checkpoint da corrida ativa, sem coordenadas e sem migrar storage antes de medir."
+- Data: 2026-07-21

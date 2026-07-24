@@ -342,6 +342,54 @@ describe("active run local-first integration", () => {
     });
   });
 
+  test("falha no salvamento final mantem snapshot canonico recuperavel", async () => {
+    await activeRunTrackingService.startActiveRun({
+      activeRunId: "run-final-save-failure",
+      userId: "user-1",
+      mode: "free",
+      startedAtMs: BASE_TIME,
+    });
+    await activeRunTrackingService.recordLocation(point(1, 0, 8), { source: "foreground" });
+    await activeRunTrackingService.recordLocation(point(2, 0, 16), { source: "foreground" });
+    await activeRunTrackingService.markActiveRunFinishing({ nowMs: BASE_TIME + 5000 });
+    await activeRunTrackingService.finishActiveRun({ finishedAtMs: BASE_TIME + 6000 });
+    const runData = await activeRunTrackingService.buildFinishedRunData({
+      status: "completed",
+      pendingSync: true,
+      syncStatus: "PENDING",
+      offlineStatus: "PENDING_SYNC",
+    });
+
+    AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+      if (key === "runs") throw new Error("disk unavailable");
+      storage.set(key, value);
+    });
+    try {
+      const failedSave = await saveLocalRun(runData);
+      expect(failedSave.id).not.toBe(runData.id);
+      if (failedSave?.id === runData.id) {
+        await markRecoveredRunLocallySaved({ reason: "should_not_run" });
+      }
+
+      expect(await activeRunTrackingService.getActiveRunSnapshot()).toMatchObject({
+        activeRunId: "run-final-save-failure",
+        status: CANONICAL_RUN_STATUS.FINISHED,
+        recoveryPending: true,
+      });
+
+      activeRunTrackingService.__resetActiveRunRuntimeForTests();
+      const restored = await activeRunTrackingService.restoreActiveRun({ restartTracking: false });
+      expect(restored).toMatchObject({
+        activeRunId: "run-final-save-failure",
+        status: CANONICAL_RUN_STATUS.FINISHED,
+      });
+    } finally {
+      AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+        storage.set(key, value);
+      });
+    }
+  });
+
   test("syncRunsToFirestore marca sucesso sem duplicar e preserva remoteRunId", async () => {
     await saveLocalRun({
       id: "run-sync-success",

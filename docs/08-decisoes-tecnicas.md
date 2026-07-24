@@ -4,7 +4,7 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 
 ## ADR-001: Usar React Native com Expo
 
-**Status:** aceito  
+**Status:** aceito
 **Contexto:** o Wayper é um app mobile com necessidade de GPS, mapa, câmera/arquivos em algumas features e build Android.  
 **Decisão:** usar React Native com Expo e Expo Dev Client.  
 **Consequências:**
@@ -128,6 +128,8 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 **Consequencias:**
 
 - A notificacao persistente mostra status, tempo e distancia da corrida ativa.
+- Negar `POST_NOTIFICATIONS` no Android 13+ nao cancela o foreground service: o app ainda o inicia, embora o Android possa ocultar o painel e os controles da gaveta.
+- O service persiste estado minimo nativo e usa `START_STICKY` para reconstruir a notificacao quando o Android recria o service; o snapshot JS continua sendo a fonte oficial da corrida.
 - O botao da notificacao alterna entre `Pausar` e `Retomar` sem criar corrida nova.
 - Tocar na notificacao abre `wayper://run/active` e reentra na tela de corrida ativa.
 - Finalizar pela notificacao fica fora do escopo porque exige confirmacao/resumo; finalizar permanece no app.
@@ -344,22 +346,44 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 
 **Status:** aceito
 **Contexto:** em corridas reais no Android, bugs de freeze podem travar parcial ou totalmente a UI da `MapScreen`, impedindo o usuario de abrir drawer/menu e navegar ate `Configuracoes > Diagnostico`. Sem um caminho direto, o bug mais critico fica sem evidencia local no momento em que acontece.
-**Decisao:** adicionar um atalho de diagnostico de emergencia no overlay da corrida ativa (`MapScreen`), disponivel em `RUNNING` e `PAUSED`, usando o export ZIP existente com escopo `ACTIVE_RUN` e share sheet nativo. A corrida nao deve ser pausada/finalizada pelo export. Durante a corrida, salvar snapshots leves `EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT` no storage de diagnostico file-backed, com heartbeat de UI, timer, watcher, AppState, notificacao, counts de path/segments, motivos agregados de descarte, drawer attempts, stalls e ultimo erro. Coordenadas exatas e paths completos continuam fora do padrao.
+**Decisao:** adicionar um atalho de diagnostico de emergencia no overlay da corrida ativa (`MapScreen`), disponivel em `RUNNING` e `PAUSED`, usando um artefato JSON leve e share sheet nativo. A corrida nao deve ser pausada/finalizada pelo export, e a `MapScreen` nao deve montar o ZIP completo durante uma corrida ativa. Durante a corrida, salvar snapshots leves `EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT` no storage de diagnostico file-backed, com heartbeat de UI, timer, watcher, AppState, notificacao, counts de path/segments, motivos agregados de descarte, drawer attempts, stalls e ultimo erro. Coordenadas exatas e paths completos continuam fora do padrao. O ZIP completo permanece na tela `Configuracoes > Diagnostico`, fora do fluxo critico da corrida ativa.
 **Politica:**
 
 - Nao criar tracker GPS, storage, logger ou export paralelos.
 - Firestore nao e requisito para diagnostico ou export.
 - O atalho da corrida deve ficar acima do mapa e usar `hitSlop`/prioridade de toque clara.
-- Gerar ZIP deve mostrar loading e erro controlado, sem bloquear a corrida nem depender de navegacao complexa.
+- Gerar o JSON leve deve ter timeout curto, liberar o estado visual antes/depois do share e ser cancelavel quando o usuario finalizar a corrida.
+- O ZIP completo deve continuar existindo no diagnostico central, mas nao deve ser chamado diretamente pelo botao ativo da `MapScreen`.
 - Drawer/header deve registrar `RUN_DRAWER_OPEN_REQUESTED`, `RUN_DRAWER_OPENED` e `RUN_DRAWER_OPEN_TIMEOUT` quando possivel.
 - A acao de diagnostico na notificacao Android fica pendente enquanto o modulo nativo possuir uma unica acao contextual Pausar/Retomar.
 
 **Consequencias:**
 
-- Mesmo se o drawer travar, o usuario tem caminho direto para exportar evidencia da corrida ativa.
+- Mesmo se o drawer travar, o usuario tem caminho direto para exportar evidencia leve da corrida ativa.
 - O ZIP passa a incluir `emergencyRunDiagnostics.json` e `uiInteractionEvents.json`.
 - Travamentos futuros devem diferenciar timer/UI stall, watcher morto, GPS sem pontos aceitos, drawer nao abrindo e render path sem atualizacao.
 - A notificacao continua segura para Pausar/Retomar ate haver validacao fisica especifica para uma segunda acao.
+
+## ADR-026: Finalizacao local-first nao bloqueada por tarefas pesadas
+
+**Status:** aceito
+**Contexto:** finalizar uma corrida ativa precisa ser a operacao mais confiavel do fluxo. Se a UI aguarda captura territorial, XP, sync remoto, parada de background service, fade visual ou export de diagnostico antes de salvar localmente, o usuario pode ficar preso em estado intermediario e a corrida pode parecer perdida.
+
+**Decisao:** a `MapScreen` deve priorizar o save minimo local da corrida finalizada. Ao tocar em `Finalizar`, o app registra `FINISHING`, cancela/libera diagnostico ativo em andamento, faz checkpoint/snapshot com timeout curto, persiste o rascunho final e salva em `sync.saveLocalRun()` antes de iniciar captura territorial, XP ou sync. Corrida por zonas pode ser salva com `territoryCaptureStatus: "PENDING"` e campos territoriais pendentes; captura territorial, progressao local e sync ficam como tarefas deferidas e recuperaveis.
+
+**Politica:**
+
+- Firestore nao participa da decisao de finalizar nem de mostrar resumo/historico local.
+- `Iniciar Corrida` nao pode aparecer enquanto `isFinishingRun` ou `FINISHING` ainda estiver ativo.
+- Timeout em checkpoint, snapshot, background stop, territorio ou progressao deve virar log recuperavel, nao bloqueio permanente da UI.
+- `RUN_FINISH_LOCAL_MIN_SAVE_STARTED`, `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED`, `RUN_FINISH_UI_RELEASED` e `RUN_FINISH_DEFERRED_TASKS_SCHEDULED` devem existir para auditar a ordem.
+
+**Consequencias:**
+
+- Historico/resumo aparecem depois do save local mesmo offline e mesmo se territorio/XP demorarem.
+- Captura territorial atrasada pode atualizar a corrida local depois, mantendo `PENDING_SYNC`.
+- Falha remota ou Firestore indisponivel nao apaga a copia local nem impede o usuario de sair da corrida ativa.
+- Validacao fisica ainda e necessaria para confirmar Android real, tela bloqueada, reentrada pela notificacao e economia agressiva de bateria.
 
 ## ADR-024: Obsidian como mente do projeto
 
@@ -380,3 +404,52 @@ Este arquivo registra decisões relevantes do projeto. Decisão não registrada 
 - `docs/13-bugs-conhecidos.md`, `docs/16-ideias-de-melhoria.md`, `docs/17-propostas-pendentes.md` e `docs/wayper/12-ideias-futuras.md` viram registros estruturados.
 - Futuras entregas precisam diferenciar implementado, em validacao, pendente de decisao, ideia futura, bug conhecido, proposta aprovada e proposta rejeitada.
 - A documentacao nao deve afirmar validacao fisica, sync remoto ou decisao aprovada sem evidencia correspondente.
+
+## ADR-025: Sentry profissional para corrida ativa e congelamentos provaveis
+
+**Status:** aceito
+**Contexto:** a corrida ativa pode falhar sem exception visivel quando o app volta de background, abre pela notificacao persistente, aplica snapshot canonico ou renderiza a rota. O diagnostico local ja possui NDJSON/ZIP, checkpoints e snapshots leves; Sentry deve complementar esse fluxo, nao substituir a evidencia offline.
+
+**Decisao:** manter `@sentry/react-native` com Expo Dev Client, plugin `@sentry/react-native/expo`, Metro `getSentryExpoConfig` e `sentry.gradle`. A camada oficial de observabilidade remota segue em `src/services/monitoring/sentryService.js`, integrada ao `logger.js` por `monitoringBridge`. Eventos locais criticos de corrida, GPS, background, notificacao, storage, recovery, reconciliacao e UI viram breadcrumbs/eventos Sentry sanitizados. GPS de alta frequencia e agregado em breadcrumbs throttled. O watchdog de event loop em `performanceDiagnosticsService` registra `RUN_UI_POSSIBLE_FREEZE_DETECTED` com contexto operacional resumido.
+
+**Politica:**
+
+- `development`: Sentry remoto desligado por padrao; exige DSN e `EXPO_PUBLIC_SENTRY_ENABLE_DEV=true`.
+- `preview`: Sentry remoto ativo quando houver DSN.
+- `production`: Sentry remoto ativo quando houver DSN.
+- `SENTRY_AUTH_TOKEN` fica apenas em secret local, CI ou EAS; nunca em Git.
+- Source maps dependem de upload autenticado por EAS/CI ou script manual.
+- Eventos remotos nao podem conter coordenadas cruas, rota completa, token, email, nome completo, Firebase payload cru, NDJSON, ZIP, imagem ou dumps grandes.
+- `sentryEventId`, quando existir, fica no log local para correlacionar ZIP/NDJSON com o painel Sentry.
+- Sentry nao pode limpar, substituir ou decidir a fonte de verdade da corrida ativa.
+
+**Consequencias:**
+
+- Freeze provavel, stall de mapa, perda de reentrada, falha de watcher, background task, notificacao e reconciliacao passam a ter trilha observavel.
+- Sem DSN ou sem rede, o app e o diagnostico local continuam funcionando.
+- Sem `SENTRY_AUTH_TOKEN`, builds locais podem usar `SENTRY_DISABLE_AUTO_UPLOAD=true`, mas isso nao valida simbolicacao.
+- Validacao final ainda exige aparelho fisico Android dev/release, evento controlado no painel e confirmacao de source maps simbolicados.
+
+## ADR-027: Coleta headless e checkpoint canonico em lote
+
+**Status:** aceito
+**Contexto:** a task de localizacao era definida por efeito colateral do service carregado por `App.js`, o snapshot canonico era regravado por ponto e a `MapScreen` processava o mesmo ponto em uma segunda sessao local. Em processo Android recriado, alta frequencia de GPS ou corrida longa, isso aumentava o risco de task ausente, concorrencia de AsyncStorage, renderizacao excessiva e divergencia entre UI e persistencia.
+
+**Decisao:** registrar `WAYPER_ACTIVE_RUN_LOCATION` em `src/tasks/activeRunLocationTask.js`, no escopo global, importado por `index.js` antes de `App`. A task chama apenas `activeRunTrackingService`, recupera o snapshot do storage, ordena/deduplica o lote e faz um checkpoint ao fim. O service passa a serializar ingestao, transicoes e escritas; pontos ficam em memoria entre checkpoints de aproximadamente 5 segundos, 5 pontos aceitos ou 10 pontos brutos. Pausa, retomada, `FINISHING`, encerramento, erro importante e AppState critico forcam flush. `MapScreen` deixa de filtrar/processar o ponto em paralelo e aplica snapshots visuais em ate 1 Hz. A previa territorial usa janela minima de 5 segundos e path simplificado; o calculo definitivo continua na tarefa pos-finalizacao local-first.
+
+**Politica:**
+
+- A task nao pode depender de callback React, componente montado, variavel global de handler ou `ref` da tela.
+- `wayper:activeRun:v2` continua canonico; `wayper_active_offline_run_v1` continua apenas como compatibilidade/rascunho. O historico `runs` nao e regravado por ponto.
+- O snapshot ativo so pode ser removido depois que o historico confirmar o mesmo `localRunId`; registro fallback ou erro de limpeza preserva o checkpoint recuperavel.
+- `startLocationUpdatesAsync` so e chamado se `hasStartedLocationUpdatesAsync` indicar que a task nao esta ativa. Atualizacao da notificacao usa o modulo nativo e nao reinicia o service de localizacao.
+- Tempo oficial continua sendo `agora - startedAt - pausas`; intervalos JS servem apenas para redesenhar a UI.
+- Erros de permissao, service, task e storage devem atualizar `lastError`, `recoveryPending`, diagnostico local e logs sanitizados.
+
+**Consequencias:**
+
+- Um processo Android headless consegue receber e persistir GPS sem montar a interface.
+- A perda maxima esperada entre checkpoints foreground fica limitada pela janela/lote; lotes entregues em background fazem flush imediato.
+- Foreground e background entram no mesmo pipeline e duplicatas nao inflam distancia.
+- Menos writes e menos reconstrucoes GeoJSON reduzem pressao sobre JS/UI em corridas longas.
+- AsyncStorage/chunks permanecem por compatibilidade; volume extremo e comportamento de fabricantes ainda exigem medicao e teste fisico antes de considerar SQLite ou declarar o risco encerrado.

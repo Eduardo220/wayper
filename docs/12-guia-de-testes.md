@@ -127,6 +127,18 @@ Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam
 - [ ] Repetir em corrida livre e corrida por zonas.
 - [ ] Abrir historico/replay/compartilhamento, se disponiveis, e conferir que pausas/gaps continuam separados.
 
+### Finalizacao e diagnostico de emergencia
+
+- [ ] Iniciar corrida livre e tocar no atalho `Diagnostico` do card `Wayper live`.
+- [ ] Confirmar que o share sheet recebe um JSON leve com `light: true` e `fullExportDeferred: true`, sem pausar a corrida.
+- [ ] Durante o export leve, tocar em `Finalizar` e confirmar que a corrida salva localmente, o resumo aparece e a UI nao fica presa em `EXPORTANDO`.
+- [ ] Repetir em corrida por zonas e confirmar que o resumo/historico aparece antes da captura territorial pesada terminar.
+- [ ] Em corrida por zonas, confirmar que um item salvo com captura pendente usa `territoryCaptureStatus: PENDING` e continua `PENDING_SYNC`.
+- [ ] Abrir `Configuracoes > Diagnostico` depois da finalizacao e exportar o ZIP completo.
+- [ ] Conferir nos logs a ordem `RUN_FINISH_LOCAL_MIN_SAVE_STARTED` -> `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED` -> `RUN_FINISH_UI_RELEASED` -> `RUN_FINISH_DEFERRED_TASKS_SCHEDULED`.
+- [ ] Confirmar que `Iniciar Corrida` nao aparece enquanto `Finalizando...` esta ativo.
+- [ ] Repetir offline/Firestore indisponivel e confirmar que save local, resumo e historico continuam funcionando.
+
 ## Cobertura automatizada de GPS/path
 
 Os testes nao usam GPS real, MapLibre, Firebase real ou rede. Eles devem cobrir:
@@ -401,6 +413,61 @@ Cobertura automatizada esperada:
 - Acoes destrutivas na UI exigem confirmacao.
 - Testes nao usam Firebase real, rede real, GPS real nem MapLibre real.
 
+## Observabilidade Sentry e freeze de corrida ativa
+
+Checklist automatizado esperado:
+
+- `sentryService` inicializa uma unica vez e nao chama SDK sem DSN.
+- `beforeSend` remove coordenadas cruas, rotas, tokens, auth, email, telefone, NDJSON, ZIP, imagem e payload bruto.
+- `captureRunError` envia contexto de corrida sanitizado.
+- GPS de alta frequencia vira breadcrumb agregado/throttled, nao evento por ponto.
+- Watchdog de performance registra `RUN_UI_POSSIBLE_FREEZE_DETECTED` com contexto de corrida.
+- Logger local nao quebra se o SDK Sentry falhar.
+- ErrorBoundary registra `REACT_ERROR_BOUNDARY`, aciona checkpoint local e nao limpa corrida ativa.
+- Testes nao usam Firestore real, rede real, GPS real nem painel Sentry real.
+
+Comandos focados:
+
+```bash
+npm test -- src/services/monitoring/__tests__/sentryMonitoring.test.js --runInBand
+npm test -- src/services/diagnostics/__tests__/performanceDiagnosticsService.test.js --runInBand
+npm run sentry:check-config
+```
+
+Checklist manual dev:
+
+- [ ] Rodar app sem `EXPO_PUBLIC_SENTRY_DSN` e confirmar que nao quebra.
+- [ ] Configurar DSN temporario e `EXPO_PUBLIC_SENTRY_ENABLE_DEV=true`.
+- [ ] Abrir `Configuracoes > Diagnostico` e enviar evento controlado.
+- [ ] Confirmar que Metro/dev nao exige source maps enviados.
+- [ ] Confirmar que breadcrumbs automaticos de `console.*` nao poluem o evento.
+
+Checklist manual Android preview/release:
+
+- [ ] Configurar `EXPO_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`, `SENTRY_PROJECT` e `SENTRY_AUTH_TOKEN` como secrets no EAS/CI.
+- [ ] Gerar build preview/release e verificar no log o upload de source maps.
+- [ ] Iniciar corrida, bloquear tela, aguardar, abrir pela notificacao e pelo icone.
+- [ ] Pausar, retomar e finalizar a corrida.
+- [ ] Enviar evento controlado pelo Diagnostico no mesmo build.
+- [ ] Confirmar `release`, `dist`, `environment`, `buildProfile`, `appVariant`, `runId` anonimizado e `userId` anonimizado.
+- [ ] Confirmar stack trace com arquivo/linha original.
+- [ ] Buscar no payload por `latitude`, `longitude`, coordenada real, `Authorization`, `token`, email e rota completa; nao pode aparecer.
+- [ ] Confirmar breadcrumbs de start/countdown, permissao, watcher, background task, notificacao, AppState, restore/reconcile, snapshot canonico e UI/map render.
+
+Cenarios de falha para reproduzir com diagnostico ligado:
+
+- [ ] Negar foreground location.
+- [ ] Negar background location.
+- [ ] Negar notificacao Android 13+.
+- [ ] GPS fraco ou salto de localizacao.
+- [ ] Internet desligada.
+- [ ] Storage cheio/simulado ou erro de AsyncStorage/FileSystem.
+- [ ] Background task falhando.
+- [ ] Notificacao nao abrindo a corrida ativa.
+- [ ] App voltando de background com corrida ativa.
+- [ ] Erro forçado em `MapScreen`.
+- [ ] Stall simulado de event loop para validar `RUN_UI_POSSIBLE_FREEZE_DETECTED`.
+
 ## Casos ruins que precisam ser testados
 
 - Usuário nega localização.
@@ -411,3 +478,44 @@ Cobertura automatizada esperada:
 - Firestore falha.
 - Ranking sem dados.
 - Perfil sem foto/nome.
+
+## Validacao Android real - hardening da corrida ativa (2026-07-21)
+
+Pre-condicoes:
+
+- usar aparelho Android 13+ e, se possivel, um Android 14/15 com fabricante que aplique economia agressiva;
+- instalar build limpa, conceder localizacao precisa e "o tempo todo" e testar notificacao tanto concedida quanto negada;
+- abrir `Configuracoes > Diagnostico`, anotar ambiente/build e limpar apenas logs antigos, nunca corridas;
+- repetir a matriz em dev client e APK release/preview. Expo Go nao valida foreground service/task nativa deste projeto.
+
+Roteiro principal:
+
+1. Iniciar corrida livre, caminhar/correr por pelo menos 15 minutos e confirmar notificacao persistente, cronometro e mapa.
+2. Alternar 5 vezes entre app ativo, Home, outro app e tela bloqueada, mantendo cada estado por 1-3 minutos.
+3. Abrir pelo icone e pela notificacao; confirmar mesmo `runId`, distancia monotona, tempo derivado dos timestamps e nenhum segmento extra sem pausa.
+4. Pausar com app e com notificacao, esperar 2 minutos, retomar e confirmar que a pausa nao entra na duracao e cria apenas o segmento esperado.
+5. Desligar internet por 5 minutos. Confirmar que GPS, checkpoint, resumo e historico local continuam; religar e observar sync posterior sem duplicata.
+6. Entrar em tunel/garagem ou desativar localizacao temporariamente. Confirmar aviso/erro registrado, ausencia de linha falsa e retomada sem perder a sessao.
+7. Com a tela bloqueada, matar somente o processo pelo Android Studio/`adb shell am kill com.wayper.app` (nao `force-stop`), aguardar fixes e reabrir. Confirmar recovery com pontos do lote headless ou, no pior caso, ate o ultimo checkpoint de aproximadamente 5 segundos.
+8. Repetir com `adb shell am force-stop com.wayper.app`. O Android bloqueia novas entregas ate abertura manual; ao abrir, a corrida deve reaparecer recuperavel ate o ultimo checkpoint e nunca ser substituida por uma nova.
+9. No modo zonas, percorrer um loop por pelo menos 10 minutos. Confirmar previa no maximo a cada ~5 segundos, UI responsiva e calculo definitivo/deferido usando a rota completa depois do save local.
+10. Finalizar offline e durante GPS fraco. Confirmar ordem `FINISHING` -> snapshot final -> historico local -> limpeza do checkpoint -> tarefas territoriais/XP/sync.
+11. Simular falha de storage/save final em build de teste. Confirmar que o resumo nao apaga `wayper:activeRun:v2` e que a proxima abertura oferece finalizar/sincronizar novamente.
+12. Fazer corrida longa de 2-4 horas (ou replay controlado de fixes em build de teste), observando memoria, tamanho/count de chunks, latencia de checkpoint, mapa e diagnostico.
+
+Evidencias a coletar sem dados sensiveis:
+
+- sequencia de eventos `RUN_STARTED`, `RUN_POINT_BATCH_SUMMARY`, `RUN_CHECKPOINT_SAVED`, pausa/retomada, background service/task, recovery, `RUN_FINISHING`, `RUN_FINISH_SAVED` e limpeza;
+- contagens raw/trusted/segments, distancia e elapsed antes/depois de cada reentrada;
+- `adb logcat` filtrado por `Wayper`, `ExpoLocation`, `TaskManager`, `ForegroundServiceStartNotAllowedException`, `SecurityException` e `ActivityManager`;
+- captura da notificacao/Task Manager sem expor rota, conta ou coordenadas;
+- ZIP/JSON leve de diagnostico com coordenadas mascaradas.
+
+Criterios de aprovacao:
+
+- nenhuma corrida nova e criada sobre snapshot `RUNNING`, `PAUSED`, `FINISHING` ou `FINISHED` ainda nao confirmado no historico;
+- foreground/background duplicados resultam em um unico ponto confiavel;
+- nenhuma escrita do historico `runs` ocorre por fix GPS;
+- perda esperada em kill abrupto fica limitada ao ultimo checkpoint/lote, sem zerar a corrida;
+- negar `POST_NOTIFICATIONS` reduz visibilidade e acoes, mas nao derruba o app; negar background exibe limitacao e nao promete rastreamento perfeito;
+- falha territorial, de internet, notificacao ou save final aparece no diagnostico e nao apaga a corrida.

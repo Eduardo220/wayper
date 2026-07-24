@@ -189,6 +189,7 @@ export default function DiagnosticsScreen() {
   const permissionsSummary = diagnostics.permissions || {};
   const storageSummary = diagnostics.storage || {};
   const syncSummary = diagnostics.sync || {};
+  const deferredQueueSummary = syncSummary.deferredQueue || {};
   const notificationSummary = diagnostics.notificationBackground || {};
   const socialSummary = diagnostics.social || {};
   const shareSummary = diagnostics.share || {};
@@ -256,6 +257,27 @@ export default function DiagnosticsScreen() {
       );
     } catch (error) {
       Alert.alert("Sync pendente", `Nao foi possivel tentar o sync.\n${error?.message || ""}`);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [refresh]);
+
+  const processDeferredQueue = useCallback(async () => {
+    setBusyAction("deferred-queue");
+    try {
+      const repository = await import("../repositories/runDeferredTaskQueueRepository.js");
+      const result = await repository.retry?.({ trigger: "diagnostics_manual", process: true });
+      if (result?.error) throw result.error;
+      await refresh();
+      const resetCount = result?.data?.retry?.resetCount || 0;
+      const processedCount = result?.data?.process?.processed?.length || 0;
+      const failedCount = result?.data?.process?.failed?.length || 0;
+      Alert.alert(
+        "Fila pos-corrida",
+        `Tarefas reativadas: ${resetCount}\nProcessadas agora: ${processedCount}\nFalhas nesta tentativa: ${failedCount}`
+      );
+    } catch (error) {
+      Alert.alert("Fila pos-corrida", `Nao foi possivel processar a fila.\n${error?.message || ""}`);
     } finally {
       setBusyAction(null);
     }
@@ -452,6 +474,16 @@ export default function DiagnosticsScreen() {
         <StatRow label="ultimo erro" value={syncSummary.lastError || "-"} />
       </DiagnosticPanel>
 
+      <DiagnosticPanel title="Fila pos-corrida">
+        <StatRow label="pendentes" value={deferredQueueSummary.pending ?? syncSummary.deferredPendingCount ?? 0} />
+        <StatRow label="rodando" value={deferredQueueSummary.running ?? syncSummary.deferredRunningCount ?? 0} />
+        <StatRow label="retry/permanente" value={`${deferredQueueSummary.failedRetryable ?? 0}/${deferredQueueSummary.failedPermanent ?? 0}`} />
+        <StatRow label="concluidas" value={deferredQueueSummary.succeeded ?? 0} />
+        <StatRow label="mais antiga" value={deferredQueueSummary.oldestPendingAt || syncSummary.deferredOldestPendingAt || "-"} />
+        <StatRow label="proxima tentativa" value={deferredQueueSummary.nextRunAt || syncSummary.deferredNextRunAt || "-"} />
+        <StatRow label="ultimo erro" value={deferredQueueSummary.lastError?.message || syncSummary.deferredLastError?.message || "-"} />
+      </DiagnosticPanel>
+
       <DiagnosticPanel title="Notificacao / Background">
         <StatRow label="foreground service" value={formatBoolean(notificationSummary.foregroundServiceActive)} />
         <StatRow label="notification id" value={notificationSummary.notificationId || "-"} />
@@ -588,6 +620,10 @@ export default function DiagnosticsScreen() {
         <TouchableOpacity style={styles.actionButton} onPress={retryPendingSync} disabled={Boolean(busyAction)}>
           <Ionicons name="sync-outline" size={18} color={WayperTheme.colors.textInverse} />
           <Text style={styles.actionText}>{busyAction === "sync" ? "Sincronizando" : "Tentar sync pendente"}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionButton} onPress={processDeferredQueue} disabled={Boolean(busyAction)}>
+          <Ionicons name="play-forward-outline" size={18} color={WayperTheme.colors.textInverse} />
+          <Text style={styles.actionText}>{busyAction === "deferred-queue" ? "Processando" : "Processar fila pos-corrida"}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton} onPress={sendLastRun} disabled={Boolean(busyAction)}>
           <Ionicons name="cloud-upload-outline" size={18} color={WayperTheme.colors.textInverse} />

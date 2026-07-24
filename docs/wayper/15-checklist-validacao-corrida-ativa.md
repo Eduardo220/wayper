@@ -104,13 +104,19 @@ Logs esperados:
 3. Confirmar que a corrida salva uma unica vez.
 4. Confirmar que historico, resumo, card final e mapa usam os mesmos valores.
 5. Confirmar que a corrida ativa foi limpa depois do save local.
+6. Confirmar que `Iniciar Corrida` nao aparece enquanto a UI esta em `Finalizando...`.
+7. Em corrida por zonas, confirmar que o resumo e o historico aparecem mesmo se a captura territorial ainda estiver pendente.
 
 Logs esperados:
 
 - `FINISH_PRESSED`
 - `RUN_FINISH_FINAL_VALUES`
+- `RUN_FINISH_LOCAL_MIN_SAVE_STARTED`
 - `FINISH_SUCCESS`
 - `RUN_FINISH_SAVED`
+- `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED`
+- `RUN_FINISH_UI_RELEASED`
+- `RUN_FINISH_DEFERRED_TASKS_SCHEDULED`
 - `RUN_SAVED_LOCAL`
 - `RUN_ACTIVE_CLEARED`
 
@@ -132,6 +138,23 @@ Logs esperados:
 - `RUN_STATE_RECONCILED`
 - `RECOVERY_COMPLETED`
 - `RUN_UI_STATE_APPLIED`
+
+## Cenario 8: Diagnostico de emergencia e finish concorrente
+
+1. Iniciar corrida livre em primeiro plano.
+2. Tocar no atalho `Diagnostico` do card `Wayper live`.
+3. Confirmar que o artefato compartilhado e JSON leve, com `light: true` e `fullExportDeferred: true`.
+4. Repetir tocando em `Diagnostico` e imediatamente `Finalizar`.
+5. Confirmar que a finalizacao vence, o estado `EXPORTANDO` some e a corrida aparece no resumo/historico local.
+6. Depois da finalizacao, abrir `Configuracoes > Diagnostico` e exportar o ZIP completo.
+
+Logs esperados:
+
+- `RUN_EMERGENCY_DIAGNOSTICS_EXPORT_STARTED`
+- `RUN_EMERGENCY_DIAGNOSTICS_EXPORT_SUCCESS` ou `RUN_DIAGNOSTIC_SHARE_TIMEOUT_OR_FAILED`
+- `RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH` quando finalizar durante export
+- `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED`
+- `RUN_FINISH_UI_RELEASED`
 
 ## O que comparar
 

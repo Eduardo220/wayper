@@ -93,8 +93,10 @@ Consultar `package.json` como fonte oficial. Scripts conhecidos incluem:
 - `npm start`
 - `npm test`
 - `npm run dev`
+- `npm run dev:clean`
 - `npm run dev:android`
 - `npm run dev:phone`
 - `npm run rua`
 - `npm run prod:apk`
+- `npm run prod:apk:no-sourcemaps`
 - `npm run prod:aab`

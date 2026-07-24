@@ -141,6 +141,19 @@ const getSyncRuntimeStatus = jest.fn(() => ({
   isSyncingRuns: true,
   autoSyncActive: true,
 }));
+const getDeferredQueueSummary = jest.fn(async () => ({
+  data: {
+    total: 4,
+    pending: 1,
+    running: 1,
+    succeeded: 1,
+    failedRetryable: 1,
+    failedPermanent: 0,
+    oldestPendingAt: "2026-06-19T12:10:00.000Z",
+    nextRunAt: "2026-06-19T12:15:00.000Z",
+    lastError: { message: "offline", code: "offline" },
+  },
+}));
 
 jest.unstable_mockModule("@react-native-async-storage/async-storage", () => ({
   default: AsyncStorageMock,
@@ -197,6 +210,11 @@ jest.unstable_mockModule("../../../repositories/runRepository.js", () => ({
 jest.unstable_mockModule("../../../repositories/runSyncQueueRepository.js", () => ({
   listPending: listPendingRuns,
   default: { listPending: listPendingRuns },
+}));
+
+jest.unstable_mockModule("../../../repositories/runDeferredTaskQueueRepository.js", () => ({
+  summary: getDeferredQueueSummary,
+  default: { summary: getDeferredQueueSummary },
 }));
 
 jest.unstable_mockModule("../../../repositories/territoryRepository.js", () => ({
@@ -369,8 +387,18 @@ describe("localDiagnosticsService", () => {
       syncFailed: 1,
       synced: 1,
       pendingQueueCount: 1,
+      deferredPendingCount: 2,
+      deferredRunningCount: 1,
+      deferredFailedCount: 1,
+      deferredOldestPendingAt: "2026-06-19T12:10:00.000Z",
+      deferredNextRunAt: "2026-06-19T12:15:00.000Z",
       lockActive: true,
       online: true,
+    });
+    expect(summary.sync.deferredQueue).toMatchObject({
+      pending: 1,
+      failedRetryable: 1,
+      lastError: { message: "offline" },
     });
     expect(summary.social).toMatchObject({
       storiesCount: 2,

@@ -430,13 +430,52 @@ describe("diagnostics logging", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
 
     expect(source).toContain('testID="emergency-diagnostics-button"');
-    expect(source).toContain("createDiagnosticsArchive({");
-    expect(source).toContain("scope: DIAGNOSTIC_EXPORT_SCOPE.ACTIVE_RUN");
+    expect(source).toContain("createActiveRunLightDiagnosticsArtifact");
+    expect(source).toContain("fullExportDeferred");
     expect(source).toContain("Sharing.shareAsync");
     expect(source).toContain("RUN_EMERGENCY_DIAGNOSTICS_EXPORT_STARTED");
+    expect(source).toContain("RUN_DIAGNOSTIC_EXPORT_TIMEOUT");
+    expect(source).toContain("RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH");
     expect(source).toContain('recordEmergencyDiagnosticsSnapshot("ui_heartbeat"');
     expect(source).toContain("hitSlop={EMERGENCY_DIAGNOSTICS_HIT_SLOP}");
+    expect(source).not.toContain("createDiagnosticsArchive({");
     expect(source).not.toContain('navigation.navigate("Diagnostico"');
+  });
+
+  test("diagnostico ativo usa artefato leve e deixa ZIP completo fora da MapScreen", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/services/diagnostics/diagnosticExportService.js"), "utf8");
+    const lightExportStart = source.indexOf("export async function createActiveRunLightDiagnosticsArtifact");
+    const fullZipStart = source.indexOf("async function createDiagnosticsArchiveInternal");
+
+    expect(source).toContain("export function buildActiveRunLightDiagnosticsPayload");
+    expect(source).toContain("format: \"wayper-active-run-light-diagnostics\"");
+    expect(source).toContain("mimeType: \"application/json\"");
+    expect(source).toContain("fullExportDeferred: true");
+    expect(lightExportStart).toBeGreaterThan(-1);
+    expect(fullZipStart).toBeGreaterThan(lightExportStart);
+    expect(source.slice(lightExportStart, fullZipStart)).not.toContain("new JSZip");
+    expect(source.slice(lightExportStart, fullZipStart)).not.toContain("getDiagnosticNdjson");
+  });
+
+  test("finalizacao da corrida salva local antes de tarefas pesadas", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const localSaved = source.indexOf("RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED");
+    const uiReleased = source.indexOf("RUN_FINISH_UI_RELEASED");
+    const deferredQueueProcessing = source.indexOf(
+      "const processResult = await runDeferredTaskQueueRepository.process({",
+      uiReleased
+    );
+
+    expect(source).toContain("RUN_FINISH_LOCAL_MIN_SAVE_STARTED");
+    expect(source).toContain("territoryCaptureStatus = \"PENDING\"");
+    expect(source).toContain("RUN_FINISH_DEFERRED_TASKS_SCHEDULED");
+    expect(source).toContain("runDeferredTaskQueueRepository.enqueuePostRun");
+    expect(source).toContain('includeTerritory: activeMode === "zones"');
+    expect(source).toContain('trigger: "finish_ui_released"');
+    expect(source).toContain("isFinishingRun ? \"Finalizando...\"");
+    expect(localSaved).toBeGreaterThan(-1);
+    expect(uiReleased).toBeGreaterThan(localSaved);
+    expect(deferredQueueProcessing).toBeGreaterThan(uiReleased);
   });
 
   test("MainNavigator registra tentativa e timeout do drawer", () => {

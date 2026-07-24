@@ -5,6 +5,7 @@ import { summarizeGpsQuality } from "./gpsQuality.js";
 import { normalizeTrackSegments, sanitizeRunPath } from "./trackSegments.js";
 
 export const ACTIVE_RUN_STORAGE_KEY = "wayper:activeRun:v2";
+export const ACTIVE_RUN_SCHEMA_VERSION = 2;
 
 export const ACTIVE_RUN_STATUS = {
   IDLE: "IDLE",
@@ -390,7 +391,6 @@ function getSegmentEndMs(segment = {}) {
 
 function derivePausedDurationMs(snapshot = {}, segments = []) {
   const explicit = getExplicitPausedDurationMs(snapshot);
-  if (explicit != null) return explicit;
 
   const sorted = normalizeSegments(segments)
     .map((segment) => ({
@@ -408,7 +408,7 @@ function derivePausedDurationMs(snapshot = {}, segments = []) {
       pausedMs += nextStart - previousEnd;
     }
   }
-  return pausedMs;
+  return Math.max(explicit || 0, pausedMs);
 }
 
 function getPausedAtMs(snapshot = {}, segments = [], nowMs = Date.now()) {
@@ -503,6 +503,7 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
     segments = normalizeSegments(segments, { status });
   }
   const currentLocation = state.currentPosition || trustedPath[trustedPath.length - 1] || base.currentLocation || null;
+  const lastRawPoint = rawPath[rawPath.length - 1] || currentLocation;
   const baseDistance = Number(base.distanceMeters ?? base.distance ?? 0) || 0;
   const measuredDistance = Number(state.stats?.distanceMeters ?? state.distanceMeters ?? 0) ||
     calculatePathDistanceMeters(trustedPath);
@@ -525,18 +526,30 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
     filteredPoints: trustedPath,
     segments,
   });
+  const pausedDurationMs = derivePausedDurationMs({ ...base, status }, segments);
+  const pausedAtMs = status === ACTIVE_RUN_STATUS.PAUSED
+    ? getPausedAtMs(base, segments, nowMs)
+    : null;
+  const finishedAtMs = options.finishedAtMs || base.finishedAtMs || null;
+  const finishedAt = options.finishedAt || base.finishedAt || null;
 
   return {
+    version: ACTIVE_RUN_SCHEMA_VERSION,
+    schemaVersion: ACTIVE_RUN_SCHEMA_VERSION,
+    formatVersion: ACTIVE_RUN_SCHEMA_VERSION,
     activeRunId: runId,
+    runId,
     id: runId,
     userId: base.userId || "offline",
     mode: base.mode || "free",
     startedAtMs: toTimestampMs(base.startedAtMs ?? base.startedAt, nowMs),
     startedAt: base.startedAt || nowIso(toTimestampMs(base.startedAtMs ?? base.startedAt, nowMs)),
-    finishedAtMs: options.finishedAtMs || base.finishedAtMs || null,
-    finishedAt: options.finishedAt || base.finishedAt || null,
+    finishedAtMs,
+    finishedAt,
+    endedAt: finishedAt,
     lastUpdatedAtMs: nowMs,
     lastUpdatedAt: nowIso(nowMs),
+    updatedAt: nowIso(nowMs),
     status,
     points: trustedPath,
     path: trustedPath,
@@ -549,11 +562,20 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
     liveRenderPath: firstNonEmptyPath(state.liveRenderPath, base.liveRenderPath, trustedPath),
     displayPoints: firstNonEmptyPath(state.displayPoints, state.liveRenderPath, base.displayPoints, trustedPath),
     currentLocation,
+    lastPoint: lastRawPoint,
+    lastRawPoint,
+    lastValidPoint: currentLocation,
     distance,
     distanceMeters: distance,
     duration: durationSeconds,
     durationSeconds,
     durationMs: durationSeconds * 1000,
+    pausedDurationMs,
+    totalPausedMs: pausedDurationMs,
+    totalPausedTime: pausedDurationMs,
+    pausedAtMs,
+    pausedAt: pausedAtMs ? nowIso(pausedAtMs) : null,
+    pauseStartedAt: pausedAtMs ? nowIso(pausedAtMs) : null,
     pace,
     paceSecondsPerKm: pace,
     pendingSync: true,
@@ -565,6 +587,12 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
     smoothingVersion: state.smoothingVersion || base.smoothingVersion || "wayper_tracking_v2",
     filterVersion: state.filterVersion || base.filterVersion || "wayper_gps_filter_v2",
     notificationBody: base.notificationBody || DEFAULT_NOTIFICATION_BODY,
+    lastError: base.lastError || null,
+    recoveryPending: Boolean(
+      base.recoveryPending ||
+      status === ACTIVE_RUN_STATUS.RECOVERING ||
+      status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE
+    ),
     meta: {
       ...(base.meta || {}),
       recovered: Boolean(base.meta?.recovered || options.recovered),
@@ -616,10 +644,20 @@ export function normalizeActiveRunSnapshot(snapshot = {}, options = {}) {
   }, { nowMs });
   const pace = calculatePaceSecondsPerKm(durationSeconds, distance);
   const lastUpdatedAtMs = toTimestampMs(snapshot.lastUpdatedAtMs ?? snapshot.lastUpdatedAt, nowMs);
+  const pausedDurationMs = derivePausedDurationMs(snapshot, segments);
+  const pausedAtMs = status === ACTIVE_RUN_STATUS.PAUSED
+    ? getPausedAtMs(snapshot, segments, nowMs)
+    : null;
+  const currentLocation = snapshot.currentLocation || snapshot.lastValidPoint || trustedPath[trustedPath.length - 1] || null;
+  const lastRawPoint = snapshot.lastRawPoint || snapshot.lastPoint || rawPath[rawPath.length - 1] || currentLocation;
 
   return {
     ...snapshot,
+    version: Number(snapshot.version || snapshot.schemaVersion || ACTIVE_RUN_SCHEMA_VERSION),
+    schemaVersion: Number(snapshot.schemaVersion || snapshot.version || ACTIVE_RUN_SCHEMA_VERSION),
+    formatVersion: Number(snapshot.formatVersion || snapshot.schemaVersion || snapshot.version || ACTIVE_RUN_SCHEMA_VERSION),
     activeRunId: runId,
+    runId,
     id: runId,
     userId: snapshot.userId || "offline",
     mode: snapshot.mode || "free",
@@ -627,8 +665,10 @@ export function normalizeActiveRunSnapshot(snapshot = {}, options = {}) {
     startedAt: snapshot.startedAt || nowIso(startedAtMs),
     finishedAtMs,
     finishedAt: snapshot.finishedAt || (finishedAtMs ? nowIso(finishedAtMs) : null),
+    endedAt: snapshot.endedAt || snapshot.finishedAt || (finishedAtMs ? nowIso(finishedAtMs) : null),
     lastUpdatedAtMs,
     lastUpdatedAt: snapshot.lastUpdatedAt || nowIso(lastUpdatedAtMs),
+    updatedAt: snapshot.updatedAt || snapshot.lastUpdatedAt || nowIso(lastUpdatedAtMs),
     status,
     points: trustedPath,
     path: trustedPath,
@@ -640,18 +680,33 @@ export function normalizeActiveRunSnapshot(snapshot = {}, options = {}) {
     routeSegments: segments,
     liveRenderPath,
     displayPoints,
-    currentLocation: snapshot.currentLocation || trustedPath[trustedPath.length - 1] || null,
+    currentLocation,
+    lastPoint: lastRawPoint,
+    lastRawPoint,
+    lastValidPoint: currentLocation,
     distance,
     distanceMeters: distance,
     duration: durationSeconds,
     durationSeconds,
     durationMs: durationSeconds * 1000,
+    pausedDurationMs,
+    totalPausedMs: pausedDurationMs,
+    totalPausedTime: pausedDurationMs,
+    pausedAtMs,
+    pausedAt: pausedAtMs ? nowIso(pausedAtMs) : null,
+    pauseStartedAt: pausedAtMs ? nowIso(pausedAtMs) : null,
     pace,
     paceSecondsPerKm: pace,
     pendingSync: snapshot.pendingSync !== false,
     synced: false,
     source: snapshot.source || "foreground",
     notificationBody: snapshot.notificationBody || DEFAULT_NOTIFICATION_BODY,
+    lastError: snapshot.lastError || null,
+    recoveryPending: Boolean(
+      snapshot.recoveryPending ||
+      status === ACTIVE_RUN_STATUS.RECOVERING ||
+      status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE
+    ),
     meta: {
       ...(snapshot.meta || {}),
       activeSegmentEndCleared: Boolean(snapshot.meta?.activeSegmentEndCleared || activeSegmentEndCleared),
@@ -949,6 +1004,7 @@ export function buildRunDataFromActiveSnapshot(snapshot = {}, overrides = {}) {
 }
 
 export default {
+  ACTIVE_RUN_SCHEMA_VERSION,
   ACTIVE_RUN_STATUS,
   ACTIVE_RUN_STORAGE_KEY,
   buildRunDataFromActiveSnapshot,

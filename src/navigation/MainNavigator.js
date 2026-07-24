@@ -49,6 +49,7 @@ import logger, { LOG_CATEGORIES } from "../utils/logger.js";
 import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
 import { subscribeCurrentUserProfile } from "../repositories/userProfileRepository.js";
 import { runLocalMigrationsOnce } from "../services/storage/storageMigrationService.js";
+import runDeferredTaskQueueRepository from "../repositories/runDeferredTaskQueueRepository.js";
 import runSyncQueueRepository from "../repositories/runSyncQueueRepository.js";
 import { hasCompletedOnboarding } from "../services/onboarding/onboardingService.js";
 
@@ -345,6 +346,13 @@ export default function MainNavigator() {
 
     runSyncQueueRepository.startAutoSync?.().catch((e) => {
       logger.warn(LOG_CATEGORIES.SYNC, "START_AUTO_SYNC_FAILED", { error: e });
+    });
+    runDeferredTaskQueueRepository.startAutoProcessing?.().then((result) => {
+      if (result?.error) {
+        logger.warn(LOG_CATEGORIES.RUN_SESSION, "START_RUN_DEFERRED_QUEUE_FAILED", { error: result.error });
+      }
+    }).catch((e) => {
+      logger.warn(LOG_CATEGORIES.RUN_SESSION, "START_RUN_DEFERRED_QUEUE_FAILED", { error: e });
     });
   }, [userData]);
 

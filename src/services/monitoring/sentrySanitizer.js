@@ -2,6 +2,8 @@ const MAX_DEPTH = 10;
 const MAX_ARRAY_ITEMS = 20;
 const MAX_OBJECT_KEYS = 60;
 const MAX_STRING_LENGTH = 2000;
+const MAX_BREADCRUMBS = 50;
+const MAX_REPEATED_BREADCRUMBS = 5;
 
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
@@ -182,6 +184,24 @@ export function sanitizeSentryBreadcrumb(breadcrumb = {}) {
   };
 }
 
+function limitBreadcrumbNoise(breadcrumbs = []) {
+  const counts = new Map();
+  const output = [];
+  for (const breadcrumb of breadcrumbs.slice(-MAX_BREADCRUMBS * 2)) {
+    const sanitized = sanitizeSentryBreadcrumb(breadcrumb);
+    const key = [
+      sanitized.category || "unknown",
+      sanitized.message || "",
+      sanitized.level || "",
+    ].join(":");
+    const count = counts.get(key) || 0;
+    if (count >= MAX_REPEATED_BREADCRUMBS) continue;
+    counts.set(key, count + 1);
+    output.push(sanitized);
+  }
+  return output.slice(-MAX_BREADCRUMBS);
+}
+
 export function sanitizeSentryEvent(event = {}) {
   const sanitized = sanitizeSentryContext(event);
 
@@ -193,7 +213,7 @@ export function sanitizeSentryEvent(event = {}) {
   }
 
   if (Array.isArray(event.breadcrumbs)) {
-    sanitized.breadcrumbs = event.breadcrumbs.map(sanitizeSentryBreadcrumb);
+    sanitized.breadcrumbs = limitBreadcrumbNoise(event.breadcrumbs);
   }
 
   if (event.request) {

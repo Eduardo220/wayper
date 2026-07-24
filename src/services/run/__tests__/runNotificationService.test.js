@@ -345,7 +345,7 @@ describe("run notification service", () => {
     ).toBeGreaterThan(0);
   });
 
-  test("permissao de notificacao negada nao inicia foreground service", async () => {
+  test("permissao de notificacao negada ainda inicia foreground service sem painel visivel", async () => {
     notificationPermissionCheck.mockResolvedValue(false);
     notificationPermissionRequest.mockResolvedValue("denied");
 
@@ -355,9 +355,9 @@ describe("run notification service", () => {
       isPaused: false,
     }, { scheduleTimer: false });
 
-    expect(started).toBe(false);
+    expect(started).toBe(true);
     expect(notificationPermissionRequest).toHaveBeenCalledTimes(1);
-    expect(nativeModule.startRunNotification).not.toHaveBeenCalled();
+    expect(nativeModule.startRunNotification).toHaveBeenCalledTimes(1);
   });
 
   test("ao finalizar corrida, notificacao e timer sao removidos", async () => {
@@ -443,6 +443,19 @@ describe("run notification service", () => {
     expect(foregroundService).toContain("Intent.FLAG_ACTIVITY_REORDER_TO_FRONT");
     expect(mainActivity).toContain("override fun onNewIntent");
     expect(mainActivity).toContain("setIntent(intent)");
+  });
+
+  test("foreground service restaura estado minimo quando Android recria o processo", () => {
+    const foregroundService = fs.readFileSync(
+      path.join(process.cwd(), "android/app/src/main/java/com/wayper/app/run/RunNotificationForegroundService.kt"),
+      "utf8"
+    );
+
+    expect(foregroundService).toContain("if (intent == null)");
+    expect(foregroundService).toContain("restorePersistedState()");
+    expect(foregroundService).toContain("PREFERENCES_NAME");
+    expect(foregroundService).toContain("START_STICKY");
+    expect(foregroundService).toContain("persistState(active = false)");
   });
 
   test("permissoes android necessarias para notificacao e background estao declaradas", () => {

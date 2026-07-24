@@ -3,6 +3,7 @@ import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { registerMonitoringSink } from "./monitoringBridge.js";
 import {
+  anonymizeIdentifier,
   sanitizeSentryBreadcrumb,
   sanitizeSentryContext,
   sanitizeSentryEvent,
@@ -10,52 +11,153 @@ import {
 
 const PUBLIC_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN || "";
 const PUBLIC_ENVIRONMENT = process.env.EXPO_PUBLIC_APP_ENV || "";
+const PUBLIC_APPLICATION_ID = process.env.EXPO_PUBLIC_APPLICATION_ID || "";
+const PUBLIC_APP_VARIANT = process.env.EXPO_PUBLIC_APP_VARIANT || "";
+const PUBLIC_BUILD_PROFILE = process.env.EXPO_PUBLIC_BUILD_PROFILE || "";
+const PUBLIC_UPDATE_CHANNEL = process.env.EXPO_PUBLIC_EAS_UPDATE_CHANNEL || "";
 const PUBLIC_ENABLE_DEV = process.env.EXPO_PUBLIC_SENTRY_ENABLE_DEV === "true";
 const PUBLIC_ENABLED = process.env.EXPO_PUBLIC_SENTRY_ENABLED !== "false";
 const PUBLIC_TEST_ENABLED = process.env.EXPO_PUBLIC_SENTRY_TEST_ENABLED === "true";
+const PUBLIC_DEBUG_ENABLED = process.env.EXPO_PUBLIC_SENTRY_DEBUG === "true";
+
+const LOCATION_BREADCRUMB_INTERVAL_MS = 30_000;
+const LOCATION_BREADCRUMB_MAX_REASONS = 8;
 
 const BREADCRUMB_EVENTS = new Set([
   "RUN_STARTED",
+  "RUN_START_ATTEMPT",
+  "RUN_START_REQUESTED",
+  "RUN_COUNTDOWN_STARTED",
+  "COUNTDOWN_SHOWN",
+  "TRACKING_START_REQUESTED",
+  "TRACKING_STARTED",
+  "RUN_START_SUCCESS",
+  "RUN_START_FAILED",
+  "START_BUTTON_PRESSED",
+  "START_FAILED",
   "PAUSE_PRESSED",
   "PAUSE_SUCCESS",
+  "PAUSE_FAILED",
   "RESUME_PRESSED",
   "RESUME_SUCCESS",
+  "RESUME_FAILED",
   "FINISH_PRESSED",
+  "FINISH_STARTED",
+  "FINISH_COMPLETED",
   "FINISH_SUCCESS",
+  "FINISH_FAILED",
+  "FINISH_LOCK_ACQUIRED",
+  "FINISH_LOCK_RELEASED",
   "RUN_SAVED_LOCAL",
+  "RUN_SAVE_STARTED",
+  "RUN_SAVE_FAILED",
   "RUN_SYNC_QUEUED",
   "RUN_SYNC_SUCCESS",
   "RUN_SYNC_FAILED",
+  "RUN_SYNC_COMPLETED",
+  "RUN_CHECKPOINT_SAVED",
+  "RUN_CHECKPOINT_FAILED",
+  "ACTIVE_RUN_SAVED",
+  "ACTIVE_RUN_SAVE_FAILED",
+  "ACTIVE_RUN_LOAD_FAILED",
+  "ACTIVE_RUN_STALE_CHECKPOINT_IGNORED",
+  "ACTIVE_RUN_EMPTY_OVERWRITE_BLOCKED",
+  "ACTIVE_RUN_DISTANCE_REGRESSION_BLOCKED",
+  "ACTIVE_RUN_ELAPSED_REGRESSION_BLOCKED",
   "LOCATION_PERMISSION_DENIED",
+  "LOCATION_PERMISSION_GRANTED",
+  "LOCATION_PERMISSION_CHECKED",
+  "LOCATION_PERMISSION_REQUESTED",
+  "LOCATION_WATCHER_STARTED",
+  "LOCATION_WATCHER_STOPPED",
+  "LOCATION_WATCHER_RESTARTED",
   "APP_BACKGROUND",
   "APP_ACTIVE",
   "RUN_APP_BACKGROUND",
   "RUN_APP_ACTIVE",
+  "APP_KILLED_OR_COLD_START_DETECTED",
+  "ACTIVE_RUN_RECOVERED_FROM_STORAGE",
+  "ACTIVE_RUN_MISSING_AFTER_FOREGROUND",
   "RUN_BACKGROUND_TASK_REGISTERED",
   "RUN_BACKGROUND_TASK_STARTED",
   "RUN_BACKGROUND_TASK_HANDLED",
   "RUN_BACKGROUND_TASK_CANCELLED_OR_STOPPED",
+  "RUN_BACKGROUND_TASK_STATUS",
   "RUN_NOTIFICATION_STARTED",
+  "RUN_NOTIFICATION_UPDATED",
   "RUN_NOTIFICATION_STOPPED",
   "RUN_NOTIFICATION_PERMISSION_DENIED",
+  "RUN_NOTIFICATION_ACTION_RECEIVED",
+  "RUN_NOTIFICATION_ACTION",
+  "RUN_NOTIFICATION_NATIVE_STATE_READ",
+  "RUN_OPENED_FROM_NOTIFICATION",
+  "RUN_NOTIFICATION_OPEN_RESTORE_STARTED",
+  "RUN_NOTIFICATION_OPEN_RESTORE_COMPLETED",
+  "RUN_DEEP_LINK_RECEIVED",
+  "RUN_REHYDRATE_STARTED",
+  "RUN_REHYDRATE_SUCCESS",
+  "RUN_REHYDRATE_FAILED",
+  "RUN_RECONCILE_STARTED",
+  "RUN_RECONCILE_RECOVERED",
+  "RUN_RECONCILE_FAILED",
+  "RUN_RECONCILE_INCONSISTENT_STATE",
+  "RUN_RECONCILE_PRESERVED_ACTIVE_EVIDENCE",
+  "RUN_ERROR_RECOVERABLE_ACTIVE_RUN",
+  "RECOVERY_STARTED",
+  "RECOVERY_LOADED_ACTIVE_RUN",
+  "RECOVERY_MERGED_STATE",
+  "RECOVERY_COMPLETED",
+  "RECOVERY_FAILED",
+  "RUN_RESTORE_STARTED",
+  "RUN_RESTORE_COMPLETED",
   "MAP_ERROR",
+  "MAP_SCREEN_MOUNTED",
+  "MAP_SCREEN_UNMOUNTED",
+  "MAP_ROUTE_HYDRATED",
+  "MAP_ROUTE_RENDERED",
+  "MAP_RENDER_STALL_DETECTED",
+  "RUN_UI_STATE_CHANGED",
+  "RUN_UI_STATE_APPLIED",
+  "CANONICAL_SNAPSHOT_APPLIED",
+  "RUN_UI_STATE_STALE_UPDATE_BLOCKED",
+  "RUN_UI_STATE_MISMATCH",
+  "RUN_UI_DISTANCE_REGRESSION_BLOCKED",
+  "RUN_UI_ELAPSED_REGRESSION_BLOCKED",
+  "RUN_UI_HEARTBEAT",
+  "RUN_UI_TIMER_STALL",
+  "RUN_UI_STALL",
+  "RUN_UI_POSSIBLE_FREEZE_DETECTED",
+  "BUTTON_PRESS_IGNORED_DUE_TO_LOCK",
+  "DIAGNOSTICS_EXPORT_FAILED",
+  "RUN_EMERGENCY_DIAGNOSTICS_EXPORT_FAILED",
 ]);
 
 const HIGH_FREQUENCY_EVENTS = new Set([
+  "FOREGROUND_LOCATION_RECEIVED",
+  "BACKGROUND_LOCATION_RECEIVED",
   "LOCATION_POINT_RECEIVED",
   "LOCATION_POINT_ACCEPTED",
   "LOCATION_POINT_REJECTED",
+  "RUN_POINT_ACCEPTED",
+  "RUN_POINT_REJECTED_SUMMARY",
 ]);
 
 const WARNING_CATEGORIES = new Set([
   "BACKGROUND",
   "FIREBASE",
+  "LOCATION",
   "MAP",
   "NOTIFICATION",
   "PERMISSION",
+  "PERFORMANCE",
   "RUN_RECOVERY",
+  "RUN_SESSION",
+  "RUN_TRACKING",
   "STORAGE",
   "SYNC",
+  "UI",
+  "UI_ACTION",
+  "APP_STATE",
 ]);
 
 const SPAN_START_EVENTS = {
@@ -92,11 +194,22 @@ let state = {
 let appStartSpan = null;
 const activeSpans = new Map();
 const warningTimestamps = new Map();
+const locationBreadcrumbState = {
+  windowStartedAt: 0,
+  lastSentAt: 0,
+  counts: {},
+  reasons: {},
+  sources: {},
+  lastEvent: null,
+  lastStatus: null,
+  lastRunId: null,
+  lastAccuracy: null,
+};
 
 function normalizeEnvironment(value) {
   const normalized = String(value || "").trim().toLowerCase();
   if (["prod", "production"].includes(normalized)) return "production";
-  if (["preview", "stage", "staging"].includes(normalized)) return "staging";
+  if (["preview", "stage", "staging"].includes(normalized)) return "preview";
   return "development";
 }
 
@@ -110,6 +223,7 @@ function getAppMetadata(overrides = {}) {
   );
   const packageName =
     overrides.packageName ||
+    PUBLIC_APPLICATION_ID ||
     (Platform.OS === "ios"
       ? expoConfig.ios?.bundleIdentifier
       : expoConfig.android?.package) ||
@@ -126,7 +240,7 @@ function getAppMetadata(overrides = {}) {
 
 function defaultTraceRate(environment) {
   if (environment === "production") return 0.08;
-  if (environment === "staging") return 0.15;
+  if (environment === "preview") return 0.15;
   return 0.2;
 }
 
@@ -154,11 +268,14 @@ export function resolveMonitoringConfig(overrides = {}) {
     tracesSampleRate: Number.isFinite(Number(overrides.tracesSampleRate))
       ? Number(overrides.tracesSampleRate)
       : defaultTraceRate(environment),
-    debug: overrides.debug ?? (environment === "development" && enabled),
+    debug: overrides.debug ?? (PUBLIC_DEBUG_ENABLED || (environment === "development" && enabled)),
     isDevClient:
       overrides.isDevClient ??
       (typeof __DEV__ !== "undefined" && __DEV__ && Constants.executionEnvironment !== "storeClient"),
     buildType: overrides.buildType || environment,
+    buildProfile: overrides.buildProfile || PUBLIC_BUILD_PROFILE || environment,
+    appVariant: overrides.appVariant || PUBLIC_APP_VARIANT || environment,
+    updateChannel: overrides.updateChannel || PUBLIC_UPDATE_CHANNEL || null,
   };
 }
 
@@ -176,6 +293,15 @@ function setGlobalContext(name, context) {
   } catch {}
 }
 
+function setTagsOnScope(scope, tags = {}) {
+  Object.entries(sanitizeSentryContext(tags || {})).forEach(([key, value]) => {
+    if (value == null || value === "") return;
+    if (["string", "number", "boolean"].includes(typeof value)) {
+      scope.setTag?.(key, String(value).slice(0, 200));
+    }
+  });
+}
+
 function captureWithScope(callback, context = {}, level = "error") {
   if (!state.enabled) return null;
   const safeContext = sanitizeSentryContext(context);
@@ -186,6 +312,12 @@ function captureWithScope(callback, context = {}, level = "error") {
       scope.setTag?.("wayper.category", String(context.category || "UNKNOWN"));
       scope.setTag?.("wayper.event", String(context.event || "UNKNOWN"));
       if (context.screen) scope.setTag?.("screenName", String(context.screen));
+      if (context.feature) scope.setTag?.("feature", String(context.feature).slice(0, 200));
+      if (context.area) scope.setTag?.("area", String(context.area).slice(0, 200));
+      if (context.runStatus || context.status) {
+        scope.setTag?.("runStatus", String(context.runStatus || context.status).slice(0, 200));
+      }
+      setTagsOnScope(scope, context.tags);
       scope.setContext?.("wayper", safeContext);
       eventId = callback(scope);
     });
@@ -204,7 +336,7 @@ function extractError(context = {}) {
 function shouldCaptureWarning(logEvent) {
   if (!WARNING_CATEGORIES.has(String(logEvent.category || "").toUpperCase())) return false;
   const event = String(logEvent.event || "");
-  if (!/(FAILED|DENIED|UNAVAILABLE|CORRUPT|INCONSISTENT|BLOCKED|STALL)/i.test(event)) return false;
+  if (!/(FAILED|DENIED|UNAVAILABLE|CORRUPT|INCONSISTENT|BLOCKED|STALL|FREEZE|MISMATCH|REGRESSION|FULL|ERROR_RECOVERABLE)/i.test(event)) return false;
 
   const key = `${logEvent.category}:${event}`;
   const now = Date.now();
@@ -215,7 +347,91 @@ function shouldCaptureWarning(logEvent) {
 }
 
 function shouldAddBreadcrumb(event) {
-  return BREADCRUMB_EVENTS.has(event) || event.startsWith("SHARE_");
+  return (
+    BREADCRUMB_EVENTS.has(event) ||
+    event.startsWith("SHARE_") ||
+    event.includes("_STALL") ||
+    event.includes("_FREEZE") ||
+    event.includes("_REGRESSION_BLOCKED") ||
+    event.includes("_INCONSISTENT_")
+  );
+}
+
+function resetLocationBreadcrumbState(now = Date.now()) {
+  locationBreadcrumbState.windowStartedAt = now;
+  locationBreadcrumbState.counts = {};
+  locationBreadcrumbState.reasons = {};
+  locationBreadcrumbState.sources = {};
+  locationBreadcrumbState.lastEvent = null;
+  locationBreadcrumbState.lastStatus = null;
+  locationBreadcrumbState.lastRunId = null;
+  locationBreadcrumbState.lastAccuracy = null;
+}
+
+function addCount(target, key = "unknown") {
+  const normalized = String(key || "unknown").slice(0, 80);
+  target[normalized] = (target[normalized] || 0) + 1;
+}
+
+function buildLocationAggregateData(now = Date.now()) {
+  const sortedReasons = Object.entries(locationBreadcrumbState.reasons)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, LOCATION_BREADCRUMB_MAX_REASONS)
+    .reduce((output, [key, value]) => ({ ...output, [key]: value }), {});
+  return {
+    windowMs: Math.max(0, now - (locationBreadcrumbState.windowStartedAt || now)),
+    counts: locationBreadcrumbState.counts,
+    reasons: sortedReasons,
+    sources: locationBreadcrumbState.sources,
+    lastEvent: locationBreadcrumbState.lastEvent,
+    status: locationBreadcrumbState.lastStatus,
+    runId: locationBreadcrumbState.lastRunId,
+    lastAccuracy: locationBreadcrumbState.lastAccuracy,
+  };
+}
+
+function flushLocationBreadcrumb(reason = "interval", now = Date.now()) {
+  const total = Object.values(locationBreadcrumbState.counts).reduce((sum, count) => sum + count, 0);
+  if (!total) return false;
+  const data = buildLocationAggregateData(now);
+  const added = addBreadcrumb({
+    category: "wayper.location",
+    message: "LOCATION_UPDATES_THROTTLED",
+    level: reason === "forced" ? "info" : "debug",
+    data: {
+      ...data,
+      reason,
+    },
+  });
+  locationBreadcrumbState.lastSentAt = now;
+  resetLocationBreadcrumbState(now);
+  return added;
+}
+
+function aggregateLocationBreadcrumb(logEvent = {}, now = Date.now()) {
+  if (!locationBreadcrumbState.windowStartedAt) {
+    resetLocationBreadcrumbState(now);
+  }
+  const context = logEvent.context || {};
+  const event = String(logEvent.event || "LOCATION_POINT");
+  addCount(locationBreadcrumbState.counts, event);
+  addCount(locationBreadcrumbState.sources, context.source || context.point?.source || "unknown");
+  if (context.reason) addCount(locationBreadcrumbState.reasons, context.reason);
+  if (event.includes("REJECTED")) addCount(locationBreadcrumbState.reasons, "rejected");
+  if (/duplicate/i.test(String(context.reason || ""))) addCount(locationBreadcrumbState.reasons, "duplicate_point");
+  if (/gap/i.test(String(context.reason || ""))) addCount(locationBreadcrumbState.reasons, "gps_gap_detected");
+  if (Number(context.accuracy) > 0) {
+    locationBreadcrumbState.lastAccuracy = Math.round(Number(context.accuracy));
+    if (Number(context.accuracy) >= 50) addCount(locationBreadcrumbState.reasons, "gps_accuracy_bad");
+  }
+  locationBreadcrumbState.lastEvent = event;
+  locationBreadcrumbState.lastStatus = context.status || context.runStatus || null;
+  locationBreadcrumbState.lastRunId = context.runId || context.localRunId || null;
+
+  if (now - locationBreadcrumbState.windowStartedAt >= LOCATION_BREADCRUMB_INTERVAL_MS) {
+    return flushLocationBreadcrumb("interval", now);
+  }
+  return false;
 }
 
 function updateOperationalTags(logEvent = {}) {
@@ -271,10 +487,13 @@ function captureLogEvent(logEvent = {}, rawContext = {}, options = {}) {
   const event = String(logEvent.event || "LOG_EVENT");
   const level = String(logEvent.level || "info");
 
-  if (HIGH_FREQUENCY_EVENTS.has(event)) return null;
-
   updateOperationalTags(logEvent);
   updatePerformanceSpans(logEvent);
+
+  if (HIGH_FREQUENCY_EVENTS.has(event)) {
+    aggregateLocationBreadcrumb(logEvent);
+    return null;
+  }
 
   if (shouldAddBreadcrumb(event)) {
     addBreadcrumb({
@@ -358,6 +577,9 @@ export function initializeMonitoring(overrides = {}) {
     setGlobalTag("platform", Platform.OS);
     setGlobalTag("isDevClient", config.isDevClient);
     setGlobalTag("buildType", config.buildType);
+    setGlobalTag("buildProfile", config.buildProfile);
+    setGlobalTag("appVariant", config.appVariant);
+    setGlobalTag("updateChannel", config.updateChannel);
     setGlobalTag("mapProvider", "maplibre");
     setGlobalContext("app", {
       appVersion: config.appVersion,
@@ -366,6 +588,9 @@ export function initializeMonitoring(overrides = {}) {
       platform: Platform.OS,
       isDevClient: config.isDevClient,
       buildType: config.buildType,
+      buildProfile: config.buildProfile,
+      appVariant: config.appVariant,
+      updateChannel: config.updateChannel,
       mapProvider: "maplibre",
     });
     addBreadcrumb({
@@ -429,6 +654,54 @@ export function addBreadcrumb(breadcrumb = {}) {
   }
 }
 
+export function captureRunError(error, context = {}) {
+  return captureException(error, {
+    feature: "run_tracking",
+    area: context.area || "active_run",
+    category: context.category || "RUN_TRACKING",
+    event: context.event || "RUN_ERROR",
+    ...context,
+  });
+}
+
+export function captureRunMessage(message, level = "warning", context = {}) {
+  return captureMessage(message, level, {
+    feature: "run_tracking",
+    area: context.area || "active_run",
+    category: context.category || "RUN_TRACKING",
+    event: context.event || "RUN_EVENT",
+    ...context,
+  });
+}
+
+export function capturePossibleFreeze(context = {}) {
+  return captureRunMessage("run_ui_possible_freeze_detected", "warning", {
+    area: context.area || "map_screen",
+    event: "RUN_UI_POSSIBLE_FREEZE_DETECTED",
+    category: "PERFORMANCE",
+    ...context,
+    tags: {
+      feature: "run_tracking",
+      area: "map_screen",
+      appState: context.appState || "unknown",
+      runStatus: context.runStatus || context.status || "unknown",
+      ...(context.tags || {}),
+    },
+  });
+}
+
+export function addRunBreadcrumb(event, context = {}, level = "info") {
+  return addBreadcrumb({
+    category: "wayper.run_tracking",
+    message: event,
+    level,
+    data: {
+      feature: "run_tracking",
+      ...context,
+    },
+  });
+}
+
 export function setMonitoringScreen(screenName) {
   const safeScreen = String(screenName || "unknown").slice(0, 100);
   setGlobalTag("screenName", safeScreen);
@@ -439,6 +712,22 @@ export function setMonitoringAuthState(authState) {
   const safeState = authState === "authenticated" ? "authenticated" : "anonymous";
   setGlobalTag("firebaseAuthState", safeState);
   setGlobalContext("firebase", { authState: safeState });
+}
+
+export function setMonitoringUser(user = null) {
+  if (!state.enabled) return false;
+  try {
+    const rawId = user?.uid || user?.id || user?.userId || null;
+    const safeId = anonymizeIdentifier(rawId, "user");
+    sentryClient.setUser?.(safeId ? { id: safeId } : null);
+    setGlobalContext("firebase", {
+      authState: rawId ? "authenticated" : "anonymous",
+      userId: safeId,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function traceAsync(name, op, context, callback) {
@@ -515,6 +804,10 @@ export function __setSentryClientForTests(client) {
   sentryClient = client || Sentry;
 }
 
+export function __flushLocationBreadcrumbsForTests() {
+  return flushLocationBreadcrumb("forced");
+}
+
 export function __resetMonitoringForTests() {
   registerMonitoringSink(null);
   activeSpans.forEach((span) => {
@@ -524,6 +817,7 @@ export function __resetMonitoringForTests() {
   });
   activeSpans.clear();
   warningTimestamps.clear();
+  resetLocationBreadcrumbState(0);
   appStartSpan = null;
   state = {
     attempted: false,
@@ -539,6 +833,10 @@ export function __resetMonitoringForTests() {
 
 export default {
   addBreadcrumb,
+  addRunBreadcrumb,
+  captureRunError,
+  captureRunMessage,
+  capturePossibleFreeze,
   captureException,
   captureMessage,
   finishAppStartSpan,
@@ -549,6 +847,7 @@ export default {
   sendMonitoringTestEvent,
   setMonitoringAuthState,
   setMonitoringScreen,
+  setMonitoringUser,
   traceAsync,
   wrapWithMonitoring,
 };

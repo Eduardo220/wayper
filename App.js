@@ -1,14 +1,13 @@
 // APP.JS — WAYPER (CLEAN, STABLE, SEM FIRULA)
 
 import "react-native-reanimated";
-import "./src/services/runTracking/activeRunTrackingService";
 import {
   configureReanimatedLogger,
   ReanimatedLogLevel,
 } from "react-native-reanimated";
 
 import React, { useEffect, useState } from "react";
-import { LogBox, View, ActivityIndicator, Image, StyleSheet, Text, Linking } from "react-native";
+import { View, ActivityIndicator, Image, StyleSheet, Text, Linking } from "react-native";
 import ErrorBoundary from "./src/components/ErrorBoundary";
 import {
   installGlobalRunErrorHandlers,
@@ -23,8 +22,11 @@ import {
 import { initializeDiagnosticsPreferences } from "./src/services/diagnostics/diagnosticsPreferencesService.js";
 import {
   finishAppStartSpan,
+  initializeMonitoring,
   setMonitoringAuthState,
   setMonitoringScreen,
+  setMonitoringUser,
+  wrapWithMonitoring,
 } from "./src/services/monitoring/sentryService.js";
 import logger, { LOG_CATEGORIES } from "./src/utils/logger.js";
 import {
@@ -70,11 +72,11 @@ configureReanimatedLogger({
   strict: false,
 });
 
-LogBox.ignoreAllLogs();
-
 const Stack = createNativeStackNavigator();
 const USE_AUTH = true;
 const BRAND_LOGO = require("./assets/logo.png");
+
+initializeMonitoring();
 
 // ===============================
 // QUERY CLIENT
@@ -93,7 +95,7 @@ const queryClient = new QueryClient({
 // ===============================
 // APP
 // ===============================
-export default function App() {
+function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
 
@@ -111,12 +113,14 @@ export default function App() {
       (firebaseUser) => {
         setUser(firebaseUser || null);
         setMonitoringAuthState(firebaseUser ? "authenticated" : "anonymous");
+        setMonitoringUser(firebaseUser || null);
         setAuthChecked(true);
       },
       (error) => {
         logger.error(LOG_CATEGORIES.FIREBASE, "AUTH_STATE_ERROR", { error });
         setUser(null);
         setMonitoringAuthState("anonymous");
+        setMonitoringUser(null);
         setAuthChecked(true);
       }
     );
@@ -225,6 +229,8 @@ export default function App() {
     </QueryClientProvider>
   );
 }
+
+export default wrapWithMonitoring(App);
 
 const styles = StyleSheet.create({
   bootScreen: {

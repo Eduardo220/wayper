@@ -17,14 +17,24 @@ Consultar `package.json` como fonte oficial. Alguns scripts importantes:
 
 ```bash
 npm run dev
+npm run dev:clean
 npm run dev:android
 npm run dev:phone
 npm run rua
 npm run prod:apk
+npm run prod:apk:no-sourcemaps
 npm run prod:aab
 npm run prod:install
 npm test
 ```
+
+Aliases principais:
+
+- `npm run dev`: ambiente development padrao, Metro localhost + emulador Android dev.
+- `npm run dev:clean`: mesmo fluxo development, com cache do Metro limpo.
+- `npm run dev:phone`: ambiente development em LAN + Android fisico conectado por USB.
+- `npm run prod:apk`: ambiente production, APK prod release com upload Sentry quando credenciais existirem.
+- `npm run prod:apk:no-sourcemaps`: ambiente production local com `SENTRY_DISABLE_AUTO_UPLOAD=true`; nao valida simbolicacao.
 
 ## Checklist antes de gerar build
 
@@ -70,11 +80,16 @@ npm test
 Runtime, expostas no bundle:
 
 ```bash
-EXPO_PUBLIC_APP_ENV=development|staging|production
+EXPO_PUBLIC_APP_ENV=development|preview|production
+EXPO_PUBLIC_BUILD_PROFILE=development|preview|production
+EXPO_PUBLIC_APP_VARIANT=dev|preview|production
+EXPO_PUBLIC_APPLICATION_ID=com.wayper.app.dev|com.wayper.app
+EXPO_PUBLIC_EAS_UPDATE_CHANNEL=
 EXPO_PUBLIC_SENTRY_DSN=https://public-key@host/project-id
 EXPO_PUBLIC_SENTRY_ENABLED=true
 EXPO_PUBLIC_SENTRY_ENABLE_DEV=false
 EXPO_PUBLIC_SENTRY_TEST_ENABLED=false
+EXPO_PUBLIC_SENTRY_DEBUG=false
 ```
 
 Build e upload de source maps:
@@ -87,7 +102,7 @@ SENTRY_PROJECT=react-native
 
 `SENTRY_AUTH_TOKEN` deve existir apenas em secret local, CI ou EAS com visibilidade sensivel. Nao adicionar o token em `app.json`, `.env.example`, `sentry.properties` ou Git.
 
-Os profiles EAS definem `EXPO_PUBLIC_APP_ENV`: development, staging para preview e production. Configure DSN, org, project e token separadamente nos ambientes usados pelo EAS.
+Os profiles EAS definem `EXPO_PUBLIC_APP_ENV`: `development`, `preview` e `production`, alem de `EXPO_PUBLIC_BUILD_PROFILE`, `EXPO_PUBLIC_APP_VARIANT` e `EXPO_PUBLIC_APPLICATION_ID`. Configure DSN, org, project e token separadamente nos ambientes usados pelo EAS.
 
 ### APK de produção
 
@@ -103,19 +118,44 @@ npm run prod:aab
 
 O script `android:flavors` injeta a etapa oficial `sentry.gradle` na pasta Android existente. O plugin `@sentry/react-native/expo` cobre prebuilds limpos. Em build release com credenciais configuradas, o upload de source maps e automatico.
 
-Para gerar um release local sem upload, use temporariamente `SENTRY_DISABLE_AUTO_UPLOAD=true`. Esse build nao valida simbolicacao.
+Para gerar um release local sem upload, use `npm run prod:apk:no-sourcemaps`. Esse build injeta `SENTRY_DISABLE_AUTO_UPLOAD=true` e nao valida simbolicacao.
 
 ## Validacao do Sentry
 
-1. Execute `npm run sentry:check` e confirme o plugin `@sentry/react-native/expo`.
+1. Execute `npm run sentry:check-config` e confirme dependencia, plugin, Metro, Gradle e profiles EAS.
 2. Gere um build preview com DSN, org, project e token configurados.
 3. Abra Configuracoes > Diagnostico.
-4. Confirme status ativo, ambiente `staging` e DSN configurado `sim`.
+4. Confirme status ativo, ambiente `preview` e DSN configurado `sim`.
 5. Toque em `Enviar erro de teste para Sentry`.
 6. No evento do Sentry, confira release, dist, ambiente, stack legivel e arquivo/linha original.
 7. Pesquise o payload por `latitude`, `longitude`, `authorization`, email usado no teste e qualquer coordenada real. Nenhum valor cru deve aparecer.
 
 Para validar source maps, use o evento controlado de um APK/AAB release ou preview, nunca apenas o Metro em development. O upload deve aparecer no log do build e o evento deve apontar para os arquivos-fonte, nao apenas para offsets minificados.
+
+Scripts uteis:
+
+```bash
+npm run sentry:check-config
+npm run sentry:test
+npm run sentry:upload-sourcemaps
+```
+
+`npm run sentry:test` nao envia evento sozinho nem imprime token. Ele orienta a usar o botao controlado em `Configuracoes > Diagnostico`. Para EAS Update, quando o projeto passar a usar updates publicados, use o fluxo autenticado correspondente:
+
+```bash
+eas update --branch <branch>
+npm run sentry:upload-sourcemaps
+```
+
+Se `SENTRY_AUTH_TOKEN` nao estiver disponivel em build local, `SENTRY_DISABLE_AUTO_UPLOAD=true` pode gerar artefato para teste local, mas esse artefato nao prova simbolicacao.
+
+Checklist extra para investigar congelamento pelo painel Sentry:
+
+- Filtrar por `event=RUN_UI_POSSIBLE_FREEZE_DETECTED`, `MAP_RENDER_STALL_DETECTED`, `ACTIVE_RUN_MISSING_AFTER_FOREGROUND`, `RUN_NOTIFICATION_OPEN_RESTORE_STARTED`, `RUN_RECONCILE_FAILED` e `ACTIVE_RUN_SAVE_FAILED`.
+- Conferir tags `release`, `dist`, `environment`, `buildProfile`, `appVariant`, `platform`, `runStatus` e `screenName`.
+- Abrir breadcrumbs e confirmar a ordem: start/countdown, permissao, watcher foreground/background, notificacao, AppState, restore/reconcile, snapshot canonico aplicado, UI/map render.
+- Comparar `sentryEventId` com o ZIP local exportado pelo Diagnostico quando o usuario conseguir compartilhar evidencia.
+- Procurar por coordenadas, rota, token, email e Firebase payload cru no evento; qualquer vazamento bloqueia release.
 
 ## Estado validado em 12/06/2026
 

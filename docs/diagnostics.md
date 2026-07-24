@@ -79,14 +79,21 @@ A fonte consolidada e `src/services/diagnostics/localDiagnosticsService.js`. Ela
 
 ## Diagnostico de emergencia na corrida
 
-Durante uma corrida ativa, a tela `MapScreen` deve expor um atalho direto de diagnostico no card `Wayper live`, sem depender de drawer, menu lateral ou `Configuracoes`. O atalho fica disponivel em `RUNNING` e `PAUSED`, gera o mesmo ZIP local com escopo `ACTIVE_RUN` e abre o share sheet nativo. A corrida nao deve ser pausada, finalizada ou bloqueada para exportar o ZIP.
+Durante uma corrida ativa, a tela `MapScreen` deve expor um atalho direto de diagnostico no card `Wayper live`, sem depender de drawer, menu lateral ou `Configuracoes`. O atalho fica disponivel em `RUNNING` e `PAUSED`, gera um artefato JSON leve de corrida ativa e abre o share sheet nativo. Ele nao deve montar o ZIP completo dentro da `MapScreen`, porque ler NDJSON, montar bundle e gerar ZIP pode disputar event loop/storage com GPS, finalizacao e UI.
+
+O ZIP completo continua disponivel em `Configuracoes > Diagnostico` (`Exportar corrida ativa`, `Exportar ultima corrida` e `Exportar logs recentes`). Durante a corrida, o JSON leve deve marcar `light: true` e `fullExportDeferred: true`, trazendo runtime resumido, storage health, contadores, contexto de emergencia e snapshots sanitizados suficientes para destravar a investigacao inicial. A corrida nao deve ser pausada, finalizada ou bloqueada para exportar esse artefato.
 
 O mesmo atalho registra eventos:
 
 - `RUN_EMERGENCY_DIAGNOSTICS_EXPORT_STARTED`;
 - `RUN_EMERGENCY_DIAGNOSTICS_EXPORT_SUCCESS`;
 - `RUN_EMERGENCY_DIAGNOSTICS_EXPORT_FAILED`;
+- `RUN_DIAGNOSTIC_EXPORT_TIMEOUT`;
+- `RUN_DIAGNOSTIC_SHARE_TIMEOUT_OR_FAILED`;
+- `RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH`;
 - `RUN_EMERGENCY_DIAGNOSTICS_LONG_PRESS`.
+
+Se o usuario finalizar a corrida enquanto o diagnostico leve esta em andamento, a finalizacao tem prioridade. A MapScreen deve cancelar/liberar o estado visual do export, registrar `RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH` e seguir para o save local. Se o share sheet falhar ou demorar demais, o arquivo leve permanece salvo localmente e o ZIP completo pode ser exportado depois pela tela de Diagnostico.
 
 Enquanto a corrida esta ativa, `MapScreen` tambem grava snapshots leves `EMERGENCY_RUN_DIAGNOSTIC_SNAPSHOT` em eventos criticos e a cada ~30s. O snapshot deve conter status, elapsed/distance, `lastUiTickAt`, `lastLocationReceivedAt`, `lastLocationAcceptedAt`, `lastRenderPathUpdatedAt`, watcher, AppState, notificacao, timer, counts de path/segments, motivos agregados de descarte, ultimo erro e contadores de stall. Ele nao deve salvar `rawPath` completo nem coordenadas exatas por padrao.
 
@@ -198,7 +205,8 @@ Diagnostico fica acessivel tambem em producao por `Menu lateral > Configuracoes 
 
 - Abrir Diagnostico sem corrida ativa e confirmar storage/permissoes.
 - Iniciar corrida e abrir Diagnostico para conferir status, `localRunId`, watcher, notification e contadores de path.
-- Durante corrida ativa, usar o atalho `Diagnostico` no card `Wayper live` e confirmar que o ZIP abre no share sheet sem pausar/finalizar a corrida.
+- Durante corrida ativa, usar o atalho `Diagnostico` no card `Wayper live` e confirmar que o JSON leve abre no share sheet sem pausar/finalizar a corrida.
+- Durante corrida ativa, iniciar o export leve e tocar em `Finalizar`; confirmar que a finalizacao local vence, a corrida salva, e o export nao deixa a UI presa em `EXPORTANDO`.
 - Bloquear tela, voltar pelo app/notificacao e conferir background/lifecycle.
 - Gerar pontos GPS e comparar raw/accepted/rejected/gaps.
 - Pausar/retomar e conferir segmentos.
@@ -206,7 +214,7 @@ Diagnostico fica acessivel tambem em producao por `Menu lateral > Configuracoes 
 - Criar story local e conferir pending story sync.
 - Compartilhar imagem/PNG e conferir ultimo export em `Compartilhamento`.
 - Negar permissoes e conferir resumo normalizado.
-- Exportar ZIP, abrir `localDiagnostics-summary.json` e validar que coordenadas estao mascaradas.
+- Exportar ZIP pela tela `Diagnostico`, abrir `localDiagnostics-summary.json` e validar que coordenadas estao mascaradas.
 - Abrir `emergencyRunDiagnostics.json` e `uiInteractionEvents.json` e validar `lastUiTickAt`, watcher, timer, drawer attempts, stalls e counts de path.
 - Repetir em build dev Android e, quando possivel, em release.
 

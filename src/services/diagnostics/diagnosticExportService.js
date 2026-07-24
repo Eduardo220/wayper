@@ -89,6 +89,111 @@ function addJson(zip, filename, value) {
   zip.file(filename, JSON.stringify(sanitizeLogContext(value || {}), null, 2));
 }
 
+export function buildActiveRunLightDiagnosticsPayload(options = {}) {
+  const runtime = options.runtime || {};
+  const emergencyContext = options.emergencyContext || {};
+  const storage = options.storage || {};
+  const runId =
+    options.runId ||
+    emergencyContext.runId ||
+    runtime.activeRunId ||
+    runtime.runId ||
+    runtime.localRunId ||
+    null;
+
+  return sanitizeLogContext({
+    format: "wayper-active-run-light-diagnostics",
+    version: 1,
+    createdAt: new Date().toISOString(),
+    scope: DIAGNOSTIC_EXPORT_SCOPE.ACTIVE_RUN,
+    runId,
+    trigger: options.trigger || "active_run",
+    light: true,
+    fullExportDeferred: true,
+    reason: options.reason || "active_run_non_blocking_export",
+    message: "Pacote leve gerado durante corrida ativa. Export ZIP completo deve ser feito fora da MapScreen.",
+    runtime: lightActiveRunSnapshot(runtime),
+    emergency: emergencyContext,
+    storage,
+    counters: {
+      rawPointsCount:
+        emergencyContext.pathCounts?.rawPointsCount ||
+        runtime.rawPointsCount ||
+        runtime.rawGpsPointsReceived ||
+        0,
+      acceptedPointsCount:
+        emergencyContext.pathCounts?.trustedPointsCount ||
+        runtime.acceptedPointsCount ||
+        runtime.acceptedGpsPoints ||
+        0,
+      renderPointsCount:
+        emergencyContext.pathCounts?.renderPointsCount ||
+        runtime.displayPointsCount ||
+        0,
+      segmentsCount:
+        emergencyContext.pathCounts?.segmentsCount ||
+        runtime.segmentsCount ||
+        runtime.routeSegmentsCount ||
+        0,
+      routeChunksCount:
+        emergencyContext.pathCounts?.routeChunksCount ||
+        runtime.routeChunksCount ||
+        runtime.routeChunksIndex?.chunks?.length ||
+        0,
+    },
+  });
+}
+
+export async function createActiveRunLightDiagnosticsArtifact(options = {}) {
+  let context = null;
+  try {
+    context = await resolveExportContext(DIAGNOSTIC_EXPORT_SCOPE.ACTIVE_RUN);
+  } catch (error) {
+    const fallbackRunId =
+      options.runId ||
+      options.emergencyContext?.runId ||
+      options.emergencyContext?.localRunId ||
+      null;
+    if (!fallbackRunId) throw error;
+    context = {
+      runtime: {},
+      runId: fallbackRunId,
+      includeAllRecent: false,
+    };
+  }
+
+  const diagnosticStorage = await getDiagnosticStorageHealth().catch((error) => ({
+    ok: false,
+    error: error?.message || String(error),
+  }));
+  const payload = buildActiveRunLightDiagnosticsPayload({
+    ...options,
+    runtime: context.runtime || {},
+    runId: context.runId,
+    storage: diagnosticStorage,
+  });
+  const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+  if (!baseDir) throw new Error("diagnostic_export_directory_unavailable");
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `wayper-active-run-light-diagnostics-${safeFilenamePart(context.runId)}-${timestamp}.json`;
+  const uri = `${baseDir}${filename}`;
+  await FileSystem.writeAsStringAsync(uri, JSON.stringify(payload, null, 2));
+
+  const info = await FileSystem.getInfoAsync(uri, { size: true });
+  return {
+    uri,
+    filename,
+    size: Number(info?.size || 0),
+    scope: DIAGNOSTIC_EXPORT_SCOPE.ACTIVE_RUN,
+    runId: context.runId,
+    mimeType: "application/json",
+    light: true,
+    fullExportDeferred: true,
+    payload,
+  };
+}
+
 async function createDiagnosticsArchiveInternal(options = {}) {
   const scope = options.scope || DIAGNOSTIC_EXPORT_SCOPE.LAST_RUN;
   const context = await resolveExportContext(scope);
@@ -209,5 +314,7 @@ export async function createDiagnosticsArchive(options = {}) {
 
 export default {
   DIAGNOSTIC_EXPORT_SCOPE,
+  buildActiveRunLightDiagnosticsPayload,
+  createActiveRunLightDiagnosticsArtifact,
   createDiagnosticsArchive,
 };

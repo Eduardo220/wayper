@@ -33,6 +33,20 @@ let lastNativeUpdateAt = 0;
 let updateTimer = null;
 let unsubscribeSnapshots = null;
 
+function reportNotificationCoordinatorFailure(event, error, extra = {}) {
+  logger.error(LOG_CATEGORIES.NOTIFICATION, event, {
+    error,
+    ...extra,
+  });
+  recordRunEvent(event, {
+    error,
+    level: "error",
+    ...extra,
+  }, {
+    category: LOG_CATEGORIES.NOTIFICATION,
+  });
+}
+
 const getNativeModule = () => nativeModuleOverride || DEFAULT_NATIVE_MODULE;
 const getTrackingService = () => trackingServiceOverride || activeRunTrackingService;
 const getRuntimeService = async () => {
@@ -263,7 +277,13 @@ async function refreshFromTrackingSnapshot() {
     return updateRunNotification(buildRunNotificationPayloadFromSnapshot(snapshot), {
       requestPermission: false,
     });
-  } catch {
+  } catch (error) {
+    recordRunEvent("RUN_NOTIFICATION_REFRESH_FAILED", {
+      error,
+      level: "warn",
+    }, {
+      category: LOG_CATEGORIES.NOTIFICATION,
+    });
     return null;
   }
 }
@@ -271,7 +291,14 @@ async function refreshFromTrackingSnapshot() {
 function startUpdateTimer() {
   if (updateTimer || !isRunNotificationSupported()) return;
   updateTimer = setInterval(() => {
-    refreshFromTrackingSnapshot();
+    refreshFromTrackingSnapshot().catch((error) => {
+      recordRunEvent("RUN_NOTIFICATION_REFRESH_FAILED", {
+        error,
+        level: "warn",
+      }, {
+        category: LOG_CATEGORIES.NOTIFICATION,
+      });
+    });
   }, RUN_NOTIFICATION_UPDATE_INTERVAL_MS);
 }
 
@@ -345,7 +372,11 @@ export async function startRunNotification(payload = {}, options = {}) {
   const permission = await ensureRunNotificationPermission({ request: options.requestPermission !== false });
   if (!permission.granted) {
     logger.warn(LOG_CATEGORIES.NOTIFICATION, "RUN_NOTIFICATION_PERMISSION_DENIED", permission);
-    return false;
+    // Android 13+ still requires the foreground-service notification to be
+    // created, but POST_NOTIFICATIONS is not required to launch the FGS. When
+    // denied, Android keeps the service visible in Active apps/Task Manager.
+    // Skipping the native start here would remove the process-lifetime anchor
+    // exactly when tracking needs it most.
   }
 
   await configureRunNotificationActions();
@@ -560,8 +591,16 @@ export async function handleRunNotificationAction(action) {
 export function startRunNotificationCoordinator() {
   if (unsubscribeSnapshots) return stopRunNotificationCoordinator;
 
-  configureRunNotificationActions().catch(() => {});
-  refreshFromTrackingSnapshot();
+  configureRunNotificationActions().catch((error) => {
+    reportNotificationCoordinatorFailure("RUN_NOTIFICATION_ACTIONS_CONFIG_FAILED", error, {
+      phase: "coordinator_start",
+    });
+  });
+  refreshFromTrackingSnapshot().catch((error) => {
+    reportNotificationCoordinatorFailure("RUN_NOTIFICATION_REFRESH_FAILED", error, {
+      phase: "coordinator_start",
+    });
+  });
 
   const trackingService = getTrackingService();
   unsubscribeSnapshots = trackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
@@ -571,15 +610,27 @@ export function startRunNotificationCoordinator() {
       !snapshot ||
       !isLiveSnapshot(snapshot)
     ) {
-      stopRunNotification().catch(() => {});
+      stopRunNotification().catch((error) => {
+        reportNotificationCoordinatorFailure("RUN_NOTIFICATION_STOP_FAILED", error, {
+          sourceEvent: event || null,
+        });
+      });
       return;
     }
 
     const payload = buildRunNotificationPayloadFromSnapshot(snapshot);
     if (!notificationActive) {
-      startRunNotification(payload, { requestPermission: false }).catch(() => {});
+      startRunNotification(payload, { requestPermission: false }).catch((error) => {
+        reportNotificationCoordinatorFailure("RUN_NOTIFICATION_START_FAILED", error, {
+          sourceEvent: event || null,
+        });
+      });
     } else {
-      updateRunNotification(payload).catch(() => {});
+      updateRunNotification(payload).catch((error) => {
+        reportNotificationCoordinatorFailure("RUN_NOTIFICATION_UPDATE_FAILED", error, {
+          sourceEvent: event || null,
+        });
+      });
     }
   }) || null;
 
@@ -590,7 +641,9 @@ export function stopRunNotificationCoordinator() {
   if (unsubscribeSnapshots) {
     try {
       unsubscribeSnapshots();
-    } catch {}
+    } catch (error) {
+      reportNotificationCoordinatorFailure("RUN_NOTIFICATION_UNSUBSCRIBE_FAILED", error);
+    }
     unsubscribeSnapshots = null;
   }
   clearUpdateTimer();

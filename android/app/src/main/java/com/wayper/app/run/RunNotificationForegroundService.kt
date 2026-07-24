@@ -39,6 +39,16 @@ class RunNotificationForegroundService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    if (intent == null) {
+      return if (restorePersistedState()) {
+        startOrUpdateForeground()
+        scheduleTicker()
+        START_STICKY
+      } else {
+        START_NOT_STICKY
+      }
+    }
+
     when (intent?.action) {
       ACTION_START, ACTION_UPDATE -> {
         applyIntentState(intent)
@@ -68,6 +78,44 @@ class RunNotificationForegroundService : Service() {
     actionLabel = intent.getStringExtra(EXTRA_ACTION_LABEL)?.takeIf { it.isNotBlank() }
       ?: if (isPaused) "Retomar" else "Pausar"
     baseElapsedRealtime = SystemClock.elapsedRealtime()
+    persistState(active = true)
+  }
+
+  private fun persistState(active: Boolean) {
+    getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+      .edit()
+      .putBoolean(PREF_ACTIVE, active)
+      .putLong(PREF_ELAPSED_SECONDS, displayElapsedSeconds())
+      .putLong(PREF_SAVED_AT_MS, System.currentTimeMillis())
+      .putLong(PREF_DISTANCE_BITS, java.lang.Double.doubleToRawLongBits(distanceKm))
+      .putBoolean(PREF_PAUSED, isPaused)
+      .putString(PREF_STATUS_LABEL, statusLabel)
+      .putString(PREF_ACTION_LABEL, actionLabel)
+      .apply()
+  }
+
+  private fun restorePersistedState(): Boolean {
+    val preferences = getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    if (!preferences.getBoolean(PREF_ACTIVE, false)) return false
+
+    val savedAtMs = preferences.getLong(PREF_SAVED_AT_MS, System.currentTimeMillis())
+    isPaused = preferences.getBoolean(PREF_PAUSED, false)
+    val persistedElapsed = max(0L, preferences.getLong(PREF_ELAPSED_SECONDS, 0L))
+    val wallClockDelta = if (isPaused) 0L else max(0L, (System.currentTimeMillis() - savedAtMs) / 1000L)
+    baseElapsedSeconds = persistedElapsed + wallClockDelta
+    distanceKm = max(
+      0.0,
+      java.lang.Double.longBitsToDouble(preferences.getLong(PREF_DISTANCE_BITS, 0L))
+    )
+    statusLabel = preferences.getString(PREF_STATUS_LABEL, null)
+      ?.takeIf { it.isNotBlank() }
+      ?: if (isPaused) "Pausada" else "Correndo"
+    actionLabel = preferences.getString(PREF_ACTION_LABEL, null)
+      ?.takeIf { it.isNotBlank() }
+      ?: if (isPaused) "Retomar" else "Pausar"
+    baseElapsedRealtime = SystemClock.elapsedRealtime()
+    updateLastNotificationState(baseElapsedSeconds, distanceKm, isPaused, statusLabel)
+    return true
   }
 
   private fun displayElapsedSeconds(): Long {
@@ -112,6 +160,7 @@ class RunNotificationForegroundService : Service() {
 
   private fun stopNotificationService() {
     handler.removeCallbacks(ticker)
+    persistState(active = false)
     foregroundStarted = false
     markForegroundServiceActive(false)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -221,6 +270,14 @@ class RunNotificationForegroundService : Service() {
     const val EXTRA_OPEN_ACTIVE_RUN = "openActiveRun"
 
     private const val TICK_INTERVAL_MS = 1000L
+    private const val PREFERENCES_NAME = "wayper_run_notification_state_v1"
+    private const val PREF_ACTIVE = "active"
+    private const val PREF_ELAPSED_SECONDS = "elapsed_seconds"
+    private const val PREF_SAVED_AT_MS = "saved_at_ms"
+    private const val PREF_DISTANCE_BITS = "distance_bits"
+    private const val PREF_PAUSED = "paused"
+    private const val PREF_STATUS_LABEL = "status_label"
+    private const val PREF_ACTION_LABEL = "action_label"
     private const val REQUEST_OPEN = 42170
     private const val REQUEST_PAUSE = 42171
     private const val REQUEST_RESUME = 42172

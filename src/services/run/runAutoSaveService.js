@@ -53,6 +53,7 @@ function isTerminalTrackingStatus(status) {
 function canCheckpointTerminalSnapshot(context = {}) {
   return (
     context.allowTerminal === true ||
+    context.event === "run_finishing" ||
     context.event === "run_finished_snapshot_saved" ||
     context.reason === "before_finish" ||
     context.reason === "finish"
@@ -140,7 +141,10 @@ export function buildOfflineCheckpointFromTrackingSnapshot(snapshot = {}, contex
 
 export async function flushActiveRunCheckpoint(context = {}) {
   try {
-    const snapshot = await activeRunTrackingService.getActiveRunSnapshot?.();
+    const snapshot = await activeRunTrackingService.flushPendingActiveRunCheckpoint?.({
+      reason: context.reason || context.event || "legacy_checkpoint",
+      force: context.forceCanonical === true,
+    }) || await activeRunTrackingService.getActiveRunSnapshot?.();
     if (!snapshot?.activeRunId) return null;
     if (isTerminalTrackingStatus(snapshot.status) && !canCheckpointTerminalSnapshot(context)) {
       recordRunEvent("ACTIVE_RUN_TERMINAL_CHECKPOINT_SKIPPED", {
@@ -252,6 +256,7 @@ function shouldForceCheckpointForEvent(event) {
     "run_started",
     "run_paused",
     "run_resumed",
+    "run_finishing",
     "run_finished_snapshot_saved",
     "active_snapshot_cleared",
     "run_cancelled",
@@ -302,8 +307,8 @@ export async function checkpointOnLocationError(error, context = {}) {
 export function startActiveRunAutoCheckpointing(options = {}) {
   if (checkpointUnsubscribe) return stopActiveRunAutoCheckpointing;
 
-  const minIntervalMs = Number(options.minIntervalMs ?? 1500);
-  const periodicIntervalMs = Number(options.periodicIntervalMs ?? 10000);
+  const minIntervalMs = Number(options.minIntervalMs ?? 5000);
+  const periodicIntervalMs = Number(options.periodicIntervalMs ?? 5000);
   checkpointUnsubscribe = activeRunTrackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
     if (!snapshot?.activeRunId) return;
 

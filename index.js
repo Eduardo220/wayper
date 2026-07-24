@@ -1,5 +1,6 @@
 import { registerRootComponent } from 'expo';
 import 'react-native-gesture-handler';
+import './src/tasks/activeRunLocationTask.js';
 import { AppRegistry } from 'react-native';
 import App from './App';
 import runNotificationActionTask from './src/services/run/runNotificationActionTask.js';

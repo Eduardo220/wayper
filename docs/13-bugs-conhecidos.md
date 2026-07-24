@@ -41,7 +41,30 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
 
 ## Bugs em investigacao
 
-Nenhum bug em investigacao registrado no momento.
+### BUG-20260621-001 - Congelamento/reentrada instavel durante corrida ativa
+
+- ID: BUG-20260621-001
+- Titulo: Congelamento/reentrada instavel durante corrida ativa
+- Status: EM_VALIDACAO
+- Severidade: critica
+- Area: Corrida ativa, background, notificacao, MapScreen, recovery, Sentry
+- Descricao: Ao iniciar uma corrida, bloquear a tela, colocar o celular no bolso, reabrir o app pela notificacao permanente/icone, exportar diagnostico pela corrida ativa ou finalizar, a UI pode congelar, ficar sem responder, permanecer em `EXPORTANDO`, perder a corrida ou voltar como se nada estivesse rodando.
+- Como reproduzir:
+  1. Gerar build dev/preview Android com diagnostico local e Sentry configurado.
+  2. Iniciar corrida no `Mapa`.
+  3. Bloquear tela e aguardar.
+  4. Reabrir pelo corpo da notificacao persistente.
+  5. Repetir abrindo pelo icone do app.
+  6. Tocar no atalho `Diagnostico` durante corrida ativa.
+  7. Durante ou logo apos o export, tocar em `Finalizar`.
+  8. Pausar, retomar e finalizar tambem sem export para comparar.
+- Evidencia: relato critico do Eduardo em 2026-06-21; auditoria de codigo encontrou o atalho ativo chamando export ZIP completo com NDJSON/bundle/JSZip dentro da `MapScreen` e a finalizacao aguardando captura territorial antes do save local em corrida por zonas. Sem payload Sentry/source map autenticado ainda.
+- Causa provavel: concorrencia no caminho critico da corrida ativa. O export emergencial pesado podia disputar storage/event loop com GPS/UI/finalizacao e deixar a tela presa em `EXPORTANDO`; a finalizacao podia aguardar tarefas pesadas antes de liberar resumo/historico. Reentrada/background/notificacao continuam exigindo validacao fisica para confirmar se ha causa adicional.
+- Arquivos relacionados: `src/screens/MapScreen.js`, `src/services/diagnostics/diagnosticExportService.js`, `src/services/runTracking/activeRunTrackingService.js`, `src/services/runTracking/activeRunRuntimeService.js`, `src/services/run/runNotificationService.js`, `src/services/run/runAutoSaveService.js`, `src/services/runOfflineStorageService.js`, `src/services/monitoring/sentryService.js`, `src/services/diagnostics/performanceDiagnosticsService.js`.
+- Correcao aplicada: instrumentacao Sentry/local adicionada para start/countdown/permissao, watcher, background task, notificacao, AppState, restore/reconcile, snapshot canonico, finish lock, UI heartbeat, event-loop freeze provavel e map render stall, com sanitizacao e GPS throttled. O atalho ativo passou a gerar JSON leve com timeout/cancelamento em vez de ZIP pesado; finalizar cancela/libera export em andamento, salva localmente antes de territorio/XP/sync e defere tarefas pesadas com logs recuperaveis. Em 2026-07-21, a task de GPS foi extraida para bootstrap headless, ingestao/transicoes/escritas passaram a ser serializadas, checkpoint canonico virou lote de ~5 segundos/limite de pontos, `MapScreen` deixou de processar o mesmo fix em paralelo e atualiza mapa em ate ~1 Hz, previa territorial passou a 5 segundos e o checkpoint so e limpo apos confirmacao do mesmo `localRunId` no historico.
+- Teste necessario: repetir em aparelho fisico Android dev e preview/release com `EXPO_PUBLIC_SENTRY_DSN` e `SENTRY_AUTH_TOKEN` configurados; confirmar evento `RUN_UI_POSSIBLE_FREEZE_DETECTED` ou breadcrumbs de reentrada sem coordenadas cruas; executar a matriz `docs/12-guia-de-testes.md` (kill de processo, force-stop, tela bloqueada, offline, GPS perdido, zonas e corrida longa); validar que `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED` ocorre antes de tarefas deferidas e que finalizar durante export registra `RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH`.
+- Data: 2026-06-21
+- Decisao/observacao: Sentry complementa o ZIP/NDJSON local. O bug nao pode ser marcado como corrigido ate haver reproducao/validacao fisica e simbolicacao autenticada no painel.
 
 ## Bugs corrigidos
 
@@ -65,6 +88,7 @@ Nenhum bug corrigido registrado neste arquivo no momento.
 | XP/conquistas sem sync remoto | ADIADO | Progresso e local por enquanto. | Definir contrato remoto idempotente. |
 | Sync territorial remoto incompleto | ADIADO | Territorio local nao vira social/remoto completo. | Definir fila/contrato separados do sync de runs. |
 | AsyncStorage com rotas/historicos longos | EM_VALIDAÇÃO | Parse/carregamento pode pesar. | Medir volume real antes de decidir SQLite. |
+| Janela de checkpoint canonico de ate ~5 segundos | PRECISA_TESTE_REAL | Kill abrupto pode perder os fixes ainda apenas em memoria; lote background concluido faz flush imediato. | Medir em aparelho real e ajustar limites somente com evidencia de I/O/bateria. |
 | Servicos legados presentes | LEGADO | Reativacao acidental pode duplicar arquitetura. | Manter docs/IA e testes bloqueando uso como fonte nova. |
 | `console.*` legado fora de fluxos criticos | ADIADO | Pode poluir logs ou Sentry se reconfigurado. | Migrar gradualmente para `logger.js`. |
 

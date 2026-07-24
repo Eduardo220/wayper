@@ -51,6 +51,12 @@ describe("active run persistence state", () => {
     const snapshot = makeRunningSnapshot();
     expect(snapshot.activeRunId).toBe("run_active_1");
     expect(snapshot.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(snapshot.version).toBe(2);
+    expect(snapshot.schemaVersion).toBe(2);
+    expect(snapshot.runId).toBe("run_active_1");
+    expect(snapshot.updatedAt).toBeTruthy();
+    expect(snapshot.lastPoint).toEqual(snapshot.rawPath[snapshot.rawPath.length - 1]);
+    expect(snapshot.lastValidPoint).toEqual(snapshot.currentLocation);
     expect(snapshot.pendingSync).toBe(true);
     expect(snapshot.trustedPath).toHaveLength(2);
   });
@@ -89,6 +95,8 @@ describe("active run persistence state", () => {
     }, { status: ACTIVE_RUN_STATUS.RUNNING, nowMs: BASE_TIME + 22_000 });
 
     expect(snapshot.segments).toHaveLength(2);
+    expect(snapshot.totalPausedMs).toBe(10_000);
+    expect(snapshot.pausedAt).toBeNull();
     expect(calculateActiveRunDurationSeconds(snapshot, { nowMs: BASE_TIME + 22_000 })).toBe(12);
   });
 
@@ -128,7 +136,7 @@ describe("active run persistence state", () => {
 
   test("desmontar MapScreen nao para background tracking da corrida ativa", () => {
     const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
-    const cleanupStart = mapScreen.indexOf("return () => {", mapScreen.indexOf("flushTimer = setInterval"));
+    const cleanupStart = mapScreen.indexOf("return () => {", mapScreen.indexOf("/* ===== INIT ===== */"));
     const cleanupEnd = mapScreen.indexOf("}, [refreshForegroundLocation]", cleanupStart);
     const cleanup = mapScreen.slice(cleanupStart, cleanupEnd);
     expect(cleanup).not.toContain("stopBackgroundLocationService()");
@@ -144,9 +152,31 @@ describe("active run persistence state", () => {
     expect(mapScreen).toContain("RUN_SCREEN_FOCUS");
     expect(mapScreen).toContain("recordNotificationOpen");
     expect(mapScreen).toContain("non_live_snapshot_guard");
+    expect(mapScreen).not.toContain("flushTimer = setInterval");
+    expect(mapScreen).not.toContain("FLUSH_INTERVAL_MS = 300");
+    expect(mapScreen).toContain("RUN_UI_UPDATE_INTERVAL_MS = 1000");
+    expect(mapScreen).toContain("ZONE_PREVIEW_INTERVAL_MS = 5000");
+    const locationHandler = mapScreen.slice(
+      mapScreen.indexOf("const handleLocationUpdate = useCallback"),
+      mapScreen.indexOf("const stopBackgroundLocationService", mapScreen.indexOf("const handleLocationUpdate = useCallback"))
+    );
+    expect(locationHandler).toContain("activeRunTrackingService.recordLocation");
+    expect(locationHandler).not.toContain("trackingSessionRef.current.processLocationPoint");
     expect(mapScreen).toContain("!running && !replaying && !runtimeRecovering");
     expect(mapScreen).toContain('"RUN_FINISH_SAVED"');
     expect(mapScreen.indexOf('"RUN_FINISH_SAVED"')).toBeLessThan(mapScreen.indexOf("markRecoveredRunLocallySaved({ reason: \"finish_local_run_saved\" })"));
+  });
+
+  test("task de localizacao e registrada no bootstrap fora da interface", () => {
+    const indexSource = fs.readFileSync(path.join(process.cwd(), "index.js"), "utf8");
+    const taskSource = fs.readFileSync(path.join(process.cwd(), "src/tasks/activeRunLocationTask.js"), "utf8");
+    const serviceSource = fs.readFileSync(path.join(process.cwd(), "src/services/runTracking/activeRunTrackingService.js"), "utf8");
+    const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+
+    expect(indexSource.indexOf("./src/tasks/activeRunLocationTask.js")).toBeLessThan(indexSource.indexOf("./App"));
+    expect(taskSource).toContain("TaskManager.defineTask(ACTIVE_RUN_LOCATION_TASK, handleActiveRunLocationTask)");
+    expect(serviceSource).not.toContain("TaskManager.defineTask");
+    expect(mapScreen).not.toContain("TaskManager.defineTask");
   });
 
   test("inicio de corrida mostra feedback antes de preparacao pesada", () => {
@@ -177,8 +207,13 @@ describe("active run persistence state", () => {
     const startFlow = mapScreen.slice(startFlowStart, startFlowEnd);
 
     expect(mapScreen).toContain("const [isStartingRun, setIsStartingRun] = useState(false)");
-    expect(mapScreen).toContain("const isRunStartBusy = isStartingRun || counting || running || runtimeRecovering");
-    expect(startFlow).toContain("isStartingRunRef.current || counting || runningRef.current || running || runtimeRecovering");
+    expect(mapScreen).toContain("const [isFinishingRun, setIsFinishingRun] = useState(false)");
+    expect(mapScreen).toContain("const isRunStartBusy = isStartingRun || counting || running || runtimeRecovering || isFinishingRun");
+    expect(startFlow).toContain("isStartingRunRef.current");
+    expect(startFlow).toContain("runningRef.current");
+    expect(startFlow).toContain("runtimeRecovering");
+    expect(startFlow).toContain("isFinishingRunRef.current");
+    expect(startFlow).toContain("isFinishingRun");
     expect(mapScreen).toContain("disabled={isRunStartBusy}");
     expect(mapScreen).toContain("startMainBtnDisabled");
     expect(mapScreen).toContain("modeOptionDisabled");

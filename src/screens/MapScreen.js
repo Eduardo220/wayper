@@ -42,6 +42,7 @@ import { WayperTheme } from "../theme/wayperTheme";
 import { auth } from "../firebaseConfig";
 import formatTime from "../utils/formatTime";
 import {
+  ACTIVE_RUN_STATUS,
   TRACKING_CONFIG,
   buildSummaryRenderPath,
   calculateActiveRunDurationSeconds,
@@ -58,8 +59,6 @@ import {
   limitPathForRendering,
   normalizeLocation,
   sanitizeRunPath,
-  smoothDisplayPath,
-  summarizeGpsQuality,
   splitPathIntoSegments,
 } from "../services/runTracking";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
@@ -104,7 +103,7 @@ import {
   getReplayIndexForElapsed,
   getReplayRunStats,
 } from "../utils/runReplay";
-import { addXpFromRun } from "../repositories/progressionRepository";
+import runDeferredTaskQueueRepository from "../repositories/runDeferredTaskQueueRepository.js";
 import { fetchAllRanking } from "../services/ranking";
 import {
   fetchActiveTerritoriesNear,
@@ -114,7 +113,6 @@ import {
   getCellIdsForBbox,
   getLeaderCellsForViewport,
   getLeaderboardForCell,
-  processRunTerritoryCapture,
   routeToZoneGeometry,
 } from "../services/territory";
 import territoryRepository from "../repositories/territoryRepository";
@@ -129,20 +127,15 @@ import {
   requestNotificationPermission,
   shouldShowPermissionEducation,
 } from "../services/permissions";
-import {
-  ACTIVE_RUN_STATUS,
-  ACTIVE_RUN_SYNC_STATUS,
-} from "../services/runOfflineStorageService";
+import { ACTIVE_RUN_SYNC_STATUS } from "../services/runOfflineStorageService";
 import logger, { LOG_CATEGORIES } from "../utils/logger.js";
 import {
-  recordLocationPointEvent,
   recordEmergencyRunDiagnosticsSnapshot,
   recordRunEvent,
   recordRunSnapshotEvent,
 } from "../services/diagnostics/runDiagnosticsService.js";
 import {
-  createDiagnosticsArchive,
-  DIAGNOSTIC_EXPORT_SCOPE,
+  createActiveRunLightDiagnosticsArtifact,
 } from "../services/diagnostics/diagnosticExportService.js";
 import {
   RUN_START_COUNTDOWN_SECONDS,
@@ -151,14 +144,15 @@ import {
 
 /* Tunáveis */
 const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
-const FLUSH_INTERVAL_MS = 300;
+const RUN_UI_UPDATE_INTERVAL_MS = 1000;
 const WATCH_TIME_INTERVAL_MS = 1000;
 const WATCH_DISTANCE_INTERVAL = 2.5;
 const INITIAL_REGION_DELTA = 0.001;
 const WAYPER_GREEN = WayperTheme.colors.primary;
 const ROUTE_CAP = 8000;
 const MAX_RUNNING_SPEED_MPS = TRACKING_CONFIG.MAX_HUMAN_SPRINT_SPEED_KMH / 3.6;
-const ZONE_PREVIEW_INTERVAL_MS = 1400;
+const ZONE_PREVIEW_INTERVAL_MS = 5000;
+const ZONE_PREVIEW_MIN_NEW_POINTS = 5;
 const FOLLOW_MAP_ZOOM = 17.2;
 const FOLLOW_ANIMATION_DURATION = 450;
 const REPLAY_FOLLOW_ZOOM = 18.1;
@@ -172,8 +166,15 @@ const TERRITORY_INITIAL_BBOX_DELTA = 0.018;
 const TERRITORY_FETCH_LIMIT = 180;
 const TERRITORY_MAX_VIEWPORT_CELLS = 140;
 const EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS = 30000;
+const EMERGENCY_DIAGNOSTICS_EXPORT_TIMEOUT_MS = 5000;
+const EMERGENCY_DIAGNOSTICS_SHARE_TIMEOUT_MS = 15000;
+const FINISH_CHECKPOINT_TIMEOUT_MS = 5000;
+const FINISH_SNAPSHOT_TIMEOUT_MS = 7000;
+const FINISH_LOCAL_SAVE_TIMEOUT_MS = 8000;
+const FINISH_UI_RELEASE_TIMEOUT_MS = 2500;
 const UI_TIMER_STALL_THRESHOLD_MS = 2500;
 const EMERGENCY_DIAGNOSTICS_HIT_SLOP = { top: 12, right: 12, bottom: 12, left: 12 };
+const EMPTY_MAP_ITEMS = Object.freeze([]);
 
 const requestReplayAnimationFrame = (callback) => {
   if (typeof globalThis.requestAnimationFrame === "function") {
@@ -215,6 +216,33 @@ const showRunShareFailure = (message, error) => {
 };
 
 const uid = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const createTimeoutError = (code, timeoutMs) => {
+  const error = new Error(code);
+  error.code = code;
+  error.timeoutMs = timeoutMs;
+  return error;
+};
+
+const withTimeout = (task, timeoutMs, code = "operation_timeout") => {
+  let timeoutId = null;
+  const operation = typeof task === "function" ? Promise.resolve().then(task) : Promise.resolve(task);
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(createTimeoutError(code, timeoutMs)), timeoutMs);
+  });
+
+  return Promise.race([operation, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+};
+
+const runDeferred = (task, onError) => {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      if (typeof onError === "function") onError(error);
+    });
+};
 
 const sanitizePath = (arr = []) => sanitizeRunPath(arr);
 const sanitizeSegmentPath = (path = [], segmentId = 0) =>
@@ -382,49 +410,6 @@ const mergeTerritoriesForMap = (existing = [], incoming = [], bbox = null) => {
   return Array.from(map.values()).sort(sortByTerritoryUpdatedAt);
 };
 
-const applyCaptureResultToTerritoryState = (existing = [], result = {}) => {
-  const removedIds = new Set([
-    ...(result.deletedTerritories || []),
-    ...(result.conqueredTerritories || []),
-    ...(result.mergedTerritories || []),
-  ].map((territory) => String(territory?.id || territory)).filter(Boolean));
-
-  const map = new Map();
-  for (const territory of Array.isArray(existing) ? existing : []) {
-    if (!territory?.id || removedIds.has(String(territory.id)) || !isActiveTerritory(territory)) continue;
-    map.set(String(territory.id), territory);
-  }
-
-  for (const territory of result.updatedTerritories || []) {
-    if (!territory?.id) continue;
-    if (isActiveTerritory(territory)) map.set(String(territory.id), territory);
-    else map.delete(String(territory.id));
-  }
-
-  const captured = result.capturedTerritory;
-  if (captured?.id && isActiveTerritory(captured)) {
-    map.set(String(captured.id), captured);
-  }
-
-  return Array.from(map.values()).sort(sortByTerritoryUpdatedAt);
-};
-
-const mergeLeaderCellsForMap = (existing = [], updates = []) => {
-  const map = new Map();
-  for (const cell of Array.isArray(existing) ? existing : []) {
-    if (cell?.cellId || cell?.id) map.set(String(cell.cellId || cell.id), cell);
-  }
-
-  for (const update of Array.isArray(updates) ? updates : []) {
-    const leaderboard = update?.leaderboard || update;
-    if (leaderboard?.cellId || leaderboard?.id) {
-      map.set(String(leaderboard.cellId || leaderboard.id), leaderboard);
-    }
-  }
-
-  return Array.from(map.values());
-};
-
 const listIdentitySignature = (items = []) =>
   (Array.isArray(items) ? items : [])
     .map((item) => [
@@ -435,69 +420,6 @@ const listIdentitySignature = (items = []) =>
       Math.round(Number(item?.areaM2 ?? item?.leaderAreaM2 ?? 0)),
     ].join(":"))
     .join("|");
-
-const getCurrentWayperUser = () => {
-  const user = auth.currentUser;
-  const emailName = user?.email ? user.email.split("@")[0] : null;
-  return {
-    id: user?.uid || "offline",
-    name: user?.displayName || emailName || "Atleta Wayper",
-    avatar: user?.photoURL || null,
-  };
-};
-
-const serializeCaptureResult = (result) => {
-  if (!result) return null;
-  if (!result.ok) {
-    return {
-      ok: false,
-      reason: result.reason || "capture_failed",
-      details: result.details || null,
-    };
-  }
-
-  return {
-    ok: true,
-    territoryId: result.capturedTerritory?.id || null,
-    capturedAreaM2: Number(result.capturedAreaM2 || 0),
-    newAreaM2: Number(result.newAreaM2 || 0),
-    stolenAreaM2: Number(result.stolenAreaM2 || 0),
-    ownMergedAreaM2: Number(result.ownMergedAreaM2 || 0),
-    conqueredCount: result.conqueredTerritories?.length || 0,
-    splitCount: result.splitTerritories?.length || 0,
-    mergedCount: result.mergedTerritories?.length || 0,
-    affectedUsersCount: result.affectedUsers?.length || 0,
-    becameLeaderInCells: result.becameLeaderInCells || [],
-    lostLeaderInCells: result.lostLeaderInCells || [],
-    cellIds: result.cellIds || [],
-    highlights: result.summary?.highlights || [],
-  };
-};
-
-const buildCaptureResultMessage = (result) => {
-  if (!result) return null;
-  if (!result.ok) {
-    const reason = result.reason || "erro";
-    if (reason === "not_closed_loop") return "Corrida salva. O trajeto nao fechou um loop para capturar territorio.";
-    if (reason === "not_enough_points") return "Corrida salva. Foram necessarios mais pontos para capturar territorio.";
-    if (reason === "duration_too_short") return "Corrida salva. A captura foi bloqueada porque a atividade foi curta demais.";
-    if (reason === "distance_too_short") return "Corrida salva. A captura foi bloqueada porque a distancia foi curta demais.";
-    if (reason === "bad_accuracy" || reason === "bad_gps") return "Corrida salva. A captura foi bloqueada por baixa qualidade de GPS.";
-    if (reason === "impossible_speed" || reason === "gps_jump" || reason === "suspicious_activity") return "Corrida salva. A captura foi bloqueada por sinais inconsistentes no trajeto.";
-    if (reason === "area_too_small") return "Corrida salva. A area ficou pequena demais para virar territorio.";
-    if (reason === "area_too_large") return "Corrida salva. A area ficou grande demais para captura segura.";
-    return "Corrida salva. A captura territorial nao foi aplicada desta vez.";
-  }
-
-  const area = Math.round(Number(result.capturedAreaM2 || 0));
-  const stolen = Math.round(Number(result.stolenAreaM2 || 0));
-  const leaderCells = result.becameLeaderInCells?.length || 0;
-  const extras = [
-    stolen > 0 ? `${stolen} m2 retomados` : null,
-    leaderCells > 0 ? `lideranca em ${leaderCells} celula${leaderCells > 1 ? "s" : ""}` : null,
-  ].filter(Boolean);
-  return `Territorio capturado: ${area} m2${extras.length ? `, ${extras.join(", ")}` : ""}.`;
-};
 
 const getPrimaryTerritoryCellId = (territory) => {
   if (Array.isArray(territory?.cellIds) && territory.cellIds.length > 0) return territory.cellIds[0];
@@ -557,6 +479,7 @@ const MapScreen = ({ navigation, route }) => {
   const [mode, setMode] = useState(null);
   const [gpsQualityWarning, setGpsQualityWarning] = useState(null);
   const [runtimeRecovering, setRuntimeRecovering] = useState(false);
+  const [isFinishingRun, setIsFinishingRun] = useState(false);
 
   const [showRunsModal, setShowRunsModal] = useState(false);
   const [showSavedModal, setShowSavedModal] = useState(false);
@@ -568,6 +491,7 @@ const MapScreen = ({ navigation, route }) => {
   const savedFullShareRef = useRef(null);
   const savedRouteShareRef = useRef(null);
   const emergencyDiagnosticsInFlightRef = useRef(false);
+  const emergencyDiagnosticsTokenRef = useRef(0);
 
   const watcherRef = useRef(null);
   const timerRef = useRef(null);
@@ -590,7 +514,6 @@ const MapScreen = ({ navigation, route }) => {
   const isStartingRunRef = useRef(false);
   const runStartCountdownIntervalRef = useRef(null);
 
-  const lastPointRef = useRef(null);
   const rawPathRef = useRef([]);
   const savedPathRef = useRef([]);
   const displayPathRef = useRef([]);
@@ -598,20 +521,19 @@ const MapScreen = ({ navigation, route }) => {
   const trackingSessionRef = useRef(createTrackingSession({ mode: "run" }));
   const lastTrackingFinishRef = useRef(null);
   const lastAcceptedLocationRef = useRef(null);
-  const lastSmoothedLocationRef = useRef(null);
-  const pendingSuspiciousPointRef = useRef(null);
   const currentRunIdRef = useRef(null);
-  const applyActiveRunSnapshotToUiRef = useRef(null);
+  const pendingActiveRunUiSnapshotRef = useRef(null);
+  const activeRunUiTimerRef = useRef(null);
+  const lastActiveRunUiAtRef = useRef(0);
   const finishInFlightRef = useRef(false);
-  const currentSegmentIdRef = useRef(0);
-  const forceNextSegmentBreakRef = useRef(false);
-  const routeBufferRef = useRef([]);
+  const isFinishingRunRef = useRef(false);
   const routeStateRef = useRef([]);
   const distanceRef = useRef(0);
   const runningRef = useRef(false);
   const runStatusRef = useRef("idle");
   const modeRef = useRef(null);
   const zonePreviewLastAtRef = useRef(0);
+  const zonePreviewLastPointCountRef = useRef(0);
   const liveTrackingRef = useRef(false);
   const territoryViewportDebounceRef = useRef(null);
   const lastTerritoryFetchRef = useRef(null);
@@ -632,16 +554,42 @@ const MapScreen = ({ navigation, route }) => {
   const lastLocationReceivedAtRef = useRef(null);
   const lastLocationAcceptedAtRef = useRef(null);
   const lastRenderPathUpdatedAtRef = useRef(null);
+  const lastMapRenderStallAtRef = useRef(0);
   const timerStallCountRef = useRef(0);
   const uiStallCountRef = useRef(0);
   const watcherRestartCountRef = useRef(0);
   const discardedPointReasonsRef = useRef({});
   const lastRunDiagnosticErrorRef = useRef(null);
 
+  const liveRoutePath = running || paused ? displayRouteState : routeState;
+  const liveRouteSegments = useMemo(
+    () => (running || paused ? displayRouteSegments : splitPathIntoSegments(liveRoutePath)),
+    [displayRouteSegments, liveRoutePath, paused, running]
+  );
+
   const routeFadeAnim = useRef(new Animated.Value(1)).current;
   const startPulseAnim = useRef(new Animated.Value(0)).current;
   const startPressAnim = useRef(new Animated.Value(1)).current;
   const currentUserId = auth.currentUser?.uid || "offline";
+
+  useEffect(() => {
+    recordRunEvent("MAP_SCREEN_MOUNTED", {
+      appState: appStateRef.current,
+      screen: "MapScreen",
+    }, {
+      forcePersist: true,
+    });
+    return () => {
+      recordRunEvent("MAP_SCREEN_UNMOUNTED", {
+        runId: currentRunIdRef.current,
+        status: runStatusRef.current,
+        appState: appStateRef.current,
+        screen: "MapScreen",
+      }, {
+        forcePersist: true,
+      });
+    };
+  }, []);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -1041,32 +989,94 @@ const MapScreen = ({ navigation, route }) => {
     );
   }, [buildEmergencyDiagnosticsContext]);
 
+  const releaseEmergencyDiagnosticsState = useCallback((token = null) => {
+    if (token == null || emergencyDiagnosticsTokenRef.current === token) {
+      emergencyDiagnosticsInFlightRef.current = false;
+      if (mountedRef.current) setEmergencyDiagnosticsLoading(false);
+    }
+  }, []);
+
   const exportEmergencyDiagnostics = useCallback(async (trigger = "run_panel_button") => {
     if (emergencyDiagnosticsInFlightRef.current) return;
+    const exportToken = emergencyDiagnosticsTokenRef.current + 1;
+    emergencyDiagnosticsTokenRef.current = exportToken;
     emergencyDiagnosticsInFlightRef.current = true;
     setEmergencyDiagnosticsLoading(true);
+    const startedAtMs = Date.now();
+    const emergencyContext = buildEmergencyDiagnosticsContext("export_started", { trigger });
     recordRunEvent("RUN_EMERGENCY_DIAGNOSTICS_EXPORT_STARTED", {
       runId: currentRunIdRef.current,
       status: getEmergencyRunStatus(),
       trigger,
       screen: "MapScreen",
+      exportType: "active_run_light",
+      timeoutMs: EMERGENCY_DIAGNOSTICS_EXPORT_TIMEOUT_MS,
     });
     recordEmergencyDiagnosticsSnapshot("export_started", { trigger }, { force: true });
 
     try {
-      const archive = await createDiagnosticsArchive({
-        scope: DIAGNOSTIC_EXPORT_SCOPE.ACTIVE_RUN,
-      });
-      const sharingAvailable = await Sharing.isAvailableAsync();
+      const archive = await withTimeout(
+        () => createActiveRunLightDiagnosticsArtifact({
+          trigger,
+          emergencyContext,
+          reason: "active_run_button_light_export",
+        }),
+        EMERGENCY_DIAGNOSTICS_EXPORT_TIMEOUT_MS,
+        "diagnostic_light_export_timeout"
+      );
+      const exportDurationMs = Date.now() - startedAtMs;
+      releaseEmergencyDiagnosticsState(exportToken);
+
+      if (finishInFlightRef.current || emergencyDiagnosticsTokenRef.current !== exportToken) {
+        recordRunEvent("RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH", {
+          runId: currentRunIdRef.current,
+          status: getEmergencyRunStatus(),
+          trigger,
+          filename: archive.filename,
+          size: archive.size,
+          durationMs: exportDurationMs,
+          screen: "MapScreen",
+        });
+        return;
+      }
+
+      const sharingAvailable = await withTimeout(
+        () => Sharing.isAvailableAsync(),
+        1200,
+        "diagnostic_share_probe_timeout"
+      ).catch(() => false);
+      let shareAttempted = false;
+      let shared = false;
       if (sharingAvailable) {
-        await Sharing.shareAsync(archive.uri, {
-          mimeType: "application/zip",
-          dialogTitle: "Exportar diagnostico Wayper",
+        shareAttempted = true;
+        await withTimeout(
+          () => Sharing.shareAsync(archive.uri, {
+            mimeType: archive.mimeType || "application/json",
+            dialogTitle: "Exportar diagnostico Wayper",
+          }),
+          EMERGENCY_DIAGNOSTICS_SHARE_TIMEOUT_MS,
+          "diagnostic_share_timeout"
+        ).then(() => {
+          shared = true;
+        }).catch((shareError) => {
+          recordRunEvent("RUN_DIAGNOSTIC_SHARE_TIMEOUT_OR_FAILED", {
+            runId: currentRunIdRef.current,
+            status: getEmergencyRunStatus(),
+            trigger,
+            filename: archive.filename,
+            error: shareError,
+            screen: "MapScreen",
+            level: "warn",
+          });
+          Alert.alert(
+            "Diagnostico salvo",
+            `Pacote leve salvo em ${archive.filename || archive.uri}. O compartilhamento nativo demorou demais, mas a corrida continua ativa.`
+          );
         });
       } else {
         Alert.alert(
           "Diagnostico gerado",
-          `Arquivo salvo em ${archive.filename || archive.uri}. Compartilhamento nativo indisponivel neste aparelho.`
+          `Pacote leve salvo em ${archive.filename || archive.uri}. Compartilhamento nativo indisponivel neste aparelho.`
         );
       }
       recordRunEvent("RUN_EMERGENCY_DIAGNOSTICS_EXPORT_SUCCESS", {
@@ -1076,7 +1086,12 @@ const MapScreen = ({ navigation, route }) => {
         uri: archive.uri,
         filename: archive.filename,
         size: archive.size,
-        shared: sharingAvailable,
+        sharingAvailable,
+        shareAttempted,
+        shared,
+        light: true,
+        fullExportDeferred: true,
+        durationMs: exportDurationMs,
         screen: "MapScreen",
       });
       recordEmergencyDiagnosticsSnapshot("export_success", {
@@ -1084,29 +1099,41 @@ const MapScreen = ({ navigation, route }) => {
         archive: {
           filename: archive.filename,
           size: archive.size,
-          shared: sharingAvailable,
+          sharingAvailable,
+          shareAttempted,
+          shared,
+          light: true,
+          fullExportDeferred: true,
         },
       }, { force: true });
     } catch (error) {
+      const timeout = error?.code === "diagnostic_light_export_timeout";
       lastRunDiagnosticErrorRef.current = {
         message: error?.message || String(error),
         code: error?.code || null,
         at: new Date().toISOString(),
       };
-      recordRunEvent("RUN_EMERGENCY_DIAGNOSTICS_EXPORT_FAILED", {
+      recordRunEvent(timeout ? "RUN_DIAGNOSTIC_EXPORT_TIMEOUT" : "RUN_EMERGENCY_DIAGNOSTICS_EXPORT_FAILED", {
         runId: currentRunIdRef.current,
         status: getEmergencyRunStatus(),
         trigger,
         error,
+        timeoutMs: timeout ? EMERGENCY_DIAGNOSTICS_EXPORT_TIMEOUT_MS : undefined,
+        light: true,
+        fullExportDeferred: true,
         screen: "MapScreen",
       });
       recordEmergencyDiagnosticsSnapshot("export_failed", { trigger }, { force: true });
-      Alert.alert("Falha no diagnostico", "Nao foi possivel gerar o ZIP agora. A corrida continua ativa.");
+      Alert.alert(
+        timeout ? "Diagnostico adiado" : "Falha no diagnostico",
+        timeout
+          ? "O pacote leve demorou demais e foi liberado. A corrida continua ativa; exporte o ZIP completo depois em Configuracoes > Diagnostico."
+          : "Nao foi possivel gerar o diagnostico agora. A corrida continua ativa."
+      );
     } finally {
-      emergencyDiagnosticsInFlightRef.current = false;
-      if (mountedRef.current) setEmergencyDiagnosticsLoading(false);
+      releaseEmergencyDiagnosticsState(exportToken);
     }
-  }, [getEmergencyRunStatus, recordEmergencyDiagnosticsSnapshot]);
+  }, [buildEmergencyDiagnosticsContext, getEmergencyRunStatus, recordEmergencyDiagnosticsSnapshot, releaseEmergencyDiagnosticsState]);
 
   const handleEmergencyDiagnosticsPress = useCallback(() => {
     exportEmergencyDiagnostics("run_panel_button");
@@ -1124,7 +1151,6 @@ const MapScreen = ({ navigation, route }) => {
   /* ===== INIT ===== */
   useEffect(() => {
     mountedRef.current = true;
-    let flushTimer = null;
     let appStateSub = null;
 
     (async () => {
@@ -1205,6 +1231,11 @@ const MapScreen = ({ navigation, route }) => {
             });
           }
           if (next === "active") {
+            const expectedActiveRunOnForeground = Boolean(
+              currentRunIdRef.current ||
+              runningRef.current ||
+              ["active", "paused", "recovering", "finishing"].includes(String(runStatusRef.current || ""))
+            );
             recordRunEvent("RUN_APP_ACTIVE", {
               runId: currentRunIdRef.current,
               status: runStatusRef.current,
@@ -1230,6 +1261,15 @@ const MapScreen = ({ navigation, route }) => {
                 reason: "app_state_active",
                 forceSyncControls: true,
               }).then((restored) => {
+                if (!restored && expectedActiveRunOnForeground) {
+                  recordRunEvent("ACTIVE_RUN_MISSING_AFTER_FOREGROUND", {
+                    runId: currentRunIdRef.current,
+                    status: runStatusRef.current,
+                    appState: next,
+                    screen: "MapScreen",
+                    level: "warn",
+                  });
+                }
                 if (!restored && !runningRef.current) {
                   refreshForegroundLocation({ updatePosition: true });
                 }
@@ -1244,8 +1284,6 @@ const MapScreen = ({ navigation, route }) => {
             }
           }
         });
-
-        flushTimer = setInterval(() => flushRouteBufferToState(), FLUSH_INTERVAL_MS);
 
         // carregar dados locais sem bloquear UI
         try {
@@ -1268,7 +1306,11 @@ const MapScreen = ({ navigation, route }) => {
 
     return () => {
       mountedRef.current = false;
-      if (flushTimer) clearInterval(flushTimer);
+      if (activeRunUiTimerRef.current) {
+        clearTimeout(activeRunUiTimerRef.current);
+        activeRunUiTimerRef.current = null;
+      }
+      pendingActiveRunUiSnapshotRef.current = null;
       stopWatcherAndPolling();
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -1346,19 +1388,17 @@ const MapScreen = ({ navigation, route }) => {
     savedPathRef.current = [];
     displayPathRef.current = [];
     displaySegmentsRef.current = [];
-    routeBufferRef.current = [];
     routeStateRef.current = [];
-    lastPointRef.current = null;
     lastAcceptedLocationRef.current = null;
-    lastSmoothedLocationRef.current = null;
-    pendingSuspiciousPointRef.current = null;
-    forceNextSegmentBreakRef.current = false;
-    currentSegmentIdRef.current = Number.isFinite(Number(options.segmentId)) ? Number(options.segmentId) : 0;
+    zonePreviewLastAtRef.current = 0;
+    zonePreviewLastPointCountRef.current = 0;
 
     setRouteState([]);
     setDisplayRouteState([]);
     setDisplayRouteSegments([]);
-    debugTracking("path_reset", { segmentId: currentSegmentIdRef.current });
+    debugTracking("path_reset", {
+      segmentId: Number.isFinite(Number(options.segmentId)) ? Number(options.segmentId) : 0,
+    });
   }, []);
 
   const updateActiveZonePreview = useCallback((path = []) => {
@@ -1367,13 +1407,16 @@ const MapScreen = ({ navigation, route }) => {
 
       const now = Date.now();
       if (now - zonePreviewLastAtRef.current < ZONE_PREVIEW_INTERVAL_MS) return;
+      const pointCount = Array.isArray(path) ? path.length : 0;
+      if (pointCount - zonePreviewLastPointCountRef.current < ZONE_PREVIEW_MIN_NEW_POINTS) return;
       zonePreviewLastAtRef.current = now;
+      zonePreviewLastPointCountRef.current = pointCount;
 
       const previewPath = finalizeRoutePath(path, {
         minPointDistanceM: 1,
-        toleranceM: 1.4,
+        toleranceM: 2.8,
         spikeToleranceM: 6,
-        maxPoints: 900,
+        maxPoints: 420,
         maxAccuracyM: MAX_GPS_ACCURACY_M,
         maxSpeedMps: MAX_RUNNING_SPEED_MPS,
         preserveTurns: true,
@@ -1386,8 +1429,8 @@ const MapScreen = ({ navigation, route }) => {
         minDistanceM: 40,
         minAreaM2: 15,
         simplifyTolerance: 0.000015,
-        maxPoints: 360,
-        maxRouteGeometryPoints: 520,
+        maxPoints: 240,
+        maxRouteGeometryPoints: 320,
       });
 
       if (built?.ok && built.geometry) {
@@ -1407,53 +1450,15 @@ const MapScreen = ({ navigation, route }) => {
       setPolygons([]);
     } catch (e) {
       debug("zone preview failed", e);
+      recordRunEvent("RUN_TERRITORY_PREVIEW_FAILED", {
+        runId: currentRunIdRef.current,
+        pointCount: Array.isArray(path) ? path.length : 0,
+        error: e,
+        screen: "MapScreen",
+        level: "warn",
+      });
     }
   }, []);
-
-  const flushRouteBufferToState = useCallback(() => {
-    try {
-      const trackingState = trackingSessionRef.current?.getState?.();
-      const sessionTrusted = sanitizePath(trackingState?.trustedPath || []);
-      if (sessionTrusted.length === 0 && (!routeBufferRef.current || routeBufferRef.current.length === 0)) return;
-      const liveSegments = sanitizeSegmentPaths(trackingState?.liveRenderSegments || []);
-
-      const savedSnapshot = sessionTrusted.length > 0 ? sessionTrusted : sanitizePath(savedPathRef.current);
-      const displaySnapshot = limitPathForRendering(
-        liveSegments.length > 0
-          ? flattenSegmentPaths(liveSegments)
-          : sanitizePath(trackingState?.liveRenderPath || []).length > 1
-            ? sanitizePath(trackingState.liveRenderPath)
-          : smoothDisplayPath(savedSnapshot, { config: TRACKING_CONFIG }),
-        TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
-      );
-      const segmentSnapshot = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(displaySnapshot);
-
-      routeStateRef.current = savedSnapshot;
-      savedPathRef.current = savedSnapshot;
-      displayPathRef.current = displaySnapshot;
-      displaySegmentsRef.current = segmentSnapshot;
-      routeBufferRef.current = [];
-      rawPathRef.current = sanitizePath(trackingState?.rawPath || rawPathRef.current);
-      distanceRef.current = Number(trackingState?.stats?.distanceMeters ?? distanceRef.current) || 0;
-      lastAcceptedLocationRef.current = savedSnapshot[savedSnapshot.length - 1] || null;
-      lastSmoothedLocationRef.current = displaySnapshot[displaySnapshot.length - 1] || null;
-      const gpsSummary = trackingState?.gpsQualitySummary || summarizeGpsQuality({
-        rawPoints: rawPathRef.current,
-        filteredPoints: savedSnapshot,
-        segments: trackingState?.segments || [],
-        pathQuality: trackingState?.pathQuality,
-      });
-
-      setRouteState(limitPathForRendering(savedSnapshot, ROUTE_CAP));
-      setDisplayRouteState(displaySnapshot);
-      setDisplayRouteSegments(segmentSnapshot);
-      setDistanceState(distanceRef.current);
-      setGpsQualityWarning(getGpsQualityWarning(gpsSummary));
-      updateActiveZonePreview(savedSnapshot);
-    } catch (e) {
-      debug("flush catch", e);
-    }
-  }, [updateActiveZonePreview]);
 
   const noteDiscardedPointReason = useCallback((reason = "unknown") => {
     const key = String(reason || "unknown");
@@ -1467,25 +1472,13 @@ const MapScreen = ({ navigation, route }) => {
   const handleLocationUpdate = useCallback(
     (locObj = {}) => {
       try {
-        if (locObj.source === "background" && appStateRef.current === "active" && watcherRef.current) {
-          noteDiscardedPointReason("background_point_ignored_foreground_watcher_alive");
-          recordLocationPointEvent("LOCATION_POINT_REJECTED", locObj, {
-            runId: currentRunIdRef.current,
-            status: runStatusRef.current,
-            reason: "background_point_ignored_foreground_watcher_alive",
-            appState: appStateRef.current,
-            screen: "MapScreen",
-          });
-          return;
-        }
-
         if (locObj.runSessionId && currentRunIdRef.current && locObj.runSessionId !== currentRunIdRef.current) {
           debugTracking("reject:stale_session", {
             pointSession: locObj.runSessionId,
             currentSession: currentRunIdRef.current,
           });
           noteDiscardedPointReason("stale_session");
-          recordLocationPointEvent("LOCATION_POINT_REJECTED", locObj, {
+          recordRunEvent("LOCATION_POINT_REJECTED", {
             runId: currentRunIdRef.current,
             reason: "stale_session",
             pointSession: locObj.runSessionId,
@@ -1499,7 +1492,7 @@ const MapScreen = ({ navigation, route }) => {
         if (!point) {
           debugTracking("reject:normalize_failed", locObj);
           noteDiscardedPointReason("invalid_coordinate");
-          recordLocationPointEvent("LOCATION_POINT_REJECTED", locObj, {
+          recordRunEvent("LOCATION_POINT_REJECTED", {
             runId: currentRunIdRef.current,
             reason: "invalid_coordinate",
             screen: "MapScreen",
@@ -1510,14 +1503,6 @@ const MapScreen = ({ navigation, route }) => {
         const receivedAt = new Date().toISOString();
         lastLocationReceivedAtRef.current = receivedAt;
         if (currentRunIdRef.current || runningRef.current) {
-          recordLocationPointEvent("LOCATION_POINT_RECEIVED", point, {
-            runId: currentRunIdRef.current,
-            status: runStatusRef.current,
-            source: locObj.source || point.source || null,
-            appState: appStateRef.current,
-            receivedAt,
-            screen: "MapScreen",
-          }, { forcePersist: true });
           recordEmergencyDiagnosticsSnapshot("location_point_received", {
             lastLocationReceivedAt: receivedAt,
           }, { minIntervalMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS });
@@ -1535,13 +1520,6 @@ const MapScreen = ({ navigation, route }) => {
             source: locObj.source,
           });
           noteDiscardedPointReason("inactive_run");
-          recordLocationPointEvent("LOCATION_POINT_REJECTED", point, {
-            runId: currentRunIdRef.current,
-            status: runStatusRef.current,
-            reason: "inactive_run",
-            source: locObj.source,
-            screen: "MapScreen",
-          });
           return;
         }
 
@@ -1551,136 +1529,30 @@ const MapScreen = ({ navigation, route }) => {
             source: locObj.source,
           });
           noteDiscardedPointReason("invalid_run_status");
-          recordLocationPointEvent("LOCATION_POINT_REJECTED", point, {
-            runId: currentRunIdRef.current,
-            status: runStatusRef.current,
-            reason: "invalid_run_status",
-            source: locObj.source,
-            screen: "MapScreen",
-          });
           return;
         }
 
-        if (locObj.source !== "background") {
-          activeRunTrackingService.recordLocation?.({
-            ...locObj,
-            source: "foreground",
-          }, { source: "foreground" }).then((snapshot) => {
-            if (snapshot?.activeRunId) {
-              applyActiveRunSnapshotToUiRef.current?.(snapshot, {
-                syncControls: false,
-                source: "foreground_point_saved",
-              });
-            }
-          }).catch((error) => {
-            debug("active run snapshot point failed", error);
-          });
-        }
-
-        const result = trackingSessionRef.current.processLocationPoint(
-          {
-            ...locObj,
-            source: locObj.source === "background" || locObj.source === "foreground"
-              ? "expo-location"
-              : locObj.source,
-          },
-          { segmentBreak: forceNextSegmentBreakRef.current }
-        );
-
-        rawPathRef.current = result.rawPath || rawPathRef.current;
-
-        if (!result.accepted) {
-          noteDiscardedPointReason(result.reason || "not_accepted");
-          if (Number(point.accuracy) > TRACKING_CONFIG.GPS_ACCURACY_ACCEPTABLE_M) {
-            setGpsQualityWarning(
-              Number(point.accuracy) > TRACKING_CONFIG.GPS_ACCURACY_MAX_M
-                ? "GPS instavel. Va para uma area aberta para melhorar a precisao."
-                : "Sinal GPS fraco. A rota pode ficar menos precisa."
-            );
-          }
-          debugTracking(`reject:${result.reason}`, {
-            accuracy: point.accuracy,
-            timestamp: point.timestamp,
-            rawPoints: result.pathQuality?.rawPoints,
-            acceptedPoints: result.pathQuality?.acceptedPoints,
-            segments: result.segments?.length || 0,
-          });
-          recordLocationPointEvent("LOCATION_POINT_REJECTED", result.rawPoint || point, {
+        const source = locObj.source === "background" ? "background" : "foreground";
+        activeRunTrackingService.recordLocation?.({
+          ...point,
+          source: locObj.source || point.source || source,
+        }, { source }).catch((error) => {
+          lastRunDiagnosticErrorRef.current = {
+            message: error?.message || String(error),
+            code: error?.code || null,
+            at: new Date().toISOString(),
+          };
+          recordRunEvent("LOCATION_INGESTION_FAILED", {
             runId: currentRunIdRef.current,
             status: runStatusRef.current,
-            reason: result.reason,
-            action: result.action,
-            rawPointsCount: result.pathQuality?.rawPoints,
-            trustedPointsCount: result.pathQuality?.acceptedPoints,
-            segmentsCount: result.segments?.length || 0,
-            distance: distanceRef.current,
+            source,
+            error,
             screen: "MapScreen",
           });
-          return;
-        }
-
-        const trustedPath = sanitizePath(result.trustedPath || []);
-        const liveSegments = sanitizeSegmentPaths(result.liveRenderSegments || []);
-        const livePath = limitPathForRendering(
-          liveSegments.length > 0 ? flattenSegmentPaths(liveSegments) : sanitizePath(result.liveRenderPath || trustedPath),
-          TRACKING_CONFIG.DISPLAY_PATH_MAX_POINTS
-        );
-
-        savedPathRef.current = trustedPath;
-        routeStateRef.current = trustedPath;
-        displayPathRef.current = livePath;
-        displaySegmentsRef.current = liveSegments.length > 0 ? liveSegments : splitPathIntoSegments(livePath);
-        routeBufferRef.current = result.point ? [result.point] : [];
-        lastAcceptedLocationRef.current = trustedPath[trustedPath.length - 1] || null;
-        lastLocationAcceptedAtRef.current = new Date().toISOString();
-        lastPointRef.current = lastAcceptedLocationRef.current;
-        lastSmoothedLocationRef.current = result.currentPosition || livePath[livePath.length - 1] || null;
-        pendingSuspiciousPointRef.current = null;
-        distanceRef.current = Number(result.stats?.distanceMeters || 0);
-        currentSegmentIdRef.current = Number(lastAcceptedLocationRef.current?.segmentId || currentSegmentIdRef.current || 0);
-        forceNextSegmentBreakRef.current = false;
-
-        if (result.currentPositionChanged && result.currentPosition) {
-          setLocation(result.currentPosition);
-        }
-
-        if (result.pathChanged) {
-          const gpsSummary = result.gpsQualitySummary || summarizeGpsQuality({
-            rawPoints: result.rawPoints || result.rawPath || [],
-            filteredPoints: trustedPath,
-            segments: result.segments || [],
-            pathQuality: result.pathQuality,
+          checkpointOnLocationError(error, {
+            phase: "canonical_location_ingestion",
           });
-          debugTracking("point_accepted", {
-            accuracy: point.accuracy,
-            rawPoints: result.pathQuality?.rawPoints,
-            acceptedPoints: result.pathQuality?.acceptedPoints,
-            segments: displaySegmentsRef.current.length,
-            segmentPointCounts: displaySegmentsRef.current.map((segment) => segment.length),
-            distanceMeters: distanceRef.current,
-            averageAccuracy: result.pathQuality?.averageAccuracy ?? null,
-            maxAccuracy: result.pathQuality?.maxAccuracy ?? null,
-          });
-          recordLocationPointEvent("LOCATION_POINT_ACCEPTED", result.point || point, {
-            runId: currentRunIdRef.current,
-            status: runStatusRef.current,
-            rawPointsCount: result.pathQuality?.rawPoints,
-            trustedPointsCount: result.pathQuality?.acceptedPoints,
-            displayPointsCount: livePath.length,
-            segmentsCount: displaySegmentsRef.current.length,
-            distance: distanceRef.current,
-            screen: "MapScreen",
-          });
-          recordEmergencyDiagnosticsSnapshot("location_point_accepted", {
-            lastLocationAcceptedAt: lastLocationAcceptedAtRef.current,
-          }, { minIntervalMs: EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS });
-          setRouteState(limitPathForRendering(trustedPath, ROUTE_CAP));
-          setDisplayRouteState(livePath);
-          setDisplayRouteSegments(displaySegmentsRef.current);
-          setDistanceState(distanceRef.current);
-          setGpsQualityWarning(getGpsQualityWarning(gpsSummary));
-          updateActiveZonePreview(trustedPath);
-        }
+        });
       } catch (e) {
         debug("handleLocationUpdate", e);
         noteDiscardedPointReason("handler_error");
@@ -1703,7 +1575,7 @@ const MapScreen = ({ navigation, route }) => {
         });
       }
     },
-    [noteDiscardedPointReason, recordEmergencyDiagnosticsSnapshot, updateActiveZonePreview]
+    [noteDiscardedPointReason, recordEmergencyDiagnosticsSnapshot]
   );
 
   const stopBackgroundLocationService = useCallback(async () => {
@@ -1736,6 +1608,12 @@ const MapScreen = ({ navigation, route }) => {
           permissionName: "locationForeground",
           status: foreground.status,
           screen: "MapScreen",
+        });
+        const permissionError = new Error("foreground location permission denied");
+        permissionError.code = "LOCATION_FOREGROUND_PERMISSION_DENIED";
+        await activeRunTrackingService.recordActiveRunFailure?.(permissionError, {
+          source: "MapScreen",
+          reason: "foreground_location_permission_denied",
         });
         return;
       }
@@ -1776,6 +1654,12 @@ const MapScreen = ({ navigation, route }) => {
             screen: "MapScreen",
           });
           backgroundPermissionWarnedRef.current = true;
+          const permissionError = new Error("background location permission denied");
+          permissionError.code = "LOCATION_BACKGROUND_PERMISSION_DENIED";
+          await activeRunTrackingService.recordActiveRunFailure?.(permissionError, {
+            source: "MapScreen",
+            reason: "background_location_permission_denied",
+          });
           if (mountedRef.current) {
             setRunLimitationNotice({
               type: "background",
@@ -1790,7 +1674,12 @@ const MapScreen = ({ navigation, route }) => {
         }
       }
 
-      await activeRunTrackingService.startBackgroundLocationUpdates?.({ force: true });
+      const backgroundStarted = await activeRunTrackingService.startBackgroundLocationUpdates?.({ force: true });
+      if (backgroundStarted === false) {
+        const startError = new Error("background location service did not start");
+        startError.code = "BACKGROUND_LOCATION_SERVICE_NOT_STARTED";
+        throw startError;
+      }
       recordRunEvent("LOCATION_WATCHER_STARTED", {
         runId: currentRunIdRef.current,
         watcherStatus: "background_start_requested",
@@ -1911,7 +1800,16 @@ const MapScreen = ({ navigation, route }) => {
           if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") {
             try {
               sub?.remove?.();
-            } catch {}
+            } catch (removeError) {
+              debug("stale watcher remove failed", removeError);
+              recordRunEvent("LOCATION_WATCHER_STOP_FAILED", {
+                runId: runSessionId,
+                phase: "accuracy_fallback_stale_subscription",
+                error: removeError,
+                screen: "MapScreen",
+                level: "warn",
+              });
+            }
             return;
           }
           debugTracking("watcher_accuracy_selected", { accuracy });
@@ -1942,7 +1840,16 @@ const MapScreen = ({ navigation, route }) => {
       if (watcherStartTokenRef.current !== startToken || runStatusRef.current !== "active") {
         try {
           sub?.remove?.();
-        } catch {}
+        } catch (removeError) {
+          debug("watcher remove after status change failed", removeError);
+          recordRunEvent("LOCATION_WATCHER_STOP_FAILED", {
+            runId: runSessionId,
+            phase: "status_changed_during_start",
+            error: removeError,
+            screen: "MapScreen",
+            level: "warn",
+          });
+        }
         return;
       }
           watcherRef.current = sub;
@@ -2232,9 +2139,9 @@ const MapScreen = ({ navigation, route }) => {
     distanceRef.current = distanceMeters;
     timeSecRef.current = durationSeconds;
     lastAcceptedLocationRef.current = trustedPath[trustedPath.length - 1] || null;
-    lastPointRef.current = lastAcceptedLocationRef.current;
-    lastSmoothedLocationRef.current = snapshot.currentLocation || livePath[livePath.length - 1] || null;
-
+    if (lastAcceptedLocationRef.current) {
+      lastLocationAcceptedAtRef.current = new Date().toISOString();
+    }
     setRunning(isLive);
     setPaused(isPaused);
     setMode(snapshot.mode || "free");
@@ -2246,6 +2153,7 @@ const MapScreen = ({ navigation, route }) => {
     setTimeSec(durationSeconds);
     if (snapshot.currentLocation) setLocation(snapshot.currentLocation);
     setGpsQualityWarning(getGpsQualityWarning(snapshot.gpsQualitySummary || snapshot.pathQuality));
+    updateActiveZonePreview(trustedPath);
     recordRunSnapshotEvent("RUN_UI_STATE_CHANGED", snapshot, {
       previousStatus: previousRunStatus,
       nextStatus: runStatusRef.current,
@@ -2264,6 +2172,15 @@ const MapScreen = ({ navigation, route }) => {
       displayPointsCount: livePath.length,
       distanceMeters,
       elapsedMs: durationSeconds * 1000,
+      screen: "MapScreen",
+    });
+    recordRunSnapshotEvent("CANONICAL_SNAPSHOT_APPLIED", snapshot, {
+      previousStatus: previousRunStatus,
+      nextStatus: runStatusRef.current,
+      source: options.source || snapshot.source || null,
+      recovered: Boolean(options.recovered),
+      routePointsCount: trustedPath.length,
+      routeSegmentsCount: segmentSnapshot.length,
       screen: "MapScreen",
     });
     devLog("MapScreen", "hydrated route points count", {
@@ -2287,7 +2204,7 @@ const MapScreen = ({ navigation, route }) => {
     }
 
     if (status === ACTIVE_RUN_STATUS.RUNNING) {
-      startElapsedTimer();
+      if (!timerRef.current || previousRunStatus !== "active") startElapsedTimer();
       if (shouldSyncControls && (forceSyncControls || previousRunStatus !== "active")) {
         startLocationWatcher().catch((error) => debug("snapshot startLocationWatcher failed", error));
         startBackgroundLocationService().catch((error) => debug("snapshot startBackgroundLocationService failed", error));
@@ -2316,21 +2233,55 @@ const MapScreen = ({ navigation, route }) => {
     stopBackgroundLocationService,
     stopElapsedTimer,
     stopWatcherAndPolling,
+    updateActiveZonePreview,
   ]);
 
-  useEffect(() => {
-    applyActiveRunSnapshotToUiRef.current = applyActiveRunSnapshotToUi;
-    return () => {
-      if (applyActiveRunSnapshotToUiRef.current === applyActiveRunSnapshotToUi) {
-        applyActiveRunSnapshotToUiRef.current = null;
-      }
-    };
+  const flushPendingActiveRunUiSnapshot = useCallback(() => {
+    if (activeRunUiTimerRef.current) {
+      clearTimeout(activeRunUiTimerRef.current);
+      activeRunUiTimerRef.current = null;
+    }
+    const pending = pendingActiveRunUiSnapshotRef.current;
+    pendingActiveRunUiSnapshotRef.current = null;
+    if (!pending?.snapshot || !mountedRef.current) return;
+    lastActiveRunUiAtRef.current = Date.now();
+    applyActiveRunSnapshotToUi(pending.snapshot, pending.options);
   }, [applyActiveRunSnapshotToUi]);
+
+  const scheduleActiveRunUiSnapshot = useCallback((snapshot, options = {}) => {
+    if (!snapshot?.activeRunId || !mountedRef.current) return;
+    pendingActiveRunUiSnapshotRef.current = { snapshot, options };
+    if (activeRunUiTimerRef.current) return;
+    const elapsed = Date.now() - lastActiveRunUiAtRef.current;
+    const delay = Math.max(0, RUN_UI_UPDATE_INTERVAL_MS - elapsed);
+    activeRunUiTimerRef.current = setTimeout(flushPendingActiveRunUiSnapshot, delay);
+  }, [flushPendingActiveRunUiSnapshot]);
 
   useEffect(() => {
     const unsubscribe = activeRunTrackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
       if (!snapshot || !mountedRef.current) return;
       if (event === "active_snapshot_cleared" || event === "run_cancelled") return;
+      if (event === "run_finishing") {
+        pendingActiveRunUiSnapshotRef.current = null;
+        if (activeRunUiTimerRef.current) {
+          clearTimeout(activeRunUiTimerRef.current);
+          activeRunUiTimerRef.current = null;
+        }
+        return;
+      }
+      if (event === "foreground_point_buffered" || event === "background_point_buffered") {
+        scheduleActiveRunUiSnapshot(snapshot, {
+          syncControls: false,
+          source: event,
+        });
+        return;
+      }
+      pendingActiveRunUiSnapshotRef.current = null;
+      if (activeRunUiTimerRef.current) {
+        clearTimeout(activeRunUiTimerRef.current);
+        activeRunUiTimerRef.current = null;
+      }
+      lastActiveRunUiAtRef.current = Date.now();
       applyActiveRunSnapshotToUi(snapshot, {
         recovered: event === "run_restored",
         allowTerminal: event === "run_finished_snapshot_saved",
@@ -2340,12 +2291,25 @@ const MapScreen = ({ navigation, route }) => {
     return () => {
       try {
         unsubscribe?.();
-      } catch {}
+      } catch (unsubscribeError) {
+        debug("active run snapshot unsubscribe failed", unsubscribeError);
+        recordRunEvent("ACTIVE_RUN_SNAPSHOT_UNSUBSCRIBE_FAILED", {
+          runId: currentRunIdRef.current,
+          error: unsubscribeError,
+          screen: "MapScreen",
+          level: "warn",
+        });
+      }
+      if (activeRunUiTimerRef.current) {
+        clearTimeout(activeRunUiTimerRef.current);
+        activeRunUiTimerRef.current = null;
+      }
+      pendingActiveRunUiSnapshotRef.current = null;
     };
-  }, [applyActiveRunSnapshotToUi]);
+  }, [applyActiveRunSnapshotToUi, scheduleActiveRunUiSnapshot]);
 
   /* ===== Start / Pause / Stop run ===== */
-  const isRunStartBusy = isStartingRun || counting || running || runtimeRecovering;
+  const isRunStartBusy = isStartingRun || counting || running || runtimeRecovering || isFinishingRun;
 
   const clearRunStartCountdownTimer = useCallback(() => {
     if (runStartCountdownIntervalRef.current) {
@@ -2425,7 +2389,26 @@ const MapScreen = ({ navigation, route }) => {
         isStartingRun: isStartingRunRef.current,
         screen: "MapScreen",
       });
-      if (isStartingRunRef.current || counting || runningRef.current || running || runtimeRecovering) {
+      if (
+        isStartingRunRef.current ||
+        counting ||
+        runningRef.current ||
+        running ||
+        runtimeRecovering ||
+        isFinishingRunRef.current ||
+        isFinishingRun
+      ) {
+        recordRunEvent("BUTTON_PRESS_IGNORED_DUE_TO_LOCK", {
+          action: "start_run",
+          mode: selectedMode,
+          counting,
+          running,
+          isStartingRun: isStartingRunRef.current,
+          runtimeRecovering,
+          isFinishingRun: isFinishingRunRef.current || isFinishingRun,
+          screen: "MapScreen",
+          level: "warn",
+        });
         recordRunEvent("RUN_START_FAILED", {
           mode: selectedMode,
           reason: "invalid_state",
@@ -2433,6 +2416,7 @@ const MapScreen = ({ navigation, route }) => {
           running,
           isStartingRun: isStartingRunRef.current,
           runtimeRecovering,
+          isFinishingRun: isFinishingRunRef.current || isFinishingRun,
           level: "warn",
           screen: "MapScreen",
         });
@@ -2473,6 +2457,16 @@ const MapScreen = ({ navigation, route }) => {
       setRunPermissionNoticeVisible(false);
       setCounting(RUN_START_COUNTDOWN_SECONDS > 0);
       setCountdown(Math.max(0, Number(RUN_START_COUNTDOWN_SECONDS) || 0));
+      recordRunEvent("RUN_START_REQUESTED", {
+        mode: selectedMode,
+        countdownSeconds: RUN_START_COUNTDOWN_SECONDS,
+        screen: "MapScreen",
+      });
+      recordRunEvent("RUN_COUNTDOWN_STARTED", {
+        mode: selectedMode,
+        countdownSeconds: RUN_START_COUNTDOWN_SECONDS,
+        screen: "MapScreen",
+      });
 
       const preflight = (async () => {
         const permission = await ensureLocationForRun();
@@ -2481,6 +2475,13 @@ const MapScreen = ({ navigation, route }) => {
         setLocationPermission(permission);
         locationPermissionRef.current = permission;
         setPermissionDenied(!permission.granted);
+        recordRunEvent("LOCATION_PERMISSION_CHECKED", {
+          permissionName: "locationForeground",
+          status: permission.status,
+          granted: Boolean(permission.granted),
+          canAskAgain: permission.canAskAgain !== false,
+          screen: "MapScreen",
+        });
         if (!permission.granted) {
           recordRunEvent("LOCATION_PERMISSION_DENIED", {
             permissionName: "locationForeground",
@@ -2634,6 +2635,7 @@ const MapScreen = ({ navigation, route }) => {
     [
       clearRunStartCountdownTimer,
       counting,
+      isFinishingRun,
       permissionDenied,
       resetRunStartFeedback,
       running,
@@ -2667,10 +2669,17 @@ const MapScreen = ({ navigation, route }) => {
           screenFocusState: "focused",
           restartTracking: true,
         });
-        const existingSnapshot = existingRuntime?.snapshot;
+        const existingSnapshot = existingRuntime?.snapshot ||
+          await activeRunTrackingService.getActiveRunSnapshot?.();
         if (
           existingSnapshot?.activeRunId &&
-          [ACTIVE_RUN_STATUS.RUNNING, ACTIVE_RUN_STATUS.PAUSED].includes(existingSnapshot.status)
+          [
+            ACTIVE_RUN_STATUS.STARTING,
+            ACTIVE_RUN_STATUS.RUNNING,
+            ACTIVE_RUN_STATUS.PAUSED,
+            ACTIVE_RUN_STATUS.RECOVERING,
+            ACTIVE_RUN_STATUS.ERROR_RECOVERABLE,
+          ].includes(existingSnapshot.status)
         ) {
           applyActiveRunSnapshotToUi(existingSnapshot, {
             recovered: true,
@@ -2686,6 +2695,28 @@ const MapScreen = ({ navigation, route }) => {
           return {
             ok: false,
             reason: "existing_active_run_recovered",
+            snapshot: existingSnapshot,
+          };
+        }
+        if (existingSnapshot?.activeRunId) {
+          const recovery = await findRecoverableRunForUser(
+            auth.currentUser?.uid || "offline",
+            { activeSnapshot: existingSnapshot }
+          );
+          if (recovery?.recoverable) {
+            setPendingRecovery(recovery);
+            setRecoveryModalVisible(true);
+          }
+          recordRunSnapshotEvent("RUN_START_FAILED", existingSnapshot, {
+            mode: selectedMode,
+            reason: "existing_run_requires_recovery",
+            recoveryAvailable: Boolean(recovery?.recoverable),
+            level: "warn",
+            screen: "MapScreen",
+          });
+          return {
+            ok: false,
+            reason: "existing_run_requires_recovery",
             snapshot: existingSnapshot,
           };
         }
@@ -2885,7 +2916,6 @@ const MapScreen = ({ navigation, route }) => {
     }
 
     try {
-      flushRouteBufferToState();
       const pausedSnapshot = await activeRunTrackingService.pauseActiveRun?.({
         endedAtMs: Date.now(),
         source: "MapScreen",
@@ -2930,7 +2960,7 @@ const MapScreen = ({ navigation, route }) => {
     recordEmergencyDiagnosticsSnapshot("pause_success", {
       status: ACTIVE_RUN_STATUS.PAUSED,
     }, { force: true });
-  }, [applyActiveRunSnapshotToUi, flushRouteBufferToState, paused, recordEmergencyDiagnosticsSnapshot, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
+  }, [applyActiveRunSnapshotToUi, paused, recordEmergencyDiagnosticsSnapshot, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
 
   const resumeRun = useCallback(async () => {
     recordRunEvent("RESUME_PRESSED", {
@@ -2987,9 +3017,6 @@ const MapScreen = ({ navigation, route }) => {
       setPaused(false);
       runningRef.current = true;
       runStatusRef.current = "active";
-      forceNextSegmentBreakRef.current = true;
-      pendingSuspiciousPointRef.current = null;
-      lastSmoothedLocationRef.current = null;
       debugTracking("session_resumed", {
         runSessionId: currentRunIdRef.current,
         segments: trackingSessionRef.current?.getState?.()?.segments?.length || 0,
@@ -3096,6 +3123,14 @@ const MapScreen = ({ navigation, route }) => {
           fromRecovery: Boolean(opts.fromRecovery),
         }, { force: true });
         if (finishInFlightRef.current) {
+          recordRunEvent("BUTTON_PRESS_IGNORED_DUE_TO_LOCK", {
+            action: "finish_run",
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            reason: "finish_already_in_flight",
+            screen: "MapScreen",
+            level: "warn",
+          });
           recordRunEvent("FINISH_FAILED", {
             runId: currentRunIdRef.current,
             status: runStatusRef.current,
@@ -3115,6 +3150,30 @@ const MapScreen = ({ navigation, route }) => {
         }
 
         finishInFlightRef.current = true;
+        isFinishingRunRef.current = true;
+        setIsFinishingRun(true);
+        if (emergencyDiagnosticsInFlightRef.current) {
+          emergencyDiagnosticsTokenRef.current += 1;
+          releaseEmergencyDiagnosticsState();
+          recordRunEvent("RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH", {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            reason: "finish_priority",
+            screen: "MapScreen",
+          });
+        }
+        recordRunEvent("FINISH_LOCK_ACQUIRED", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          screen: "MapScreen",
+        });
+        recordRunEvent("FINISH_STARTED", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          force: Boolean(opts.force),
+          fromRecovery: Boolean(opts.fromRecovery),
+          screen: "MapScreen",
+        });
         runningRef.current = false;
         runStatusRef.current = "finishing";
         setRunning(false);
@@ -3122,17 +3181,99 @@ const MapScreen = ({ navigation, route }) => {
         const activeMode = modeRef.current || mode || "free";
 
         stopWatcherAndPolling();
-        stopBackgroundLocationService();
         stopElapsedTimer();
-
-        flushRouteBufferToState();
+        runDeferred(
+          () => withTimeout(
+            () => stopBackgroundLocationService(),
+            FINISH_UI_RELEASE_TIMEOUT_MS,
+            "finish_background_stop_timeout"
+          ),
+          (backgroundError) => {
+            recordRunEvent(
+              backgroundError?.code === "finish_background_stop_timeout"
+                ? "RUN_FINISH_BACKGROUND_STOP_TIMEOUT"
+                : "RUN_FINISH_BACKGROUND_STOP_FAILED",
+              {
+                runId: currentRunIdRef.current,
+                status: runStatusRef.current,
+                error: backgroundError,
+                timeoutMs: backgroundError?.timeoutMs || FINISH_UI_RELEASE_TIMEOUT_MS,
+                screen: "MapScreen",
+                level: "warn",
+              }
+            );
+          }
+        );
 
         const finishedAtMs = Date.now();
-        await flushActiveRunCheckpoint({
-          reason: "before_finish",
-          checkpointAtMs: finishedAtMs,
+        await withTimeout(
+          () => activeRunTrackingService.markActiveRunFinishing?.({
+            nowMs: finishedAtMs,
+            reason: "finish_pressed",
+            source: "MapScreen",
+          }),
+          FINISH_CHECKPOINT_TIMEOUT_MS,
+          "finish_mark_finishing_timeout"
+        ).catch((finishingError) => {
+          recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+            runId: currentRunIdRef.current,
+            stage: "mark_finishing",
+            error: finishingError,
+            timeoutMs: FINISH_CHECKPOINT_TIMEOUT_MS,
+            screen: "MapScreen",
+            level: "warn",
+          });
         });
-        const activeFinalSnapshot = await activeRunTrackingService.finishActiveRun?.({ finishedAtMs });
+        recordRunEvent("RUN_FINISH_LOCAL_MIN_SAVE_STARTED", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          checkpointAtMs: finishedAtMs,
+          screen: "MapScreen",
+        });
+        await withTimeout(
+          () => flushActiveRunCheckpoint({
+            reason: "before_finish",
+            checkpointAtMs: finishedAtMs,
+          }),
+          FINISH_CHECKPOINT_TIMEOUT_MS,
+          "finish_checkpoint_timeout"
+        ).catch((checkpointError) => {
+          recordRunEvent("RUN_FINISH_TIMEOUT_FALLBACK", {
+            runId: currentRunIdRef.current,
+            stage: "before_finish_checkpoint",
+            error: checkpointError,
+            timeoutMs: FINISH_CHECKPOINT_TIMEOUT_MS,
+            screen: "MapScreen",
+            level: "warn",
+          });
+        });
+        let activeFinalSnapshot = null;
+        try {
+          activeFinalSnapshot = await withTimeout(
+            () => activeRunTrackingService.finishActiveRun?.({ finishedAtMs }),
+            FINISH_SNAPSHOT_TIMEOUT_MS,
+            "finish_active_snapshot_timeout"
+          );
+        } catch (finishSnapshotError) {
+          recordRunEvent("RUN_FINISH_TIMEOUT_FALLBACK", {
+            runId: currentRunIdRef.current,
+            stage: "active_run_finish_snapshot",
+            error: finishSnapshotError,
+            timeoutMs: FINISH_SNAPSHOT_TIMEOUT_MS,
+            screen: "MapScreen",
+            level: "warn",
+          });
+          activeFinalSnapshot = await activeRunTrackingService.getActiveRunSnapshot?.().catch((snapshotReadError) => {
+            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+              runId: currentRunIdRef.current,
+              stage: "read_snapshot_after_finish_failure",
+              error: snapshotReadError,
+              screen: "MapScreen",
+              level: "error",
+            });
+            return null;
+          });
+        }
         const startedAtMs = Number(activeFinalSnapshot?.startedAtMs) ||
           Date.parse(activeFinalSnapshot?.startedAt || trackingSessionRef.current?.state?.startedAt || "") ||
           null;
@@ -3226,6 +3367,7 @@ const MapScreen = ({ navigation, route }) => {
           date: finishedAt,
           startedAt: activeFinalSnapshot?.startedAt || trackingSessionRef.current?.state?.startedAt || null,
           endedAt: finishedAt,
+          finishedAt,
           pausedDurationSeconds: null,
           status: "completed",
           mode: activeMode,
@@ -3236,88 +3378,37 @@ const MapScreen = ({ navigation, route }) => {
         };
 
         if (activeMode === "zones") {
-          try {
-            const actor = getCurrentWayperUser();
-            const result = await processRunTerritoryCapture({
-              userId: actor.id,
-              userName: actor.name,
-              userAvatar: actor.avatar,
-              runId,
-              path,
-              segments: runData.routeSegments,
-              mode: activeMode,
-              distanceMeters: totalDistance,
-              durationSeconds: totalDuration,
-              visibility: "followers",
-              createdAt: finishedAt,
-              existingTerritories: territories,
-              persistRemote: false,
-            });
-
-            setCaptureResult(result);
-            runData.captureResult = serializeCaptureResult(result);
-            runData.territoryCaptureMessage = buildCaptureResultMessage(result);
-
-            if (result?.ok) {
-              const captured = result.capturedTerritory || {};
-              runData.area = Number(result.capturedAreaM2 || captured.areaM2 || 0);
-              runData.territoryId = captured.id || null;
-              runData.zoneId = captured.id || null;
-              runData.zoneCoords = sanitizePath(captured.coordsPreview || []);
-              runData.geometry = captured.geometry || null;
-              runData.zoneGeometry = captured.geometry || null;
-              runData.routeGeometry = captured.routeGeometry || null;
-              runData.color = captured.color || WayperTheme.colors.primary;
-              runData.strokeColor = captured.strokeColor || captured.color || WayperTheme.colors.primary;
-              runData.fillOpacity = Number(captured.fillOpacity ?? 0.24);
-              runData.zoneCount = runData.zoneCoords.length >= 3 ? 1 : 0;
-              runData.areaM2 = runData.area;
-              runData.territorySummary = result.summary || null;
-              runData.territoryEvents = Array.isArray(result.events) ? result.events : [];
-              runData.capturedCells = Array.isArray(result.cellIds) ? result.cellIds : [];
-              setTerritories((prev) => applyCaptureResultToTerritoryState(prev, result));
-              if (Array.isArray(result.localLeaderboardUpdates) && result.localLeaderboardUpdates.length > 0) {
-                setLeaderCells((prev) => mergeLeaderCellsForMap(prev, result.localLeaderboardUpdates));
-              }
-            } else {
-              runData.area = 0;
-              runData.territoryCaptureFailedReason = result?.reason || "capture_failed";
-              if (result?.runContext?.suspicious || result?.details?.suspicious) {
-                runData.suspicious = true;
-                runData.territoryCaptureBlockedReason = result?.reason || "suspicious_activity";
-                runData.suspiciousScore = result?.suspiciousScore || 0;
-              }
-            }
-          } catch (e) {
-            debug("territory capture failed unexpectedly; saving zone run without legacy zone fallback", e);
-            runData.area = 0;
-            runData.areaM2 = 0;
-            runData.zoneId = null;
-            runData.zoneCoords = [];
-            runData.zoneCount = 0;
-            runData.geometry = null;
-            runData.zoneGeometry = null;
-            runData.routeGeometry = null;
-            runData.territorySummary = null;
-            runData.territoryEvents = [];
-            runData.territoryCaptureFailedReason = "capture_unavailable";
-            runData.territoryCaptureMessage = "Corrida salva. A captura territorial ficou indisponivel neste momento.";
-          }
+          runData.areaM2 = 0;
+          runData.territorySummary = null;
+          runData.territoryEvents = [];
+          runData.capturedCells = [];
+          runData.territoryCaptureStatus = "PENDING";
+          runData.territoryData = {
+            pendingCalculation: true,
+            deferred: true,
+            reason: "finish_local_first",
+          };
+          runData.territoryCaptureMessage = "Corrida salva. Captura territorial sera processada em seguida.";
         } else {
           setCaptureResult(null);
         }
 
         try {
-          await persistFinishedRunDraft(runData, {
-            userId: auth.currentUser?.uid || "offline",
-            status: ACTIVE_RUN_STATUS.FINISHED,
-            syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
-          });
+          await withTimeout(
+            () => persistFinishedRunDraft(runData, {
+              userId: auth.currentUser?.uid || "offline",
+              status: ACTIVE_RUN_STATUS.FINISHED,
+              syncStatus: ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
+            }),
+            FINISH_LOCAL_SAVE_TIMEOUT_MS,
+            "finish_draft_save_timeout"
+          );
         } catch (storageError) {
           debug("persistFinishedRunDraft failed", storageError);
-          recordRunEvent("RUN_SAVED_LOCAL", {
+          recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
             runId,
-            reason: "finished_draft_failed",
+            stage: "finished_draft",
+            reason: storageError?.code === "finish_draft_save_timeout" ? "finished_draft_timeout" : "finished_draft_failed",
             error: storageError,
             level: "warn",
             screen: "MapScreen",
@@ -3326,14 +3417,21 @@ const MapScreen = ({ navigation, route }) => {
 
         let savedLocalRun = null;
         try {
-          savedLocalRun = await sync.saveLocalRun?.({
-            ...runData,
-            synced: false,
-            pendingSync: true,
-            syncStatus: ACTIVE_RUN_SYNC_STATUS.PENDING,
-            offlineStatus: "PENDING_SYNC",
-          });
-          if (savedLocalRun?.id === runData.id) {
+          savedLocalRun = await withTimeout(
+            () => sync.saveLocalRun?.({
+              ...runData,
+              synced: false,
+              pendingSync: true,
+              syncStatus: ACTIVE_RUN_SYNC_STATUS.PENDING,
+              offlineStatus: "PENDING_SYNC",
+            }),
+            FINISH_LOCAL_SAVE_TIMEOUT_MS,
+            "finish_local_history_save_timeout"
+          );
+          const localSaveConfirmed = Boolean(
+            savedLocalRun?.id && String(savedLocalRun.id) === String(runData.id)
+          );
+          if (localSaveConfirmed) {
             recordRunSnapshotEvent("RUN_FINISH_SAVED", savedLocalRun, {
               runId,
               sessionId: stoppedRunSessionId || runId,
@@ -3345,28 +3443,49 @@ const MapScreen = ({ navigation, route }) => {
               queuedSync: true,
               screen: "MapScreen",
             });
-          }
-          sync.scheduleRunsSync?.();
-          recordRunSnapshotEvent("RUN_SYNC_QUEUED", savedLocalRun || runData, {
-            source: "finish",
-            screen: "MapScreen",
-          });
-          if (savedLocalRun?.id === runData.id) {
-            await markRecoveredRunLocallySaved({ reason: "finish_local_run_saved" });
-          }
-          if (savedLocalRun) {
-            try {
-              await addXpFromRun(savedLocalRun, {
-                userId: auth.currentUser?.uid || "offline",
+            recordRunEvent("RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED", {
+              runId,
+              localRunId: savedLocalRun.localRunId || savedLocalRun.id || null,
+              distanceMeters: totalDistance,
+              elapsedMs: totalDuration * 1000,
+              queuedSync: true,
+              screen: "MapScreen",
+            });
+            sync.scheduleRunsSync?.();
+            recordRunSnapshotEvent("RUN_SYNC_QUEUED", savedLocalRun, {
+              source: "finish",
+              screen: "MapScreen",
+            });
+            const cleanupResult = await withTimeout(
+              () => markRecoveredRunLocallySaved({ reason: "finish_local_run_saved" }),
+              FINISH_UI_RELEASE_TIMEOUT_MS,
+              "finish_recovery_mark_saved_timeout"
+            ).catch((recoveryMarkError) => ({ ok: false, error: recoveryMarkError }));
+            if (cleanupResult?.ok === false) {
+              recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+                runId,
+                stage: "mark_recovered_locally_saved",
+                error: cleanupResult.error || new Error("active run cleanup was not confirmed"),
+                level: "warn",
+                screen: "MapScreen",
               });
-            } catch (progressError) {
-              debug("local progression update failed after finish", progressError);
             }
+          } else {
+            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+              runId,
+              stage: "save_local_run",
+              reason: "local_save_not_confirmed",
+              returnedRunId: savedLocalRun?.id || null,
+              level: "warn",
+              screen: "MapScreen",
+            });
+            savedLocalRun = null;
           }
         } catch (saveLocalError) {
           debug("final local run save failed; keeping active snapshot", saveLocalError);
-          recordRunEvent("RUN_SAVED_LOCAL", {
+          recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
             runId,
+            stage: "save_local_run",
             reason: "save_local_failed",
             error: saveLocalError,
             level: "warn",
@@ -3374,7 +3493,62 @@ const MapScreen = ({ navigation, route }) => {
           });
         }
 
-        await fadeOutRoute();
+        let deferredQueueResult = null;
+        let deferredQueuedTasks = [];
+        if (savedLocalRun) {
+          const currentUser = auth.currentUser || {};
+          const emailName = currentUser.email ? currentUser.email.split("@")[0] : null;
+          deferredQueueResult = await withTimeout(
+            () => runDeferredTaskQueueRepository.enqueuePostRun(savedLocalRun, {
+              userId: currentUser.uid || "offline",
+              userName: currentUser.displayName || emailName || "Atleta Wayper",
+              userAvatar: currentUser.photoURL || null,
+              includeTerritory: activeMode === "zones",
+              source: "finish",
+            }),
+            FINISH_LOCAL_SAVE_TIMEOUT_MS,
+            "finish_deferred_queue_enqueue_timeout"
+          ).catch((queueError) => {
+            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+              runId,
+              stage: "deferred_queue_enqueue",
+              reason: queueError?.code === "finish_deferred_queue_enqueue_timeout"
+                ? "deferred_queue_enqueue_timeout"
+                : "deferred_queue_enqueue_failed",
+              error: queueError,
+              level: "warn",
+              screen: "MapScreen",
+            });
+            return { error: queueError, data: { queued: [] } };
+          });
+          if (deferredQueueResult?.error) {
+            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+              runId,
+              stage: "deferred_queue_enqueue",
+              error: deferredQueueResult.error,
+              level: "warn",
+              screen: "MapScreen",
+            });
+          }
+          deferredQueuedTasks = Array.isArray(deferredQueueResult?.data?.queued)
+            ? deferredQueueResult.data.queued
+            : [];
+        }
+
+        await withTimeout(
+          () => fadeOutRoute(),
+          FINISH_UI_RELEASE_TIMEOUT_MS,
+          "finish_ui_release_animation_timeout"
+        ).catch((uiReleaseError) => {
+          recordRunEvent("RUN_FINISH_TIMEOUT_FALLBACK", {
+            runId,
+            stage: "ui_release_animation",
+            error: uiReleaseError,
+            timeoutMs: FINISH_UI_RELEASE_TIMEOUT_MS,
+            screen: "MapScreen",
+            level: "warn",
+          });
+        });
         resetRunVisuals();
         setCompletedZonePreview(
           runData.mode === "zones" && runData.zoneCoords.length >= 3
@@ -3390,7 +3564,8 @@ const MapScreen = ({ navigation, route }) => {
             : []
         );
 
-        setCurrentRunData(savedLocalRun?.id === runData.id ? savedLocalRun : runData);
+        const initialRunForUi = savedLocalRun?.id === runData.id ? savedLocalRun : runData;
+        setCurrentRunData(initialRunForUi);
         if (savedLocalRun?.id === runData.id) {
           setRunsList((prev) => {
             const seen = new Set();
@@ -3404,6 +3579,90 @@ const MapScreen = ({ navigation, route }) => {
           });
         }
         setShowRunModal(true);
+        recordRunEvent("RUN_FINISH_UI_RELEASED", {
+          runId,
+          localRunId: initialRunForUi.localRunId || initialRunForUi.id || null,
+          savedLocal: Boolean(savedLocalRun?.id === runData.id),
+          hasDeferredTerritory: activeMode === "zones",
+          screen: "MapScreen",
+        });
+        recordRunEvent("RUN_FINISH_DEFERRED_TASKS_SCHEDULED", {
+          runId,
+          localRunId: initialRunForUi.localRunId || initialRunForUi.id || null,
+          queued: deferredQueuedTasks.length,
+          queueStatus: deferredQueueResult?.queueStatus || (deferredQueueResult?.error ? "failed" : "queued"),
+          types: deferredQueuedTasks.map((task) => task.type),
+          screen: "MapScreen",
+        });
+
+        if (savedLocalRun) {
+          runDeferred(async () => {
+            const deferredRunId = deferredQueuedTasks[0]?.runId || savedLocalRun.localRunId || savedLocalRun.id || runId;
+            const processResult = await runDeferredTaskQueueRepository.process({
+              trigger: "finish_ui_released",
+              runId: deferredRunId,
+              limit: 8,
+            });
+            if (processResult?.error) throw processResult.error;
+
+            const refreshedRun = await sync.findLocalRunById?.({
+              id: savedLocalRun.id,
+              localRunId: savedLocalRun.localRunId || savedLocalRun.id || runId,
+              runId: savedLocalRun.runId || runId,
+              remoteRunId: savedLocalRun.remoteRunId || null,
+            });
+            if (mountedRef.current && refreshedRun) {
+              setCurrentRunData((prev) =>
+                String(prev?.id || prev?.localRunId || "") === String(savedLocalRun.id || savedLocalRun.localRunId || runId)
+                  ? refreshedRun
+                  : prev
+              );
+              setRunsList((prev) => {
+                const seen = new Set();
+                return [refreshedRun, ...(Array.isArray(prev) ? prev : [])].filter((item) => {
+                  if (!item) return false;
+                  const key = item.zoneId
+                    ? `zone:${item.zoneId}`
+                    : `run:${item.localRunId || item.remoteRunId || item.id || item.date}`;
+                  if (seen.has(key)) return false;
+                  seen.add(key);
+                  return true;
+                });
+              });
+              if (activeMode === "zones") {
+                setCaptureResult(refreshedRun.captureResult || null);
+                if (Array.isArray(refreshedRun.zoneCoords) && refreshedRun.zoneCoords.length >= 3) {
+                  setCompletedZonePreview([{
+                    coords: refreshedRun.zoneCoords,
+                    geometry: refreshedRun.geometry || null,
+                    area: refreshedRun.area,
+                    id: refreshedRun.zoneId || "completed-zone",
+                    color: refreshedRun.color || WayperTheme.colors.primary,
+                    strokeColor: refreshedRun.strokeColor || refreshedRun.color || WayperTheme.colors.primary,
+                    fillOpacity: refreshedRun.fillOpacity ?? 0.24,
+                  }]);
+                }
+              }
+            }
+            recordRunSnapshotEvent("RUN_FINISH_DEFERRED_QUEUE_PROCESSED", refreshedRun || savedLocalRun, {
+              runId,
+              localRunId: savedLocalRun.localRunId || savedLocalRun.id || null,
+              processed: processResult?.data?.processed?.length || 0,
+              failed: processResult?.data?.failed?.length || 0,
+              skipped: Boolean(processResult?.data?.skipped),
+              reason: processResult?.data?.reason || null,
+              screen: "MapScreen",
+            });
+          }, (deferredError) => {
+            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+              runId,
+              stage: "deferred_task_queue_process",
+              error: deferredError,
+              level: "warn",
+              screen: "MapScreen",
+            });
+          });
+        }
         debugTracking("session_stopped", {
           runSessionId: stoppedRunSessionId,
           savedPoints: path.length,
@@ -3415,10 +3674,24 @@ const MapScreen = ({ navigation, route }) => {
           averageAccuracy: runData.pathQuality?.averageAccuracy ?? null,
           maxAccuracy: runData.pathQuality?.maxAccuracy ?? null,
         });
-        recordRunSnapshotEvent("FINISH_SUCCESS", savedLocalRun || runData, {
-          source: "MapScreen",
-          screen: "MapScreen",
-        });
+        if (savedLocalRun?.id === runData.id) {
+          recordRunSnapshotEvent("FINISH_SUCCESS", savedLocalRun, {
+            source: "MapScreen",
+            screen: "MapScreen",
+          });
+          recordRunSnapshotEvent("FINISH_COMPLETED", savedLocalRun, {
+            source: "MapScreen",
+            screen: "MapScreen",
+          });
+        } else {
+          recordRunSnapshotEvent("RUN_FINISH_ERROR_RECOVERABLE", runData, {
+            source: "MapScreen",
+            reason: "history_save_not_confirmed",
+            recoveryPending: true,
+            level: "warn",
+            screen: "MapScreen",
+          });
+        }
       } catch (e) {
         debug("stopRun catch", e);
         recordRunEvent("FINISH_FAILED", {
@@ -3428,10 +3701,17 @@ const MapScreen = ({ navigation, route }) => {
           screen: "MapScreen",
         });
       } finally {
+        recordRunEvent("FINISH_LOCK_RELEASED", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          screen: "MapScreen",
+        });
         finishInFlightRef.current = false;
+        isFinishingRunRef.current = false;
+        if (mountedRef.current) setIsFinishingRun(false);
       }
     },
-    [running, location, timeSec, recordEmergencyDiagnosticsSnapshot, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, flushRouteBufferToState, mode, territories]
+    [running, location, timeSec, recordEmergencyDiagnosticsSnapshot, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, mode, territories, releaseEmergencyDiagnosticsState]
   );
 
   const restoreRecoveryCandidateToUi = useCallback(
@@ -3441,6 +3721,12 @@ const MapScreen = ({ navigation, route }) => {
 
       restoringActiveRunRef.current = true;
       try {
+        recordRunEvent("RUN_RESTORE_STARTED", {
+          runId: candidate.id || candidate.localRunId || null,
+          localRunId: candidate.localRunId || null,
+          source: candidate.source || null,
+          screen: "MapScreen",
+        });
         if (options.closeBlockingOverlays !== false) {
           closeActiveRunBlockingOverlays();
         }
@@ -3457,6 +3743,14 @@ const MapScreen = ({ navigation, route }) => {
         applyActiveRunSnapshotToUi(snapshot, {
           recovered: options.recovered !== false,
           forceSyncControls: options.forceSyncControls !== false,
+        });
+        recordRunSnapshotEvent("ACTIVE_RUN_RECOVERED_FROM_STORAGE", snapshot, {
+          source: hydrated?.source || candidate.source || "recovery_candidate",
+          screen: "MapScreen",
+        });
+        recordRunSnapshotEvent("RUN_RESTORE_COMPLETED", snapshot, {
+          source: hydrated?.source || candidate.source || "recovery_candidate",
+          screen: "MapScreen",
         });
         return true;
       } finally {
@@ -3480,6 +3774,13 @@ const MapScreen = ({ navigation, route }) => {
           closeActiveRunBlockingOverlays();
         }
         const reason = options.reason || "map_reentry";
+        recordRunEvent("RUN_RESTORE_STARTED", {
+          reason,
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          appState: appStateRef.current,
+          screen: "MapScreen",
+        });
         const result = await hydrateActiveRunFromRuntime(reason, {
           userId: auth.currentUser?.uid || "offline",
           appState: appStateRef.current,
@@ -3498,6 +3799,11 @@ const MapScreen = ({ navigation, route }) => {
           recovered: options.recovered,
           forceSyncControls: options.forceSyncControls !== false,
           source: reason,
+        });
+        recordRunSnapshotEvent("RUN_RESTORE_COMPLETED", snapshot, {
+          reason,
+          source: result?.source || null,
+          screen: "MapScreen",
         });
         if (reason === "notification_open") {
           recordRunSnapshotEvent("RUN_NOTIFICATION_OPEN_RESTORE_COMPLETED", snapshot, {
@@ -3574,6 +3880,14 @@ const MapScreen = ({ navigation, route }) => {
       screen: "MapScreen",
       fromRunNotification: Boolean(route?.params?.fromRunNotification),
     });
+    recordRunEvent("RUN_NOTIFICATION_OPEN_RESTORE_STARTED", {
+      requestId,
+      screen: "MapScreen",
+      fromRunNotification: Boolean(route?.params?.fromRunNotification),
+      fromDeepLink: Boolean(route?.params?.fromDeepLink),
+    }, {
+      category: LOG_CATEGORIES.NOTIFICATION,
+    });
 
     restoreActiveRunForReentry({
       closeBlockingOverlays: true,
@@ -3610,6 +3924,15 @@ const MapScreen = ({ navigation, route }) => {
       try {
         const recovery = await findRecoverableRunForUser(auth.currentUser?.uid || "offline");
         if (cancelled || !recovery?.recoverable) return;
+        recordRunEvent("APP_KILLED_OR_COLD_START_DETECTED", {
+          runId: recovery.id || recovery.localRunId || null,
+          localRunId: recovery.localRunId || null,
+          source: recovery.source || null,
+          status: recovery.status || null,
+          screen: "MapScreen",
+        }, {
+          forcePersist: true,
+        });
         if (isLiveRecovery(recovery)) {
           await restoreRecoveryCandidateToUi(recovery, {
             closeBlockingOverlays: false,
@@ -3705,15 +4028,45 @@ const MapScreen = ({ navigation, route }) => {
           userId: auth.currentUser?.uid || "offline",
           delayMs: 0,
         });
-        try {
-          await addXpFromRun(saved || runData, {
-            userId: auth.currentUser?.uid || "offline",
+        const currentUser = auth.currentUser || {};
+        const recoveredRun = saved || runData;
+        const recoveredQueue = await runDeferredTaskQueueRepository.enqueuePostRun(recoveredRun, {
+          userId: currentUser.uid || "offline",
+          userName: currentUser.displayName || currentUser.email?.split("@")?.[0] || "Atleta Wayper",
+          userAvatar: currentUser.photoURL || null,
+          includeTerritory: String(recoveredRun.mode || "").toLowerCase() === "zones",
+          source: "recovery_finished",
+        });
+        if (recoveredQueue?.error) {
+          recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+            runId: pendingRecovery.id,
+            stage: "recovery_deferred_queue_enqueue",
+            error: recoveredQueue.error,
+            level: "warn",
+            screen: "MapScreen",
           });
-        } catch (progressError) {
-          debug("local progression update failed after recovered finish", progressError);
+        } else {
+          runDeferred(() => runDeferredTaskQueueRepository.process({
+            trigger: "recovery_finished",
+            runId: recoveredQueue.data?.queued?.[0]?.runId || recoveredRun.localRunId || recoveredRun.id || pendingRecovery.id,
+            limit: 8,
+          }), (deferredError) => {
+            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+              runId: pendingRecovery.id,
+              stage: "recovery_deferred_task_queue_process",
+              error: deferredError,
+              level: "warn",
+              screen: "MapScreen",
+            });
+          });
         }
-        await markRecoveredRunLocallySaved({ reason: "finished_recovery_enqueued" });
-        setCurrentRunData(saved || runData);
+        const cleanupResult = await markRecoveredRunLocallySaved({
+          reason: "finished_recovery_enqueued",
+        });
+        if (cleanupResult?.ok === false) {
+          throw cleanupResult.error || new Error("active run cleanup was not confirmed");
+        }
+        setCurrentRunData(recoveredRun);
         setShowRunModal(true);
         setPendingRecovery(null);
         recordRunEvent("FINISH_SUCCESS", {
@@ -3736,6 +4089,7 @@ const MapScreen = ({ navigation, route }) => {
       setPendingRecovery(null);
     } catch (error) {
       debug("finish recovery failed", error);
+      if (mountedRef.current) setRecoveryModalVisible(true);
       recordRunEvent("FINISH_FAILED", {
         runId: pendingRecovery.id,
         localRunId: pendingRecovery.localRunId,
@@ -4266,8 +4620,8 @@ const MapScreen = ({ navigation, route }) => {
       displayPointsCount,
       lastValidRoutePointsCount: routeStateRef.current?.length || 0,
       renderIntervalMs,
-      routeBufferFlushIntervalMs: FLUSH_INTERVAL_MS,
-      pendingRouteBufferPoints: routeBufferRef.current?.length || 0,
+      routeUiUpdateIntervalMs: RUN_UI_UPDATE_INTERVAL_MS,
+      pendingRouteUiSnapshot: Boolean(pendingActiveRunUiSnapshotRef.current),
       screen: "MapScreen",
     });
     recordEmergencyDiagnosticsSnapshot("render_path_update", {
@@ -4299,6 +4653,42 @@ const MapScreen = ({ navigation, route }) => {
         });
         recordEmergencyDiagnosticsSnapshot("ui_stall", {
           elapsedSinceLastHeartbeatMs: now - previousHeartbeatAt,
+        }, { force: true });
+      }
+
+      const lastRenderAtMs = lastRenderPathUpdatedAtRef.current
+        ? Date.parse(lastRenderPathUpdatedAtRef.current)
+        : 0;
+      const lastAcceptedAtMs = lastLocationAcceptedAtRef.current
+        ? Date.parse(lastLocationAcceptedAtRef.current)
+        : 0;
+      const hasRenderableRun = Boolean(
+        runningRef.current &&
+        runStatusRef.current === "active" &&
+        (displayPathRef.current?.length || savedPathRef.current?.length)
+      );
+      if (
+        hasRenderableRun &&
+        Number.isFinite(lastRenderAtMs) &&
+        lastRenderAtMs > 0 &&
+        now - lastRenderAtMs > EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS * 2 &&
+        (!lastAcceptedAtMs || lastAcceptedAtMs >= lastRenderAtMs) &&
+        now - lastMapRenderStallAtRef.current > EMERGENCY_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS * 2
+      ) {
+        lastMapRenderStallAtRef.current = now;
+        recordRunEvent("MAP_RENDER_STALL_DETECTED", {
+          runId: currentRunIdRef.current,
+          status: runStatusRef.current,
+          elapsedSinceLastRenderMs: now - lastRenderAtMs,
+          lastLocationAcceptedAt: lastLocationAcceptedAtRef.current,
+          lastRenderPathUpdatedAt: lastRenderPathUpdatedAtRef.current,
+          routePointsCount: savedPathRef.current?.length || 0,
+          displayPointsCount: displayPathRef.current?.length || 0,
+          screen: "MapScreen",
+          level: "warn",
+        });
+        recordEmergencyDiagnosticsSnapshot("map_render_stall", {
+          elapsedSinceLastRenderMs: now - lastRenderAtMs,
         }, { force: true });
       }
 
@@ -4380,11 +4770,9 @@ const MapScreen = ({ navigation, route }) => {
   const safeLocation = location || DEFAULT_COORD;
   const replayCenter = Array.isArray(replayPathState) && replayPathState.length > 0 ? replayPathState[replayPathState.length - 1] : null;
   const mapLocation = replaying && replayCenter ? replayCenter : safeLocation;
-  const activeZonePreview = showZones && running && mode === "zones" && Array.isArray(polygons) ? polygons : [];
-  const finishedZonePreview = showZones && (showRunModal || showSavedModal) && Array.isArray(completedZonePreview) ? completedZonePreview : [];
+  const activeZonePreview = showZones && running && mode === "zones" && Array.isArray(polygons) ? polygons : EMPTY_MAP_ITEMS;
+  const finishedZonePreview = showZones && (showRunModal || showSavedModal) && Array.isArray(completedZonePreview) ? completedZonePreview : EMPTY_MAP_ITEMS;
   const visibleMapZones = finishedZonePreview.length > 0 ? finishedZonePreview : activeZonePreview;
-  const liveRoutePath = running || paused ? displayRouteState : routeState;
-  const liveRouteSegments = running || paused ? displayRouteSegments : splitPathIntoSegments(liveRoutePath);
   const shouldFollowMap = running && !paused && !replaying && mapFollowEnabled;
   const shouldFollowReplay = replaying;
   const shouldShowRecenterMap = running && !paused && !replaying && !mapFollowEnabled;
@@ -4588,7 +4976,7 @@ const MapScreen = ({ navigation, route }) => {
         </View>
       )}
 
-      {!running && !replaying && !runtimeRecovering && (
+      {!running && !replaying && !runtimeRecovering && !isFinishingRun && (
         <View style={styles.menuPanel}>
           <View pointerEvents="none" style={styles.menuTopGlow} />
           {permissionDenied ? (
@@ -4654,7 +5042,9 @@ const MapScreen = ({ navigation, route }) => {
                 />
                 <View pointerEvents="none" style={styles.startMainBtnGloss} />
                 <View style={styles.startMainBtnContent}>
-                  <Text style={styles.startMainBtnTxt}>{isStartingRun || counting ? "Iniciando..." : "Iniciar Corrida"}</Text>
+                  <Text style={styles.startMainBtnTxt}>
+                    {isFinishingRun ? "Finalizando..." : isStartingRun || counting ? "Iniciando..." : "Iniciar Corrida"}
+                  </Text>
                   <View style={styles.startChevronCircle}>
                     <Ionicons name="chevron-forward" size={27} color={WayperTheme.colors.text} />
                   </View>
@@ -5113,6 +5503,7 @@ const MapScreen = ({ navigation, route }) => {
         captureResult={captureResult}
         onClose={() => setShowRunModal(false)}
         onSave={async (payload) => {
+          let closeSummaryAfterSave = false;
           try {
             const trustedPath = sanitizePath(payload.trustedPath || payload.path || payload.coords || currentRunData?.trustedPath || currentRunData?.path || []);
             const renderPath = sanitizePath(
@@ -5184,10 +5575,18 @@ const MapScreen = ({ navigation, route }) => {
             }
 
             const saved = await sync.saveLocalRun?.(normalized);
-            sync.scheduleRunsSync?.();
-            if (saved?.id && String(saved.id) === String(normalized.id)) {
-              await markRecoveredRunLocallySaved({ reason: "summary_modal_local_run_saved" });
+            if (!saved?.id || String(saved.id) !== String(normalized.id)) {
+              const saveError = new Error("local run save was not confirmed for the expected id");
+              saveError.code = "RUN_LOCAL_SAVE_NOT_CONFIRMED";
+              throw saveError;
             }
+            const cleanupResult = await markRecoveredRunLocallySaved({
+              reason: "summary_modal_local_run_saved",
+            });
+            if (cleanupResult?.ok === false) {
+              throw cleanupResult.error || new Error("active run cleanup was not confirmed");
+            }
+            sync.scheduleRunsSync?.();
 
             setRunsList((prev) => {
               const seen = new Set();
@@ -5203,19 +5602,56 @@ const MapScreen = ({ navigation, route }) => {
             });
             setLastSavedRun(saved);
             setShowSavedModal(true);
+            closeSummaryAfterSave = true;
 
-            try {
-              await addXpFromRun(saved || normalized, {
-                userId: auth.currentUser?.uid || "offline",
+            const currentUser = auth.currentUser || {};
+            const queuedRun = saved || normalized;
+            const queueResult = await runDeferredTaskQueueRepository.enqueuePostRun(queuedRun, {
+              userId: currentUser.uid || "offline",
+              userName: currentUser.displayName || currentUser.email?.split("@")?.[0] || "Atleta Wayper",
+              userAvatar: currentUser.photoURL || null,
+              includeTerritory: String(queuedRun.mode || "").toLowerCase() === "zones",
+              source: "summary_modal_save",
+            });
+            if (queueResult?.error) {
+              recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+                runId: queuedRun.id || queuedRun.localRunId || null,
+                stage: "summary_modal_deferred_queue_enqueue",
+                error: queueResult.error,
+                level: "warn",
+                screen: "MapScreen",
               });
-            } catch (progressError) {
-              debug("local progression update failed after summary save", progressError);
+            } else {
+              runDeferred(() => runDeferredTaskQueueRepository.process({
+                trigger: "summary_modal_save",
+                runId: queueResult.data?.queued?.[0]?.runId || queuedRun.localRunId || queuedRun.id || null,
+                limit: 8,
+              }), (deferredError) => {
+                recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+                  runId: queuedRun.id || queuedRun.localRunId || null,
+                  stage: "summary_modal_deferred_task_queue_process",
+                  error: deferredError,
+                  level: "warn",
+                  screen: "MapScreen",
+                });
+              });
             }
           } catch (e) {
             debug("RunSummaryModal onSave failed", e);
-            Alert.alert("Erro", "Não foi possível salvar a corrida.");
+            recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+              runId: payload?.id || currentRunData?.id || null,
+              stage: "summary_modal_local_save",
+              error: e,
+              recoveryPending: true,
+              level: "warn",
+              screen: "MapScreen",
+            });
+            Alert.alert(
+              "Corrida preservada",
+              "Não foi possível confirmar o salvamento. O rascunho recuperável foi mantido; tente salvar novamente."
+            );
           } finally {
-            setShowRunModal(false);
+            if (closeSummaryAfterSave) setShowRunModal(false);
           }
         }}
       />

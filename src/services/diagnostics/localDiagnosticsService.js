@@ -23,6 +23,7 @@ const XP_EVENTS_STORAGE_KEY = "wayper_xp_events_v1";
 const USER_PROGRESS_STORAGE_KEY = "wayper_user_progress_v1";
 const ACHIEVEMENTS_STORAGE_KEY = "wayper_achievements_v1";
 const ACHIEVEMENT_PROGRESS_STORAGE_KEY = "wayper_achievement_progress_v1";
+const RUN_DEFERRED_TASK_QUEUE_KEY = "wayper_run_deferred_tasks_v1";
 const RANKING_CACHE_KEY_PREFIX = "wayper:rankingCache:v1";
 
 const LIVE_RUN_STATUSES = new Set(["STARTING", "RUNNING", "PAUSED", "RECOVERING", "ERROR_RECOVERABLE"]);
@@ -414,6 +415,7 @@ async function buildStorageSection({ includeSize = false } = {}) {
     readStorageKeyInfo(USER_PROGRESS_STORAGE_KEY, { includeSize }),
     readStorageKeyInfo(ACHIEVEMENTS_STORAGE_KEY, { includeSize }),
     readStorageKeyInfo(ACHIEVEMENT_PROGRESS_STORAGE_KEY, { includeSize }),
+    readStorageKeyInfo(RUN_DEFERRED_TASK_QUEUE_KEY, { includeSize, parse: true }),
   ]) : [];
 
   const selectedSizeBytes = selectedKeys.reduce((total, item) => total + Number(item.sizeBytes || 0), 0);
@@ -442,18 +444,21 @@ async function buildStorageSection({ includeSize = false } = {}) {
 }
 
 async function buildSyncSection() {
-  const [runRepository, queueRepository, syncModule, netInfoModule] = await Promise.all([
+  const [runRepository, queueRepository, deferredQueueRepository, syncModule, netInfoModule] = await Promise.all([
     import("../../repositories/runRepository.js"),
     import("../../repositories/runSyncQueueRepository.js"),
+    import("../../repositories/runDeferredTaskQueueRepository.js"),
     import("../../utils/sync.js"),
     import("@react-native-community/netinfo").catch(() => null),
   ]);
-  const [runsResult, pendingResult, logs] = await Promise.all([
+  const [runsResult, pendingResult, deferredSummaryResult, logs] = await Promise.all([
     runRepository.list?.().catch((error) => ({ data: [], error })),
     queueRepository.listPending?.().catch((error) => ({ data: [], error })),
+    deferredQueueRepository.summary?.().catch((error) => ({ data: null, error })),
     getLogs({ category: "SYNC", limit: 200 }).catch(() => []),
   ]);
   const runs = toArray(runsResult?.data);
+  const deferredQueue = deferredSummaryResult?.data || null;
   const latestAttempt = latestByDate(runs, (run) => run.lastSyncAttemptAt || run.lastSyncedAt || run.syncedAt || run.updatedAt);
   const lastErrorRun = latestByDate(
     runs.filter((run) => run.lastSyncError || run.syncError),
@@ -467,6 +472,13 @@ async function buildSyncSection() {
   return {
     ...counts,
     pendingQueueCount: toArray(pendingResult?.data).length,
+    deferredQueue,
+    deferredPendingCount: Number(deferredQueue?.pending || 0) + Number(deferredQueue?.failedRetryable || 0),
+    deferredRunningCount: Number(deferredQueue?.running || 0),
+    deferredFailedCount: Number(deferredQueue?.failedRetryable || 0) + Number(deferredQueue?.failedPermanent || 0),
+    deferredOldestPendingAt: deferredQueue?.oldestPendingAt || null,
+    deferredNextRunAt: deferredQueue?.nextRunAt || null,
+    deferredLastError: deferredQueue?.lastError || deferredSummaryResult?.error || null,
     lastSyncAttemptAt: latestAttempt?.lastSyncAttemptAt || latestAttempt?.lastSyncedAt || latestAttempt?.syncedAt || null,
     lockActive: Boolean(runtimeStatus?.isSyncingRuns),
     runtimeStatus,
