@@ -224,6 +224,58 @@ describe("local run history source", () => {
     expect(runs[0].segments).toHaveLength(1);
   });
 
+  test("historico persiste formato canonico compacto e reidrata aliases na leitura", async () => {
+    const trustedPath = Array.from({ length: 120 }, (_, index) => point(index + 1));
+    const rawPath = [point(0), ...trustedPath];
+    const saved = await saveLocalRun({
+      id: "compact-run",
+      localRunId: "compact-run",
+      status: "completed",
+      distance: 1200,
+      duration: 420,
+      date: "2026-06-05T10:00:00Z",
+      path: trustedPath,
+      trustedPath,
+      filteredPoints: trustedPath,
+      rawPath,
+      rawPoints: rawPath,
+      renderPath: trustedPath,
+      displayPath: trustedPath,
+      displayPoints: trustedPath,
+      segments: [{
+        id: "segment_0",
+        index: 0,
+        trustedPath,
+        filteredPoints: trustedPath,
+        rawPath,
+        rawPoints: rawPath,
+        displayPoints: trustedPath,
+      }],
+    });
+
+    const rawStored = storage.get("runs");
+    const [storedRun] = JSON.parse(rawStored);
+    expect(storedRun).toMatchObject({
+      id: "compact-run",
+      localRunStorageFormatVersion: 2,
+    });
+    expect(storedRun.path).toBeUndefined();
+    expect(storedRun.filteredPoints).toBeUndefined();
+    expect(storedRun.rawPoints).toBeUndefined();
+    expect(storedRun.segments).toBeUndefined();
+    expect(storedRun.routeSegments).toBeUndefined();
+    expect(storedRun.segmentMeta).toHaveLength(1);
+    expect(rawStored.length).toBeLessThan(JSON.stringify(saved).length / 2);
+
+    const [loaded] = await loadLocalRuns();
+    expect(loaded.path).toHaveLength(120);
+    expect(loaded.trustedPath).toHaveLength(120);
+    expect(loaded.filteredPoints).toHaveLength(120);
+    expect(loaded.rawPath).toHaveLength(121);
+    expect(loaded.segments).toHaveLength(1);
+    expect(loaded.segments[0].trustedPath).toHaveLength(120);
+  });
+
   test("abre corrida local por id, localRunId, remoteRunId e id legado", async () => {
     await saveLocalRun({
       id: "stable-id",

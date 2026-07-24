@@ -64,6 +64,12 @@
     },
 
     "plugins": [
+      [
+        "./plugins/withAsyncStorageDatabaseSize.cjs",
+        {
+          "sizeMB": 32
+        }
+      ],
       "@maplibre/maplibre-react-native",
       "expo-web-browser",
       [

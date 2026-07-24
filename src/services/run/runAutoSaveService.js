@@ -25,6 +25,10 @@ let checkpointPendingContext = null;
 let lastCheckpointAt = 0;
 let lastLocationErrorCheckpointAt = 0;
 
+const CHECKPOINT_PERSISTENCE_ECHO_EVENTS = new Set([
+  "run_checkpoint_saved",
+]);
+
 const isDev = () => typeof __DEV__ !== "undefined" && __DEV__;
 
 function log(event, payload = {}) {
@@ -265,10 +269,12 @@ function shouldForceCheckpointForEvent(event) {
 
 async function flushQueuedCheckpoint(context = {}) {
   if (checkpointInFlight) {
-    checkpointPendingContext = {
-      ...(checkpointPendingContext || {}),
-      ...context,
-    };
+    if (context.force === true) {
+      checkpointPendingContext = {
+        ...(checkpointPendingContext || {}),
+        ...context,
+      };
+    }
     return null;
   }
 
@@ -298,6 +304,7 @@ export async function checkpointOnLocationError(error, context = {}) {
   lastLocationErrorCheckpointAt = now;
   return flushQueuedCheckpoint({
     ...context,
+    force: true,
     reason: context.reason || "location_error",
     checkpointAtMs: now,
     errorName: error?.name || null,
@@ -307,22 +314,20 @@ export async function checkpointOnLocationError(error, context = {}) {
 export function startActiveRunAutoCheckpointing(options = {}) {
   if (checkpointUnsubscribe) return stopActiveRunAutoCheckpointing;
 
-  const minIntervalMs = Number(options.minIntervalMs ?? 5000);
-  const periodicIntervalMs = Number(options.periodicIntervalMs ?? 5000);
+  const minIntervalMs = Number(options.minIntervalMs ?? 15000);
+  const periodicIntervalMs = Number(options.periodicIntervalMs ?? 15000);
   checkpointUnsubscribe = activeRunTrackingService.onActiveRunSnapshot?.(({ event, snapshot }) => {
     if (!snapshot?.activeRunId) return;
+    if (CHECKPOINT_PERSISTENCE_ECHO_EVENTS.has(event)) return;
 
     const now = Date.now();
     const force = shouldForceCheckpointForEvent(event);
     if (!force && now - lastCheckpointAt < minIntervalMs) {
-      checkpointPendingContext = {
-        reason: "tracking_snapshot_throttled",
-        event,
-      };
       return;
     }
 
     flushQueuedCheckpoint({
+      force,
       reason: "tracking_snapshot",
       event,
     }).catch((error) => {
@@ -335,6 +340,7 @@ export function startActiveRunAutoCheckpointing(options = {}) {
 
   checkpointErrorUnsubscribe = activeRunTrackingService.onActiveRunError?.(({ error, context }) => {
     flushQueuedCheckpoint({
+      force: true,
       reason: "tracking_error",
       checkpointAtMs: Date.now(),
       errorName: error?.name || null,

@@ -107,6 +107,10 @@ describe("runOfflineStorageService", () => {
       distanceMeters: 100,
     });
     expect(loaded.finalRunData.id).toBe("run-3");
+    expect(loaded.finalRunData.path).toBeUndefined();
+    expect(loaded.finalRunData.trustedPath).toBeUndefined();
+    expect(loaded.finalRunData.routeStoredInOfflineEnvelope).toBe(true);
+    expect(loaded.points).toHaveLength(2);
     expect(shouldRestoreActiveRun(loaded)).toBe(false);
     expect(shouldRecoverOfflineRun(loaded)).toBe(true);
   });

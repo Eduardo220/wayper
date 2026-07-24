@@ -98,6 +98,12 @@ function makeSnapshot(overrides = {}) {
   };
 }
 
+async function flushPromises() {
+  for (let index = 0; index < 8; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 describe("runAutoSaveService", () => {
   beforeEach(() => {
     currentSnapshot = makeSnapshot();
@@ -200,6 +206,28 @@ describe("runAutoSaveService", () => {
     expect(snapshotListeners.size).toBe(0);
     expect(errorListeners.size).toBe(0);
     expect(saveActiveRunSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("evento emitido pela propria persistencia nao cria ciclo de autosave", async () => {
+    startActiveRunAutoCheckpointing({
+      minIntervalMs: 0,
+      periodicIntervalMs: 0,
+    });
+    saveActiveRunSnapshot.mockImplementationOnce(async (checkpoint) => {
+      snapshotListeners.forEach((listener) => listener({
+        event: "run_checkpoint_saved",
+        snapshot: currentSnapshot,
+      }));
+      return checkpoint;
+    });
+
+    snapshotListeners.forEach((listener) => listener({
+      event: "run_started",
+      snapshot: currentSnapshot,
+    }));
+    await flushPromises();
+
+    expect(saveActiveRunSnapshot).toHaveBeenCalledTimes(1);
   });
 
   test("snapshot finishing vira rascunho finalizado, nao checkpoint running", () => {

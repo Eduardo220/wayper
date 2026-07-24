@@ -44,6 +44,7 @@ import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js
 
 // ----------------- Keys / Constants -----------------
 const RUNS_KEY = "runs";
+const LOCAL_RUN_STORAGE_FORMAT_VERSION = 2;
 const ZONES_KEY = "zones";
 const MEDALS_KEY = "medals"; // NEW
 export const RUN_SYNC_STATUS = {
@@ -527,6 +528,83 @@ function sanitizeRunSegments(segments = []) {
     );
 }
 
+function buildStoredSegmentMeta(segments = []) {
+  return (Array.isArray(segments) ? segments : []).map((segment, index) => ({
+    id: String(segment?.id || `segment_${Number.isFinite(Number(segment?.index)) ? Number(segment.index) : index}`),
+    index: Number.isFinite(Number(segment?.index ?? segment?.segmentId))
+      ? Number(segment.index ?? segment.segmentId)
+      : index,
+    reason: segment?.reason || "active",
+    startTimestamp: segment?.startTimestamp ?? segment?.startedAt ?? null,
+    endTimestamp: segment?.endTimestamp ?? segment?.endedAt ?? null,
+    startedAt: segment?.startedAt || null,
+    endedAt: segment?.endedAt || null,
+    endReason: segment?.endReason || null,
+  }));
+}
+
+function expandStoredSegmentMeta(run = {}, paths = {}) {
+  const metadata = Array.isArray(run.segmentMeta) ? run.segmentMeta : [];
+  if (metadata.length === 0) return [];
+
+  const forSegment = (path = [], segmentIndex = 0) => {
+    const source = Array.isArray(path) ? path : [];
+    if (metadata.length === 1) return source;
+    return source.filter((point) => Number(point?.segmentId ?? point?.segmentIndex ?? 0) === segmentIndex);
+  };
+
+  return metadata.map((segment, fallbackIndex) => {
+    const index = Number.isFinite(Number(segment?.index)) ? Number(segment.index) : fallbackIndex;
+    const trustedPath = forSegment(paths.trustedPath, index);
+    const rawPath = forSegment(paths.rawPath, index);
+    const renderPath = forSegment(paths.renderPath, index);
+    return {
+      ...segment,
+      index,
+      trustedPath,
+      filteredPoints: trustedPath,
+      rawPath,
+      rawPoints: rawPath,
+      liveRenderPath: renderPath,
+      summaryRenderPath: renderPath,
+      displayPoints: renderPath,
+    };
+  });
+}
+
+function compactLocalRunForStorage(run = {}) {
+  const trustedPath = sanitizeCoordsArray(run.trustedPath || run.path || run.filteredPoints || []);
+  const rawPath = sanitizeCoordsArray(run.rawPath || run.rawPoints || []);
+  const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || run.displayPoints || trustedPath);
+  const segmentMeta = buildStoredSegmentMeta(run.segments || run.routeSegments || []);
+  const {
+    points,
+    path,
+    filteredPoints,
+    rawPoints,
+    segments,
+    routeSegments,
+    liveRenderPath,
+    displayPath,
+    displayPoints,
+    summaryRenderPath,
+    ...metadata
+  } = run;
+
+  return {
+    ...metadata,
+    localRunStorageFormatVersion: LOCAL_RUN_STORAGE_FORMAT_VERSION,
+    trustedPath,
+    rawPath,
+    renderPath,
+    segmentMeta,
+  };
+}
+
+function compactLocalRunsForStorage(runs = []) {
+  return (Array.isArray(runs) ? runs : []).map(compactLocalRunForStorage);
+}
+
 function normalizeLocalRunRecord(run = {}, { now = new Date().toISOString(), forHistory = false } = {}) {
   if (!run || typeof run !== "object") return null;
 
@@ -537,7 +615,12 @@ function normalizeLocalRunRecord(run = {}, { now = new Date().toISOString(), for
   const trustedPath = sanitizeCoordsArray(run.trustedPath || run.path || run.coords || run.filteredPoints || []);
   const renderPath = sanitizeCoordsArray(run.renderPath || run.displayPath || run.displayPoints || trustedPath);
   const rawPath = sanitizeCoordsArray(run.rawPoints || run.rawPath || []);
-  const segments = sanitizeRunSegments(run.routeSegments || run.segments || []);
+  const storedSegments = expandStoredSegmentMeta(run, {
+    trustedPath,
+    rawPath,
+    renderPath,
+  });
+  const segments = sanitizeRunSegments(run.routeSegments || run.segments || storedSegments);
   const syncStatus = normalizeRunSyncStatus(run);
   const offlineStatus = normalizeRunOfflineStatus(run, syncStatus);
   const pendingSync = run.pendingSync !== undefined
@@ -733,7 +816,7 @@ export async function saveLocalRun(run = {}) {
         : [savedRecord, ...existing];
 
     const deduped = normalizeLocalRunsForHistory(uniqueById(next));
-    await AsyncStorage.setItem(RUNS_KEY, safeStringify(deduped));
+    await AsyncStorage.setItem(RUNS_KEY, safeStringify(compactLocalRunsForStorage(deduped)));
     recordRunEvent("RUN_SAVED_LOCAL", {
       runId: savedRecord.id,
       localRunId: savedRecord.localRunId || savedRecord.id,
@@ -773,7 +856,7 @@ export async function deleteLocalRun(runId, options = {}) {
     const next = (Array.isArray(existing) ? existing : []).filter((run) =>
       !getRunIdentityCandidates(run).includes(id)
     );
-    await AsyncStorage.setItem(RUNS_KEY, safeStringify(next));
+    await AsyncStorage.setItem(RUNS_KEY, safeStringify(compactLocalRunsForStorage(next)));
 
     let remoteDeleted = false;
     if (options.deleteRemote !== false) {

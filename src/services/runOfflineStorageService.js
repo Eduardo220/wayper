@@ -134,9 +134,34 @@ function sanitizePoint(point = {}, fallbackSegmentIndex = 0) {
 
 function sanitizePoints(points = []) {
   return (Array.isArray(points) ? points : [])
-    .map((point, index) => sanitizePoint(point, toFiniteNumber(point?.segmentIndex ?? point?.segmentId, index) ?? 0))
+    .map((point) => sanitizePoint(point, toFiniteNumber(point?.segmentIndex ?? point?.segmentId, 0) ?? 0))
     .filter(Boolean)
     .slice(-ACTIVE_RUN_MAX_POINTS);
+}
+
+function buildCompactFinalRunData(runData = {}) {
+  const {
+    points,
+    path,
+    trustedPath,
+    filteredPoints,
+    rawPath,
+    rawPoints,
+    segments,
+    routeSegments,
+    liveRenderPath,
+    renderPath,
+    displayPath,
+    displayPoints,
+    summaryRenderPath,
+    ...metadata
+  } = runData;
+  return {
+    ...metadata,
+    id: runData.id || runData.localRunId || null,
+    localRunId: runData.localRunId || runData.id || null,
+    routeStoredInOfflineEnvelope: true,
+  };
 }
 
 function sanitizeSegment(segment = {}, fallbackIndex = 0) {
@@ -470,7 +495,7 @@ export function buildOfflineRunFromRunData(runData = {}, options = {}) {
     points,
     segments,
     territoryData: buildTerritoryData(runData),
-    finalRunData: runData,
+    finalRunData: buildCompactFinalRunData(runData),
     createdAt: toIso(runData.createdAt || options.createdAt || runData.date),
     updatedAt: nowIso(),
     checkpointAt: toIso(runData.endedAt || runData.date || options.endedAt),
