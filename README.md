@@ -1,64 +1,47 @@
-# 🏃‍♂️ Wayper – Corra, Conquiste e Domine Territórios Reais
+# Wayper — exercício real, aventura contínua
 
-### Transforme suas corridas em uma experiência estratégica e competitiva.
+> A Wayper transforma exercício físico em uma aventura contínua. Durante a
+> atividade, o usuário apenas corre. Depois da atividade, descobre tudo o que
+> conquistou.
 
-O **Wayper** é um app de corrida gamificado que leva sua experiência além do cronômetro. Enquanto você corre, o Wayper registra sua rota, identifica sua área de atuação e transforma seu trajeto em **zonas conquistadas dentro do mapa real da sua cidade**.
+**A corrida é a ação. O pós-corrida é o jogo.**
 
-Cada corrida se torna uma oportunidade de expandir seu território, disputar espaço com outros corredores e evoluir no ranking geral.
+A Wayper é uma plataforma mobile de exercício físico gamificada. Ela registra a
+atividade com prioridade em segurança, background, recuperação e funcionamento
+offline. Depois do salvamento, transforma os dados em descoberta: desempenho,
+trajeto, territórios, progressão, competição, replay e recompensas futuras.
 
-A missão é simples: **correr, competir e se divertir dominando o maior território possível.**
+Durante a atividade, a experiência deve ser mínima e não exigir atenção ao mapa.
+Territórios são consequência do movimento real, não uma obrigação visual.
 
----
+## Pilares
 
-## 🎯 Objetivo Principal
-Tornar a corrida uma experiência mais envolvente por meio de **estratégia**, **competição saudável**, **exploração urbana** e **conquista de áreas reais**, incentivando os usuários a correr mais e explorar novos lugares.
+- tracking confiável, local-first e recuperável;
+- atividade segura com tela apagada e em background;
+- Relatório da Expedição como experiência pós-corrida principal;
+- território, progressão, competição e exploração urbana;
+- experiência gratuita respeitosa e assinatura baseada em valor;
+- ecossistema futuro de desafios, comunidades e parceiros sem interromper o
+  corredor.
 
----
+## Estado do produto
 
-## 👥 Público-Alvo
-- Corredores de todos os níveis que buscam motivação  
-- Pessoas que adoram competições e desafios  
-- Atletas casuais atrás de metas mais divertidas  
-- Exploradores urbanos em busca de novos trajetos  
-- Usuários que gostam de apps interativos e gamificados  
+Em `develop`, tracking canônico, checkpoints, recuperação, salvamento local,
+sincronização posterior, territórios, XP, ranking, replay e compartilhamento
+existem em níveis diferentes de maturidade. O Relatório da Expedição, planos,
+entitlements, parceiros, anúncios e pagamentos ainda não estão implementados como
+domínios completos.
 
----
-
-## 🧩 Principais Funcionalidades
-
-### 📍 Conquista de Zonas
-- Rastreamento via GPS durante a corrida  
-- Cada trajeto percorrido gera uma nova zona no mapa  
-- Expansão contínua de território conforme você explora novos caminhos  
-
-### 🏆 Ranking Competitivo
-1. Ranking interno com:
-   - Maior número de zonas conquistadas  
-   - Maior área total dominada (em m²)  
-2. Atualização em tempo real conforme os usuários correm
-
-### 📊 Estatísticas Detalhadas
-- Distância, tempo, velocidade e ritmo  
-- Histórico de corridas e evolução de território  
-- Comparativos pessoais e progresso ao longo do tempo  
-
-### 🌍 Mapa Interativo
-- Visualização nítida das suas zonas  
-- Exibição de áreas de outros usuários  
-- Possibilidade de explorar novas regiões para expansão  
-
-### 🎮 Gamificação Inteligente
-- Metas de corrida e objetivos personalizados  
-- Sistema de conquistas baseado em desempenho e exploração  
-- Competição saudável incentivando treino e diversão  
-
----
+A direção oficial está em [docs/product](docs/product/README.md) e a aderência do
+código foi registrada na
+[auditoria de 2026-07-24](docs/audits/2026-07-24-direcao-oficial-produto.md).
 
 ## 🛠️ Tecnologias Utilizadas
 
 **Frontend:** React Native  
-**Backend:** Node.js / Firebase  
-**Banco de Dados:** Firestore  
+**Backend remoto atual:** Firebase
+
+**Persistência:** local-first com sincronização posterior para Firestore
 **Mapas & Localização:** MapLibre + OpenFreeMap  
 **Autenticação:** Firebase Auth  
 
@@ -109,3 +92,4 @@ npm install
 
 # Inicie o app
 npm start
+```

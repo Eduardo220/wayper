@@ -1,5 +1,13 @@
 # Regras de Negócio
 
+## Regra central
+
+- A corrida é a ação; o pós-corrida é o jogo.
+- Tracking e salvamento têm precedência sobre gamificação e monetização.
+- O usuário não precisa observar o mapa durante a atividade.
+- Territórios são consequência da atividade e são apresentados principalmente
+  depois.
+
 ## Usuário
 
 - Um usuário precisa estar autenticado para registrar corridas.
@@ -23,6 +31,20 @@
 - Depois de finalizada e salva localmente, a corrida deve permanecer visivel no historico mesmo se o sync remoto estiver `PENDING_SYNC` ou `SYNC_FAILED`.
 - Firestore e destino posterior de sincronizacao; falha remota nao pode apagar `localRunId`, rota, segmentos ou resumo territorial local.
 - Retry de sync deve ser idempotente por `localRunId`/`remoteRunId` e nao pode duplicar corrida remota.
+- Snapshot e salvamento mínimo confirmados precedem território, XP, ranking,
+  conquista, recompensa, replay, exportação, share, anúncio e sync remoto.
+- Finalização concorrente é bloqueada por chave/estado idempotente.
+- Lógica crítica de finalização não depende do ciclo de vida de uma tela.
+
+## Processamento e Relatório da Expedição
+
+- Cada módulo derivado possui estado persistente e pode ser retomado.
+- Falha de um módulo não bloqueia outro nem invalida a corrida.
+- O relatório aceita resultado parcial e é reabrível pelo histórico.
+- Fechar ou pular animação não cancela concessão/processamento.
+- UI não recalcula nem concede resultado definitivo.
+- Ranking/feed só podem ser marcados prontos quando materializarem o resultado
+  prometido.
 
 ## XP, progresso e conquistas
 
@@ -132,3 +154,15 @@ A definir:
 - Não expor localização em tempo real para outros usuários sem regra clara.
 - Histórico de rotas pode revelar casa/trabalho; tratar com cuidado.
 - Permitir ocultar dados sensíveis deve ser considerado.
+- Analytics comerciais não registram coordenadas cruas por padrão.
+
+## Planos, anúncios, parceiros e pagamentos
+
+- Free preserva registro, histórico e experiência central.
+- Plus é resolvido por capabilities/entitlements, não booleanos espalhados.
+- Anúncios nunca aparecem durante atividade, recuperação ou finalização.
+- Parceiros aparecem em momentos opcionais antes/depois, nunca interrompem o
+  corredor.
+- Recompensa é concedida com idempotência e auditoria fora da UI.
+- Gateway é substituível; retorno visual de checkout não confirma pagamento.
+- Falha financeira, comercial ou de anúncio não afeta tracking ou dados salvos.

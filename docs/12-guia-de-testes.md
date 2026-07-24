@@ -519,3 +519,60 @@ Criterios de aprovacao:
 - perda esperada em kill abrupto fica limitada ao ultimo checkpoint/lote, sem zerar a corrida;
 - negar `POST_NOTIFICATIONS` reduz visibilidade e acoes, mas nao derruba o app; negar background exibe limitacao e nao promete rastreamento perfeito;
 - falha territorial, de internet, notificacao ou save final aparece no diagnostico e nao apaga a corrida.
+
+## Matriz obrigatória da nova direção
+
+Esta seção define cobertura exigida para fases futuras. Não indica que os testes
+foram executados.
+
+### Tracking e finalização
+
+- iniciar e concluir completamente offline;
+- tela apagada, aparelho bloqueado, background e outro app;
+- pausa/retomada por UI e notificação;
+- processo da UI recriado e reabertura por ícone/notificação;
+- GPS oscilante e lote fora de ordem;
+- duas solicitações de finalização;
+- crash antes/depois do snapshot, save, limpeza e enqueue;
+- território/XP/ranking/sync indisponíveis sem bloquear save;
+- retry após reinício sem duplicar corrida, XP ou território.
+
+### Relatório da Expedição
+
+- abrir com somente métricas prontas;
+- atualizar cada módulo sem remontar o conjunto;
+- fechar/pular e reabrir pelo histórico;
+- funcionar offline com pendências honestas;
+- replay/share indisponíveis não bloquearem os demais;
+- falha recuperável/permanente e `not_applicable`;
+- migração de corridas antigas sem relatório.
+
+### Entitlements
+
+- Free, Plus, promocional, expirado e restaurado;
+- último estado conhecido offline;
+- mudança de plano durante uso;
+- capability desconhecida com fallback seguro;
+- tracking/finalização idênticos para todos os planos.
+
+### Anúncios
+
+- política retorna falso em todos os estados de atividade e recuperação;
+- Plus, consentimento ausente, frequência, provider offline e kill switch;
+- falha de load/show sem erro funcional;
+- nenhum import/callback no domínio da corrida.
+
+### Parceiros e recompensas
+
+- elegibilidade, validade, estoque e privacidade;
+- concessão idempotente, reabertura e duas telas;
+- falha do parceiro sem perda do relatório;
+- recompensa não concedida por animação/componente.
+
+### Pagamentos
+
+- retorno visual sem confirmação não concede entitlement;
+- webhook duplicado/fora de ordem;
+- cancelamento, refund, restauração e expiração;
+- provider indisponível;
+- nenhum efeito em tracking, save ou histórico.

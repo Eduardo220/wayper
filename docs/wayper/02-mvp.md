@@ -1,16 +1,24 @@
 # MVP
 
+**Status:** snapshot histórico do escopo inicial. A direção vigente está em
+`../product/`; o código atual já ultrapassou partes deste MVP. Afirmações sobre
+território individual ou itens “fora” não anulam a implementação real nem
+autorizam expandi-la sem decisão.
+
 ## Objetivo do MVP
 
-O MVP da Wayper deve validar se usuários entendem e valorizam a ideia principal: caminhar ou correr no mundo real para conquistar territórios no mapa.
+O próximo marco de produto deve validar se usuários confiam no registro da
+atividade e valorizam descobrir, depois dela, desempenho, trajeto, territórios e
+progressão.
 
 O MVP não deve tentar resolver clans, eventos, disputas complexas ou economia de jogo. A prioridade é provar o ciclo básico:
 
 1. Usuário inicia uma atividade.
 2. App registra GPS real.
 3. Usuário encerra a atividade.
-4. App mostra rota, distância, XP e território conquistado.
-5. Dados são persistidos para histórico e perfil.
+4. App confirma o salvamento mínimo.
+5. App revela rota, distância, XP e território em módulos pós-corrida.
+6. Dados e resultados parciais são persistidos para histórico e perfil.
 
 ## O que entra no MVP
 
@@ -71,7 +79,10 @@ O MVP será considerado bem-sucedido se:
 
 ## Decisão de escopo
 
-O MVP deve favorecer regras simples, rastreáveis e fáceis de explicar. Território no MVP deve ser progresso individual do usuário, não posse global disputável. Qualquer feature que aumente muito a complexidade de GPS, mapa, Firestore ou ranking deve ser tratada como proposta futura e registrada em [[10-decisoes-do-projeto]].
+O escopo deve favorecer regras simples, rastreáveis e fáceis de explicar. O código
+atual já contém elementos competitivos territoriais que divergem da decisão
+histórica de progresso individual; a regra final precisa de consolidação antes de
+expansão. Nenhuma mecânica pode aumentar o risco do GPS ou do salvamento.
 
 ## Documentos relacionados
 

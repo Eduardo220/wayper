@@ -234,3 +234,27 @@ v1.0.0
 - Repetir evento controlado e corrida com tela bloqueada em dispositivo fisico.
 - Documentar publicação na Play Store.
 - Documentar rollback.
+
+## Gates da direção oficial
+
+Nenhuma release pode introduzir regressão em salvamento local, background,
+recovery ou finalização em troca de gamificação ou monetização.
+
+Antes de liberar o novo modo foco ou Relatório da Expedição:
+
+- flag central com default seguro e rollback;
+- compatibilidade com corrida/fila já persistidas;
+- teste de finalização concorrente, crash/restart e resultado parcial;
+- Android físico nas condições de `docs/22-teste-real-corrida-background.md`;
+- evidência de que fechar/pular o relatório não perde atividade ou processamento.
+
+Antes de liberar Plus, parceiros, anúncios ou pagamentos:
+
+- ADR e autorização de produção específicos;
+- consentimento/privacidade quando aplicável;
+- provider desacoplado e falha neutra;
+- kill switch independente;
+- restauração/idempotência;
+- matriz negativa que prove ausência durante atividade, recuperação e finalização.
+
+Esses gates são futuros e não declaram nenhuma integração atual como validada.

@@ -1,5 +1,15 @@
 # Mecânica de territórios
 
+**Aviso de divergência (2026-07-24):** este documento descreve a intenção original
+de território individual, mas `territoryCaptureService` já implementa conquista,
+defesa, roubo e líderes em alguma medida. O comportamento existe, porém a regra
+competitiva final continua pendente. Não expandir nem remover sem inventário,
+decisão, migração e rollback.
+
+Pela direção oficial, território é processado silenciosamente como consequência e
+apresentado principalmente no Relatório da Expedição. O usuário não precisa caçar
+áreas olhando a tela durante a corrida.
+
 ## Nota local-first atual
 
 Desde 2026-06-06, a captura territorial por zonas funciona localmente antes do Firestore:

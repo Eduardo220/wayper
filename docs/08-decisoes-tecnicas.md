@@ -2,6 +2,11 @@
 
 Este arquivo registra decisões relevantes do projeto. Decisão não registrada vira arqueologia depois, e ninguém merece escavar commit velho.
 
+As decisões transversais da direção oficial de 2026-07-24 estão registradas como
+ADR-028 a ADR-038 em
+[`docs/architecture/adrs-direcao-oficial.md`](architecture/adrs-direcao-oficial.md).
+Elas complementam, e não apagam, as decisões local-first abaixo.
+
 ## ADR-001: Usar React Native com Expo
 
 **Status:** aceito

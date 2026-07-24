@@ -103,7 +103,10 @@ Nenhuma ideia rejeitada registrada neste arquivo no momento.
 
 ## Ideias implementadas
 
-Nenhuma ideia movida para implementada neste arquivo no momento. Quando uma ideia for implementada, registre data, arquivos alterados, evidencia e link para changelog/revisao quando existir.
+- `IDEA-20260621-002`: fila persistente pós-finalização implementada no caminho
+  `runDeferredTaskQueueService` e registrada como base do futuro pipeline da
+  Expedição. A validação física e a materialização completa de ranking/feed ainda
+  estão pendentes.
 
 ## Ideias geradas automaticamente apos alteracoes
 
@@ -143,22 +146,23 @@ Nenhuma ideia movida para implementada neste arquivo no momento. Quando uma idei
 - Prompt futuro sugerido: "Criar proposta para uma secao de correlacao Sentry no Diagnostico local do Wayper, sem expor PII e sem substituir o ZIP."
 - Data: 2026-06-21
 
-### IDEA-20260621-002 - Fila persistente para tarefas pos-finalizacao
+### IDEA-20260621-002 - Fila persistente para tarefas pos-finalizacao — implementada
 
 - ID: IDEA-20260621-002
 - Titulo: Fila persistente para tarefas pos-finalizacao
 - Origem: Codex
 - Relacionada a qual alteracao: finalizacao local-first nao bloqueada por captura territorial, XP e sync
-- Arquivos afetados ou provaveis: `src/screens/MapScreen.js`, `src/services/sync.js`, `src/repositories/RunRepository.js`, `src/services/territoryCaptureService.js`, `src/repositories/ProgressionRepository.js`, `docs/08-decisoes-tecnicas.md`
-- Problema/oportunidade: a corrida agora salva localmente antes das tarefas pesadas, mas uma fila persistente dedicada poderia reprocessar captura territorial e progressao depois de app kill, timeout ou falta de memoria, sem depender da tela ficar aberta.
-- Proposta: criar futuramente uma fila local idempotente de tarefas pos-finalizacao por `localRunId`, com estados `PENDING`, `RUNNING`, `FAILED`, `COMPLETED`, retry manual em Diagnostico e execucao em AppState/reabertura.
+- Arquivos afetados: `src/services/run/runDeferredTaskQueueService.js`, `src/repositories/runDeferredTaskQueueRepository.js`, `src/screens/MapScreen.js`, `src/navigation/MainNavigator.js`, `src/services/run/__tests__/runDeferredTaskQueueService.test.js`
+- Problema/oportunidade: a corrida salva localmente antes das tarefas pesadas e precisa reprocessar captura territorial e progressao depois de app kill, timeout ou falta de memoria, sem depender da tela aberta.
+- Implementação: fila local por corrida/tipo com estados persistentes, tentativas, prioridade e processamento na reabertura/AppState. Território, XP e sync usam os repositories existentes.
 - Impacto esperado: tornar captura territorial, XP e sync ainda mais recuperaveis sem recolocar esses trabalhos no caminho critico do botao `Finalizar`.
 - Complexidade: media
-- Risco: duplicar fila de sync existente, gerar corrida enriquecida duas vezes ou esconder erro de territorio se os estados nao forem claros.
-- Dependencias: validacao fisica da finalizacao atual e decisao do Eduardo sobre escopo de retry automatico.
-- Status: AGUARDANDO_VALIDACAO_EDU
-- Proximo passo sugerido: Eduardo decidir se a fila vira proposta apos a rodada de teste real do finish/export.
-- Prompt futuro sugerido: "Criar proposta para fila persistente de tarefas pos-finalizacao no Wayper, reaproveitando repositories atuais e sem bloquear o save local."
+- Risco restante: ranking/feed ainda não materializam resultado específico da
+  Expedição; falta contrato por módulo e validação física após kill/reabertura.
+- Dependencias: evolução incremental para o pipeline da Expedição e matriz Android.
+- Status: IMPLEMENTADO
+- Próximo passo sugerido: evoluir a fila existente; não criar uma segunda fila.
+- Evidência: branch `develop` auditada em 2026-07-24 e ADR-031.
 - Data: 2026-06-21
 
 ### IDEA-20260721-001 - Telemetria local de custo e janela adaptativa de checkpoint

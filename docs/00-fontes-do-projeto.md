@@ -5,11 +5,18 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 ## Ordem de prioridade das fontes
 
 1. Código atual na branch `develop`.
-2. Código estável na branch `main`.
+2. Código na branch `main`, somente como referência da versão estável.
 3. `README.md` do repositório.
 4. Documentação em `/docs`.
-5. Issues, pull requests e decisões registradas no GitHub.
-6. Conversas e anotações externas, somente quando não contradizem o código ou a documentação.
+5. ADRs e decisões técnicas.
+6. Issues e pull requests.
+7. Planos locais do projeto.
+8. Conversas e anotações externas.
+
+Quando houver divergência, identifique-a, confirme o comportamento real,
+determine qual fonte está desatualizada, corrija-a e registre a decisão. Não
+presuma que um documento antigo vence o código nem que o código atual representa
+automaticamente uma nova regra de produto.
 
 ## Papel do Obsidian e dos Markdown
 
@@ -32,6 +39,10 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 | Fonte | Arquivo |
 | --- | --- |
 | Visão do produto | `docs/01-visao-do-produto.md` |
+| Direção oficial de produto e negócio | `docs/product/README.md` |
+| Auditorias | `docs/audits/` |
+| ADRs transversais | `docs/architecture/adrs-direcao-oficial.md` |
+| Portabilidade e reuso | `docs/architecture/portability-and-reuse.md` |
 | Roadmap | `docs/02-roadmap.md` |
 | Backlog | `docs/03-backlog.md` |
 | Arquitetura | `docs/04-arquitetura.md` |
@@ -61,3 +72,6 @@ Este diretório centraliza as fontes oficiais de contexto do Wayper para desenvo
 - Para o estado local-first consolidado em 2026-06-19, use `docs/24-resumo-rodada-local-first.md` como mapa rapido antes de aprofundar nos documentos especificos.
 - Para o protocolo "Obsidian como mente do projeto", use `docs/14-instrucoes-para-ia.md` como regra operacional e preserve a diferenca entre implementado, em validacao, pendente de decisao, ideia futura, bug conhecido, proposta aprovada e proposta rejeitada.
 - Nao mova ideia para backlog ativo, changelog de implementacao ou decisao aprovada sem validacao explicita do Eduardo.
+- Para a direção vigente desde 2026-07-24, comece por `AGENTS.md` e
+  `docs/product/README.md`. Documentos históricos continuam úteis para o
+  comportamento técnico, mas não substituem a visão oficial.

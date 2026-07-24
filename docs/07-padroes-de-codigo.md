@@ -85,6 +85,21 @@ src/
 - Demo/mock deve carregar origem explicita e nunca substituir dado real/cache/local silenciosamente.
 - Preferir funções pequenas e testáveis.
 - Código de mapa e GPS deve tratar erro, permissão negada e dados imprecisos.
+- Não executar território, XP, ranking, recompensa, anúncio ou rede no caminho de
+  alta frequência do GPS.
+- Lógica crítica de tracking/finalização deve sobreviver sem componente montado.
+- Trabalho derivado precisa de idempotency key, estado persistente, retry limitado
+  e erro classificável.
+- Evoluir `runDeferredTaskQueueService`; não criar outra fila de Expedição em
+  paralelo.
+- UI apresenta estado e dispara comando; não concede recompensa nem confirma
+  pagamento.
+- Entitlements, feature flags e política de anúncios devem ser resolvidos
+  centralmente quando forem implementados.
+- Imports de Firebase, gateway, ads e analytics ficam em adapters/repositories,
+  não em regras de domínio.
+- Toda feature futura declara status de produto, modo offline, rollback e impacto
+  na corrida antes de receber código.
 
 ## Scripts importantes
 

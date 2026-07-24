@@ -40,6 +40,10 @@ Durante a atividade, o app deve acompanhar:
 
 O app deve deixar claro quando o GPS estiver ruim ou quando parte da rota não estiver sendo considerada confiável.
 
+A UI prioriza tempo, distância, pace, estado, GPS crítico e controles. Mapa é
+opcional. Território, parceiros, anúncios, upgrade e recompensas não exigem
+atenção.
+
 ## Pausa
 
 O usuário pode pausar a atividade.
@@ -72,12 +76,13 @@ Ao encerrar:
 - Registrar horário de término.
 - Calcular duração ativa.
 - Calcular distância válida.
-- Processar rota.
-- Calcular XP.
-- Calcular conquista territorial inicial.
-- Persistir atividade e resumo localmente em `runs`.
-- Enfileirar sync remoto posterior quando aplicavel.
-- Mostrar tela de resumo.
+- Congelar snapshot canônico.
+- Persistir e confirmar atividade mínima localmente em `runs`.
+- Marcar a corrida finalizada e liberar confirmação para a UI.
+- Criar tarefas persistentes de processamento.
+- Calcular território, XP, ranking e outros derivados sem bloquear o save.
+- Enfileirar sync remoto posterior quando aplicável.
+- Mostrar o resumo atual e, futuramente, o Relatório da Expedição parcial.
 
 Atividades muito curtas podem ser salvas como rascunho, descartadas ou marcadas como inválidas. Essa regra ainda precisa ser decidida em [[10-decisoes-do-projeto]].
 

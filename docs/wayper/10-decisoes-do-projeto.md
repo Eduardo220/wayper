@@ -1,5 +1,10 @@
 # Decisões do projeto
 
+**Nota de precedência (2026-07-24):** decisões históricas permanecem como memória,
+mas as decisões vigentes de produto estão em
+`../product/10-decisoes-aprovadas.md` e os ADRs transversais em
+`../architecture/adrs-direcao-oficial.md`.
+
 ## Como usar
 
 Este arquivo registra decisões importantes da Wayper.
@@ -8,18 +13,18 @@ Toda mudança relevante de produto, arquitetura, Firestore, GPS, território, XP
 
 ## Decisões aprovadas
 
-### A documentação oficial fica em `docs/wayper`
+### A documentação oficial fica em `docs/wayper` — superada em 2026-07-24
 
-Status: aprovada.
+Status: superada.
 
 Decisão:
 
-- `docs/wayper` é a fonte de verdade do projeto.
-- Mudanças importantes devem atualizar a documentação correspondente.
+- A fonte implementada é o código de `develop`; `docs/wayper` é memória detalhada.
+- A ordem completa está em `../00-fontes-do-projeto.md`.
 
 Motivo:
 
-- Evitar regras espalhadas entre conversas, código e documentos antigos.
+- Preservar memória sem fazer documentação antiga vencer o comportamento real.
 
 ### O MVP deve validar caminhada/corrida com conquista de território
 
@@ -47,12 +52,20 @@ Motivo:
 
 ### Território do MVP é progresso individual
 
-Status: aprovada.
+Status: em revisão por divergência.
 
 Decisão:
 
 - O território no MVP representa progresso individual derivado de atividades válidas.
 - O MVP não define posse global, perda de território, disputa em tempo real ou controle compartilhado de áreas.
+
+Situação atual:
+
+- o código contém captura competitiva, defesa, roubo e líderes;
+- a nova visão admite competição territorial, mas não aprova silenciosamente a
+  fórmula atual;
+- preservar o comportamento enquanto a regra final é auditada; não expandir ou
+  remover sem decisão e rollback.
 
 Motivo:
 

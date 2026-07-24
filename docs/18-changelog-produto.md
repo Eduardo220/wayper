@@ -26,6 +26,58 @@ Origem:
 ### Riscos restantes
 ```
 
+## 2026-07-24 - Direção oficial de produto, negócio e arquitetura
+
+Status: Implementado na documentação; código de produção inalterado
+
+Origem: Solicitação humana
+
+Área: Produto, arquitetura, negócio, IA e planejamento
+
+### O que mudou
+
+- “a corrida é a ação; o pós-corrida é o jogo” passou a ser regra permanente;
+- `AGENTS.md` e `docs/product/` consolidam visão, princípios, planos, parcerias,
+  anúncios, Expedição, economia, decisões, hipóteses e critérios;
+- ADRs formalizam tracking, save mínimo, pipeline, monetização, providers, flags,
+  recompensas e ads;
+- README, roadmap, backlog, arquitetura, dados, fluxos, UX, negócio, deploy, testes
+  e documentos históricos foram reconciliados.
+
+### Por que mudou
+
+Para posicionar a Wayper como plataforma de exercício gamificada, preservar a
+atividade segura e tornar o pós-corrida a principal experiência de descoberta.
+
+### Impacto no usuário
+
+Nenhum comportamento foi alterado nesta fase. As próximas entregas passam a ter
+limites claros de segurança, experiência e monetização.
+
+### Impacto técnico
+
+Nenhum código, dependência ou schema de produção mudou. Foram definidos contratos
+planejados e a evolução da fila existente, sem criar implementação paralela.
+
+### Documentos relacionados
+
+- `AGENTS.md`
+- `docs/product/README.md`
+- `docs/architecture/adrs-direcao-oficial.md`
+- `docs/audits/2026-07-24-direcao-oficial-produto.md`
+
+### Arquivos alterados
+
+Consultar o commit da Fase B e a revisão de 2026-07-24.
+
+### Riscos restantes
+
+- validação Android física da corrida;
+- finalização ainda orquestrada em `MapScreen`;
+- relatório e seus schemas ainda planejados;
+- regra territorial competitiva pendente;
+- integrações comerciais não implementadas nem autorizadas.
+
 ## 2026-06-03 - Corrida offline com sincronização pendente
 
 Status: Implementado

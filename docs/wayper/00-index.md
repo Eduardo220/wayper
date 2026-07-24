@@ -1,12 +1,18 @@
 # Wayper - Índice da documentação
 
-Este diretório é a fonte de verdade da Wayper.
+Este diretório preserva documentação detalhada e histórica da Wayper. Ele não
+precede o comportamento real da branch `develop` nem a direção oficial em
+`docs/product/`.
 
-Tudo que define produto, regras de negócio, mecânicas de território, decisões técnicas, Firestore, GPS, ranking e evolução do app deve estar registrado em `docs/wayper`. Quando houver conflito entre uma ideia solta, uma conversa, um comentário de código ou um arquivo antigo de documentação, este diretório deve ser tratado como referência principal.
+A ordem vigente está em `../00-fontes-do-projeto.md`: código de `develop`, código
+de `main` como referência, README, documentação, ADRs, issues/PRs, planos e notas
+externas. Em conflito, a divergência deve ser registrada e a fonte incorreta
+atualizada.
 
 ## Como usar esta documentação
 
 - Leia este índice antes de mexer no projeto.
+- Leia também `../../AGENTS.md` e `../product/README.md`.
 - Consulte os arquivos específicos antes de implementar qualquer feature.
 - Registre decisões importantes em [[10-decisoes-do-projeto]].
 - Registre propostas novas antes de transformar a ideia em implementação.
@@ -15,6 +21,7 @@ Tudo que define produto, regras de negócio, mecânicas de território, decisõe
 ## Documentos principais
 
 - [[01-visao-geral]]: conceito, problema, público-alvo, diferencial e visão de produto.
+- `../product/00-visao-oficial.md`: visão normativa vigente.
 - [[02-mvp]]: escopo inicial, itens fora do MVP, critérios de sucesso e riscos.
 - [[03-mecanica-territorios]]: regras de conquista de territórios com GPS real.
 - [[04-regras-corrida]]: início, pausa, retomada e encerramento de caminhada ou corrida.

@@ -2,7 +2,25 @@
 
 Este roadmap organiza a evolucao do Wayper por fases. O status deve refletir o codigo atual na branch `develop`; quando algo depende de aparelho fisico, credencial remota ou release real, nao deve ser marcado como fechado.
 
-## Fase 0: Base funcional
+## Sequência oficial desde 2026-07-24
+
+| Fase | Objetivo | Estado em 2026-07-24 |
+| --- | --- | --- |
+| 1 — Fundação confiável | Tracking, offline, background, recovery, finalização e validação física | Parcialmente implementada; Android físico pendente |
+| 2 — Pipeline da Expedição | Extrair finalização, formalizar save mínimo e resultados idempotentes | Planejada |
+| 3 — Relatório da Expedição | Experiência modular, parcial, persistente e reabrível | Planejada |
+| 4 — Retenção | Progressão, conquistas, streaks e desafios com regras consolidadas | Parcial na base; expansão planejada |
+| 5 — Wayper Plus | Entitlements e benefícios positivos | Aprovada conceitualmente |
+| 6 — Wayper Pro | Ferramentas para organizadores/comunidades | Em validação |
+| 7 — Parceiros | Campanhas, recompensas e desafios contextuais | Aprovada conceitualmente |
+| 8 — Pagamentos | Providers substituíveis e confirmação segura | Aprovada conceitualmente; integração não autorizada |
+| 9 — Ecossistema | Eventos, criadores, temporadas e marketplace futuro | Hipóteses/planejamento futuro |
+
+Fases posteriores não autorizam antecipar SDK, schema remoto ou UI comercial. O
+gate entre as fases 1 e 2 é evidência de corrida segura e recuperável; entre as
+fases 2 e 3, é um pipeline persistente e idempotente.
+
+## Base técnica atual: funcional
 
 Objetivo: manter o app executavel, com autenticacao, navegacao, mapa e build Android controlado.
 
@@ -14,7 +32,7 @@ Objetivo: manter o app executavel, com autenticacao, navegacao, mapa e build And
 | Sentry/diagnostico | Diagnostico local avancado; Sentry depende de credenciais e validacao autenticada. |
 | Variaveis/segredos de ambiente | Parcial; manter secrets fora do repositorio. |
 
-## Fase 1: Corrida, GPS e historico local-first
+## Base técnica atual: corrida, GPS e histórico local-first
 
 Objetivo: iniciar, acompanhar, pausar/finalizar, preservar e listar corridas sem depender obrigatoriamente de Firestore.
 
@@ -30,7 +48,7 @@ Objetivo: iniciar, acompanhar, pausar/finalizar, preservar e listar corridas sem
 | Notificacao/background Android | Implementado tecnicamente; validacao fisica dev/release segue pendente. |
 | Firestore de runs | Destino posterior/best effort, nao dependencia local. |
 
-## Fase 2: Zonas e territorios
+## Base técnica atual: zonas e territórios
 
 Objetivo: transformar corridas por zonas em territorios locais reais e preparar sync remoto futuro.
 
@@ -44,7 +62,7 @@ Objetivo: transformar corridas por zonas em territorios locais reais e preparar 
 | Sync remoto territorial social/completo | Futuro. |
 | Estrategia final de disputa territorial | Pendente. |
 
-## Fase 3: Progresso, perfil, ranking e social
+## Base técnica atual: progresso, perfil, ranking e social
 
 Objetivo: mostrar progresso real/local, Home social e rankings honestos sem confundir cache/demo com dado real.
 
@@ -59,7 +77,7 @@ Objetivo: mostrar progresso real/local, Home social e rankings honestos sem conf
 | Stories locais | Implementado localmente como `PENDING_SYNC`; upload remoto futuro. |
 | Feed/Friends/Groups | Parcial; ainda ha trechos Firestore-first. |
 
-## Fase 4: Compartilhamento, onboarding e diagnostico
+## Base técnica atual: compartilhamento, onboarding e diagnóstico
 
 | Item | Status atual |
 | --- | --- |
@@ -71,7 +89,7 @@ Objetivo: mostrar progresso real/local, Home social e rankings honestos sem conf
 | Adicionar ao story | Implementado localmente, `PENDING_SYNC`. |
 | Diagnostico/export ZIP | Avancado; coordenadas mascaradas por padrao. |
 
-## Fase 5: Producao
+## Gate de produção
 
 Objetivo: publicar com build, assinatura, telemetria e validacao fisica reais.
 
@@ -85,11 +103,14 @@ Objetivo: publicar com build, assinatura, telemetria e validacao fisica reais.
 | Teste real Android background/GPS/notificacao | Pendente antes de considerar fechado. |
 | Play Store/rollback | Futuro. |
 
-## Fora de escopo por enquanto
+## Não autorizados por enquanto
 
-- Monetizacao.
-- Marketplace.
-- Treinos pagos.
+- Integração real de anúncios ou gateway.
+- Marketplace aberto.
+- Carteira, split, repasse ou moeda conversível.
+- WayCoins, baús, passes e rewarded ads.
+- Plano Pro sem validação de segmento.
+- Treinos/desafios pagos sem decisão própria.
 - Wearables.
 - iOS em producao, salvo decisao futura.
 - SQLite antes de medicao real.

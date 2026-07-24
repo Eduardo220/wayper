@@ -2,7 +2,8 @@
 
 ## Objetivo
 
-As telas da Wayper devem apoiar o ciclo principal do MVP: entrar no app, permitir localização, iniciar atividade, acompanhar rota, encerrar, ver resumo e consultar progresso.
+As telas da Wayper devem apoiar o ciclo: preparar, registrar atividade sem exigir
+atenção, salvar com segurança e revelar resultados no pós-corrida.
 
 ## Onboarding
 
@@ -15,7 +16,7 @@ Função:
 Conteúdo mínimo:
 
 - Corridas e caminhadas viram território.
-- O mapa é o centro da experiência.
+- O Relatório da Expedição é o centro da descoberta; mapa na corrida é opcional.
 - Atividades válidas geram XP e progresso.
 - Wayper funciona local/offline quando necessario e sincroniza depois.
 - Localizacao foreground e necessaria para correr.
@@ -76,7 +77,7 @@ Comportamento local-first:
 
 Função:
 
-- Ser a tela principal do app.
+- Permitir exploração fora da corrida e, na implementação atual, iniciar atividade.
 - Mostrar localização atual.
 - Mostrar rota ou território quando disponível.
 - Permitir iniciar caminhada ou corrida.
@@ -105,6 +106,7 @@ Elementos esperados:
 
 - Tempo ativo.
 - Distância.
+- Pace.
 - Tipo da atividade.
 - Estado do GPS.
 - Botão de pausa.

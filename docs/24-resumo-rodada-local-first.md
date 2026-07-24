@@ -9,6 +9,10 @@ Consolidar a arquitetura local-first do Wayper depois das melhorias em corrida a
 
 Este documento nao substitui os demais arquivos em `/docs`; ele resume o estado atual e aponta as decisoes que futuras alteracoes devem preservar.
 
+**Nota de 2026-07-24:** este é um snapshot técnico, não a visão de produto vigente.
+Para produto, negócio e arquitetura-alvo, consultar `AGENTS.md`,
+`docs/product/README.md` e `docs/architecture/adrs-direcao-oficial.md`.
+
 ## Escopo implementado
 
 - Corrida ativa com estado canonico local em `wayper:activeRun:v2`.

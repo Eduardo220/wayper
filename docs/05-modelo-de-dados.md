@@ -479,3 +479,68 @@ Regras:
 - Evitar documentos grandes demais para rotas muito longas.
 - Considerar simplificação/compressão de rota.
 - Validar se cálculo de ranking deve ficar no client ou em backend controlado.
+
+## Modelo planejado do processamento da Expedição
+
+**Status:** planejado; estas chaves ainda não representam storage implementado.
+
+O schema definitivo deve evoluir a fila `wayper_run_deferred_tasks_v1`, não criar
+um segundo mecanismo concorrente.
+
+```js
+expeditionProcessing = {
+  runId,
+  version,
+  status, // pending | processing | partial | ready | failed_retryable | failed_permanent
+  createdAt,
+  updatedAt,
+  modules: {
+    metrics: {
+      status,
+      version,
+      attempts,
+      updatedAt,
+      resultRef,
+      errorCode,
+    },
+    territory: { /* mesmo envelope */ },
+    progression: { /* mesmo envelope */ },
+    ranking: { /* mesmo envelope */ },
+    challenges: { /* mesmo envelope */ },
+    rewards: { /* mesmo envelope */ },
+  },
+}
+```
+
+Requisitos:
+
+- chave idempotente por `runId + module + version`;
+- payload mínimo e sanitizado na fila;
+- resultado persistido separado do estado transitório;
+- falha de um módulo não altera a corrida finalizada;
+- migração lê tarefas atuais e evita duplicação.
+
+## Modelo planejado do Relatório da Expedição
+
+```js
+expeditionReport = {
+  runId,
+  version,
+  overallStatus, // partial | ready
+  generatedAt,
+  sections: [
+    {
+      type, // metrics | route | territory | progression | ranking | challenge | reward | share
+      status,
+      version,
+      updatedAt,
+      dataRef,
+      errorCode,
+    },
+  ],
+}
+```
+
+O relatório referencia a corrida salva e resultados derivados. Ele não duplica a
+rota canônica nem concede XP/recompensa. Os schemas Free/Plus, campanha, pagamento
+e anúncio permanecem conceituais até fases próprias.

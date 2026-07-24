@@ -254,3 +254,38 @@ Desde 2026-06-18, onboarding, permissoes e estados vazios seguem uma politica un
 - Se haverá Cloud Functions ou apenas lógica client-side no início.
 - Política final de sync remoto para XP, conquistas, stories e território.
 - Medição real para decidir se AsyncStorage continua suficiente ou se SQLite/Expo SQLite entra em uma fase futura.
+
+## Arquitetura-alvo da Expedição
+
+Esta separação é conceitual. Antes de criar arquivos, consolidar os serviços
+existentes indicados na coluna “base atual”.
+
+| Domínio | Responsabilidade | Base atual |
+| --- | --- | --- |
+| Run Tracking | sessão, GPS, métricas, pausa, checkpoint e recovery | `src/services/runTracking`, `src/tasks/activeRunLocationTask.js` |
+| Run Finalization | snapshot, trava, save mínimo e criação do processamento | `stopRun` em `MapScreen`, `sync.js`, `RunRepository` |
+| Expedition Processing | território, XP, ranking, conquistas, desafios e recompensas | `runDeferredTaskQueueService` e repositories |
+| Expedition Report | combinar módulos, pendências, reabertura, replay e share | `RunSummaryModal` e `RunDetailScreen`, ainda sem contrato |
+| Progression | XP, níveis, conquistas, streaks e desbloqueios | `ProgressionRepository`, `AchievementRepository` |
+| Entitlements | Free, Plus, acesso temporário e capabilities | planejado |
+| Commercial | parceiros, campanhas, elegibilidade e métricas | planejado |
+| Payments Infrastructure | adapters de assinatura/checkout/refund/webhook | planejado e não autorizado para integração |
+| Ads Infrastructure | provider de disponibilidade/carregamento/exibição | planejado e não autorizado para integração |
+
+### Dependências permitidas
+
+`Run Tracking` não depende dos demais domínios. `Run Finalization` depende do
+tracking e da persistência local, mas apenas cria trabalho para
+`Expedition Processing`. O relatório lê resultados; não os concede. Commercial,
+Payments e Ads nunca são dependências de tracking/finalização.
+
+### Evolução segura
+
+1. preservar formatos e leitura atuais;
+2. extrair orquestração de `MapScreen` sem alterar o pipeline de GPS;
+3. evoluir a fila existente com versão/status/resultado por módulo;
+4. adaptar resumo e detalhe ao contrato;
+5. remover caminhos legados apenas após inventário, migração e rollback.
+
+Para providers e reuso, consultar
+`docs/architecture/portability-and-reuse.md`.

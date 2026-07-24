@@ -1,5 +1,8 @@
 # Fluxos de Usuário
 
+Regra transversal: a atividade é um fluxo de registro seguro; o gameplay
+principal começa depois do salvamento, no Relatório da Expedição.
+
 ## 0. Onboarding
 
 1. Usuario novo autenticado abre o app sem corrida ativa preservada.
@@ -59,22 +62,38 @@
 3. App mostra feedback de inicio e evita duplo clique.
 4. App explica/solicita background location e notificacao quando necessario, sem bloquear o app inteiro se forem negadas.
 5. App comeca a coletar pontos GPS.
-6. App mostra tempo, distancia e rota.
+6. App mostra tempo, distância, pace, estado, GPS crítico e controles; mapa/rota é
+   opcional.
 7. App mantem estado de corrida ativa em `wayper:activeRun:v2`.
+8. Território, parceiros, recompensas e promoções não exigem interação.
 
 ## 6. Finalizar corrida
 
 1. Usuário toca em finalizar.
 2. App marca fluxo de finalizacao e impede duplo encerramento.
-3. App para coleta de localização e remove notificacao/foreground service ao concluir.
-4. App consolida métricas finais a partir de `trustedPath`, `renderPath` e `segments`.
-5. App valida corrida mínima.
-6. App salva corrida finalizada localmente em `runs` por `sync.saveLocalRun()`/`RunRepository`.
-7. App calcula XP/conquistas locais depois da corrida salva.
-8. Se for corrida por zonas, app preserva captura territorial local quando existir.
-9. App enfileira sync remoto posterior por `runSyncQueueService`.
-10. App mostra resumo.
-11. Se Firestore falhar, a corrida segue no historico local como pendente/falha de sync.
+3. App congela o snapshot canônico final e encerra a coleta com timeout controlado.
+4. App consolida métricas mínimas de `trustedPath`, `renderPath` e `segments`.
+5. App valida e persiste localmente o registro mínimo em `runs`.
+6. App confirma que a corrida está finalizada antes de limpar a sessão ativa.
+7. App devolve confirmação à interface.
+8. App cria/atualiza tarefas persistentes de processamento da Expedição.
+9. Território, XP, ranking, conquistas e sync executam depois e podem falhar
+   independentemente.
+10. App abre o resumo atual; futuramente ele será o Relatório da Expedição.
+11. Se Firestore falhar, a corrida segue no histórico local e os estados pendentes
+   permanecem recuperáveis.
+
+## 6.1 Relatório da Expedição
+
+1. Usuário chega ao relatório após a confirmação do save ou o reabre no histórico.
+2. Métricas físicas disponíveis aparecem imediatamente.
+3. Cada módulo carrega seu estado persistido: processando, pronto, falha
+   recuperável, falha permanente ou não aplicável.
+4. Território, progressão, ranking, desafio e recompensa atualizam sem bloquear os
+   demais.
+5. Usuário pode pular/fechar o relatório sem perder processamento ou resultado.
+6. Replay, exportação e share usam apenas dados já disponíveis.
+7. Reabrir o relatório mostra o mesmo estado e retoma trabalhos elegíveis.
 
 ## 7. Visualizar mapa
 

@@ -1,5 +1,10 @@
 # Corrida por zonas
 
+Pela direção vigente desde 2026-07-24, a zona é consequência da atividade. A
+captura definitiva acontece depois do salvamento mínimo e sua descoberta é
+primariamente pós-corrida. Preview/mapa durante a atividade é opcional e não pode
+exigir que o usuário procure territórios na tela.
+
 A captura de zonas parte dos pontos aceitos pelo tracking, ja filtrados por precisao, saltos de GPS, velocidade impossivel e pausas. Pausas viram segmentos separados; a rota visual salva usa `LineString` ou `MultiLineString` para nao desenhar uma ponte falsa entre trechos.
 
 ## Como a rota vira zona

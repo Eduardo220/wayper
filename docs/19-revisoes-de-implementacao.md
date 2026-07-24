@@ -32,6 +32,54 @@ Classificação: Alinhado | Parcialmente alinhado | Desalinhado
 ### Ações recomendadas
 ```
 
+## 2026-07-24 - Revisão da direção oficial
+
+### Documentos consultados
+
+README, fontes, visão, roadmap, backlog, arquitetura, dados, fluxos, padrões, ADRs,
+design, negócio, deploy, testes, bugs, IA, corrida, background, offline,
+diagnóstico, Sentry, zonas, ranking, replay, share e finalização.
+
+### Arquivos analisados
+
+`MapScreen`, tracking canônico/headless, recovery, notificação, sync, repositories,
+fila pós-corrida, território, progressão, ranking, resumo, detalhe, replay, share,
+social e diagnósticos. A referência `main` foi consultada sem alteração.
+
+### Resultado
+
+Classificação: Parcialmente alinhado
+
+### Problemas encontrados
+
+- UX ativa ainda centraliza mapa/captura;
+- finalização ainda é orquestrada no componente;
+- pós-corrida fragmentado e sem contrato persistente;
+- documentação histórica contradizia produto e código;
+- não há flags/entitlements/providers comerciais.
+
+### Riscos
+
+Validação física pendente, bug de reentrada/finalização, caminhos legados e regra
+territorial divergente.
+
+### Melhorias sugeridas
+
+Seguir as fases do roadmap: segurança, finalização/pipeline, modo foco, relatório,
+retenção, planos e somente depois ecossistema comercial.
+
+### Documentação atualizada
+
+- `AGENTS.md`
+- `docs/product/`
+- `docs/architecture/`
+- documentos operacionais e históricos afetados.
+
+### Ações recomendadas
+
+Não alterar produção antes de concluir a matriz física da Fase C e desenhar o
+contrato incremental da Fase D.
+
 ## 2026-06-03 - Revisao da corrida offline com sincronizacao automatica
 
 ### Documentos consultados

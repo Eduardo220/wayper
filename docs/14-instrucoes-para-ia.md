@@ -4,7 +4,15 @@ Use este arquivo como fonte para configurar o Project/GPT do Wayper.
 
 ## Contexto
 
-O Wayper é um app mobile de corrida gamificado. Usuários registram rotas reais, conquistam zonas no mapa, competem em rankings e acompanham evolução.
+A Wayper é uma plataforma mobile de exercício físico gamificada.
+
+> A Wayper transforma exercício físico em uma aventura contínua. Durante a
+> atividade, o usuário apenas corre. Depois da atividade, descobre tudo o que
+> conquistou.
+
+Regra obrigatória: **a corrida é a ação; o pós-corrida é o jogo**. Durante a
+atividade, tracking e segurança dominam. Território, progressão, competição,
+recompensa e negócio aparecem principalmente depois.
 
 ## Branches
 
@@ -14,11 +22,13 @@ O Wayper é um app mobile de corrida gamificado. Usuários registram rotas reais
 ## Prioridade de fontes
 
 1. Código atual do repositório na branch `develop`.
-2. Código estável da branch `main`, quando a pergunta for sobre produção.
+2. Código da branch `main`, somente como referência estável.
 3. `README.md`.
 4. Arquivos em `/docs`.
-5. Issues e PRs.
-6. Conhecimento geral, apenas quando faltar informação no projeto.
+5. ADRs e decisões técnicas.
+6. Issues e PRs.
+7. Planos locais.
+8. Conversas e anotações externas.
 
 ## Protocolo Obsidian como mente do projeto
 
@@ -34,7 +44,12 @@ O Obsidian e os arquivos Markdown em `/docs` funcionam como a memoria viva do Wa
 
 ### Arquivos para consultar sempre
 
+- `AGENTS.md`
 - `docs/00-fontes-do-projeto.md`
+- `docs/product/README.md`
+- `docs/product/10-decisoes-aprovadas.md`
+- `docs/product/11-hipoteses-em-avaliacao.md`
+- `docs/product/12-criterios-para-novas-features.md`
 - `docs/14-instrucoes-para-ia.md`
 - `docs/24-resumo-rodada-local-first.md`
 - `docs/13-bugs-conhecidos.md`
@@ -87,7 +102,12 @@ Consulte tambem docs de dominio conforme a tarefa: roadmap, backlog, modelo de d
 
 ### Convencao de status
 
-Use estes status em bugs, ideias, propostas, decisoes e docs de acompanhamento:
+Para ideias e decisões de produto, use os estados normativos: `APROVADA`,
+`APROVADA_CONCEITUALMENTE`, `PLANEJADA`, `EM_VALIDACAO`, `IMPLEMENTADA`,
+`PARCIALMENTE_IMPLEMENTADA`, `DESCARTADA` ou `BLOQUEADA`.
+
+Arquivos operacionais históricos também usam os estados abaixo. Ao atualizá-los,
+registre a equivalência sem apagar contexto anterior:
 
 - `AGUARDANDO_VALIDAÇÃO_EDU`: sugestao registrada; Eduardo ainda nao decidiu.
 - `APROVADO`: Eduardo aprovou a proposta ou decisao.
@@ -227,6 +247,19 @@ Quando responder sobre o Wayper:
 - Nao adicionar SQLite sem ADR, medicao e plano incremental.
 - Nao afirmar que background/tela bloqueada esta 100% validado sem teste fisico Android dev/release.
 - Nao afirmar que stories, XP/conquistas ou territorio ja possuem sync remoto completo enquanto os contratos forem futuros.
+- Não tornar Firestore obrigatório para iniciar, acompanhar, finalizar, salvar ou
+  recuperar atividade.
+- Não executar processamento pesado no caminho crítico do GPS.
+- Não acoplar lógica crítica de tracking/finalização a componente montado.
+- Não segurar finalização por território, XP, ranking, recompensa, anúncio,
+  replay, exportação, share ou sync.
+- Não mostrar anúncio, parceiro, upgrade ou recompensa durante atividade,
+  recuperação ou finalização.
+- Evoluir a fila pós-corrida existente em vez de criar pipeline paralelo.
+- Tratar Plus como valor por entitlement; Pro e integrações comerciais não estão
+  autorizados apenas por serem hipóteses documentadas.
+- Gateway, ads, mapa e backend são adapters; nenhum pertence ao tracking.
+- Recompensa é concedida pelo domínio, nunca por componente visual.
 - Nao alterar ou commitar `docs/.obsidian/workspace.json`, `docs/.obsidian/graph.json` ou arquivos com apenas ruído de line-ending.
 
 ## Prompt base obrigatorio para IA/Codex
@@ -241,8 +274,12 @@ Antes de implementar qualquer coisa:
 6. Preserve padrao visual, arquitetura, nomenclatura e estrutura atual.
 7. Nao remova funcionalidades existentes sem justificar.
 8. Nao dependa obrigatoriamente de Firestore nos fluxos local-first.
-9. Atualize docs/ADRs quando criar ou consolidar decisao tecnica importante.
-10. Ao final, entregue resumo, arquivos alterados, decisoes, testes, riscos e como testar manualmente.
+9. Preserve a regra: a corrida e a acao; o pos-corrida e o jogo.
+10. Nao bloqueie o save minimo por processamento derivado.
+11. Atualize docs/ADRs quando criar ou consolidar decisao tecnica importante.
+12. Trabalhe em fases pequenas, verificaveis e reversiveis.
+13. Ao final, entregue diagnostico, arquivos, decisoes, testes reais, riscos,
+    validacoes fisicas pendentes e proximo commit.
 ```
 
 ## Estilo de implementação

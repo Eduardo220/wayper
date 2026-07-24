@@ -17,14 +17,19 @@ Antes de implementar qualquer coisa:
 7. Preserve padrao visual, arquitetura, nomenclatura e estrutura atual.
 8. Nao dependa obrigatoriamente de Firestore nos fluxos local-first.
 9. Nao reative runService.js, zones legado, xpService ou MedalsWidget como fonte oficial.
-10. Documente decisoes importantes e rode testes antes de concluir.
+10. Preserve: a corrida e a acao; o pos-corrida e o jogo.
+11. Nao bloqueie save minimo com processamento derivado.
+12. Documente decisoes importantes e rode testes antes de concluir.
 ```
 
 Para a rodada consolidada em 2026-06-19, consulte tambem `docs/24-resumo-rodada-local-first.md`.
 
 ## Como usar
 
-Use estes prompts com Codex, Claude ou GPT quando precisar evoluir a Wayper. Antes de executar qualquer prompt, informe que `docs/wayper` é a fonte de verdade e peça para a IA ler [[00-index]].
+Use estes prompts com Codex, Claude ou GPT quando precisar evoluir a Wayper. Antes
+de executar qualquer prompt, peça para ler `AGENTS.md`,
+`docs/00-fontes-do-projeto.md`, `docs/product/README.md` e [[00-index]]. O código
+de `develop` é a primeira fonte do comportamento implementado.
 
 ## Revisar arquitetura
 

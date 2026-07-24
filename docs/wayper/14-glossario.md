@@ -1,5 +1,26 @@
 # Glossário
 
+## Expedição
+
+Representação da atividade salva e de seus resultados derivados. O processamento
+pode completar território, progressão, ranking, desafios e recompensas de forma
+parcial e retomável.
+
+## Relatório da Expedição
+
+Experiência pós-corrida modular, persistente e reabrível que apresenta métricas,
+rota e resultados da Expedição sem bloquear o salvamento.
+
+## Entitlement
+
+Capability concedida por plano, promoção ou papel, resolvida centralmente e com
+fallback offline. Não altera tracking ou acesso aos dados essenciais.
+
+## Parceiro
+
+Participante opcional da experiência por campanha, desafio, evento ou recompensa.
+Não aborda o usuário durante a atividade.
+
 ## Território
 
 Área do mapa conquistada pelo usuário a partir de uma atividade real com GPS válido. Pode ser representado por células, zonas, polígonos ou outra estratégia ainda pendente.

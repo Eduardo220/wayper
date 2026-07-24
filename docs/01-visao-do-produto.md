@@ -6,35 +6,50 @@ Wayper
 
 ## Descrição curta
 
-O Wayper é um aplicativo mobile de corrida gamificado em que usuários registram rotas reais, conquistam zonas no mapa, competem por território e acompanham evolução física e estratégica.
+A Wayper é uma plataforma mobile de exercício físico gamificada em que a
+atividade acontece no mundo real e a principal experiência de descoberta acontece
+depois dela.
+
+> A Wayper transforma exercício físico em uma aventura contínua. Durante a
+> atividade, o usuário apenas corre. Depois da atividade, descobre tudo o que
+> conquistou.
+
+Regra central: **a corrida é a ação; o pós-corrida é o jogo**.
 
 ## Problema
 
-Muitos aplicativos de corrida focam apenas em tempo, distância, ritmo e histórico. Isso pode funcionar para atletas disciplinados, mas deixa a experiência repetitiva para usuários casuais ou competitivos que precisam de motivação visual, social e progressiva.
+Aplicativos convencionais registram métricas, enquanto experiências gamificadas
+frequentemente exigem atenção ao celular. A Wayper precisa oferecer motivação
+física, estratégica e social sem comprometer segurança, confiança ou foco durante
+o exercício.
 
 ## Solução
 
-Transformar corridas reais em uma disputa territorial no mapa da cidade. Cada trajeto pode expandir áreas conquistadas, alimentar rankings, desbloquear conquistas e incentivar exploração urbana.
+Registrar a atividade de forma local-first e resiliente e, depois do salvamento,
+revelar desempenho, rota, territórios, progressão, competição e recompensas no
+Relatório da Expedição.
 
 ## Público-alvo
 
-- Corredores iniciantes que precisam de motivação.
-- Corredores casuais que gostam de competição.
+- Pessoas fisicamente ativas que buscam motivação.
+- Corredores iniciantes, casuais e avançados.
 - Pessoas que gostam de gamificação.
 - Usuários que exploram bairros, parques e rotas urbanas.
 - Grupos de amigos que desejam competir de forma saudável.
 
 ## Proposta de valor
 
-Correr deixa de ser apenas exercício registrado e passa a ser uma experiência de conquista, progressão e disputa estratégica.
+Exercício deixa de ser apenas dado registrado e se torna uma aventura contínua,
+sem obrigar o usuário a olhar o celular durante a atividade.
 
 ## Pilares do produto
 
-1. **Corrida real**: rastreamento por GPS e métricas úteis.
-2. **Conquista territorial**: zonas no mapa associadas às rotas.
-3. **Competição saudável**: ranking, progresso e disputa.
-4. **Exploração urbana**: incentivo a conhecer novas áreas.
-5. **Gamificação**: metas, conquistas, evolução e feedback visual.
+1. **Atividade confiável**: GPS, métricas, background, offline e recuperação.
+2. **Descoberta pós-corrida**: Relatório da Expedição modular e reabrível.
+3. **Conquista territorial**: consequência silenciosa do movimento real.
+4. **Progressão e competição**: evolução física e estratégica.
+5. **Exploração e comunidade**: desafios e experiências seguras.
+6. **Negócio respeitoso**: assinatura por valor e parceiros fora da corrida.
 
 ## Métricas de sucesso
 
@@ -45,6 +60,10 @@ Correr deixa de ser apenas exercício registrado e passa a ser uma experiência 
 - Participação em rankings.
 - Tempo médio por sessão.
 - Taxa de conclusão de corridas iniciadas.
+- Taxa de atividades salvas com sucesso.
+- Relatórios abertos e reabertos.
+- Processamentos derivados concluídos/recuperados.
+- Retenção e conversão para Plus quando implementado.
 
 ## Premissas atuais
 

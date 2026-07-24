@@ -2,7 +2,9 @@
 
 ## Objetivo visual
 
-O Wayper deve parecer um app esportivo, competitivo e moderno, com foco em mapa, progresso social e sensacao de conquista.
+O Wayper deve parecer uma plataforma esportiva, competitiva e moderna. Durante a
+atividade, o foco visual é calma, legibilidade e segurança; depois dela, descoberta
+e sensação de conquista.
 
 ## Telas principais
 
@@ -13,6 +15,7 @@ O Wayper deve parecer um app esportivo, competitivo e moderno, com foco em mapa,
 | Home/Menu | Ser a entrada social do app, com stories, amigos recentes, feed de atividades e acoes rapidas discretas. |
 | Corrida | Iniciar, acompanhar e finalizar corrida. |
 | Mapa | Visualizar localizacao e zonas. |
+| Relatório da Expedição | Revelar métricas, trajeto, territórios, progressão e resultados parciais. |
 | Ranking | Comparar progresso com outros usuarios. |
 | Perfil | Ver dados, estatisticas e conquistas. |
 | Dashboard | Ver estatisticas pessoais, XP, territorio, ranking e sync. |
@@ -35,7 +38,8 @@ O Wayper deve parecer um app esportivo, competitivo e moderno, com foco em mapa,
 - Lista de ranking.
 - Mapa com poligonos de zonas.
 - Linha de rota.
-- Modal de resumo da corrida.
+- Painel ativo mínimo com tempo, distância, pace, estado, GPS crítico e controles.
+- Relatório modular da Expedição, evoluindo o resumo atual.
 - Alertas de permissao/localizacao.
 - Central de diagnostico em Configuracoes.
 
@@ -66,6 +70,11 @@ Estados esperados:
 - Na Home, a acao principal deve ser compacta: continuar corrida preservada ou abrir o mapa para iniciar uma nova.
 - Home deve priorizar stories/feed social; estatisticas pessoais ficam em Perfil/Dashboard.
 - Tela de corrida nao pode ser confusa.
+- Modo foco é a experiência ativa padrão; mapa deve ser opcional.
+- Durante corrida não há promoção, anúncio, parceiro, recompensa, missão ou
+  upgrade.
+- Controles de pausa/finalização mantêm área de toque segura e proteção contra
+  toque acidental.
 - Feedback de GPS deve ser claro.
 - Nao esconder erro tecnico atras de mensagem generica inutil.
 - Ranking deve mostrar posicao do usuario.
@@ -87,6 +96,9 @@ Toda tela relevante deve prever:
 - Na Home: sem stories, sem amigos, sem feed, offline/cache, usuario novo, sem corridas para postar e story local pendente de sync.
 - Em Diagnostico: sem logs, export em andamento, export concluido, falha parcial de secao, dados mascarados por privacidade.
 - Em Onboarding/permissoes: educacao antes do pedido, permissao bloqueada com acao de configuracoes e permissao opcional negada como limitacao.
+- No Relatório da Expedição: `pending`, `processing`, `ready`,
+  `failed_retryable`, `failed_permanent` e `not_applicable` por módulo, sem
+  bloquear o conjunto.
 
 Padrao visual:
 
@@ -117,3 +129,4 @@ assets/screens/group.png
 - Definir componentes base.
 - Definir estados visuais das zonas.
 - Criar wireframes atualizados para telas futuras.
+- Criar wireframes do modo foco e do Relatório da Expedição antes da implementação.
