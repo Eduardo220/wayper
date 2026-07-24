@@ -32,6 +32,7 @@ let lastStatusKey = "";
 let lastNativeUpdateAt = 0;
 let updateTimer = null;
 let unsubscribeSnapshots = null;
+let notificationStartInFlight = null;
 
 function reportNotificationCoordinatorFailure(event, error, extra = {}) {
   logger.error(LOG_CATEGORIES.NOTIFICATION, event, {
@@ -163,9 +164,9 @@ export function buildRunNotificationPayloadFromSnapshot(snapshot = {}, nowMs = D
 
 function getPayloadKey(payload = {}) {
   return [
-    payload.elapsedTimeSeconds,
-    Math.round(toNumber(payload.distanceKm, 0) * 1000),
+    Math.round(toNumber(payload.distanceKm, 0) * 100),
     payload.isPaused ? "paused" : "running",
+    payload.status || "",
   ].join(":");
 }
 
@@ -361,6 +362,20 @@ export async function configureRunNotificationActions() {
 }
 
 export async function startRunNotification(payload = {}, options = {}) {
+  if (notificationStartInFlight) return notificationStartInFlight;
+
+  const operation = startRunNotificationInternal(payload, options);
+  notificationStartInFlight = operation;
+  try {
+    return await operation;
+  } finally {
+    if (notificationStartInFlight === operation) {
+      notificationStartInFlight = null;
+    }
+  }
+}
+
+async function startRunNotificationInternal(payload = {}, options = {}) {
   const nativeModule = getNativeModule();
   if (!isRunNotificationSupported() || !nativeModule) {
     logger.warn(LOG_CATEGORIES.NOTIFICATION, "RUN_NOTIFICATION_UNSUPPORTED", {
@@ -424,13 +439,25 @@ export async function updateRunNotification(payload = {}, options = {}) {
   }
 
   if (typeof nativeModule.updateRunNotification !== "function") return false;
-  await nativeModule.updateRunNotification(normalized);
-  getTrackingService().setRunRuntimeSurfaceState?.({
-    notificationStatus: "active",
-  });
+  const previousPayloadKey = lastPayloadKey;
+  const previousStatusKey = lastStatusKey;
+  const previousNativeUpdateAt = lastNativeUpdateAt;
   lastPayloadKey = key;
   lastStatusKey = getStatusKey(normalized);
   lastNativeUpdateAt = Date.now();
+  try {
+    await nativeModule.updateRunNotification(normalized);
+  } catch (error) {
+    if (lastPayloadKey === key) {
+      lastPayloadKey = previousPayloadKey;
+      lastStatusKey = previousStatusKey;
+      lastNativeUpdateAt = previousNativeUpdateAt;
+    }
+    throw error;
+  }
+  getTrackingService().setRunRuntimeSurfaceState?.({
+    notificationStatus: "active",
+  });
   logger.debug(LOG_CATEGORIES.NOTIFICATION, "RUN_NOTIFICATION_UPDATED", {
     status: normalized.status,
     isPaused: normalized.isPaused,
@@ -441,6 +468,9 @@ export async function updateRunNotification(payload = {}, options = {}) {
 }
 
 export async function stopRunNotification() {
+  if (notificationStartInFlight) {
+    await notificationStartInFlight.catch(() => false);
+  }
   clearUpdateTimer();
   lastPayloadKey = "";
   lastStatusKey = "";
@@ -478,10 +508,12 @@ async function runNotificationActionThroughRuntime(action) {
   const normalizedAction = String(action || "").toLowerCase();
   const trackingService = getTrackingService();
   const runtimeService = await getRuntimeService();
+  const currentSnapshot = await trackingService.getActiveRunSnapshot?.().catch(() => null);
   runtimeService.recordNotificationAction?.(normalizedAction, {
     source: "notification_action_handler",
   });
   const result = await runtimeService.hydrateActiveRunFromRuntime?.(`notification_action:${normalizedAction}`, {
+    userId: currentSnapshot?.userId,
     restartTracking: true,
     forceNotification: true,
   });
@@ -662,6 +694,7 @@ export function __resetRunNotificationServiceForTests() {
   lastPayloadKey = "";
   lastStatusKey = "";
   lastNativeUpdateAt = 0;
+  notificationStartInFlight = null;
   nativeModuleOverride = null;
   trackingServiceOverride = null;
   runtimeServiceOverride = null;

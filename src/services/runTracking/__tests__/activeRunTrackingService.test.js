@@ -584,6 +584,27 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
   });
 
+  test("runtime deriva usuario do snapshot ao reconciliar acao sem sessao de UI", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-runtime-derived-user",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+    await service.flushPendingActiveRunCheckpoint({ reason: "test", force: true });
+
+    service.__resetActiveRunRuntimeForTests();
+    const result = await runtimeService.hydrateActiveRunFromRuntime("notification_action:pause", {
+      restartTracking: false,
+    });
+
+    expect(result.snapshot).toMatchObject({
+      activeRunId: "run-runtime-derived-user",
+      userId: "user-1",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+    });
+  });
+
   test("runtime nao retorna IDLE quando ha evidencia ativa sem snapshot legivel", async () => {
     service.setRunRuntimeSurfaceState({
       backgroundTaskStatus: "started",

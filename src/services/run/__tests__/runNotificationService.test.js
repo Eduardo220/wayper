@@ -98,6 +98,7 @@ function runningSnapshot(mode = "free", distanceMeters = 1420) {
   return {
     activeRunId: `run_${mode}`,
     id: `run_${mode}`,
+    userId: "user-1",
     mode,
     status: "RUNNING",
     startedAtMs: BASE_TIME,
@@ -235,6 +236,7 @@ describe("run notification service", () => {
       source: "notification_action_handler",
     }));
     expect(runtimeService.hydrateActiveRunFromRuntime).toHaveBeenCalledWith("notification_action:pause", expect.objectContaining({
+      userId: "user-1",
       restartTracking: true,
       forceNotification: true,
     }));
@@ -268,6 +270,7 @@ describe("run notification service", () => {
       source: "notification_action_handler",
     }));
     expect(runtimeService.hydrateActiveRunFromRuntime).toHaveBeenCalledWith("notification_action:resume", expect.objectContaining({
+      userId: "user-1",
       restartTracking: true,
       forceNotification: true,
     }));
@@ -408,6 +411,33 @@ describe("run notification service", () => {
     expect(stopA).toBe(stopB);
     expect(trackingService.onActiveRunSnapshot).toHaveBeenCalledTimes(1);
     expect(listeners.size).toBe(1);
+  });
+
+  test("coalesce inicializacoes concorrentes e deixa segundos para o ticker nativo", async () => {
+    let releaseStart;
+    nativeModule.startRunNotification.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseStart = resolve;
+    }));
+
+    const first = service.startRunNotification({
+      elapsedTimeSeconds: 10,
+      distanceKm: 1.421,
+    }, { scheduleTimer: false });
+    const second = service.startRunNotification({
+      elapsedTimeSeconds: 11,
+      distanceKm: 1.424,
+    }, { scheduleTimer: false });
+
+    await flushPromises();
+    expect(nativeModule.startRunNotification).toHaveBeenCalledTimes(1);
+    releaseStart(true);
+    await Promise.all([first, second]);
+
+    await service.updateRunNotification({
+      elapsedTimeSeconds: 12,
+      distanceKm: 1.424,
+    });
+    expect(nativeModule.updateRunNotification).not.toHaveBeenCalled();
   });
 
   test("recovery de corrida pausada restaura notificacao pausada", async () => {

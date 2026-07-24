@@ -107,6 +107,7 @@ function summarizeOfflineRun(run = null) {
   if (!run) return null;
   return {
     localRunId: run.localRunId || null,
+    userId: run.userId || null,
     status: run.status || null,
     syncStatus: run.syncStatus || null,
     pointsCount: Array.isArray(run.points) ? run.points.length : 0,
@@ -138,6 +139,7 @@ function buildRuntimeSnapshot({
     runId: normalized?.activeRunId || offlineRun?.localRunId || null,
     activeRunId: normalized?.activeRunId || null,
     localRunId: normalized?.localRunId || offlineRun?.localRunId || null,
+    userId: normalized?.userId || offlineRun?.userId || null,
     status: toRuntimeStatus(normalized, offlineRun?.status || ACTIVE_RUN_STATUS.IDLE),
     startedAt: normalized?.startedAt || offlineRun?.startedAt || null,
     updatedAt: normalized?.lastUpdatedAt || offlineRun?.updatedAt || null,
@@ -345,7 +347,12 @@ export async function reconcileActiveRunState(reason = "runtime", options = {}) 
     }
 
     try {
-      const userId = options.userId || "offline";
+      const userId =
+        options.userId ||
+        before.userId ||
+        before.offlineRun?.userId ||
+        lastKnownActiveSnapshot?.userId ||
+        "offline";
       const recovery = await findRecoverableRunForUser(userId, {
         reason: normalizedReason,
       });
