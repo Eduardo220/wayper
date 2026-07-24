@@ -14,6 +14,7 @@ import {
   buildRunDataFromActiveSnapshot,
   normalizeActiveRunSnapshot,
 } from "../runTracking/activeRunState.js";
+import activeRunTrackingService from "../runTracking/activeRunTrackingService.js";
 import { buildSummaryRenderPath, sanitizeRunPath } from "../runTracking/index.js";
 import logger, { LOG_CATEGORIES } from "../../utils/logger.js";
 import {
@@ -298,17 +299,10 @@ export function createRecoveryCandidate(source, run = {}, options = {}) {
 
 async function getActiveRunSnapshot() {
   try {
-    const module = await import("../runTracking/activeRunTrackingService.js");
-    const service = module.default || module;
-    return service.getActiveRunSnapshot?.() || null;
+    return await activeRunTrackingService.getActiveRunSnapshot?.() || null;
   } catch {
     return null;
   }
-}
-
-async function getTrackingService() {
-  const module = await import("../runTracking/activeRunTrackingService.js");
-  return module.default || module;
 }
 
 function candidateUpdatedAtMs(candidate = {}) {
@@ -541,7 +535,7 @@ export async function hydrateRecoverableRunCandidate(candidate = {}, options = {
   }
 
   try {
-    const service = await getTrackingService();
+    const service = options.trackingService || activeRunTrackingService;
 
     if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) {
       const restored = await service.restoreActiveRun?.({
@@ -653,13 +647,18 @@ export async function persistFinishedRunDraft(runData = {}, options = {}) {
 
 export async function markRecoveredRunLocallySaved(options = {}) {
   try {
-    const service = await getTrackingService();
+    const service = options.trackingService || activeRunTrackingService;
+    if (typeof service?.markActiveRunLocallySaved !== "function") {
+      const error = new Error("active run cleanup dependency is unavailable");
+      error.code = "ACTIVE_RUN_CLEANUP_DEPENDENCY_MISSING";
+      throw error;
+    }
     const expectedRunId = options.expectedRunId || options.runId || options.localRunId || null;
-    const canonicalCleared = await service.markActiveRunLocallySaved?.({
+    const canonicalCleared = await service.markActiveRunLocallySaved({
       expectedRunId,
       reason: options.reason || "local_run_saved",
     });
-    if (canonicalCleared === false) {
+    if (canonicalCleared !== true) {
       const error = new Error("canonical active run cleanup was not confirmed");
       error.code = "ACTIVE_RUN_CLEANUP_NOT_CONFIRMED";
       throw error;
@@ -781,9 +780,7 @@ export function buildRunDataFromRecoveredRun(candidate = {}, overrides = {}) {
 export async function discardRecoveredRun(candidate = {}) {
   try {
     if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) {
-      const module = await import("../runTracking/activeRunTrackingService.js");
-      const service = module.default || module;
-      await service.cancelActiveRun?.({ reason: "discard_recovery" });
+      await activeRunTrackingService.cancelActiveRun?.({ reason: "discard_recovery" });
     }
     if (!candidate.source || candidate.source === RUN_RECOVERY_SOURCE.OFFLINE) {
       await clearActiveRun();

@@ -227,15 +227,20 @@ export function buildMinimumSavedRun(runData = {}, options = {}) {
   };
 }
 
-async function resolveFreezeDependencies(options = {}) {
-  const [trackingModule, checkpointModule] = await Promise.all([
-    options.trackingService ? null : import("../runTracking/activeRunTrackingService.js"),
-    options.flushCheckpoint ? null : import("./runAutoSaveService.js"),
-  ]);
-  return {
-    trackingService: options.trackingService || trackingModule?.default,
-    flushCheckpoint: options.flushCheckpoint || checkpointModule?.flushActiveRunCheckpoint,
-  };
+function resolveFreezeDependencies(options = {}) {
+  const trackingService = options.trackingService || null;
+  const flushCheckpoint = options.flushCheckpoint || null;
+  if (
+    typeof trackingService?.markActiveRunFinishing !== "function" ||
+    typeof trackingService?.finishActiveRun !== "function" ||
+    typeof flushCheckpoint !== "function"
+  ) {
+    throw makeFinalizationError("RUN_FINALIZATION_DEPENDENCIES_MISSING", {
+      stage: "resolve_freeze_dependencies",
+      recoverable: true,
+    });
+  }
+  return { trackingService, flushCheckpoint };
 }
 
 export async function freezeActiveRunForFinalization(options = {}) {
@@ -339,24 +344,26 @@ export async function freezeActiveRunForFinalization(options = {}) {
   };
 }
 
-async function resolvePersistenceDependencies(options = {}) {
-  const [syncModule, recoveryModule] = await Promise.all([
-    options.saveLocalRun && options.findLocalRunById && options.scheduleRunsSync
-      ? null
-      : import("../../utils/sync.js"),
-    options.persistFinishedRunDraft && options.markRecoveredRunLocallySaved
-      ? null
-      : import("./runRecoveryService.js"),
-  ]);
-  return {
-    saveLocalRun: options.saveLocalRun || syncModule?.saveLocalRun,
-    findLocalRunById: options.findLocalRunById || syncModule?.findLocalRunById,
-    scheduleRunsSync: options.scheduleRunsSync || syncModule?.scheduleRunsSync,
-    persistFinishedRunDraft:
-      options.persistFinishedRunDraft || recoveryModule?.persistFinishedRunDraft,
-    markRecoveredRunLocallySaved:
-      options.markRecoveredRunLocallySaved || recoveryModule?.markRecoveredRunLocallySaved,
+function resolvePersistenceDependencies(options = {}) {
+  const dependencies = {
+    saveLocalRun: options.saveLocalRun || null,
+    findLocalRunById: options.findLocalRunById || null,
+    scheduleRunsSync: options.scheduleRunsSync || null,
+    persistFinishedRunDraft: options.persistFinishedRunDraft || null,
+    markRecoveredRunLocallySaved: options.markRecoveredRunLocallySaved || null,
   };
+  if (
+    typeof dependencies.saveLocalRun !== "function" ||
+    typeof dependencies.findLocalRunById !== "function" ||
+    typeof dependencies.persistFinishedRunDraft !== "function" ||
+    typeof dependencies.markRecoveredRunLocallySaved !== "function"
+  ) {
+    throw makeFinalizationError("RUN_FINALIZATION_DEPENDENCIES_MISSING", {
+      stage: "resolve_persistence_dependencies",
+      recoverable: true,
+    });
+  }
+  return dependencies;
 }
 
 async function persistMinimumFinishedRunInternal(runData = {}, options = {}) {
@@ -561,10 +568,15 @@ export async function enqueuePostRunProcessing(savedRun = {}, options = {}) {
   const source = options.source || "runFinalizationService";
   const screen = options.screen || null;
   const timeouts = { ...RUN_FINALIZATION_TIMEOUTS, ...(options.timeouts || {}) };
-  const queueRepository = options.queueRepository ||
-    (await import("../../repositories/runDeferredTaskQueueRepository.js")).default;
+  const queueRepository = options.queueRepository || null;
 
   try {
+    if (typeof queueRepository?.enqueuePostRun !== "function") {
+      throw makeFinalizationError("RUN_FINALIZATION_DEPENDENCIES_MISSING", {
+        stage: "resolve_queue_dependencies",
+        recoverable: true,
+      });
+    }
     const result = await withTimeout(
       () => queueRepository.enqueuePostRun(savedRun, {
         userId: options.userId || savedRun.userId || "offline",

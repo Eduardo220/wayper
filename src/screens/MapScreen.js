@@ -69,6 +69,7 @@ import {
 } from "../services/runTracking/activeRunRuntimeService.js";
 import {
   checkpointOnLocationError,
+  flushActiveRunCheckpoint,
   forceCheckpointForAppState,
 } from "../services/run/runAutoSaveService.js";
 import {
@@ -78,6 +79,8 @@ import {
   hydrateRecoverableRunCandidate,
   isFinishedRecovery,
   isLiveRecovery,
+  markRecoveredRunLocallySaved,
+  persistFinishedRunDraft,
 } from "../services/run/runRecoveryService.js";
 import {
   enqueuePostRunProcessing,
@@ -144,6 +147,25 @@ import {
   RUN_START_COUNTDOWN_SECONDS,
   RUN_START_COUNTDOWN_TICK_MS,
 } from "../config/runStartConfig.js";
+
+const markRecoveredRunSavedWithoutLazyLoad = (options = {}) =>
+  markRecoveredRunLocallySaved({
+    ...options,
+    trackingService: activeRunTrackingService,
+  });
+
+const RUN_FINALIZATION_FREEZE_DEPENDENCIES = Object.freeze({
+  trackingService: activeRunTrackingService,
+  flushCheckpoint: flushActiveRunCheckpoint,
+});
+
+const RUN_FINALIZATION_PERSISTENCE_DEPENDENCIES = Object.freeze({
+  saveLocalRun: sync.saveLocalRun,
+  findLocalRunById: sync.findLocalRunById,
+  scheduleRunsSync: sync.scheduleRunsSync,
+  persistFinishedRunDraft,
+  markRecoveredRunLocallySaved: markRecoveredRunSavedWithoutLazyLoad,
+});
 
 /* Tunáveis */
 const MAX_GPS_ACCURACY_M = TRACKING_CONFIG.GPS_ACCURACY_HARD_REJECT_M;
@@ -3123,6 +3145,7 @@ const MapScreen = ({ navigation, route }) => {
   const stopRun = useCallback(
     async (opts = {}) => {
       let finishLockAcquired = false;
+      let finishBackgroundStopPromise = null;
       try {
         recordRunEvent("FINISH_PRESSED", {
           runId: currentRunIdRef.current,
@@ -3192,9 +3215,11 @@ const MapScreen = ({ navigation, route }) => {
 
         stopWatcherAndPolling();
         stopElapsedTimer();
+        finishBackgroundStopPromise = Promise.resolve()
+          .then(() => stopBackgroundLocationService());
         runDeferred(
           () => withTimeout(
-            () => stopBackgroundLocationService(),
+            () => finishBackgroundStopPromise,
             FINISH_UI_RELEASE_TIMEOUT_MS,
             "finish_background_stop_timeout"
           ),
@@ -3217,6 +3242,7 @@ const MapScreen = ({ navigation, route }) => {
 
         const finishedAtMs = Date.now();
         const freezeResult = await freezeActiveRunForFinalization({
+          ...RUN_FINALIZATION_FREEZE_DEPENDENCIES,
           runId: currentRunIdRef.current,
           finishedAtMs,
           reason: "finish_pressed",
@@ -3342,6 +3368,7 @@ const MapScreen = ({ navigation, route }) => {
         let savedLocalRun = null;
         try {
           const minimumSaveResult = await persistMinimumFinishedRun(runData, {
+            ...RUN_FINALIZATION_PERSISTENCE_DEPENDENCIES,
             userId: auth.currentUser?.uid || "offline",
             sessionId: stoppedRunSessionId || runId,
             source: "MapScreen",
@@ -3413,6 +3440,7 @@ const MapScreen = ({ navigation, route }) => {
             const currentUser = auth.currentUser || {};
             const emailName = currentUser.email ? currentUser.email.split("@")[0] : null;
             const queueResult = await enqueuePostRunProcessing(savedLocalRun, {
+              queueRepository: runDeferredTaskQueueRepository,
               userId: currentUser.uid || "offline",
               userName: currentUser.displayName || emailName || "Atleta Wayper",
               userAvatar: currentUser.photoURL || null,
@@ -3527,6 +3555,148 @@ const MapScreen = ({ navigation, route }) => {
           error: e,
           screen: "MapScreen",
         });
+        try {
+          let finishFailureSnapshot = null;
+          try {
+            finishFailureSnapshot = await withTimeout(
+              () => activeRunTrackingService.getActiveRunSnapshot?.(),
+              FINISH_UI_RELEASE_TIMEOUT_MS,
+              "finish_failure_snapshot_timeout"
+            );
+          } catch (snapshotError) {
+            recordRunEvent("RUN_FINISH_FAILURE_SNAPSHOT_READ_FAILED", {
+              runId: currentRunIdRef.current,
+              error: snapshotError,
+              timeoutMs: FINISH_UI_RELEASE_TIMEOUT_MS,
+              level: "warn",
+              screen: "MapScreen",
+            });
+          }
+          const finishFailureStatus = String(finishFailureSnapshot?.status || "").toUpperCase();
+          const canRestoreLiveUi = [
+            ACTIVE_RUN_STATUS.STARTING,
+            ACTIVE_RUN_STATUS.RUNNING,
+            ACTIVE_RUN_STATUS.PAUSED,
+            ACTIVE_RUN_STATUS.RECOVERING,
+            ACTIVE_RUN_STATUS.ERROR_RECOVERABLE,
+          ].includes(finishFailureStatus);
+          let recoveryPresented = false;
+
+          if (finishFailureSnapshot?.activeRunId && canRestoreLiveUi) {
+            let backgroundStopTimedOut = false;
+            if (
+              finishFailureStatus === ACTIVE_RUN_STATUS.RUNNING &&
+              finishBackgroundStopPromise
+            ) {
+              try {
+                await withTimeout(
+                  () => finishBackgroundStopPromise,
+                  FINISH_UI_RELEASE_TIMEOUT_MS,
+                  "finish_failure_background_stop_timeout"
+                );
+              } catch (backgroundStopError) {
+                backgroundStopTimedOut = true;
+                recordRunEvent("RUN_FINISH_FAILURE_BACKGROUND_STOP_TIMEOUT", {
+                  runId: finishFailureSnapshot.activeRunId,
+                  error: backgroundStopError,
+                  timeoutMs: FINISH_UI_RELEASE_TIMEOUT_MS,
+                  level: "warn",
+                  screen: "MapScreen",
+                });
+              }
+            }
+            applyActiveRunSnapshotToUi(finishFailureSnapshot, {
+              recovered: true,
+              forceSyncControls: true,
+              source: "finish_failure_restore",
+            });
+            if (backgroundStopTimedOut) {
+              runDeferred(
+                async () => {
+                  await finishBackgroundStopPromise;
+                  const latestSnapshot = await withTimeout(
+                    () => activeRunTrackingService.getActiveRunSnapshot?.(),
+                    FINISH_UI_RELEASE_TIMEOUT_MS,
+                    "finish_failure_late_stop_snapshot_timeout"
+                  );
+                  if (
+                    latestSnapshot?.activeRunId === finishFailureSnapshot.activeRunId &&
+                    String(latestSnapshot.status || "").toUpperCase() === ACTIVE_RUN_STATUS.RUNNING
+                  ) {
+                    await startLocationWatcher();
+                    await startBackgroundLocationService();
+                  }
+                },
+                (backgroundError) => recordRunEvent("RUN_FINISH_FAILURE_RESTORE_BACKGROUND_FAILED", {
+                  runId: finishFailureSnapshot.activeRunId,
+                  error: backgroundError,
+                  level: "warn",
+                  screen: "MapScreen",
+                })
+              );
+            }
+            recordRunSnapshotEvent("RUN_FINISH_FAILURE_STATE_RESTORED", finishFailureSnapshot, {
+              source: "MapScreen",
+              screen: "MapScreen",
+            });
+            recoveryPresented = true;
+          } else {
+            let candidate = null;
+            try {
+              candidate = await withTimeout(
+                () => findRecoverableRunForUser(
+                  auth.currentUser?.uid || finishFailureSnapshot?.userId || "offline",
+                  {
+                    activeSnapshot: finishFailureSnapshot || null,
+                    reason: "finish_failure_terminal_recovery",
+                  }
+                ),
+                FINISH_UI_RELEASE_TIMEOUT_MS,
+                "finish_failure_recovery_timeout"
+              );
+            } catch (recoveryError) {
+              recordRunEvent("RUN_FINISH_FAILURE_RECOVERY_LOOKUP_FAILED", {
+                runId: finishFailureSnapshot?.activeRunId || currentRunIdRef.current,
+                error: recoveryError,
+                timeoutMs: FINISH_UI_RELEASE_TIMEOUT_MS,
+                level: "warn",
+                screen: "MapScreen",
+              });
+            }
+            if (candidate?.recoverable) {
+              setPendingRecovery(candidate);
+              setRecoveryModalVisible(true);
+              recoveryPresented = true;
+              recordRunSnapshotEvent(
+                "RUN_FINISH_FAILURE_RECOVERY_PRESENTED",
+                finishFailureSnapshot || candidate.raw || candidate,
+                {
+                  source: candidate.source || "MapScreen",
+                  screen: "MapScreen",
+                }
+              );
+            }
+          }
+          if (!recoveryPresented) {
+            recordRunEvent("RUN_FINISH_FAILURE_RECOVERY_UNAVAILABLE", {
+              runId: finishFailureSnapshot?.activeRunId || currentRunIdRef.current,
+              status: finishFailureStatus || runStatusRef.current,
+              level: "error",
+              screen: "MapScreen",
+            });
+            Alert.alert(
+              "Finalização interrompida",
+              "Não foi possível restaurar a corrida automaticamente. Reabra o Wayper para executar a recuperação antes de iniciar outra atividade."
+            );
+          }
+        } catch (restoreError) {
+          recordRunEvent("RUN_FINISH_FAILURE_RESTORE_FAILED", {
+            runId: currentRunIdRef.current,
+            error: restoreError,
+            level: "error",
+            screen: "MapScreen",
+          });
+        }
       } finally {
         if (finishLockAcquired) {
           recordRunEvent("FINISH_LOCK_RELEASED", {
@@ -3540,7 +3710,7 @@ const MapScreen = ({ navigation, route }) => {
         }
       }
     },
-    [running, location, timeSec, recordEmergencyDiagnosticsSnapshot, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, mode, territories, releaseEmergencyDiagnosticsState]
+    [applyActiveRunSnapshotToUi, running, location, timeSec, recordEmergencyDiagnosticsSnapshot, resetRunVisuals, fadeOutRoute, startBackgroundLocationService, startElapsedTimer, startLocationWatcher, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, mode, territories, releaseEmergencyDiagnosticsState]
   );
 
   const restoreRecoveryCandidateToUi = useCallback(
@@ -3854,6 +4024,7 @@ const MapScreen = ({ navigation, route }) => {
       if (isFinishedRecovery(pendingRecovery)) {
         const runData = buildRunDataFromRecoveredRun(pendingRecovery);
         const minimumSaveResult = await persistMinimumFinishedRun(runData, {
+          ...RUN_FINALIZATION_PERSISTENCE_DEPENDENCIES,
           userId: auth.currentUser?.uid || "offline",
           sessionId: pendingRecovery.localRunId || pendingRecovery.id,
           source: "recovery_modal_finished",
@@ -3864,6 +4035,7 @@ const MapScreen = ({ navigation, route }) => {
         const recoveredRun = saved;
         runDeferred(async () => {
           const queueResult = await enqueuePostRunProcessing(recoveredRun, {
+            queueRepository: runDeferredTaskQueueRepository,
             userId: currentUser.uid || "offline",
             userName: currentUser.displayName || currentUser.email?.split("@")?.[0] || "Atleta Wayper",
             userAvatar: currentUser.photoURL || null,
@@ -5381,6 +5553,7 @@ const MapScreen = ({ navigation, route }) => {
             }
 
             const minimumSaveResult = await persistMinimumFinishedRun(normalized, {
+              ...RUN_FINALIZATION_PERSISTENCE_DEPENDENCIES,
               userId: auth.currentUser?.uid || normalized.userId || "offline",
               sessionId: normalized.localRunId || normalized.id,
               source: "summary_modal_save",
@@ -5443,6 +5616,7 @@ const MapScreen = ({ navigation, route }) => {
 
             runDeferred(async () => {
               const queueResult = await enqueuePostRunProcessing(saved, {
+                queueRepository: runDeferredTaskQueueRepository,
                 userId: currentUser.uid || "offline",
                 userName: currentUser.displayName || currentUser.email?.split("@")?.[0] || "Atleta Wayper",
                 userAvatar: currentUser.photoURL || null,

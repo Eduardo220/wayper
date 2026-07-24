@@ -415,6 +415,7 @@ describe("runRecoveryService", () => {
     const result = await markRecoveredRunLocallySaved({
       reason: "test",
       expectedRunId: "clean-me",
+      trackingService,
     });
 
     expect(result.ok).toBe(true);
@@ -423,6 +424,28 @@ describe("runRecoveryService", () => {
       reason: "test",
     });
     expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(false);
+  });
+
+  test("dependencia canonica invalida preserva o checkpoint legado", async () => {
+    storage.set(ACTIVE_RUN_STORAGE_KEY, JSON.stringify({
+      localRunId: "legacy-preserved-without-canonical-cleaner",
+      userId: "user-1",
+      mode: "free",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAt: BASE_RUN.startedAt,
+      points: BASE_RUN.trustedPath,
+      schemaVersion: 1,
+    }));
+
+    const result = await markRecoveredRunLocallySaved({
+      reason: "missing_canonical_cleaner",
+      expectedRunId: "legacy-preserved-without-canonical-cleaner",
+      trackingService: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("ACTIVE_RUN_CLEANUP_DEPENDENCY_MISSING");
+    expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(true);
   });
 
   test("nao limpa legado quando o ID esperado pertence a outra corrida", async () => {

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, jest, test } from "@jest/globals";
+import fs from "node:fs";
+import path from "node:path";
 
 const recordRunEvent = jest.fn();
 const recordRunSnapshotEvent = jest.fn();
@@ -91,6 +93,47 @@ describe("runFinalizationService", () => {
         runId: "run-1",
         status: "pending",
       },
+    });
+  });
+
+  test("caminho critico nao depende de carregamento tardio de bundle", () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), "src/services/run/runFinalizationService.js"),
+      "utf8"
+    );
+    const mapScreen = fs.readFileSync(
+      path.join(process.cwd(), "src/screens/MapScreen.js"),
+      "utf8"
+    );
+    const recoverySource = fs.readFileSync(
+      path.join(process.cwd(), "src/services/run/runRecoveryService.js"),
+      "utf8"
+    );
+
+    expect(source).not.toContain("import(");
+    expect(recoverySource).not.toContain("import(");
+    expect(mapScreen).toContain("RUN_FINALIZATION_FREEZE_DEPENDENCIES");
+    expect(mapScreen).toContain("RUN_FINALIZATION_PERSISTENCE_DEPENDENCIES");
+    expect(mapScreen).toContain("queueRepository: runDeferredTaskQueueRepository");
+  });
+
+  test("falha explicitamente se dependencias pre-carregadas nao forem fornecidas", async () => {
+    await expect(freezeActiveRunForFinalization({
+      runId: "run-missing-dependencies",
+      finishedAtMs: 1000,
+    })).rejects.toMatchObject({
+      code: "RUN_FINALIZATION_DEPENDENCIES_MISSING",
+      stage: "resolve_freeze_dependencies",
+      recoverable: true,
+    });
+
+    await expect(persistMinimumFinishedRun(makeRun({
+      id: "run-missing-persistence",
+      localRunId: "run-missing-persistence",
+    }))).rejects.toMatchObject({
+      code: "RUN_FINALIZATION_DEPENDENCIES_MISSING",
+      stage: "resolve_persistence_dependencies",
+      recoverable: true,
     });
   });
 
@@ -344,5 +387,19 @@ describe("runFinalizationService", () => {
     });
     expect(failure.ok).toBe(false);
     expect(failure.queued).toEqual([]);
+
+    const missingDependency = await enqueuePostRunProcessing(
+      makeRun({ id: "run-3", localRunId: "run-3" })
+    );
+    expect(missingDependency).toMatchObject({
+      ok: false,
+      runId: "run-3",
+      queued: [],
+      error: {
+        code: "RUN_FINALIZATION_DEPENDENCIES_MISSING",
+        stage: "resolve_queue_dependencies",
+        recoverable: true,
+      },
+    });
   });
 });
