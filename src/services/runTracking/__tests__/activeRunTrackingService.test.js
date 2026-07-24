@@ -726,6 +726,58 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(resumedAgain.segments).toEqual(resumed.segments);
   });
 
+  test("retomada imediata desconta a pausa aberta antes do primeiro novo ponto", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-resume-open-pause",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+    const paused = await service.pauseActiveRun({ endedAtMs: BASE_TIME + 10_000 });
+
+    expect(paused).toMatchObject({
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      durationSeconds: 10,
+      pausedAtMs: BASE_TIME + 10_000,
+    });
+
+    const resumed = await service.resumeActiveRun({
+      startedAtMs: BASE_TIME + 70_000,
+    });
+
+    expect(resumed).toMatchObject({
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      durationSeconds: 10,
+      pausedDurationMs: 60_000,
+      totalPausedMs: 60_000,
+    });
+    expect(service.getCurrentDurationSeconds(BASE_TIME + 71_000)).toBe(11);
+  });
+
+  test("retomadas sucessivas acumulam somente cada intervalo pausado", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-multiple-pauses",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), { source: "foreground" });
+    await service.pauseActiveRun({ endedAtMs: BASE_TIME + 10_000 });
+    await service.resumeActiveRun({ startedAtMs: BASE_TIME + 70_000 });
+    await service.recordLocation({
+      ...nextPoint(2),
+      timestamp: BASE_TIME + 72_000,
+    }, { source: "foreground" });
+    await service.pauseActiveRun({ endedAtMs: BASE_TIME + 80_000 });
+
+    const resumed = await service.resumeActiveRun({
+      startedAtMs: BASE_TIME + 110_000,
+    });
+
+    expect(resumed.pausedDurationMs).toBe(90_000);
+    expect(resumed.totalPausedMs).toBe(90_000);
+    expect(resumed.durationSeconds).toBe(20);
+  });
+
   test("hidrata snapshot canonico preservando pausa, path e segmentos", async () => {
     const hydrated = await service.hydrateActiveRunSnapshot({
       activeRunId: "run-hydrated",

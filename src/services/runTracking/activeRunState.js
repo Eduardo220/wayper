@@ -740,6 +740,10 @@ export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapsho
   if (existing.activeRunId !== incoming.activeRunId) return existing;
 
   const status = normalizeStatus(incoming.status || existing.status);
+  const nextPausedDurationMs = Math.max(
+    derivePausedDurationMs(existing, existing.segments),
+    derivePausedDurationMs(incoming, incoming.segments)
+  );
   const trustedPathMergeInput = [...(existing.trustedPath || existing.path || []), ...(incoming.trustedPath || incoming.path || [])];
   const rawPathMergeInput = [...(existing.rawPath || existing.rawPoints || []), ...(incoming.rawPath || incoming.rawPoints || [])];
   const mergedTrustedPath = mergeRunPaths(existing.trustedPath || existing.path || [], incoming.trustedPath || incoming.path || []);
@@ -810,6 +814,9 @@ export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapsho
   return normalizeActiveRunSnapshot({
     ...scalarBase,
     status,
+    pausedDurationMs: nextPausedDurationMs,
+    totalPausedMs: nextPausedDurationMs,
+    totalPausedTime: nextPausedDurationMs,
     lastUpdatedAtMs: nextUpdatedAtMs,
     lastUpdatedAt: nowIso(nextUpdatedAtMs),
     updatedAt: nowIso(nextUpdatedAtMs),

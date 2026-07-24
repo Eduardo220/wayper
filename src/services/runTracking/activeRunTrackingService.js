@@ -102,6 +102,31 @@ function toOptionalTimestampMs(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function getPausedDurationIncludingOpenPause(snapshot = {}, nowMs = Date.now()) {
+  const priorPausedMs = Math.max(
+    0,
+    Number(
+      snapshot.pausedDurationMs ??
+      snapshot.totalPausedMs ??
+      snapshot.totalPausedTime ??
+      0
+    ) || 0
+  );
+  if (snapshot.status !== ACTIVE_RUN_STATUS.PAUSED) return priorPausedMs;
+
+  const segments = Array.isArray(snapshot.segments) ? snapshot.segments : [];
+  const lastSegment = segments[segments.length - 1] || null;
+  const pauseStartedAtMs = toOptionalTimestampMs(
+    snapshot.pausedAtMs ??
+    snapshot.pausedAt ??
+    snapshot.pauseStartedAt ??
+    lastSegment?.endedAt ??
+    lastSegment?.endTimestamp
+  );
+  if (pauseStartedAtMs == null) return priorPausedMs;
+  return priorPausedMs + Math.max(0, Number(nowMs) - pauseStartedAtMs);
+}
+
 function log(event, payload = {}) {
   if (!debugEnabled) return;
   logger.debug(LOG_CATEGORIES.RUN_TRACKING, event, payload);
@@ -857,7 +882,14 @@ async function readSnapshotFromStorageKey(key, source) {
 }
 
 async function persistSnapshot(snapshot, event = "snapshot_saved", options = {}) {
-  const incoming = normalizeActiveRunSnapshot(snapshot);
+  const stateObservedAtMs = Number(
+    options.nowMs ??
+    snapshot?.lastUpdatedAtMs ??
+    snapshot?.lastUpdatedAt ??
+    snapshot?.updatedAt ??
+    Date.now()
+  ) || Date.now();
+  const incoming = normalizeActiveRunSnapshot(snapshot, { nowMs: stateObservedAtMs });
   const previousMetrics = getSnapshotMetrics(activeSnapshot);
   const incomingMetrics = getSnapshotMetrics(incoming);
   const shouldMerge =
@@ -871,7 +903,7 @@ async function persistSnapshot(snapshot, event = "snapshot_saved", options = {})
     ? reconcileRunState({
         currentState: activeSnapshot,
         incomingState: incoming,
-        now: Date.now(),
+        now: stateObservedAtMs,
         reason: event,
       })
     : {
@@ -1987,8 +2019,14 @@ async function resumeActiveRunInternal(options = {}) {
     if (activeSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
     if (activeSnapshot.status !== ACTIVE_RUN_STATUS.PAUSED) return activeSnapshot;
     const startedAt = Number(options.startedAtMs || Date.now());
+    const pausedDurationMs = getPausedDurationIncludingOpenPause(activeSnapshot, startedAt);
     session.resume?.({ startedAt });
-    const snapshot = createSnapshotFromTrackingSession(session, activeSnapshot, {
+    const snapshot = createSnapshotFromTrackingSession(session, {
+      ...activeSnapshot,
+      pausedDurationMs,
+      totalPausedMs: pausedDurationMs,
+      totalPausedTime: pausedDurationMs,
+    }, {
       status: ACTIVE_RUN_STATUS.RUNNING,
       nowMs: startedAt,
       source: options.source || "foreground",
@@ -2019,31 +2057,7 @@ async function markActiveRunFinishingInternal(options = {}) {
       return activeSnapshot;
     }
     const nowMs = Number(options.nowMs || Date.now());
-    const wasPaused = activeSnapshot.status === ACTIVE_RUN_STATUS.PAUSED;
-    const lastSegment = Array.isArray(activeSnapshot.segments)
-      ? activeSnapshot.segments[activeSnapshot.segments.length - 1]
-      : null;
-    const pauseStartedAtMs = wasPaused
-      ? toOptionalTimestampMs(
-          activeSnapshot.pausedAtMs ??
-          activeSnapshot.pausedAt ??
-          activeSnapshot.pauseStartedAt ??
-          lastSegment?.endedAt ??
-          lastSegment?.endTimestamp
-        )
-      : null;
-    const priorPausedMs = Math.max(
-      0,
-      Number(
-        activeSnapshot.pausedDurationMs ??
-        activeSnapshot.totalPausedMs ??
-        activeSnapshot.totalPausedTime ??
-        0
-      ) || 0
-    );
-    const finishingPausedMs = wasPaused && pauseStartedAtMs != null
-      ? priorPausedMs + Math.max(0, nowMs - pauseStartedAtMs)
-      : priorPausedMs;
+    const finishingPausedMs = getPausedDurationIncludingOpenPause(activeSnapshot, nowMs);
     const snapshot = createSnapshotFromTrackingSession(session, {
       ...activeSnapshot,
       pausedDurationMs: finishingPausedMs,

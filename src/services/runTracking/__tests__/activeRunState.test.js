@@ -334,6 +334,35 @@ describe("active run persistence state", () => {
     expect(merged.meta.distancePreserved).toBe(true);
   });
 
+  test("pausa acumulada nao regride quando a retomada e reconciliada como stale", () => {
+    const existing = normalizeActiveRunSnapshot({
+      ...makeRunningSnapshot(),
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      lastUpdatedAtMs: BASE_TIME + 80_000,
+      pausedDurationMs: 0,
+      totalPausedMs: 0,
+      pausedAtMs: BASE_TIME + 10_000,
+    }, { nowMs: BASE_TIME + 80_000 });
+    const incoming = normalizeActiveRunSnapshot({
+      ...existing,
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      lastUpdatedAtMs: BASE_TIME + 70_000,
+      pausedDurationMs: 60_000,
+      totalPausedMs: 60_000,
+      pausedAtMs: null,
+      pausedAt: null,
+    }, { nowMs: BASE_TIME + 70_000 });
+
+    const merged = mergeActiveRunSnapshots(existing, incoming, {
+      nowMs: BASE_TIME + 70_000,
+    });
+
+    expect(merged.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(merged.pausedDurationMs).toBe(60_000);
+    expect(merged.totalPausedMs).toBe(60_000);
+    expect(merged.meta.staleSnapshotIgnored).toBe(true);
+  });
+
   test("recovery deduplica o mesmo ponto com timestamp numerico e ISO", () => {
     const numericPoint = p(1);
     const isoPoint = {
