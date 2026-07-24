@@ -4,8 +4,8 @@
 **Branch:** `develop`  
 **Aparelho:** Samsung SM-A546E, Android 16/API 36  
 **Perfil:** Dev Client (`com.wayper.app.dev`)  
-**Status:** gate físico reprovado; correções automatizadas aprovadas; nova build e
-reteste físico pendentes
+**Status:** gate físico reprovado; correções automatizadas aprovadas; nova build
+instalada; reteste físico pendente
 
 Este registro não contém coordenadas, rota, identificador da corrida ou
 identificador pessoal. Os logs brutos usados no diagnóstico permanecem somente
@@ -176,6 +176,34 @@ npm test -- --runInBand
 Resultado: 52 suites e 476 testes aprovados, 0 snapshots, em 17,506 s
 informados pelo Jest.
 
+### Build preparada para o reteste
+
+```bash
+npm run android:build:dev
+```
+
+Resultado:
+
+- `assembleDevDebug` concluído em 1 min 53 s;
+- 631 tarefas, 74 executadas e 557 atualizadas;
+- APK Dev Client gerado com aproximadamente 320 MB;
+- `BuildConfig.AsyncStorage_db_size = 32L` confirmado no código nativo gerado;
+- primeira tentativa no sandbox falhou apenas porque `~/.gradle` era somente
+  leitura; a repetição autorizada fora do sandbox concluiu;
+- Gradle reportou depreciações para compatibilidade futura com Gradle 9, sem
+  falha da build.
+
+Preparação física:
+
+- `adb install -r`: `Success`, preservando dados;
+- Dev Client aberto via deep link em estado `WARM`, 402 ms informados;
+- processo e activity ficaram visíveis/resumidos;
+- nenhum warning/erro apareceu no recorte recente dos tags
+  `AndroidRuntime`, `ReactNative`, `ReactNativeJS` e `Expo`.
+
+Essa evidência valida build, configuração nativa, instalação e bootstrap. Não
+valida as correções funcionais da corrida.
+
 ## Resultado físico
 
 | Cenário | Resultado |
@@ -193,7 +221,7 @@ informados pelo Jest.
 
 ## Riscos restantes
 
-- As correções ainda não foram exercitadas em uma nova instalação física.
+- As correções ainda não foram exercitadas em uma nova corrida física.
 - A base antiga do Dev Client pode conter artefato incompleto; não deve servir
   como evidência do novo build.
 - O limite de 32 MB reduz risco imediato, mas SQLite deve ser reavaliado se
@@ -204,19 +232,16 @@ informados pelo Jest.
 
 ## Validações físicas pendentes
 
-1. gerar e instalar nova build Dev Client com a configuração nativa de 32 MB;
-2. iniciar uma corrida nova, sem reutilizar o artefato final corrompido;
-3. repetir tela apagada, reentrada e pausar/retomar pela notificação;
-4. pausar no app, aguardar e confirmar que a pausa não entra na duração;
-5. tocar duas vezes em finalizar e confirmar uma única transação;
-6. confirmar resumo em poucos segundos, histórico local e notificação removida;
-7. reabrir o app e confirmar que rota/distância não duplicaram;
-8. depois repetir os cenários críticos em preview/release e economia agressiva.
+1. iniciar uma corrida nova, sem reutilizar o artefato final corrompido;
+2. repetir tela apagada, reentrada e pausar/retomar pela notificação;
+3. pausar no app, aguardar e confirmar que a pausa não entra na duração;
+4. tocar duas vezes em finalizar e confirmar uma única transação;
+5. confirmar resumo em poucos segundos, histórico local e notificação removida;
+6. reabrir o app e confirmar que rota/distância não duplicaram;
+7. depois repetir os cenários críticos em preview/release e economia agressiva.
 
 ## Próximos passos
 
-- concluir a suíte completa;
-- gerar/reinstalar a build Dev Client;
 - executar o reteste curto de regressão;
 - somente então decidir se o gate físico C/D pode ser aprovado;
 - manter a Fase 3 visual bloqueada até a persistência básica ficar comprovada.
@@ -229,4 +254,5 @@ informados pelo Jest.
 
 Commit sugerido para este registro:
 
-`docs(test): registrar gate fisico e remediacoes`
+- consolidação: `docs(test): registrar gate fisico e remediacoes`;
+- evidência da build: `docs(test): registrar build do reteste fisico`.
