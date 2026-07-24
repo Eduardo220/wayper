@@ -3108,6 +3108,7 @@ const MapScreen = ({ navigation, route }) => {
 
   const stopRun = useCallback(
     async (opts = {}) => {
+      let finishLockAcquired = false;
       try {
         recordRunEvent("FINISH_PRESSED", {
           runId: currentRunIdRef.current,
@@ -3131,12 +3132,6 @@ const MapScreen = ({ navigation, route }) => {
             screen: "MapScreen",
             level: "warn",
           });
-          recordRunEvent("FINISH_FAILED", {
-            runId: currentRunIdRef.current,
-            status: runStatusRef.current,
-            reason: "finish_already_in_flight",
-            screen: "MapScreen",
-          });
           return;
         }
         if (!running && !runningRef.current && !opts.force) {
@@ -3150,6 +3145,7 @@ const MapScreen = ({ navigation, route }) => {
         }
 
         finishInFlightRef.current = true;
+        finishLockAcquired = true;
         isFinishingRunRef.current = true;
         setIsFinishingRun(true);
         if (emergencyDiagnosticsInFlightRef.current) {
@@ -3522,14 +3518,16 @@ const MapScreen = ({ navigation, route }) => {
           screen: "MapScreen",
         });
       } finally {
-        recordRunEvent("FINISH_LOCK_RELEASED", {
-          runId: currentRunIdRef.current,
-          status: runStatusRef.current,
-          screen: "MapScreen",
-        });
-        finishInFlightRef.current = false;
-        isFinishingRunRef.current = false;
-        if (mountedRef.current) setIsFinishingRun(false);
+        if (finishLockAcquired) {
+          recordRunEvent("FINISH_LOCK_RELEASED", {
+            runId: currentRunIdRef.current,
+            status: runStatusRef.current,
+            screen: "MapScreen",
+          });
+          finishInFlightRef.current = false;
+          isFinishingRunRef.current = false;
+          if (mountedRef.current) setIsFinishingRun(false);
+        }
       }
     },
     [running, location, timeSec, recordEmergencyDiagnosticsSnapshot, resetRunVisuals, fadeOutRoute, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling, mode, territories, releaseEmergencyDiagnosticsState]

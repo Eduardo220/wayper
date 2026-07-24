@@ -108,6 +108,7 @@ describe("runFinalizationService", () => {
     expect(result.ok).toBe(true);
     expect(result.savedLocalRun.minimumSavedRunVersion).toBe(1);
     expect(order.indexOf("save")).toBeLessThan(order.indexOf("cleanup"));
+    expect(dependencies.persistFinishedRunDraft).not.toHaveBeenCalled();
     expect(dependencies.markRecoveredRunLocallySaved).toHaveBeenCalledTimes(1);
     expect(recordRunEvent).toHaveBeenCalledWith(
       "RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED",
@@ -131,6 +132,34 @@ describe("runFinalizationService", () => {
       recoverable: true,
     });
 
+    expect(dependencies.markRecoveredRunLocallySaved).not.toHaveBeenCalled();
+    expect(dependencies.persistFinishedRunDraft).toHaveBeenCalledTimes(1);
+  });
+
+  test("rascunho recuperavel so e gravado como fallback do historico", async () => {
+    const returnedWithoutIdentity = {
+      id: "fallback-generated-id",
+      status: "completed",
+      finishedAt: "2026-07-24T12:00:00.000Z",
+    };
+    const { dependencies, order } = makePersistenceDependencies({
+      saveLocalRun: jest.fn(async () => {
+        order.push("save");
+        return returnedWithoutIdentity;
+      }),
+    });
+
+    await expect(persistMinimumFinishedRun(makeRun(), {
+      ...dependencies,
+      timeouts: {
+        LOCAL_SAVE_MS: 1000,
+        DRAFT_SAVE_MS: 1000,
+      },
+    })).rejects.toMatchObject({
+      code: "RUN_MINIMUM_SAVE_NOT_CONFIRMED",
+    });
+
+    expect(order).toEqual(["save", "draft"]);
     expect(dependencies.markRecoveredRunLocallySaved).not.toHaveBeenCalled();
   });
 

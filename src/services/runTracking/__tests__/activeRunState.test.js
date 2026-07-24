@@ -100,6 +100,37 @@ describe("active run persistence state", () => {
     expect(calculateActiveRunDurationSeconds(snapshot, { nowMs: BASE_TIME + 22_000 })).toBe(12);
   });
 
+  test("duracao antiga nao reincorpora pausa depois da retomada", () => {
+    const snapshot = normalizeActiveRunSnapshot({
+      activeRunId: "paused-stored-duration",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAtMs: BASE_TIME,
+      durationMs: 22_000,
+      durationSeconds: 22,
+      pausedDurationMs: 10_000,
+      totalPausedMs: 10_000,
+      segments: [
+        {
+          index: 0,
+          startedAt: BASE_TIME,
+          endedAt: BASE_TIME + 6000,
+          endReason: "pause",
+          trustedPath: [p(0), p(2)],
+        },
+        {
+          index: 1,
+          startedAt: BASE_TIME + 16_000,
+          endedAt: null,
+          reason: "resume",
+          trustedPath: [p(9, 30, 30, { timestamp: BASE_TIME + 18_000 })],
+        },
+      ],
+    }, { nowMs: BASE_TIME + 20_000 });
+
+    expect(snapshot.durationSeconds).toBe(10);
+    expect(calculateActiveRunDurationSeconds(snapshot, { nowMs: BASE_TIME + 20_000 })).toBe(10);
+  });
+
   test("finalizar corrida usa pontos persistidos no snapshot", () => {
     const run = buildRunDataFromActiveSnapshot({
       ...makeRunningSnapshot(),
@@ -301,5 +332,53 @@ describe("active run persistence state", () => {
     expect(merged.distanceMeters).toBe(930);
     expect(merged.trustedPath).toHaveLength(existing.trustedPath.length);
     expect(merged.meta.distancePreserved).toBe(true);
+  });
+
+  test("recovery deduplica o mesmo ponto com timestamp numerico e ISO", () => {
+    const numericPoint = p(1);
+    const isoPoint = {
+      ...numericPoint,
+      timestamp: new Date(numericPoint.timestamp).toISOString(),
+    };
+    const existing = normalizeActiveRunSnapshot({
+      activeRunId: "run-timestamp-dedupe",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAtMs: BASE_TIME,
+      lastUpdatedAtMs: BASE_TIME + 3000,
+      trustedPath: [numericPoint],
+      rawPath: [numericPoint],
+      distanceMeters: 0,
+    }, { nowMs: BASE_TIME + 3000 });
+    const incoming = normalizeActiveRunSnapshot({
+      ...existing,
+      lastUpdatedAtMs: BASE_TIME + 4000,
+      trustedPath: [isoPoint],
+      rawPath: [isoPoint],
+    }, { nowMs: BASE_TIME + 4000 });
+
+    const merged = mergeActiveRunSnapshots(existing, incoming, {
+      nowMs: BASE_TIME + 4000,
+    });
+
+    expect(merged.trustedPath).toHaveLength(1);
+    expect(merged.rawPath).toHaveLength(1);
+    expect(merged.meta.dedupedTrustedPointsCount).toBeGreaterThan(0);
+  });
+
+  test("duplo toque em finalizar nao libera o lock adquirido pela primeira chamada", () => {
+    const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const stopRunStart = mapScreen.indexOf("const stopRun = useCallback");
+    const stopRunEnd = mapScreen.indexOf("const restoreRecoveryCandidateToUi", stopRunStart);
+    const stopRunFlow = mapScreen.slice(stopRunStart, stopRunEnd);
+
+    expect(stopRunFlow).toContain("let finishLockAcquired = false");
+    expect(stopRunFlow).toContain("finishLockAcquired = true");
+    expect(stopRunFlow).toContain("if (finishLockAcquired)");
+    expect(stopRunFlow.indexOf("if (finishInFlightRef.current)")).toBeLessThan(
+      stopRunFlow.indexOf("finishLockAcquired = true")
+    );
+    expect(stopRunFlow).not.toMatch(
+      /FINISH_FAILED[\s\S]{0,250}finish_already_in_flight/
+    );
   });
 });

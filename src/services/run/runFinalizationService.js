@@ -7,10 +7,11 @@ export const RUN_MINIMUM_SAVE_SCHEMA_VERSION = 1;
 export const EXPEDITION_PROCESSING_SCHEMA_VERSION = 1;
 
 export const RUN_FINALIZATION_TIMEOUTS = Object.freeze({
-  CHECKPOINT_MS: 5000,
-  SNAPSHOT_MS: 7000,
-  LOCAL_SAVE_MS: 8000,
-  CLEANUP_MS: 2500,
+  CHECKPOINT_MS: 2000,
+  SNAPSHOT_MS: 2500,
+  LOCAL_SAVE_MS: 3500,
+  DRAFT_SAVE_MS: 1500,
+  CLEANUP_MS: 1500,
   QUEUE_MS: 8000,
 });
 
@@ -282,7 +283,43 @@ async function persistMinimumFinishedRunInternal(runData = {}, options = {}) {
     hasSharedIdentity(existing, minimumRun) &&
     Number(existing.minimumSavedRunVersion || 0) >= RUN_MINIMUM_SAVE_SCHEMA_VERSION;
 
-  if (!existingAlreadyConfirmed) {
+  let savedLocalRun = existingAlreadyConfirmed ? existing : null;
+  let historySaveError = null;
+  if (!savedLocalRun) {
+    try {
+      savedLocalRun = await withTimeout(
+        () => dependencies.saveLocalRun?.(minimumRun),
+        timeouts.LOCAL_SAVE_MS,
+        "finish_local_history_save_timeout"
+      );
+    } catch (error) {
+      historySaveError = error;
+      recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+        runId,
+        stage: "save_local_run",
+        reason: "save_local_failed",
+        error,
+        source,
+        screen,
+        level: "warn",
+      });
+    }
+  }
+
+  if (!isFinishedLocalRun(savedLocalRun) || !hasSharedIdentity(savedLocalRun, minimumRun)) {
+    const confirmationError = historySaveError || makeFinalizationError(
+      "RUN_MINIMUM_SAVE_NOT_CONFIRMED",
+      { stage: "save_local_run" }
+    );
+    recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
+      runId,
+      stage: "save_local_run",
+      reason: historySaveError ? "save_local_failed" : "local_save_not_confirmed",
+      returnedRunId: savedLocalRun?.id || null,
+      source,
+      screen,
+      level: "warn",
+    });
     try {
       await withTimeout(
         () => dependencies.persistFinishedRunDraft?.(minimumRun, {
@@ -290,7 +327,7 @@ async function persistMinimumFinishedRunInternal(runData = {}, options = {}) {
           status: "FINISHED",
           syncStatus: "LOCAL_ONLY",
         }),
-        timeouts.LOCAL_SAVE_MS,
+        timeouts.DRAFT_SAVE_MS,
         "finish_draft_save_timeout"
       );
     } catch (error) {
@@ -307,46 +344,13 @@ async function persistMinimumFinishedRunInternal(runData = {}, options = {}) {
         level: "warn",
       });
     }
-  }
-
-  let savedLocalRun = existingAlreadyConfirmed ? existing : null;
-  if (!savedLocalRun) {
-    try {
-      savedLocalRun = await withTimeout(
-        () => dependencies.saveLocalRun?.(minimumRun),
-        timeouts.LOCAL_SAVE_MS,
-        "finish_local_history_save_timeout"
-      );
-    } catch (error) {
-      recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-        runId,
+    throw makeFinalizationError(
+      historySaveError ? "RUN_MINIMUM_SAVE_FAILED" : "RUN_MINIMUM_SAVE_NOT_CONFIRMED",
+      {
         stage: "save_local_run",
-        reason: "save_local_failed",
-        error,
-        source,
-        screen,
-        level: "warn",
-      });
-      throw makeFinalizationError("RUN_MINIMUM_SAVE_FAILED", {
-        stage: "save_local_run",
-        cause: error,
-      });
-    }
-  }
-
-  if (!isFinishedLocalRun(savedLocalRun) || !hasSharedIdentity(savedLocalRun, minimumRun)) {
-    recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-      runId,
-      stage: "save_local_run",
-      reason: "local_save_not_confirmed",
-      returnedRunId: savedLocalRun?.id || null,
-      source,
-      screen,
-      level: "warn",
-    });
-    throw makeFinalizationError("RUN_MINIMUM_SAVE_NOT_CONFIRMED", {
-      stage: "save_local_run",
-    });
+        cause: confirmationError,
+      }
+    );
   }
 
   recordRunSnapshotEvent("RUN_FINISH_SAVED", savedLocalRun, {

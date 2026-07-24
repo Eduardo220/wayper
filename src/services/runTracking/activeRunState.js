@@ -46,12 +46,19 @@ function clone(value) {
 
 function pointKey(point = {}) {
   const id = point.id || point.pointId || point.locationId;
-  if (id) return `id:${id}`;
-  const timestamp = point.timestamp ?? point.time ?? point.t ?? "";
+  const timestamp = getPointTimestampMs(point);
   const latitude = Number(point.latitude ?? point.lat);
   const longitude = Number(point.longitude ?? point.lng ?? point.lon);
+  if (timestamp != null && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    return [
+      timestamp,
+      latitude.toFixed(7),
+      longitude.toFixed(7),
+    ].join(":");
+  }
+  if (id) return `id:${id}`;
   return [
-    timestamp,
+    point.timestamp ?? point.time ?? point.t ?? "",
     Number.isFinite(latitude) ? latitude.toFixed(7) : "",
     Number.isFinite(longitude) ? longitude.toFixed(7) : "",
   ].join(":");
@@ -427,10 +434,14 @@ function calculateStartedAtElapsedMs(snapshot = {}, segments = [], options = {})
   const pausedMs = derivePausedDurationMs(snapshot, segments);
   const storedDurationMs = getStoredDurationMs(snapshot);
   const latestLocationAtMs = getLatestLocationAtMs(snapshot, segments);
+  const hasPauseTimeline =
+    status === ACTIVE_RUN_STATUS.PAUSED ||
+    pausedMs > 0 ||
+    segments.length > 1;
 
   if (status === ACTIVE_RUN_STATUS.PAUSED) {
     const pausedAtMs = getPausedAtMs(snapshot, segments, nowMs);
-    return Math.max(0, pausedAtMs - startedAtMs - pausedMs, storedDurationMs);
+    return Math.max(0, pausedAtMs - startedAtMs - pausedMs);
   }
 
   if (status === ACTIVE_RUN_STATUS.FINISHED) {
@@ -442,14 +453,16 @@ function calculateStartedAtElapsedMs(snapshot = {}, segments = [], options = {})
     const lastLocationElapsedMs = latestLocationAtMs
       ? Math.max(0, latestLocationAtMs - startedAtMs - pausedMs)
       : 0;
-    return Math.max(storedDurationMs, finishedElapsedMs, lastLocationElapsedMs);
+    const derivedElapsedMs = Math.max(finishedElapsedMs, lastLocationElapsedMs);
+    return hasPauseTimeline ? derivedElapsedMs : Math.max(storedDurationMs, derivedElapsedMs);
   }
 
   if (status === ACTIVE_RUN_STATUS.RUNNING || status === ACTIVE_RUN_STATUS.RECOVERING || status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE) {
     const runningEndMs = options.useLastLocationAtForRunning && latestLocationAtMs
       ? latestLocationAtMs
       : Math.max(nowMs, latestLocationAtMs || 0);
-    return Math.max(0, runningEndMs - startedAtMs - pausedMs, storedDurationMs);
+    const derivedElapsedMs = Math.max(0, runningEndMs - startedAtMs - pausedMs);
+    return hasPauseTimeline ? derivedElapsedMs : Math.max(storedDurationMs, derivedElapsedMs);
   }
 
   return null;
