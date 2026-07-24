@@ -3605,42 +3605,54 @@ const MapScreen = ({ navigation, route }) => {
                 });
               }
             }
-            applyActiveRunSnapshotToUi(finishFailureSnapshot, {
-              recovered: true,
-              forceSyncControls: true,
-              source: "finish_failure_restore",
-            });
-            if (backgroundStopTimedOut) {
-              runDeferred(
-                async () => {
-                  await finishBackgroundStopPromise;
-                  const latestSnapshot = await withTimeout(
-                    () => activeRunTrackingService.getActiveRunSnapshot?.(),
-                    FINISH_UI_RELEASE_TIMEOUT_MS,
-                    "finish_failure_late_stop_snapshot_timeout"
-                  );
-                  if (
-                    latestSnapshot?.activeRunId === finishFailureSnapshot.activeRunId &&
-                    String(latestSnapshot.status || "").toUpperCase() === ACTIVE_RUN_STATUS.RUNNING
-                  ) {
-                    await startLocationWatcher();
-                    await startBackgroundLocationService();
-                  }
-                },
-                (backgroundError) => recordRunEvent("RUN_FINISH_FAILURE_RESTORE_BACKGROUND_FAILED", {
-                  runId: finishFailureSnapshot.activeRunId,
-                  error: backgroundError,
-                  level: "warn",
-                  screen: "MapScreen",
-                })
-              );
+            try {
+              applyActiveRunSnapshotToUi(finishFailureSnapshot, {
+                recovered: true,
+                forceSyncControls: true,
+                source: "finish_failure_restore",
+              });
+              if (backgroundStopTimedOut) {
+                runDeferred(
+                  async () => {
+                    await finishBackgroundStopPromise;
+                    const latestSnapshot = await withTimeout(
+                      () => activeRunTrackingService.getActiveRunSnapshot?.(),
+                      FINISH_UI_RELEASE_TIMEOUT_MS,
+                      "finish_failure_late_stop_snapshot_timeout"
+                    );
+                    if (
+                      latestSnapshot?.activeRunId === finishFailureSnapshot.activeRunId &&
+                      String(latestSnapshot.status || "").toUpperCase() === ACTIVE_RUN_STATUS.RUNNING
+                    ) {
+                      await Promise.all([
+                        startLocationWatcher(),
+                        startBackgroundLocationService(),
+                      ]);
+                    }
+                  },
+                  (backgroundError) => recordRunEvent("RUN_FINISH_FAILURE_RESTORE_BACKGROUND_FAILED", {
+                    runId: finishFailureSnapshot.activeRunId,
+                    error: backgroundError,
+                    level: "warn",
+                    screen: "MapScreen",
+                  })
+                );
+              }
+              recordRunSnapshotEvent("RUN_FINISH_FAILURE_STATE_RESTORED", finishFailureSnapshot, {
+                source: "MapScreen",
+                screen: "MapScreen",
+              });
+              recoveryPresented = true;
+            } catch (liveRestoreError) {
+              recordRunEvent("RUN_FINISH_FAILURE_LIVE_RESTORE_FAILED", {
+                runId: finishFailureSnapshot.activeRunId,
+                error: liveRestoreError,
+                level: "warn",
+                screen: "MapScreen",
+              });
             }
-            recordRunSnapshotEvent("RUN_FINISH_FAILURE_STATE_RESTORED", finishFailureSnapshot, {
-              source: "MapScreen",
-              screen: "MapScreen",
-            });
-            recoveryPresented = true;
-          } else {
+          }
+          if (!recoveryPresented) {
             let candidate = null;
             try {
               candidate = await withTimeout(

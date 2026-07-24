@@ -187,6 +187,8 @@ describe("active run persistence state", () => {
     expect(mapScreen).toContain('"finish_failure_snapshot_timeout"');
     expect(mapScreen).toContain("activeSnapshot: finishFailureSnapshot || null");
     expect(mapScreen).toContain("RUN_FINISH_FAILURE_RECOVERY_UNAVAILABLE");
+    expect(mapScreen).toContain("RUN_FINISH_FAILURE_LIVE_RESTORE_FAILED");
+    expect(mapScreen).toContain("await Promise.all([");
     expect(mapScreen).toContain("finishBackgroundStopPromise");
     expect(mapScreen).toContain("hydrated route points count");
     expect(mapScreen).toContain("hydrateActiveRunFromRuntime");
