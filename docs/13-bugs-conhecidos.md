@@ -37,7 +37,10 @@ Use este arquivo para registrar bugs, riscos e limitacoes conhecidas enquanto na
 
 ## Bugs ativos
 
-Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo permanecem ativos e devem virar bugs formais quando houver reproducao, evidencia ou impacto direto em usuario.
+Há bugs funcionais reproduzidos e ainda em validação nesta rodada. Eles
+permanecem ativos até que os testes indicados em cada registro sejam concluídos;
+nenhum deles foi promovido silenciosamente a corrigido por causa de um reteste
+parcial.
 
 ## Bugs em investigacao
 
@@ -66,6 +69,11 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
 - Evidencia da Fase C em 2026-07-24: 7 suites criticas/87 testes automatizados passaram. Um Android fisico foi inicialmente detectado por ADB como `unauthorized`; naquele momento nenhum teste foi executado no aparelho e o status do bug não mudou.
 - Evidencia da Fase D em 2026-07-24: 52 suites/468 testes passaram e o bundle Android com 2.334 módulos foi exportado. O Dev Client também abriu no Samsung SM-A546E com Android 16/API 36 e carregou o bundle atual, mas nenhuma corrida ativa, tela bloqueada, kill ou reentrada foi testada; o smoke básico não altera `EM_VALIDACAO`.
 - Evidencia física posterior em 2026-07-24: o mesmo aparelho manteve coleta/foreground service por 12 min 32 s com tela apagada e reabriu pela notificação sem crash/ANR. O gate continuou reprovado por falhas de ação da notificação, storage/finalização e recovery, registradas abaixo. O stall `RUN_UI_POSSIBLE_FREEZE_DETECTED` de 11,87 s deve ser medido novamente após reduzir o I/O.
+- Reteste físico parcial em 2026-07-24: uma corrida nova confirmou pausa/retomada
+  no app e finalização local sem freeze, erro de bundle ou falsa perda da
+  corrida. O bug continua `EM_VALIDACAO` porque notificação, tela bloqueada,
+  kill/force-stop, preview/release e economia agressiva não foram repetidos após
+  o último hardening.
 - Data: 2026-06-21
 - Decisao/observacao: Sentry complementa o ZIP/NDJSON local. O bug nao pode ser marcado como corrigido ate haver reproducao/validacao fisica e simbolicacao autenticada no painel.
 
@@ -121,11 +129,16 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
   `src/services/run/runAutoSaveService.js`,
   `src/services/runOfflineStorageService.js`, `src/utils/sync.js`,
   `src/services/run/runFinalizationService.js`.
-- Teste necessario: instalar nova build, finalizar corrida nova, medir tempo e
-  confirmar item no histórico após reabrir o app.
+- Teste necessario: executar corrida com rota real e duração representativa,
+  medir tempo/volume e confirmar um único item no histórico após reiniciar o
+  app. Repetir depois em preview/release.
 - Evidencia automatizada adicional: save de detalhes força atualização do
   registro existente e falha preserva o fluxo de retry; export e build Android
-  passaram. Persistência física continua pendente.
+  passaram. Naquele momento, a persistência física ainda estava pendente.
+- Evidencia física parcial: uma corrida nova gerou `RUN_SAVED_LOCAL`,
+  `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED`, cleanup por ID e confirmação
+  `Corrida salva`, sem `SQLITE_FULL`. O teste foi curto e sem rota relevante;
+  histórico após reinício e corrida longa ainda precisam ser medidos.
 - Data: 2026-07-24
 - Decisao/observacao: commit `c3acc03`; SQLite continua opção condicionada a
   medição, não correção automática.
@@ -149,8 +162,9 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
 - Correcao aplicada: apenas a chamada proprietária libera o lock; dedupe usa
   timestamp normalizado + coordenada; timeline de pausa vence storage; timeouts
   da finalização foram reduzidos. Finalizar em `PAUSED` consolida a pausa aberta,
-  e a limpeza recebe o ID esperado e bloqueia mismatch sem remover snapshot,
-  backup ou chunks.
+  retomada acumula imediatamente `now - pausedAt`, merges preservam o total
+  pausado monotônico e a limpeza recebe o ID esperado e bloqueia mismatch sem
+  remover snapshot, backup ou chunks.
 - Arquivos relacionados: `src/screens/MapScreen.js`,
   `src/services/run/runFinalizationService.js`,
   `src/services/runTracking/activeRunState.js`.
@@ -158,9 +172,61 @@ Nenhum bug funcional especifico registrado nesta rodada. Os riscos abaixo perman
   duplicar rota/distância.
 - Evidencia automatizada adicional: finalização após 60 s de pausa manteve 10 s
   ativos; testes de limpeza por ID preservaram as corridas divergentes; suíte
-  focada 6/109 e suíte completa 52/487 aprovadas.
+  focada anterior 6/109 e suíte completa anterior 52/487 aprovadas. A regressão
+  específica de retomada foi consolidada no commit `2b9c8ab`; depois do
+  hardening final, 4 suítes/89 e a suíte completa 52/493 passaram.
+- Evidencia física parcial: corrida nova pausou em `00:21`, permaneceu parada por
+  mais de 20 segundos, retomou sem incorporar o intervalo e finalizou em
+  `01:07`. O resumo preservou `01:07`. Duplo toque, rota real e reabertura ainda
+  não foram repetidos; o status permanece `EM_VALIDACAO`.
 - Data: 2026-07-24
-- Decisao/observacao: commit `ec8d236`; não marcar como corrigido antes do reteste.
+- Decisao/observacao: commits `ec8d236`, `58c16d8` e `2b9c8ab`; não marcar como
+  corrigido antes de concluir o restante do reteste.
+
+### BUG-20260724-004 - Finalização dependia de carregamento tardio de módulo
+
+- ID: BUG-20260724-004
+- Titulo: Finalização dependia de carregamento tardio de módulo
+- Status: EM_VALIDACAO
+- Severidade: critica
+- Area: Finalização, recovery, Metro/bundle, offline
+- Descricao: ao finalizar uma corrida pausada no Dev Client, a interface voltou
+  ao mapa ocioso e registrou `FINISH_FAILED`, embora o snapshot continuasse
+  preservado e recuperável.
+- Evidencia: reprodução física com
+  `LoadBundleFromServerRequestError: Could not load bundle` durante a resolução
+  tardia das dependências de finalização. A reabertura recuperou a corrida
+  pausada; portanto o dado não havia sido apagado, mas a UI comunicou estado
+  incorreto.
+- Causa confirmada: `runFinalizationService` usava `import()` dentro de freeze,
+  persistência e fila; `runRecoveryService` também carregava tracking sob
+  demanda. O catch aguardava snapshot sem timeout, não consultava o checkpoint
+  legado quando a leitura retornava `null` e podia reiniciar tracking enquanto a
+  parada de background ainda estava em andamento.
+- Correcao aplicada: dependências locais são importadas estaticamente e injetadas
+  pela composição; ausência gera `RUN_FINALIZATION_DEPENDENCIES_MISSING`;
+  finalização/recovery não contêm `import()`; limpeza exige método canônico e
+  confirmação explícita; a falha lê snapshot e recovery com timeout, restaura
+  `RUNNING`/`PAUSED` ou apresenta modal; restart espera a parada de background e
+  rearma novamente se ela exceder o timeout.
+- Arquivos relacionados: `src/screens/MapScreen.js`,
+  `src/services/run/runFinalizationService.js`,
+  `src/services/run/runRecoveryService.js` e testes correspondentes.
+- Teste necessario:
+  1. desconectar o Dev Client do Metro e finalizar normalmente, confirmando que
+     o save mínimo não tenta buscar outro bundle;
+  2. em execução separada e controlada, induzir falha pré-save e confirmar
+     restauração/recovery sem lock preso nem estado ocioso falso;
+  3. repetir a finalização em APK preview/release offline.
+- Evidencia automatizada: 4 suítes/89 testes focados, suíte completa 52/493,
+  export Android com 2.334 módulos e build `devDebug` com 631 tarefas aprovadas.
+- Evidencia física parcial: a corrida antiga foi recuperada e finalizada depois
+  do patch; uma corrida nova finalizou com save mínimo, cleanup, liberação da UI
+  e tarefas derivadas em ordem, sem `FINISH_FAILED` ou erro de bundle. A falha
+  controlada após o último hardening ainda não foi exercitada.
+- Data: 2026-07-24
+- Decisao/observacao: commit `9e2dbdf`; manter `EM_VALIDACAO` até separar e
+  concluir perda de Metro, falha induzida e offline/preview/release.
 
 ## Bugs corrigidos
 

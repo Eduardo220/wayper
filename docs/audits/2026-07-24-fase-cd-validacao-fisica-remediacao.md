@@ -4,9 +4,8 @@
 **Branch:** `develop`  
 **Aparelho:** Samsung SM-A546E, Android 16/API 36  
 **Perfil:** Dev Client (`com.wayper.app.dev`)  
-**Status:** gate físico reprovado; correções automatizadas aprovadas; build
-anterior instalada; hardening adicional buildado; instalação e reteste
-funcional pendentes
+**Status:** reteste curto parcial aprovado; gate físico global aberto para
+notificação, offline, force-stop, rota real, preview/release e bateria
 
 Este registro não contém coordenadas, rota, identificador da corrida ou
 identificador pessoal. Os logs brutos usados no diagnóstico permanecem somente
@@ -220,18 +219,19 @@ valida as correções funcionais da corrida.
 | Finalização única | Resumo abriu; save local reprovado por `SQLITE_FULL` |
 | Remoção da notificação após finalizar | Aprovado |
 
-## Riscos restantes
+## Riscos registrados antes dos adendos
 
-- As correções ainda não foram exercitadas em uma nova corrida física.
-- A base antiga do Dev Client pode conter artefato incompleto; não deve servir
-  como evidência do novo build.
+- Naquele ponto, as correções ainda não haviam sido exercitadas em uma nova
+  corrida física.
+- A base antiga do Dev Client podia conter artefato incompleto e não servia como
+  evidência do novo build.
 - O limite de 32 MB reduz risco imediato, mas SQLite deve ser reavaliado se
   medições mostrarem parse ou volume incompatíveis com corridas longas.
 - Preview/release, economia agressiva, kill/force-stop, zonas, offline com
   reconexão, replay e compartilhamento continuam sem validação desta rodada.
 - O stall de UI precisa ser medido novamente após a compactação.
 
-## Validações físicas pendentes
+## Validações físicas pendentes naquele ponto
 
 1. iniciar uma corrida nova, sem reutilizar o artefato final corrompido;
 2. repetir tela apagada, reentrada e pausar/retomar pela notificação;
@@ -241,7 +241,7 @@ valida as correções funcionais da corrida.
 6. reabrir o app e confirmar que rota/distância não duplicaram;
 7. depois repetir os cenários críticos em preview/release e economia agressiva.
 
-## Próximos passos
+## Próximos passos definidos naquele ponto
 
 - executar o reteste curto de regressão;
 - somente então decidir se o gate físico C/D pode ser aprovado;
@@ -374,3 +374,200 @@ Resultado: `BUILD SUCCESSFUL` em 1 min 51 s; 631 tarefas, 65 executadas e
 - código: `58c16d8 fix(run): endurecer transicoes e salvamento final`;
 - documentação sugerida:
   `docs(run): registrar hardening do fluxo critico`.
+
+## Adendo — reteste limpo de pausa e finalização
+
+### Diagnóstico
+
+O reteste físico encontrou e isolou duas bordas posteriores ao hardening
+anterior:
+
+1. a retomada criava o snapshot correto com a pausa acumulada, mas
+   `mergeActiveRunSnapshots()` podia escolher escalares de um snapshot anterior
+   e restaurar `pausedDurationMs: 0`; o cronômetro passava a incorporar o
+   intervalo parado;
+2. a primeira tentativa de finalizar a corrida física recuperada registrou
+   `FINISH_FAILED` e
+   `LoadBundleFromServerRequestError: Could not load bundle`. O snapshot
+   permaneceu `PAUSED` e recuperável, mas a UI voltou falsamente ao estado
+   ocioso.
+
+A causa do segundo defeito era carregamento tardio por `import()` dentro de
+freeze, persistência, fila e caminhos de recovery. A revisão posterior também
+encontrou leitura de snapshot sem timeout, ausência de fallback legado quando a
+leitura retornava `null`, confirmação permissiva de cleanup e uma disputa entre
+restart e parada assíncrona do background.
+
+### Arquivos analisados
+
+- `src/screens/MapScreen.js`;
+- `src/services/run/runFinalizationService.js`;
+- `src/services/run/runRecoveryService.js`;
+- `src/services/runTracking/activeRunState.js`;
+- `src/services/runTracking/activeRunTrackingService.js`;
+- `src/services/run/runAutoSaveService.js`;
+- `src/services/runOfflineStorageService.js`;
+- `src/utils/sync.js`;
+- `src/repositories/runDeferredTaskQueueRepository.js`;
+- testes de finalização, recovery, estado ativo e tracking;
+- logs sanitizados de Metro/ADB, hierarquia e screenshots temporários do
+  aparelho.
+
+### Arquivos alterados
+
+Pausa/retomada:
+
+- `src/services/runTracking/activeRunState.js`;
+- `src/services/runTracking/activeRunTrackingService.js`;
+- `src/services/runTracking/__tests__/activeRunState.test.js`;
+- `src/services/runTracking/__tests__/activeRunTrackingService.test.js`.
+
+Finalização/recovery:
+
+- `src/screens/MapScreen.js`;
+- `src/services/run/runFinalizationService.js`;
+- `src/services/run/runRecoveryService.js`;
+- `src/services/run/__tests__/runFinalizationService.test.js`;
+- `src/services/run/__tests__/runRecoveryService.test.js`;
+- `src/services/runTracking/__tests__/activeRunState.test.js`.
+
+Documentação:
+
+- `AGENTS.md`, instruções para IA, arquitetura, fluxos, ADRs, guia/checklist de
+  testes, bugs, changelog, revisão de implementação, resumo local-first e este
+  relatório.
+
+### Justificativas
+
+- `totalPausedMs` é acumulador monotônico e não pode regredir em merge.
+- O toque em `Finalizar` não pode depender de rede, Firestore, Metro ou novo
+  carregamento de módulo.
+- Dependência crítica ausente deve falhar antes de executar a etapa dependente,
+  com erro explícito; o catch restaura o snapshot ou apresenta recovery.
+- Save confirmado precede cleanup; cleanup canônico inválido não autoriza apagar
+  o checkpoint legado.
+- Falha pré-save deve restaurar `RUNNING`/`PAUSED` ou apresentar recovery com
+  timeout, sem deixar o lock preso nem comunicar `IDLE` falso.
+- Restart de tracking só ocorre depois da parada de background; se a parada
+  exceder o timeout, o restart é repetido quando ela terminar.
+
+### Testes executados e resultados
+
+Regressão focada final:
+
+```bash
+npm test -- --runInBand \
+  src/services/run/__tests__/runFinalizationService.test.js \
+  src/services/run/__tests__/runRecoveryService.test.js \
+  src/services/runTracking/__tests__/activeRunState.test.js \
+  src/services/runTracking/__tests__/activeRunTrackingService.test.js
+```
+
+Resultado: 4 suítes e 89 testes aprovados, 0 snapshots, em 14.693 s informados
+pelo Jest.
+
+Suíte completa no estado final:
+
+```bash
+npm test
+```
+
+Resultado: 52 suítes e 493 testes aprovados, 0 snapshots, em 24.515 s
+informados pelo Jest.
+
+Bundle Android final:
+
+```bash
+node scripts/with-env.cjs .env.development -- \
+  ./node_modules/.bin/expo export --platform android \
+  --output-dir /tmp/wayper-expo-finalization-reviewed.LWdtU0
+```
+
+Resultado: 2.334 módulos empacotados; bundle Hermes Android gerado com sucesso.
+O diretório é temporário e não foi versionado.
+
+Build Android:
+
+```bash
+npm run android:build:dev
+```
+
+Resultado: `BUILD SUCCESSFUL` em 2 min 19 s; 631 tarefas, 65 executadas e 566
+`up-to-date`. A primeira tentativa dentro do sandbox falhou somente pelo cache
+Gradle em filesystem read-only; a repetição autorizada concluiu.
+
+`git diff --check` também foi aprovado antes do commit de código.
+
+### Resultado físico
+
+A corrida antiga recuperada foi usada apenas para comprovar preservação e
+finalização após o patch:
+
+- o snapshot voltou `PAUSED` e a UI mostrou `05:01`;
+- a finalização confirmou save local, cleanup e resumo;
+- esse artefato continha checkpoint legado previamente inflado e **não** serve
+  como evidência limpa de duração.
+
+Uma corrida nova foi então executada no Samsung SM-A546E, Android 16/API 36:
+
+| Etapa | Evidência |
+| --- | --- |
+| Início | `Corrida Livre`, estado `Ativa` e cronômetro funcionando |
+| Primeira pausa | UI `Retomar` em `00:21` |
+| Intervalo parado | superior a 20 segundos; não entrou no tempo ativo |
+| Retomada | mesma corrida voltou `Ativa`, sem incorporar a pausa |
+| Segunda pausa | UI `Pausa` em `01:07` |
+| Finalização | `RUN_FINISH_FINAL_VALUES` com `elapsedMs: 67000` |
+| Save mínimo | `RUN_FINISH_SAVED` e `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED` |
+| Cleanup | `RUN_ACTIVE_CLEARED` somente depois do save confirmado |
+| Liberação | resumo `1:07` e evento `RUN_FINISH_UI_RELEASED` |
+| Pós-corrida | tarefas derivadas enfileiradas/processadas após a liberação |
+| Detalhes | confirmação `Corrida salva` |
+| Estado final | mapa ocioso com `Iniciar Corrida` |
+
+Não houve `FINISH_FAILED` nem `LoadBundleFromServerRequestError`; nenhum crash ou
+ANR foi observado no recorte acompanhado do ciclo limpo. A corrida foi curta e
+feita sem deslocamento útil; o GPS indicou instabilidade, o resumo teve
+`0.00 km` e a evidência não valida qualidade de rota/distância.
+
+### Riscos restantes
+
+- pausa/retomada pela notificação ainda não foi repetida na build corrigida;
+- duplo toque em `Finalizar` não foi repetido no ciclo limpo;
+- falha pré-save controlada não foi induzida depois do último hardening de
+  timeout/fallback;
+- histórico após reinício e rota/distância reais ainda não foram verificados;
+- offline completo, perda de Metro, zonas, force-stop/kill, processo recriado,
+  replay, compartilhamento, preview/release e economia agressiva seguem
+  pendentes;
+- o teste curto não mede crescimento do AsyncStorage, parse de rota longa nem o
+  stall anterior de 11,87 s;
+- Sentry/source maps e assinatura release continuam fora desta evidência.
+
+### Validações físicas pendentes
+
+1. pausar/retomar pela notificação com tela bloqueada e mesmo `localRunId`;
+2. executar duplo toque rápido e confirmar uma única transação;
+3. reabrir app/histórico e conferir uma única corrida, rota, distância e
+   segmentos;
+4. repetir corrida com deslocamento real e GPS estável;
+5. finalizar offline, reconectar e confirmar sync idempotente;
+6. repetir em zonas, force-stop, preview/release e bateria agressiva;
+7. induzir falha pré-save e comprovar restauração/recovery sem estado ocioso
+   falso.
+
+### Próximos passos
+
+1. manter o gate físico global aberto e registrar apenas o subfluxo
+   pausa/finalização no app como aprovado;
+2. executar o restante do checklist físico antes de avançar para mudanças
+   visuais que dependam da corrida;
+3. preservar finalização/recovery sem lazy load como contrato permanente;
+4. considerar SQLite somente após corrida longa e medição real.
+
+### Commits
+
+- `2b9c8ab fix(run): descontar pausas na retomada`;
+- `9e2dbdf fix(run): blindar finalizacao e recovery sem lazy load`;
+- documentação sugerida:
+  `docs(run): registrar reteste limpo da finalizacao`.

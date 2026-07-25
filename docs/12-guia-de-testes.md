@@ -38,21 +38,28 @@ Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam
 
 ## Gate físico das Fases C/D — 2026-07-24
 
-O teste no Samsung SM-A546E, Android 16/API 36, foi **reprovado**. Tela apagada
+O primeiro teste no Samsung SM-A546E, Android 16/API 36, foi **reprovado**. Tela apagada
 por 12 min 32 s, foreground service, checkpoints e reentrada pela notificação
 funcionaram; pausar/retomar pela notificação, consistência de duração/rota no
 recovery e persistência da finalização falharam. A finalização única abriu o
 resumo, mas registrou `SQLITE_FULL` e não confirmou o histórico.
 
-Antes de aprovar:
+O reteste curto posterior aprovou parcialmente o fluxo no app:
 
-- instalar nova build Dev Client, pois o limite nativo de 32 MB exige rebuild;
-- usar uma corrida nova, sem reutilizar o artefato incompleto anterior;
+- corrida nova pausada em `00:21`, retomada sem incorporar o intervalo parado e
+  finalizada com `01:07` ativo;
+- save mínimo local confirmado, snapshot ativo removido depois do save, resumo
+  salvo e retorno a `Iniciar Corrida`;
+- `RUN_FINISH_UI_RELEASED` ocorreu antes da fila derivada;
+- não ocorreram `FINISH_FAILED` nem `LoadBundleFromServerRequestError`.
+
+O gate global continua aberto. Antes de aprovar:
+
 - validar pausa/retomada pela notificação com usuário autenticado;
-- validar pausa longa sem somar o período pausado;
 - tocar duas vezes em finalizar e confirmar uma única transação;
-- confirmar resumo rápido, item no histórico e notificação removida;
+- confirmar item único no histórico depois de reabrir;
 - reabrir e confirmar que rota/distância não duplicam.
+- repetir offline, force-stop, preview/release, zonas e economia agressiva.
 
 Registro detalhado:
 `docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`.
@@ -64,10 +71,16 @@ e cobriu os detalhes residuais do fluxo crítico:
 
 - transição de pausa/retomada exige mesmo ID e estado esperado;
 - finalização durante pausa acumula a pausa aberta;
+- retomada acumula a pausa encerrada antes de publicar `RUNNING` e o total
+  pausado não pode regredir em merge;
 - limpeza canônica/legada é condicionada ao ID salvo;
 - cálculo final normaliza timestamps ISO/numéricos e respeita a timeline;
 - save do resumo usa o serviço oficial, mantém retry e não aguarda território
-  ou fila derivada.
+  ou fila derivada;
+- finalização e recovery não usam `import()` tardio; dependências locais
+  obrigatórias são pré-carregadas/injetadas;
+- falha pré-save lê snapshot/recovery com timeout, restaura a corrida viva ou
+  apresenta recovery em vez de voltar falsamente a `IDLE`.
 
 Evidência automatizada desta rodada:
 
@@ -87,11 +100,29 @@ Resultado: 6 suítes e 109 testes aprovados.
 npm test -- --runInBand
 ```
 
-Resultado: 52 suítes e 487 testes aprovados, 0 snapshots.
+Resultado anterior: 52 suítes e 487 testes aprovados, 0 snapshots.
 
-O export Android processou 2.334 módulos e `npm run android:build:dev`
-concluiu 631 tarefas em 1 min 51 s. Esses resultados não substituem o reteste
-funcional no aparelho.
+Depois do diagnóstico físico e do hardening final:
+
+```bash
+npm test -- --runInBand \
+  src/services/run/__tests__/runFinalizationService.test.js \
+  src/services/run/__tests__/runRecoveryService.test.js \
+  src/services/runTracking/__tests__/activeRunState.test.js \
+  src/services/runTracking/__tests__/activeRunTrackingService.test.js
+```
+
+Resultado: 4 suítes e 89 testes aprovados.
+
+```bash
+npm test
+```
+
+Resultado: 52 suítes e 493 testes aprovados, 0 snapshots.
+
+O export Android final processou 2.334 módulos. `npm run android:build:dev`
+concluiu 631 tarefas em 2 min 19 s. Esses resultados complementam, mas não
+substituem, os cenários físicos ainda pendentes.
 
 ## Testes unitários prioritários
 
@@ -193,6 +224,12 @@ funcional no aparelho.
 - [ ] Em corrida por zonas, confirmar que um item salvo com captura pendente usa `territoryCaptureStatus: PENDING` e continua `PENDING_SYNC`.
 - [ ] Abrir `Configuracoes > Diagnostico` depois da finalizacao e exportar o ZIP completo.
 - [ ] Conferir nos logs a ordem `RUN_FINISH_LOCAL_MIN_SAVE_STARTED` -> `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED` -> `RUN_FINISH_UI_RELEASED` -> `RUN_FINISH_DEFERRED_TASKS_SCHEDULED`.
+- [ ] No caminho feliz, confirmar ausência de
+  `LoadBundleFromServerRequestError` e `FINISH_FAILED`; a transação crítica não
+  pode carregar módulo sob demanda.
+- [ ] Induzir uma falha anterior ao save e confirmar snapshot `RUNNING`/`PAUSED`
+  restaurado ou modal de recovery; nesse cenário, `FINISH_FAILED` é esperado,
+  as leituras são limitadas por timeout e o lock é liberado no `finally`.
 - [ ] Confirmar que `Iniciar Corrida` nao aparece enquanto `Finalizando...` esta ativo.
 - [ ] Repetir offline/Firestore indisponivel e confirmar que save local, resumo e historico continuam funcionando.
 
@@ -206,6 +243,11 @@ Cobertura automatizada obrigatória:
 - duas finalizações concorrentes compartilham o mesmo lock no serviço;
 - reentrada não regrava uma corrida mínima já confirmada;
 - freeze/checkpoint funciona fora do ciclo de vida da `MapScreen`;
+- serviço crítico e recovery não contêm `import()` tardio;
+- dependência local ausente falha antes de executar a etapa dependente, e o
+  catch restaura/apresenta recovery;
+- cleanup inválido preserva o checkpoint legado;
+- leitura de falha e lookup de recovery são limitados e não deixam o lock preso;
 - falha ao criar tarefas derivadas não invalida o save mínimo;
 - fila persiste `result`, versão, tentativas e estado por módulo;
 - falha retryable de sync produz relatório parcial sem apagar métricas;

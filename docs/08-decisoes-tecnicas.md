@@ -379,9 +379,20 @@ Elas complementam, e não apagam, as decisões local-first abaixo.
 **Politica:**
 
 - Firestore nao participa da decisao de finalizar nem de mostrar resumo/historico local.
+- Freeze, checkpoint, save mínimo, cleanup e abertura de recovery usam
+  dependências locais pré-carregadas, injetadas pela composição da finalização;
+  `import()` tardio e carregamento de bundle são proibidos dentro da transação
+  crítica até a liberação da UI. Tarefas derivadas posteriores permanecem
+  independentes e falháveis.
+- Dependência obrigatória ausente gera
+  `RUN_FINALIZATION_DEPENDENCIES_MISSING` antes de executar a etapa dependente;
+  o catch restaura o snapshot ou apresenta recovery.
 - `Iniciar Corrida` nao pode aparecer enquanto `isFinishingRun` ou `FINISHING` ainda estiver ativo.
 - Timeout em checkpoint, snapshot, background stop, territorio ou progressao deve virar log recuperavel, nao bloqueio permanente da UI.
 - `RUN_FINISH_LOCAL_MIN_SAVE_STARTED`, `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED`, `RUN_FINISH_UI_RELEASED` e `RUN_FINISH_DEFERRED_TASKS_SCHEDULED` devem existir para auditar a ordem.
+- Falha anterior ao save tenta restaurar `RUNNING`/`PAUSED`; snapshot terminal ou
+  apenas legado abre recovery. Leituras são limitadas por timeout e não podem
+  deixar o lock preso.
 
 **Consequencias:**
 
@@ -389,6 +400,15 @@ Elas complementam, e não apagam, as decisões local-first abaixo.
 - Captura territorial atrasada pode atualizar a corrida local depois, mantendo `PENDING_SYNC`.
 - Falha remota ou Firestore indisponivel nao apaga a copia local nem impede o usuario de sair da corrida ativa.
 - Validacao fisica ainda e necessaria para confirmar Android real, tela bloqueada, reentrada pela notificacao e economia agressiva de bateria.
+
+**Evidência física parcial de 2026-07-24:** uma falha real
+`LoadBundleFromServerRequestError` durante a finalização preservou o snapshot,
+mas expôs a dependência tardia e uma falsa UI ociosa. Depois da remoção de
+`import()` do serviço de finalização, uma corrida limpa confirmou save local,
+limpeza do snapshot, liberação da UI e tarefas derivadas nessa ordem, sem
+`FINISH_FAILED`. A remoção equivalente no recovery e o fallback final foram
+validados automaticamente; falha induzida após esse último hardening,
+preview/release e offline completo seguem pendentes.
 
 ## ADR-024: Obsidian como mente do projeto
 
@@ -475,7 +495,12 @@ decisão foi refinada sem trocar a fonte oficial:
 - dedupe de recovery normaliza timestamps ISO/numéricos;
 - lock de finalização só é liberado pela chamada que o adquiriu.
 
-O gate físico permanece reprovado até nova build comprovar as correções.
+Na execução que motivou este adendo, o gate físico ficou reprovado até que uma
+nova build comprovasse as correções. O reteste posterior aprovou apenas o
+subfluxo curto de pausa/retomada e finalização no app; o gate global continua
+aberto para notificação, rota real, offline, force-stop e preview/release,
+conforme
+`docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`.
 
 ## ADR-028: Transições confirmadas e limpeza vinculada à identidade
 
@@ -499,6 +524,8 @@ retry visível se o save não for confirmado.
 
 - sucesso de pausa exige mesmo `activeRunId` e estado `PAUSED`;
 - sucesso de retomada exige mesmo `activeRunId` e estado `RUNNING`;
+- a retomada acumula `now - pausedAt` antes de publicar `RUNNING`, fecha a pausa
+  aberta e preserva `totalPausedMs` monotônico durante merges;
 - retorno não nulo com estado incorreto é falha recuperável, não sucesso;
 - `expectedRunId` é obrigatório quando a limpeza sucede um save conhecido;
 - mismatch registra `RUN_ACTIVE_CLEANUP_ID_MISMATCH_BLOCKED` e preserva
@@ -512,6 +539,7 @@ retry visível se o save não for confirmado.
 
 - UI, notificação e storage não anunciam transições que o serviço não confirmou;
 - finalizar durante pausa não incorpora o intervalo parado;
+- pausar, aguardar e retomar não faz o cronômetro saltar pelo tempo parado;
 - uma finalização atrasada não apaga uma nova corrida;
 - recuperação e edição convergem no serviço oficial em vez de criar caminhos
   paralelos;

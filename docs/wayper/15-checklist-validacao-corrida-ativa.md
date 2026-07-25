@@ -30,11 +30,40 @@ Critérios obrigatórios:
 
 - nenhuma ação muda apenas o rótulo: snapshot, app e notificação concordam;
 - o período pausado não entra no tempo ativo;
+- imediatamente após retomar, o cronômetro deve permanecer próximo do valor
+  pausado, somando somente os segundos novamente ativos;
 - apenas o ID salvo é limpo;
 - o resumo não fecha se o save de detalhes falhar;
 - território, XP e fila não atrasam a confirmação local;
+- no caminho feliz não podem ocorrer `LoadBundleFromServerRequestError` nem
+  `FINISH_FAILED`;
+- a ordem observável é save mínimo confirmado -> cleanup -> liberação da UI ->
+  agendamento/processamento derivado;
+- falha induzida pré-save registra `FINISH_FAILED` e depois
+  `RUN_FINISH_FAILURE_STATE_RESTORED` ou
+  `RUN_FINISH_FAILURE_RECOVERY_PRESENTED`; nunca termina em `IDLE` com snapshot
+  recuperável;
 - `RUN_ACTIVE_CLEANUP_ID_MISMATCH_BLOCKED`, se ocorrer, reprova o cenário e
   exige investigação antes de nova feature.
+
+### Execução parcial registrada em 2026-07-24
+
+- [x] corrida nova iniciada no Dev Client;
+- [x] pausa no app em `00:21`, espera superior a 20 segundos e retomada sem salto
+  do período pausado;
+- [x] segunda pausa e finalização com resumo em `01:07`;
+- [x] save mínimo local, cleanup, detalhes salvos e retorno a
+  `Iniciar Corrida`;
+- [x] tarefas derivadas iniciadas somente após `RUN_FINISH_UI_RELEASED`;
+- [x] ausência de `FINISH_FAILED` e `LoadBundleFromServerRequestError`;
+- [ ] pausa/retomada pela notificação;
+- [ ] duplo toque na finalização;
+- [ ] reabertura do histórico com rota/distância;
+- [ ] offline, force-stop, zonas, preview/release e economia agressiva.
+
+A corrida antiga recuperada antes desse reteste não serve como prova de duração:
+ela continha checkpoint legado contaminado. A evidência limpa de tempo é a
+corrida nova descrita acima.
 
 ## Cenario 1: Primeiro plano por 5 minutos
 

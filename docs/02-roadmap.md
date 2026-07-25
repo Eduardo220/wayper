@@ -6,8 +6,8 @@ Este roadmap organiza a evolucao do Wayper por fases. O status deve refletir o c
 
 | Fase | Objetivo | Estado em 2026-07-24 |
 | --- | --- | --- |
-| 1 — Fundação confiável | Tracking, offline, background, recovery, finalização e validação física | Parcialmente implementada; gate físico reprovado e reteste pendente |
-| 2 — Pipeline da Expedição | Extrair finalização, formalizar save mínimo e resultados idempotentes | Núcleo implementado na Fase D; gate físico reprovado, remediações aguardam reteste |
+| 1 — Fundação confiável | Tracking, offline, background, recovery, finalização e validação física | Parcialmente implementada; pausa/finalização no app aprovadas em reteste curto e gate físico global aberto |
+| 2 — Pipeline da Expedição | Extrair finalização, formalizar save mínimo e resultados idempotentes | Núcleo implementado na Fase D; save mínimo/finalização no app aprovados parcialmente, demais cenários físicos pendentes |
 | 3 — Relatório da Expedição | Experiência modular, parcial, persistente e reabrível | Planejada |
 | 4 — Retenção | Progressão, conquistas, streaks e desafios com regras consolidadas | Parcial na base; expansão planejada |
 | 5 — Wayper Plus | Entitlements e benefícios positivos | Aprovada conceitualmente |
@@ -48,7 +48,7 @@ Objetivo: iniciar, acompanhar, pausar/finalizar, preservar e listar corridas sem
 | GPS/path | Avancado; pipeline oficial em `src/services/tracking`. |
 | Historico/detalhes offline | Avancado; fonte local `runs`. |
 | Sync idempotente de runs | Avancado; `sync.js`/`runSyncQueueService`. |
-| Notificacao/background Android | Tela apagada/reentrada passaram no Dev Client; ações da notificação falharam e aguardam reteste das correções. |
+| Notificacao/background Android | Tela apagada/reentrada e pausa/finalização no app passaram parcialmente no Dev Client; ações da notificação ainda aguardam reteste das correções. |
 | Firestore de runs | Destino posterior/best effort, nao dependencia local. |
 
 ## Base técnica atual: zonas e territórios
@@ -103,7 +103,7 @@ Objetivo: publicar com build, assinatura, telemetria e validacao fisica reais.
 | Build release oficial | Pendente de assinatura real e checklist completo. |
 | Assinatura Android release | Pendente; debug-signed prod APK nao e publicavel. |
 | Source maps/Sentry autenticado | Pendente sem credenciais/painel validado. |
-| Teste real Android background/GPS/notificacao | Executado parcialmente e reprovado; nova build/reteste e matriz preview/release pendentes. |
+| Teste real Android background/GPS/notificacao | Executado parcialmente; background/reentrada e pausa/finalização no app têm evidência, enquanto notificação, rota real, offline e matriz preview/release permanecem pendentes. |
 | Play Store/rollback | Futuro. |
 
 ## Não autorizados por enquanto

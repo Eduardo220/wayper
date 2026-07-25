@@ -26,9 +26,68 @@ Origem:
 ### Riscos restantes
 ```
 
+## 2026-07-24 - Pausa descontada e finalização sem carregamento tardio
+
+Status: Implementado; automação aprovada e reteste físico parcial aprovado
+
+Origem: Reteste Android real conduzido com o usuário
+
+Área: Corrida ativa, pausa, finalização, recovery e offline
+
+### O que mudou
+
+- retomada acumula a pausa encerrada antes de publicar `RUNNING`;
+- merges preservam o total pausado monotônico;
+- finalização e recovery usam dependências locais estáticas/pré-carregadas;
+- dependência ausente falha antes da etapa dependente e aciona
+  restauração/recovery;
+- falha pré-save lê snapshot/recovery com timeout e restaura a corrida viva ou
+  apresenta recovery;
+- reinício de tracking não disputa mais, no caminho normal, com a parada de
+  background ainda em andamento;
+- cleanup exige confirmação canônica antes de remover o checkpoint legado.
+
+### Por que mudou
+
+O reteste revelou dois defeitos residuais: a retomada podia perder a pausa
+acumulada durante reconciliação, e uma finalização física falhou com
+`LoadBundleFromServerRequestError` por resolver módulos sob demanda depois do
+toque.
+
+### Impacto no usuário
+
+Uma pausa não infla mais o tempo ativo depois da retomada. Finalizar não depende
+de buscar outro bundle; se uma borda falhar antes do save, a corrida permanece
+visível/recuperável em vez de parecer perdida.
+
+### Impacto técnico
+
+`MapScreen` compõe os adapters locais existentes e
+`runFinalizationService`/`runRecoveryService` não contêm `import()` tardio. O
+save mínimo continua precedendo cleanup, liberação da UI e tarefas derivadas.
+
+### Documentos relacionados
+
+- `docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`;
+- `docs/08-decisoes-tecnicas.md`;
+- `docs/13-bugs-conhecidos.md`;
+- `docs/wayper/15-checklist-validacao-corrida-ativa.md`.
+
+### Arquivos alterados
+
+Serviços existentes de estado ativo, finalização e recovery, `MapScreen`, testes
+de regressão e documentação correspondente.
+
+### Riscos restantes
+
+- ação de pausa/retomada pela notificação ainda precisa novo reteste;
+- falha pré-save controlada ainda não foi induzida após o hardening final;
+- histórico/reabertura com rota real, offline, zonas, force-stop,
+  preview/release e economia agressiva continuam pendentes.
+
 ## 2026-07-24 - Remediação do gate físico das Fases C/D
 
-Status: Implementado e validado automaticamente; reteste físico pendente
+Status: Implementado e validado automaticamente; reteste físico parcial
 
 Origem: Teste Android real conduzido com o usuário
 
@@ -55,8 +114,10 @@ finalização.
 
 ### Impacto no usuário
 
-A correção busca preservar pausa, duração, rota e finalização local sem exigir
-internet. O impacto físico ainda precisa ser comprovado em nova build.
+A arquitetura preserva pausa e finalização local sem depender de Firestore. O
+subfluxo físico curto foi executado com Dev Client conectado ao Metro e, por
+isso, não comprova operação offline. Rota real, notificação e demais cenários
+ainda precisam de comprovação.
 
 ### Impacto técnico
 
@@ -78,7 +139,7 @@ finalização/recovery, testes, config plugin e documentação correspondente.
 
 ### Riscos restantes
 
-- nova build e reteste físico;
+- conclusão do reteste físico;
 - preview/release, kill/force-stop, zonas e offline/reconexão;
 - medir stall de UI e volume/parse antes de decidir SQLite.
 

@@ -100,7 +100,11 @@ Para produto, negócio e arquitetura-alvo, consultar `AGENTS.md`,
 - Background location e notificacao sao limitantes: devem ser explicadas, mas a negativa nao quebra o app inteiro.
 - Iniciar corrida deve dar feedback imediato e bloquear duplo clique.
 - Pausar/retomar pelo app ou notificacao passa pelo mesmo fluxo oficial.
-- Finalizar salva localmente antes de depender de remoto.
+- Pausar/retomar preserva o total pausado monotônico; a retomada desconta o
+  intervalo antes de publicar `RUNNING`.
+- Finalizar salva localmente antes de depender de remoto e usa apenas
+  dependências locais pré-carregadas, sem `import()` tardio.
+- Falha pré-save restaura o snapshot vivo ou apresenta recovery com timeout.
 - Historico/detalhe abrem offline e preferem copia local.
 - Corrida por zonas preserva area, geometria, `zoneCoords`, resumo territorial, eventos e celulas quando a captura local existe.
 - Corrida livre nao recebe territorio falso.
@@ -118,18 +122,23 @@ Codex pode sugerir, registrar e organizar. Eduardo decide o que entra na proxima
 
 ## Validacoes realizadas
 
-Ultima rodada reportada em 2026-07-24:
+Última rodada reportada em 2026-07-24:
 
-- `npm test -- --runInBand`: 52 suites / 476 testes, 0 snapshots.
-- `git diff --check`: passou, com warnings LF/CRLF conhecidos quando aplicavel.
-- `npx expo config --type prebuild`: passou e registrou o config plugin do
-  AsyncStorage.
+- `npm test`: 52 suites / 493 testes, 0 snapshots.
+- suíte crítica focada: 4 suites / 89 testes.
+- `git diff --check`: aprovado.
+- export Android: 2.334 módulos.
+- `npm run android:build:dev`: 631 tarefas, `BUILD SUCCESSFUL`.
+- reteste físico parcial: pausa no app descontada, finalização/save/cleanup/UI
+  aprovados em corrida nova de `01:07`.
 - `lint`, `typecheck`, `test:ci` e `validate` nao existem no `package.json`.
 
 ## Riscos pendentes
 
-- Gate físico Dev Client reprovado: background/reentrada passaram, mas
-  notificação, recovery e finalização aguardam reteste da nova build.
+- Gate físico Dev Client parcial: background/reentrada foram comprovados na
+  rodada inicial; pausa/finalização no app passaram no reteste limpo; ação da
+  notificação, falha pré-save induzida, histórico com rota real e os demais
+  cenários continuam abertos.
 - Fabricantes com economia agressiva de bateria podem matar o processo mesmo com foreground service.
 - Feed/Friends/Groups ainda possuem trechos Firestore-first, incluindo componentes de grupo como `CreateGroupModal`.
 - Upload/sync remoto de stories ainda nao existe.
@@ -142,8 +151,8 @@ Ultima rodada reportada em 2026-07-24:
 
 ## Proximos passos recomendados
 
-1. Gerar nova build Dev Client e retestar notificação, pausa, recovery e
-   finalização em corrida nova.
+1. Retestar pausa/retomada pela notificação, duplo toque, recovery e histórico
+   após reabrir, usando corrida nova com deslocamento real.
 2. Repetir depois em preview/release e com economia de bateria ligada/desligada.
 3. Fechar assinatura release real e source maps autenticados antes de tratar APK como publicavel.
 4. Desacoplar Feed/Friends/Groups de chamadas Firestore-first por repositories, sem quebrar o social atual.

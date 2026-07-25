@@ -295,8 +295,17 @@ Desde a Fase D de 2026-07-24:
 - pausa e retomada só são confirmadas quando o snapshot devolve o mesmo
   `activeRunId` e o estado esperado; a UI e a notificação preservam o estado
   anterior se a transição falhar;
+- ao retomar, o intervalo `now - pausedAt` é incorporado imediatamente ao total
+  pausado, e a reconciliação nunca pode reduzir esse total;
 - finalizar uma corrida `PAUSED` consolida primeiro a pausa aberta para que ela
   não entre na duração ativa;
+- freeze, checkpoint, save mínimo, limpeza e recovery usam adapters locais
+  pré-carregados, injetados pela composição da finalização; `import()` tardio ou
+  carregamento de bundle não faz parte da transação crítica;
+- ausência de uma dependência obrigatória falha explicitamente antes de executar
+  a etapa dependente; o catch reaplica o snapshot `RUNNING`/`PAUSED` ou
+  apresenta recovery com timeout, sem anunciar `IDLE` enquanto existe evidência
+  local;
 - o registro em `runs` recebe seed versionado de processamento antes da limpeza
   da sessão ativa;
 - a limpeza canônica e legada recebe o `runId` esperado e se recusa a apagar

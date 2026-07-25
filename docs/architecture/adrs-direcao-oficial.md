@@ -58,7 +58,12 @@ de produção.
 **Evidência de implementação (2026-07-24):**
 `runFinalizationService` concentra freeze, lock idempotente, confirmação do
 registro mínimo versionado e limpeza posterior da sessão ativa. A criação da fila
-acontece somente após `RUN_FINISH_UI_RELEASED`.
+acontece somente após `RUN_FINISH_UI_RELEASED`. Os adapters críticos são
+pré-carregados e a composição da finalização os injeta;
+`runFinalizationService` e `runRecoveryService` não usam `import()` tardio. Uma
+dependência ausente falha antes de executar sua etapa, e a UI restaura o
+snapshot vivo ou apresenta recovery com timeout. A fila derivada já liberada
+continua independente e pode carregar adapters próprios.
 
 - **Contexto:** a finalização atual já salva localmente antes da fila derivada.
 - **Problema:** território, XP, ranking, sync ou animação podem falhar/demorar.
@@ -70,10 +75,12 @@ acontece somente após `RUN_FINISH_UI_RELEASED`.
 - **Riscos:** relatório incompleto se a fila não for retomada.
 - **Critérios de revisão:** não aplicável enquanto a atividade precisar sobreviver
   offline.
-- **Impacto técnico:** orquestrador idempotente e contrato `minimumSavedRun`.
+- **Impacto técnico:** orquestrador idempotente, contrato `minimumSavedRun` e
+  dependências locais estáticas/injetadas.
 - **Impacto comercial:** anúncio, recompensa e checkout nunca antecedem o save.
 - **Impacto visual:** confirmação rápida seguida de estados parciais.
-- **Impacto em testes:** concorrência, crash em cada etapa e reprocessamento.
+- **Impacto em testes:** concorrência, crash em cada etapa, ausência de
+  dependência, proibição de lazy load, restauração e reprocessamento.
 
 ## ADR-031 — Processamento da Expedição idempotente
 

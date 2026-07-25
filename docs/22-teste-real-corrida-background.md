@@ -23,8 +23,15 @@ O resultado esperado em todos os cenarios e preservar `localRunId`, status, temp
 O gate no Samsung SM-A546E, Android 16/API 36, foi reprovado. Tela apagada,
 foreground service e reentrada passaram; ações da notificação,
 pausa/duração/recovery e save final falharam. Correções foram aplicadas, mas
-exigem uma nova build e reteste. Não reutilizar o artefato final incompleto como
-base do novo teste.
+o resultado histórico permanece registrado.
+
+Um reteste curto posterior, em corrida nova no Dev Client, aprovou pausa/retomada
+no app sem somar o intervalo parado e finalização local em `01:07`, com cleanup
+após save, resumo salvo e fila derivada após liberação da UI. Não houve
+`FINISH_FAILED` nem erro de carregamento de bundle. Esse reteste não repetiu tela
+bloqueada, ação da notificação, kill/force-stop, offline, zonas ou release; por
+isso o gate de background continua parcial. Não usar a corrida antiga
+contaminada como evidência de duração.
 
 Evidência sanitizada:
 `docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`.

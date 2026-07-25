@@ -32,6 +32,56 @@ Classificação: Alinhado | Parcialmente alinhado | Desalinhado
 ### Ações recomendadas
 ```
 
+## 2026-07-24 - Revisão de pausa e finalização sem lazy load
+
+### Documentos consultados
+
+Arquitetura, fluxos, regras de corrida, ADR-026/028/030, guia/checklist Android,
+bugs e auditoria física C/D.
+
+### Arquivos analisados
+
+`MapScreen`, estado/tracking canônico, autosave, finalização, recovery, storage
+legado, sync, fila derivada e testes correspondentes.
+
+### Resultado
+
+Classificação: Parcialmente alinhado
+
+O caminho feliz está alinhado: pausa monotônica, save local confirmado, cleanup
+por identidade, liberação da UI antes da fila e nenhuma dependência remota ou
+carregamento tardio na transação crítica. O subfluxo foi aprovado em corrida
+física limpa. A
+classificação global permanece parcial porque os cenários de notificação,
+falha induzida, rota real, offline e release continuam pendentes.
+
+### Problemas encontrados
+
+Merge podia apagar a pausa acumulada na retomada; `import()` tardio podia abortar
+a finalização; fallback não consultava legado após snapshot nulo; leituras de
+falha não tinham timeout; cleanup aceitava dependência canônica incompleta; e o
+restart podia disputar com a parada do background.
+
+### Riscos
+
+Notificação, force-stop, preview/release, bateria agressiva, zona, sync após
+offline e rota longa ainda não têm evidência depois do último patch.
+
+### Melhorias sugeridas
+
+Adicionar teste de integração controlado para falha pré-save/timeout e executar o
+restante da matriz física antes de alterar a experiência principal da corrida.
+
+### Documentação atualizada
+
+Arquitetura, fluxos, ADRs, testes, bugs, changelog, checklist, roteiro de
+background, resumo local-first e auditoria C/D.
+
+### Ações recomendadas
+
+Preservar a proibição de lazy load no caminho crítico, retestar notificação e
+reentrada e depois validar uma corrida real com deslocamento/histórico.
+
 ## 2026-07-24 - Revisão das remediações do gate físico C/D
 
 ### Documentos consultados
@@ -49,8 +99,10 @@ Notificação/runtime, autosave/storage, histórico/sync, finalização,
 Classificação: Parcialmente alinhado
 
 As correções respeitam local-first, não adicionam processamento no GPS, não
-duplicam serviços e mantêm tarefas derivadas fora da finalização. A classificação
-continua parcial porque a nova build ainda não foi retestada fisicamente.
+duplicam serviços e mantêm tarefas derivadas fora da finalização. Naquele
+momento, a classificação continuava parcial porque a nova build ainda não havia
+sido retestada fisicamente. O reteste posterior aprovou pausa/retomada e
+finalização no app em um ciclo curto, sem fechar o gate global.
 
 ### Problemas encontrados
 
@@ -75,8 +127,10 @@ changelog e resumo local-first.
 
 ### Ações recomendadas
 
-Instalar nova build, usar corrida nova e executar o roteiro curto antes de seguir
-para a camada visual do Relatório da Expedição.
+A ação recomendada naquele momento era instalar a nova build, usar corrida nova
+e executar o roteiro curto. Essa ação foi concluída parcialmente; notificação,
+falha induzida, rota real, offline, preview/release e demais cenários continuam
+pendentes antes de fechar o gate global.
 
 ## 2026-07-24 - Revisão da Fase D
 

@@ -130,6 +130,10 @@ Regra vigente desde 2026-06-17:
 - Quando existe timeline de pausas/segmentos, o tempo final deve ser derivado de `finishedAt - startedAt - totalPausedMs`; duração armazenada que incluiu pausa não pode vencer esse cálculo. Sem timeline confiável, usar o maior valor seguro entre storage, UI viva e último ponto.
 - Se a finalização começar em `PAUSED`, a pausa ainda aberta deve ser acumulada
   antes da transição para `FINISHING`.
+- Ao retomar, `now - pausedAt` deve ser acumulado antes de publicar `RUNNING`;
+  reconciliação não pode reduzir o total pausado.
+- Finalização e recovery devem usar módulos locais pré-carregados. Carregamento
+  tardio de bundle não faz parte do fluxo crítico.
 - Se o storage falhar por falta de espaco, a corrida em memoria e o ultimo backup valido devem ser preservados e o erro precisa ficar auditavel.
 
 ### Auto-save e estados offline

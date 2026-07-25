@@ -8,7 +8,8 @@
 
 **Escopo executado:** extração da finalização, contrato mínimo e evolução da fila
 
-**Status:** implementado; gate físico reprovado e correções aguardando reteste
+**Status:** implementado; registro original reprovado, com reteste curto
+posterior parcialmente aprovado e gate físico global aberto
 
 ## Diagnóstico
 
@@ -149,15 +150,19 @@ tela apagada e reentrada, mas revelou `user_mismatch` nas ações da notificaç�
 pressão de storage até `SQLITE_FULL`, liberação indevida do lock por toque
 duplicado, rota duplicada no recovery e duração com pausa incorreta. A
 finalização única abriu o resumo depois de aproximadamente 47 segundos, porém o
-save local falhou. O gate da Fase D está reprovado até o reteste das correções.
+save local falhou. Naquela execução, o gate da Fase D ficou reprovado.
+
+Uma build posterior aprovou pausa/retomada e finalização no app em corrida curta,
+com save mínimo e cleanup confirmados. Essa evidência não abrange notificação,
+rota real, offline, falha induzida ou preview/release.
 
 Registro sanitizado:
 `docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`.
 
 ## Riscos restantes
 
-- a corrida física revelou falhas críticas; as correções ainda não foram
-  validadas em nova build;
+- a corrida física original revelou falhas críticas; a nova build validou apenas
+  o subfluxo curto de pausa/retomada e finalização no app;
 - lock em memória evita concorrência no processo atual; após crash, a proteção é
   a confirmação idempotente no histórico;
 - o relatório visual ainda não consome o contrato modular;
@@ -173,13 +178,15 @@ Registro sanitizado:
 - repetir em corrida livre e por zonas, dev client e preview/release;
 - validar economia agressiva de bateria.
 
-O aparelho foi autorizado durante a Fase D. A execução física posterior está
-registrada no relatório de remediação; nenhum cenário crítico reprovado é
-declarado aprovado.
+O aparelho foi autorizado durante a Fase D. As execuções físicas posteriores
+estão registradas no relatório de remediação. Apenas o subfluxo curto de
+pausa/retomada e finalização no app foi aprovado; os demais cenários críticos
+continuam pendentes.
 
 ## Próximos passos
 
-1. gerar nova build e executar o reteste físico das correções;
+1. concluir o reteste físico restante de notificação, recovery, offline,
+   falha induzida e preview/release;
 2. medir duração do freeze/save mínimo e crescimento do storage;
 3. adaptar `RunSummaryModal` e `RunDetailScreen` ao estado modular na Fase 3;
 4. manter integrações comerciais fora do fluxo.

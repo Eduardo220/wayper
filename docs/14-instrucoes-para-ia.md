@@ -251,6 +251,12 @@ Quando responder sobre o Wayper:
   recuperar atividade.
 - Não executar processamento pesado no caminho crítico do GPS.
 - Não acoplar lógica crítica de tracking/finalização a componente montado.
+- Não usar `import()` tardio nem depender de carregamento de bundle na transação
+  crítica de finalização/recovery até save mínimo, cleanup e liberação da UI;
+  adapters obrigatórios devem estar pré-carregados e ser injetados pela
+  composição. Tarefas derivadas posteriores podem carregar adapters próprios.
+- Não permitir regressão de `totalPausedMs`; a retomada acumula a pausa aberta
+  antes de publicar `RUNNING`.
 - Não segurar finalização por território, XP, ranking, recompensa, anúncio,
   replay, exportação, share ou sync.
 - Não mostrar anúncio, parceiro, upgrade ou recompensa durante atividade,

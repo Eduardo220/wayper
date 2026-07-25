@@ -258,6 +258,8 @@ Desde 2026-06-04, `runAutoSaveService` tambem protege a corrida ativa contra que
 
 - Checkpoints canonicos sao disparados por lote: aproximadamente a cada 5 segundos, 5 pontos aceitos ou 10 pontos brutos. Um lote da task background sempre faz flush ao terminar.
 - Start, pause, resume, `FINISHING`, snapshot final, erro importante e AppState critico forcam checkpoint imediato; as escritas sao serializadas para snapshot antigo nao vencer o novo.
+- Resume acumula `now - pausedAt` antes de publicar `RUNNING`; merges preservam
+  `totalPausedMs`/`pausedDurationMs` de forma monotônica.
 - `runAutoSaveService` gera o checkpoint legado de compatibilidade em janela padrao de 15 segundos, depois de forcar o canonico quando necessario.
 - Eventos emitidos pela própria persistência do checkpoint legado são ignorados; somente checkpoints forçados pendentes entram novamente na fila.
 - `MapScreen` forca checkpoint ao entrar em `background` ou `inactive`, antes de finalizar a corrida e quando falhas recuperaveis de localizacao aparecem.
@@ -266,12 +268,19 @@ Desde 2026-06-04, `runAutoSaveService` tambem protege a corrida ativa contra que
 - Estado `FINISHING` e tratado como finalizado para recovery, nunca como corrida viva, e impede que uma nova corrida substitua silenciosamente a anterior.
 - Pontos rejeitados tambem atualizam `rawPath`, qualidade e ultimo erro/estado recuperavel no proximo checkpoint; o historico `runs` nunca e regravado por ponto.
 - O snapshot canonico e seus chunks so sao limpos depois que o save final confirma o mesmo `localRunId`. Fallback de erro, ID divergente ou falha de cleanup preservam recovery.
+- A composição injeta na finalização tracking, checkpoint, persistência e fila
+  já carregados. `runRecoveryService` usa módulos locais importados
+  estaticamente e aceita tracking injetado nos pontos suportados. Nenhum
+  `import()` tardio pode entrar entre `Finalizar`, freeze, save mínimo, cleanup
+  e liberação da UI.
+- Falha anterior ao save faz leitura com timeout e restaura `RUNNING`/`PAUSED`
+  ou apresenta candidato canônico/legado, sem deixar o lock indefinidamente.
 - Checkpoint periodico nao deve regravar snapshot terminal (`FINISHED`, `COMPLETED`, `CANCELLED`) como corrida ativa; somente eventos de finalizacao podem persistir estado terminal.
 - Erros de storage cheio (`SQLITE_FULL`, `database or disk is full`, quota) devem ser registrados em `storageHealth` e `ACTIVE_RUN_SAVE_FAILED`, preservando snapshot em memoria e backup anterior quando possivel.
 
 Fluxo reforcado:
 
-`bootstrap headless -> start/checkpoint -> pontos em memoria -> checkpoint por tempo/lote -> pause/resume flush -> AppState flush -> recovery consolidado -> FINISHING/before_finish flush -> finish canonico -> saveLocalRun compacto confirmado e pending sync -> rascunho final somente em fallback -> limpeza ativa -> sync idempotente`.
+`bootstrap headless -> start/checkpoint -> pontos em memoria -> checkpoint por tempo/lote -> pause/resume com pausa acumulada + flush -> AppState flush -> recovery consolidado sem lazy load -> FINISHING/before_finish flush -> finish canonico com dependencias pre-carregadas -> saveLocalRun compacto confirmado e pending sync -> rascunho final somente em fallback -> limpeza ativa -> sync idempotente`.
 
 ### Notificacao persistente Android da corrida ativa
 

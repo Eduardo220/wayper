@@ -35,8 +35,13 @@
   conquista, recompensa, replay, exportação, share, anúncio e sync remoto.
 - Finalização concorrente é bloqueada por chave/estado idempotente.
 - Lógica crítica de finalização não depende do ciclo de vida de uma tela.
+- A transação crítica de finalização/recovery até save mínimo, cleanup e
+  liberação da UI usa somente dependências locais já carregadas. Processamento
+  derivado posterior pode carregar adapters próprios sem bloquear a corrida.
 - Pausa e retomada só alteram a experiência quando o mesmo `activeRunId`
   confirma respectivamente `PAUSED` ou `RUNNING`.
+- O total pausado é monotônico; retomar acumula o intervalo aberto antes de
+  publicar `RUNNING`.
 - Finalizar durante pausa deve acumular a pausa aberta antes de calcular a
   duração ativa.
 - Limpeza após save é vinculada ao ID salvo e nunca pode apagar snapshot de

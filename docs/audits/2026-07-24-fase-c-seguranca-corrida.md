@@ -4,7 +4,8 @@
 **Branch:** `develop`  
 **Base:** `bef386b`  
 **Escopo executado:** gate automatizado, teste Android físico e remediação
-**Status:** gate físico reprovado; correções aguardam nova build e reteste
+**Status:** registro original reprovado; reteste posterior aprovou o subfluxo
+curto no app e manteve o gate físico global aberto
 
 ## Diagnóstico
 
@@ -71,33 +72,34 @@ Descoberta Android:
 ## Riscos restantes
 
 - `BUG-20260621-001` não pode ser marcado como corrigido;
-- tela bloqueada e reentrada passaram parcialmente no Dev Client; ações da
-  notificação, recovery e finalização falharam;
+- na execução original, tela bloqueada e reentrada passaram parcialmente no Dev
+  Client; ações da notificação, recovery e finalização falharam;
 - kill, force-stop, preview/release e bateria agressiva continuam sem evidência;
 - source maps/Sentry autenticado e assinatura release permanecem bloqueados;
 - testes automatizados não reproduzem políticas reais de fabricantes Android.
 
 ## Validação física pendente
 
-1. instalar a nova build Dev Client;
-2. repetir as regressões de notificação, pausa, recovery e finalização;
-3. repetir depois em preview/release e com economia agressiva;
+1. repetir pausa/retomada pela notificação e reentrada com tela bloqueada;
+2. validar recovery, falha induzida, rota real e histórico após reinício;
+3. repetir depois em offline, preview/release e com economia agressiva;
 4. anexar apenas diagnóstico sanitizado;
-5. somente então atualizar o status dos bugs.
+5. atualizar cada bug somente para o escopo efetivamente comprovado.
 
 ## Próximo passo
 
-Retestar as remediações da Fase D antes de avançar para a camada visual do
-Relatório da Expedição. O fluxo não será considerado validado em produção até a
-matriz física ser concluída.
+Concluir a matriz física restante antes de considerar o fluxo validado em
+produção. O reteste curto posterior comprovou somente pausa/retomada e
+finalização no app.
 
 ## Nota posterior
 
 O aparelho foi autorizado e a matriz física parcial foi executada no Samsung
 SM-A546E, Android 16/API 36. Tela apagada, foreground service e reentrada pela
 notificação funcionaram, mas ações da notificação, consistência após
-pausa/recovery e persistência da finalização falharam. O gate está reprovado até
-uma nova build validar as correções. Evidência completa e sanitizada:
+pausa/recovery e persistência da finalização falharam naquela execução. Uma
+nova build aprovou depois o subfluxo curto de pausa/retomada e finalização no
+app; o gate global permanece aberto. Evidência completa e sanitizada:
 `docs/audits/2026-07-24-fase-cd-validacao-fisica-remediacao.md`.
 
 ## Commit sugerido

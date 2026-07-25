@@ -6,8 +6,8 @@ Backlog vivo de funcionalidades, melhorias e pendencias. Nao usar este arquivo p
 
 | Item | Tipo | Status | Observacao |
 | --- | --- | --- | --- |
-| Retestar correções de corrida/background/notificação | QA | Alta | Gate Dev Client reprovado em 2026-07-24; gerar nova build e repetir ações da notificação, pausa, recovery e finalização. |
-| Validar finalização/reentrada em Android preview/release | QA/bug | Pendente | Dev Client revelou falhas e recebeu correções; ainda falta confirmar histórico, lock e rota sem duplicação em nova build. |
+| Concluir reteste de corrida/background/notificação | QA | Alta | A nova build aprovou pausa/retomada e finalização no app em ciclo curto; ainda é preciso repetir ações da notificação, tela bloqueada, recovery, offline e demais cenários. |
+| Validar finalização/reentrada em Android preview/release | QA/bug | Pendente | O Dev Client confirmou save mínimo/finalização no app; ainda falta confirmar histórico após reinício, lock, falha induzida e rota sem duplicação em preview/release. |
 | Modo foco da corrida | Produto/UX | Planejado | Tempo, distância, pace, estado, GPS crítico e controles; mapa opcional. |
 | Contrato do Relatório da Expedição | Produto/dados | Planejado | Reabrível, parcial e compatível com `RunSummaryModal`/`RunDetailScreen`. |
 | Assinatura Android release real | Build | Pendente | APK prod debug-signed nao e publicavel. |

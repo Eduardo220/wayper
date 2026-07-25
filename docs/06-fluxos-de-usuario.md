@@ -86,6 +86,13 @@ principal começa depois do salvamento, no Relatório da Expedição.
 12. Se o processo terminar entre os passos 7 e 8, o seed
     `expeditionProcessingStatus=PENDING` faz o startup recriar idempotentemente as
     tarefas ausentes.
+13. Freeze, save, cleanup e liberação da UI usam dependências locais
+    pré-carregadas; essa transação crítica não tenta buscar outro bundle ou
+    módulo. Tarefas derivadas posteriores são independentes.
+14. Se uma falha ocorrer antes da confirmação local, o app faz uma leitura
+    limitada do snapshot: reaplica a corrida `RUNNING`/`PAUSED` ou apresenta o
+    recovery canônico/legado. A existência de evidência recuperável impede a
+    falsa volta ao estado ocioso.
 
 ## 6.1 Relatório da Expedição
 

@@ -39,6 +39,11 @@ anúncios.
 - o caminho crítico do GPS não recebe processamento pesado, chamadas comerciais
   ou efeitos derivados;
 - lógica crítica não depende de componente montado;
+- a transação crítica de finalização/recovery até save mínimo, cleanup e
+  liberação da UI usa dependências locais já carregadas; tarefas derivadas
+  posteriores podem carregar adapters próprios sem bloquear a corrida;
+- o total pausado é monotônico; retomar acumula a pausa antes de publicar
+  `RUNNING`;
 - a tela ativa é mínima: tempo, distância, pace, estado, GPS crítico, pausa,
   retomada, finalização e segurança;
 - território é consequência silenciosa, apresentada principalmente depois;
