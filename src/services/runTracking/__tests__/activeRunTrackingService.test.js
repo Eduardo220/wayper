@@ -180,9 +180,17 @@ describe("activeRunTrackingService lifecycle", () => {
     const beforeCorrection = await service.recordLocation(pointAt(4_000, 8, 24), {
       source: "foreground",
     });
+    await service.flushPendingActiveRunCheckpoint({
+      reason: "distance_before_correction_test",
+      force: true,
+    });
+    const beforeCorrectionCheckpoint =
+      service.__getActiveRunCheckpointWorkCountersForTests();
+    AsyncStorageMock.setItem.mockClear();
 
     const corrected = await service.recordLocation(pointAt(8_000, 1, 8), {
       source: "foreground",
+      deferCheckpoint: true,
     });
 
     expect(corrected.trustedPath).toHaveLength(2);
@@ -191,10 +199,442 @@ describe("activeRunTrackingService lifecycle", () => {
       reason: "distance_correction_test",
       force: true,
     });
+    const afterCorrectionCheckpoint =
+      service.__getActiveRunCheckpointWorkCountersForTests();
+    expect(afterCorrectionCheckpoint.committedCheckpointFallbacks).toBe(
+      beforeCorrectionCheckpoint.committedCheckpointFallbacks + 1
+    );
+    expect(afterCorrectionCheckpoint.normalizedPersistCalls).toBe(
+      beforeCorrectionCheckpoint.normalizedPersistCalls + 1
+    );
+    expect(AsyncStorageMock.setItem.mock.calls
+      .map(([key]) => key)
+      .filter((key) => key.includes(":routeChunk:"))
+    ).toHaveLength(1);
     expect(getStoredActiveRun().distanceMeters).toBeCloseTo(
       corrected.distanceMeters,
       6
     );
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+    expect(restored.trustedPath).toHaveLength(2);
+    expect(restored.rawPath).toHaveLength(3);
+    expect(restored.trustedPath[1].longitude).toBeCloseTo(
+      corrected.trustedPath[1].longitude,
+      8
+    );
+    expect(restored.distanceMeters).toBeCloseTo(corrected.distanceMeters, 6);
+  });
+
+  test("checkpoint comprometido nao renormaliza a rota e preserva recovery", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-committed-checkpoint-fast-path",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    const beforePoints =
+      service.__getActiveRunCheckpointWorkCountersForTests();
+    const canonicalWritesBefore = AsyncStorageMock.setItem.mock.calls
+      .filter(([key]) => key === ACTIVE_RUN_STORAGE_KEY)
+      .length;
+
+    let committedSnapshot = null;
+    for (let index = 1; index <= 5; index += 1) {
+      committedSnapshot = await service.recordLocation(nextPoint(index), {
+        source: index % 2 === 0 ? "background" : "foreground",
+        deferCheckpoint: true,
+      });
+    }
+
+    const beforeCheckpoint =
+      service.__getActiveRunCheckpointWorkCountersForTests();
+    expect(beforeCheckpoint.normalizedPersistCalls).toBe(
+      beforePoints.normalizedPersistCalls
+    );
+    expect(beforeCheckpoint.committedCheckpointWrites).toBe(
+      beforePoints.committedCheckpointWrites
+    );
+    expect(AsyncStorageMock.setItem.mock.calls
+      .filter(([key]) => key === ACTIVE_RUN_STORAGE_KEY)
+    ).toHaveLength(canonicalWritesBefore);
+
+    const saved = await service.flushPendingActiveRunCheckpoint({
+      reason: "committed_fast_path_test",
+      force: true,
+    });
+    const storedCheckpoint = getStoredActiveRun();
+
+    const afterCheckpoint =
+      service.__getActiveRunCheckpointWorkCountersForTests();
+    expect(afterCheckpoint.normalizedPersistCalls).toBe(
+      beforeCheckpoint.normalizedPersistCalls
+    );
+    expect(afterCheckpoint.committedCheckpointFallbacks).toBe(
+      beforeCheckpoint.committedCheckpointFallbacks
+    );
+    expect(afterCheckpoint.committedCheckpointWrites).toBe(
+      beforeCheckpoint.committedCheckpointWrites + 1
+    );
+    expect(saved.trustedPath).toBe(committedSnapshot.trustedPath);
+    expect(saved.rawPath).toBe(committedSnapshot.rawPath);
+    expect(saved.segments).toBe(committedSnapshot.segments);
+    expect(storedCheckpoint.durationSeconds).toBeGreaterThan(0);
+    expect(storedCheckpoint.durationMs).toBe(
+      storedCheckpoint.durationSeconds * 1000
+    );
+    expect(storedCheckpoint.pace).toBeCloseTo(
+      storedCheckpoint.paceSecondsPerKm,
+      8
+    );
+    expect(storedCheckpoint.paceSecondsPerKm).toBeCloseTo(
+      storedCheckpoint.durationSeconds /
+        (storedCheckpoint.distanceMeters / 1000),
+      8
+    );
+    expect(
+      afterCheckpoint.routeChunkPointsSanitized -
+      beforeCheckpoint.routeChunkPointsSanitized
+    ).toBeLessThanOrEqual(10);
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({
+      restartTracking: false,
+    });
+    expect(restored).toMatchObject({
+      activeRunId: "run-committed-checkpoint-fast-path",
+      runId: "run-committed-checkpoint-fast-path",
+      id: "run-committed-checkpoint-fast-path",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+    });
+    expect(restored.trustedPath).toHaveLength(5);
+    expect(restored.rawPath).toHaveLength(5);
+  });
+
+  test("checkpoint legado fora do formato comprometido usa normalizacao segura", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-checkpoint-safe-fallback",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    const legacySnapshot = await service.recordLocation(nextPoint(1), {
+      source: "foreground",
+      deferCheckpoint: true,
+    });
+    legacySnapshot.version = 1;
+    legacySnapshot.schemaVersion = 1;
+    legacySnapshot.formatVersion = 1;
+    const before = service.__getActiveRunCheckpointWorkCountersForTests();
+
+    await service.flushPendingActiveRunCheckpoint({
+      reason: "safe_fallback_without_point_commit",
+      force: true,
+    });
+
+    const after = service.__getActiveRunCheckpointWorkCountersForTests();
+    expect(after.committedCheckpointWrites).toBe(
+      before.committedCheckpointWrites
+    );
+    expect(after.committedCheckpointFallbacks).toBe(
+      before.committedCheckpointFallbacks + 1
+    );
+    expect(after.normalizedPersistCalls).toBe(
+      before.normalizedPersistCalls + 1
+    );
+    expect(getStoredActiveRun()).toMatchObject({
+      activeRunId: "run-checkpoint-safe-fallback",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      snapshotStorage: "light",
+      version: 1,
+    });
+  });
+
+  test.each([
+    {
+      label: "chunk",
+      matchesKey: (key) => key.startsWith(
+        `${service.ACTIVE_RUN_ROUTE_CHUNK_KEY_PREFIX}:`
+      ),
+    },
+    {
+      label: "indice de chunks",
+      matchesKey: (key) => key.startsWith(
+        `${service.ACTIVE_RUN_ROUTE_CHUNK_INDEX_STORAGE_KEY}:`
+      ),
+    },
+  ])("falha de escrita de $label preserva snapshot anterior e recupera com seguranca", async ({
+    label,
+    matchesKey,
+  }) => {
+    await service.startActiveRun({
+      activeRunId: "run-route-chunk-write-retry",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), {
+      source: "foreground",
+      deferCheckpoint: true,
+    });
+    await service.flushPendingActiveRunCheckpoint({
+      reason: "route_chunk_write_baseline_test",
+      force: true,
+    });
+    const currentBefore = storage.get(ACTIVE_RUN_STORAGE_KEY);
+    const backupBefore = storage.get(service.ACTIVE_RUN_BACKUP_STORAGE_KEY);
+    const countersBefore =
+      service.__getActiveRunCheckpointWorkCountersForTests();
+    await service.recordLocation(nextPoint(2), {
+      source: "foreground",
+      deferCheckpoint: true,
+    });
+    let failedOnce = false;
+    AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+      if (!failedOnce && matchesKey(key)) {
+        failedOnce = true;
+        throw new Error("route chunk storage unavailable");
+      }
+      storage.set(key, value);
+    });
+
+    try {
+      await expect(service.flushPendingActiveRunCheckpoint({
+        reason: "route_chunk_write_failure_test",
+        force: true,
+      })).resolves.toMatchObject({
+        activeRunId: "run-route-chunk-write-retry",
+      });
+
+      expect(failedOnce).toBe(true);
+      expect(storage.get(ACTIVE_RUN_STORAGE_KEY)).toBe(currentBefore);
+      expect(storage.get(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)).toBe(
+        backupBefore
+      );
+      expect(service.getTrackingRuntimeStatus()).toMatchObject({
+        checkpointDirty: true,
+        acceptedPointsSinceCheckpoint: 1,
+        rawPointsSinceCheckpoint: 1,
+      });
+      expect(
+        service.__getActiveRunCheckpointWorkCountersForTests()
+          .committedCheckpointWrites
+      ).toBe(countersBefore.committedCheckpointWrites);
+    } finally {
+      AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+        storage.set(key, value);
+      });
+    }
+
+    if (label === "indice de chunks") {
+      service.__resetActiveRunRuntimeForTests();
+      const restoredAfterCrash = await service.restoreActiveRun({
+        restartTracking: false,
+      });
+      expect(restoredAfterCrash.trustedPath).toHaveLength(1);
+      expect(restoredAfterCrash.rawPath).toHaveLength(1);
+      expect(restoredAfterCrash.trustedPath[0].timestamp).toBe(
+        nextPoint(1).timestamp
+      );
+      expect(restoredAfterCrash.distanceMeters).toBeCloseTo(
+        JSON.parse(currentBefore).distanceMeters,
+        6
+      );
+      return;
+    }
+
+    await service.flushPendingActiveRunCheckpoint({
+      reason: "route_chunk_write_retry_test",
+      force: true,
+    });
+
+    expect(service.getTrackingRuntimeStatus().checkpointDirty).toBe(false);
+    expect(getStoredTrustedPointsFromChunks()).toHaveLength(2);
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+    expect(restored.trustedPath).toHaveLength(2);
+    expect(restored.trustedPath[1].timestamp).toBe(nextPoint(2).timestamp);
+  });
+
+  test("recovery prefere backup mais novo quando current falha apos o backup", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-newer-backup-recovery",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(1), {
+      source: "foreground",
+      deferCheckpoint: true,
+    });
+    const currentBefore = storage.get(ACTIVE_RUN_STORAGE_KEY);
+    let currentWriteFailed = false;
+    AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+      if (!currentWriteFailed && key === ACTIVE_RUN_STORAGE_KEY) {
+        currentWriteFailed = true;
+        throw new Error("canonical snapshot write unavailable");
+      }
+      storage.set(key, value);
+    });
+
+    try {
+      await service.flushPendingActiveRunCheckpoint({
+        reason: "newer_backup_test",
+        force: true,
+      });
+      expect(currentWriteFailed).toBe(true);
+      expect(storage.get(ACTIVE_RUN_STORAGE_KEY)).toBe(currentBefore);
+      expect(JSON.parse(
+        storage.get(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)
+      ).routeChunksIndex.totalTrustedPoints).toBe(1);
+    } finally {
+      AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+        storage.set(key, value);
+      });
+    }
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+
+    expect(restored).toMatchObject({
+      activeRunId: "run-newer-backup-recovery",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+    });
+    expect(restored.trustedPath).toHaveLength(1);
+    expect(restored.trustedPath[0].timestamp).toBe(nextPoint(1).timestamp);
+    await __flushLogWritesForTests();
+    const logs = await getLogs({ runId: "run-newer-backup-recovery" });
+    expect(logs.map((entry) => entry.event)).toContain(
+      "RUN_ACTIVE_SNAPSHOT_BACKUP_USED"
+    );
+  });
+
+  test("backup de outra corrida nao substitui o current canonico", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-current-identity-backup",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    const foreignObservedAtMs = Date.now() + 60_000;
+    const foreignBackup = {
+      ...JSON.parse(storage.get(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)),
+      activeRunId: "run-foreign-backup",
+      runId: "run-foreign-backup",
+      id: "run-foreign-backup",
+      lastUpdatedAtMs: foreignObservedAtMs,
+      lastUpdatedAt: new Date(foreignObservedAtMs).toISOString(),
+    };
+    foreignBackup.routeChunksIndex = {
+      ...foreignBackup.routeChunksIndex,
+      activeRunId: "run-foreign-backup",
+      updatedAt: new Date(foreignObservedAtMs).toISOString(),
+    };
+    storage.set(
+      service.ACTIVE_RUN_BACKUP_STORAGE_KEY,
+      JSON.stringify(foreignBackup)
+    );
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+
+    expect(restored.activeRunId).toBe("run-current-identity-backup");
+  });
+
+  test("backup live mais antigo nao vence current mais avancado", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-stale-live-backup",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    const staleBackup = JSON.parse(
+      storage.get(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)
+    );
+    staleBackup.routeChunksIndex = {
+      ...staleBackup.routeChunksIndex,
+      updatedAt: new Date(BASE_TIME).toISOString(),
+    };
+    await service.recordLocation(nextPoint(1), {
+      source: "foreground",
+      deferCheckpoint: true,
+    });
+    await service.flushPendingActiveRunCheckpoint({
+      reason: "newer_current_test",
+      force: true,
+    });
+    storage.set(
+      service.ACTIVE_RUN_BACKUP_STORAGE_KEY,
+      JSON.stringify(staleBackup)
+    );
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+
+    expect(restored.trustedPath).toHaveLength(1);
+    await __flushLogWritesForTests();
+    const logs = await getLogs({ runId: "run-stale-live-backup" });
+    expect(logs.map((entry) => entry.event)).not.toContain(
+      "RUN_ACTIVE_SNAPSHOT_BACKUP_USED"
+    );
+  });
+
+  test("empate de recencia aceita backup com distancia corrigida", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-corrected-distance-backup",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    const current = JSON.parse(storage.get(ACTIVE_RUN_STORAGE_KEY));
+    const backup = JSON.parse(
+      storage.get(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)
+    );
+    current.distanceMeters = 100;
+    current.distance = 100;
+    backup.distanceMeters = 50;
+    backup.distance = 50;
+    storage.set(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(current));
+    storage.set(
+      service.ACTIVE_RUN_BACKUP_STORAGE_KEY,
+      JSON.stringify(backup)
+    );
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+    await __flushLogWritesForTests();
+    const logs = await getLogs({ runId: "run-corrected-distance-backup" });
+
+    expect(logs.map((entry) => entry.event)).toContain(
+      "RUN_ACTIVE_SNAPSHOT_BACKUP_USED"
+    );
+    expect(restored.distanceMeters).toBe(50);
+  });
+
+  test("backup terminal da mesma corrida nao perde para current live", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-terminal-backup",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    const terminalBackup = {
+      ...JSON.parse(storage.get(service.ACTIVE_RUN_BACKUP_STORAGE_KEY)),
+      status: ACTIVE_RUN_STATUS.FINISHING,
+      lastUpdatedAtMs: BASE_TIME - 1_000,
+      lastUpdatedAt: new Date(BASE_TIME - 1_000).toISOString(),
+      updatedAt: new Date(BASE_TIME - 1_000).toISOString(),
+    };
+    terminalBackup.routeChunksIndex = {
+      ...terminalBackup.routeChunksIndex,
+      updatedAt: new Date(BASE_TIME - 1_000).toISOString(),
+    };
+    storage.set(
+      service.ACTIVE_RUN_BACKUP_STORAGE_KEY,
+      JSON.stringify(terminalBackup)
+    );
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+
+    expect(restored).toMatchObject({
+      activeRunId: "run-terminal-backup",
+      status: ACTIVE_RUN_STATUS.FINISHING,
+    });
   });
 
   test("mantem backup do snapshot canonico e usa backup se current estiver corrompido", async () => {
@@ -217,6 +657,21 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(restored.activeRunId).toBe("run-backup-restore");
     expect(restored.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
     expect(restored.trustedPath.length).toBeGreaterThanOrEqual(1);
+    expect(storage.has(service.ACTIVE_RUN_CORRUPT_STORAGE_KEY)).toBe(true);
+  });
+
+  test("usa backup quando current e JSON valido sem identidade de corrida", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-invalid-current-identity",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    storage.set(ACTIVE_RUN_STORAGE_KEY, "{}");
+
+    service.__resetActiveRunRuntimeForTests();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+
+    expect(restored.activeRunId).toBe("run-invalid-current-identity");
     expect(storage.has(service.ACTIVE_RUN_CORRUPT_STORAGE_KEY)).toBe(true);
   });
 
@@ -900,15 +1355,80 @@ describe("activeRunTrackingService lifecycle", () => {
       }],
     }, { restartTracking: false });
 
+    service.__resetActiveRunRuntimeForTests();
     AsyncStorageMock.setItem.mockClear();
-    await service.recordLocation(nextPoint(261), { source: "foreground" });
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+    const chunkWritesDuringRecovery = AsyncStorageMock.setItem.mock.calls
+      .map(([key]) => key)
+      .filter((key) => key.includes(":routeChunk:"));
+    expect(restored.trustedPath).toHaveLength(260);
+    expect(chunkWritesDuringRecovery).toHaveLength(0);
+
+    AsyncStorageMock.setItem.mockClear();
+    const countersBefore =
+      service.__getActiveRunCheckpointWorkCountersForTests();
+    await service.recordLocation(nextPoint(261), {
+      source: "foreground",
+      deferCheckpoint: true,
+    });
     await service.flushPendingActiveRunCheckpoint({ reason: "long_run_incremental", force: true });
+    const countersAfter =
+      service.__getActiveRunCheckpointWorkCountersForTests();
 
     const chunkWriteKeys = AsyncStorageMock.setItem.mock.calls
       .map(([key]) => key)
       .filter((key) => key.includes(":routeChunk:"));
     expect(chunkWriteKeys).toHaveLength(1);
     expect(chunkWriteKeys[0]).toMatch(/:1$/);
+    expect(countersAfter.normalizedPersistCalls).toBe(
+      countersBefore.normalizedPersistCalls
+    );
+    expect(countersAfter.committedCheckpointWrites).toBe(
+      countersBefore.committedCheckpointWrites + 1
+    );
+    expect(
+      countersAfter.routeChunkPointsSanitized -
+      countersBefore.routeChunkPointsSanitized
+    ).toBe(((points.length % service.ACTIVE_RUN_ROUTE_CHUNK_SIZE) + 1) * 2);
+  });
+
+  test("indice de chunks incoerente nao semeia cache incremental", async () => {
+    const points = Array.from({ length: 260 }, (_, index) => nextPoint(index + 1));
+    await service.hydrateActiveRunSnapshot({
+      activeRunId: "run-inconsistent-chunk-index",
+      userId: "user-1",
+      mode: "free",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAtMs: BASE_TIME,
+      lastUpdatedAtMs: BASE_TIME + 520_000,
+      trustedPath: points,
+      rawPath: points,
+      segments: [{
+        index: 0,
+        startedAt: BASE_TIME,
+        trustedPath: points,
+        rawPath: points,
+      }],
+    }, { restartTracking: false });
+
+    for (const key of [
+      ACTIVE_RUN_STORAGE_KEY,
+      service.ACTIVE_RUN_BACKUP_STORAGE_KEY,
+    ]) {
+      const envelope = JSON.parse(storage.get(key));
+      envelope.routeChunksIndex.chunks[0].closed = false;
+      storage.set(key, JSON.stringify(envelope));
+    }
+
+    service.__resetActiveRunRuntimeForTests();
+    AsyncStorageMock.setItem.mockClear();
+    const restored = await service.restoreActiveRun({ restartTracking: false });
+    const chunkWriteKeys = AsyncStorageMock.setItem.mock.calls
+      .map(([key]) => key)
+      .filter((key) => key.includes(":routeChunk:"));
+
+    expect(restored.trustedPath).toHaveLength(260);
+    expect(chunkWriteKeys).toHaveLength(2);
   });
 
   test("deduplica o mesmo ponto vindo do watcher e da task background", async () => {

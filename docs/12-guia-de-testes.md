@@ -36,6 +36,37 @@ Resultados reportados:
 
 Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam de validacao fisica Android dev/release.
 
+## Unidade 2 — checkpoint comprometido — 2026-07-29
+
+Gates executados na variante isolada sobre `HEAD`:
+
+```bash
+npm test -- --runInBand activeRunTrackingService.test.js activeRunLocalFirst.integration.test.js
+npm test -- --runInBand
+node scripts/with-env.cjs .env.development.local -- ./node_modules/.bin/expo export --platform android --output-dir /tmp/wayper-unit2-export.0kcrTk
+```
+
+Resultados:
+
+- gate focado: 2 suítes e 53 testes aprovados;
+- suíte completa isolada: 53 suítes e 536 testes aprovados;
+- `git diff --cached --check`: aprovado;
+- export Android isolado: 2.334 módulos e bundle Hermes de 10.926.920 bytes;
+- nenhum snapshot Jest;
+- nenhum build nativo ou teste Android físico executado.
+
+A cobertura prova fast path sem reconstrução da geometria, fallback v1 e por
+correção de distância, falhas de chunk/índice, commit marker por descritores,
+recovery conservador, seleção entre current/backup e corrida longa sem
+regravação dos chunks íntegros.
+
+O checkpoint é incremental, mas não O(1): descritores, segmentos, índice,
+envelope e I/O continuam fazendo parte do trabalho.
+
+Detalhes:
+`docs/audits/2026-07-29-unidade-2-checkpoint-comprometido.md`.
+
+
 ## Fase 1B — duração canônica — 2026-07-29
 
 Gates executados:

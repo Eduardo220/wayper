@@ -32,6 +32,64 @@ Classificação: Alinhado | Parcialmente alinhado | Desalinhado
 ### Ações recomendadas
 ```
 
+## 2026-07-29 - Revisão da Unidade 2 de checkpoint comprometido
+
+### Documentos consultados
+
+`AGENTS.md`, direção estratégica completa, ADR-027, arquitetura de tracking,
+regras/modelo da corrida ativa, guia de testes, bugs conhecidos e auditorias
+das Fases 1A e 1B.
+
+### Arquivos analisados
+
+Checkpoint, chunks, envelopes current/backup, recovery e testes do
+`activeRunTrackingService`.
+
+### Resultado
+
+Classificação: Alinhado no escopo da Unidade 2
+
+O checkpoint ordinário evita normalização integral sem remover o fallback
+seguro. Escritas parciais não avançam envelopes, descritores delimitam o estado
+comprometido, o cache só é reidratado com evidência coerente e recovery não
+cruza identidades.
+
+### Problemas encontrados
+
+- normalização integral no checkpoint ordinário;
+- falhas de chunk/índice absorvidas;
+- cache de chunks perdido depois de reset;
+- chunk físico adiantado combinado com envelope anterior;
+- current escolhido antes de avaliar backup mais novo;
+- envelope JSON semanticamente inválido bloqueando backup saudável.
+
+### Riscos
+
+- o caminho não é O(1);
+- chunks mutáveis não oferecem atomicidade copy-on-write da cauda;
+- automação não mede latência, bateria ou AsyncStorage real;
+- nenhuma validação física foi executada.
+
+### Melhorias sugeridas
+
+Medir checkpoint, fallback e recovery em corrida longa no gate físico da
+fundação. Avaliar chunks versionados somente se a evidência real justificar a
+complexidade.
+
+### Documentação atualizada
+
+- `docs/audits/2026-07-29-unidade-2-checkpoint-comprometido.md`;
+- `docs/12-guia-de-testes.md`;
+- `docs/18-changelog-produto.md`.
+
+### Ações recomendadas
+
+1. fechar gate e commit seletivo da Unidade 2;
+2. avançar para lifecycle nativo serializado;
+3. manter modo foco e cercas de finalização fora do próximo commit;
+4. executar a matriz física ao fim das unidades críticas.
+
+
 ## 2026-07-29 - Revisão da Fase 1B de duração canônica
 
 ### Documentos consultados

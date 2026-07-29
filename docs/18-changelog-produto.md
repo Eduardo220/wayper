@@ -26,6 +26,68 @@ Origem:
 ### Riscos restantes
 ```
 
+## 2026-07-29 - Checkpoint comprometido sem rebuild
+
+Status: Implementada; automação aprovada e validação física pendente
+
+Origem: Direção estratégica — fundação confiável da corrida
+
+Área: Tracking, checkpoint, chunks e recovery local
+
+### O que mudou
+
+- checkpoints `RUNNING` elegíveis passaram a persistir o estado já comprometido
+  sem normalizar ou copiar toda a rota;
+- duração e pace do checkpoint são atualizados por escalares;
+- falhas de chunk/índice deixaram de avançar envelopes como se a escrita tivesse
+  sido concluída;
+- descritores delimitam o prefixo geométrico efetivamente comprometido;
+- o cache interno de chunks só é restaurado quando índice, envelope, chunks e
+  geometria são coerentes;
+- recovery escolhe current/backup por identidade, terminalidade, recência e
+  ordem de gravação `backup -> current`.
+
+### Por que mudou
+
+O checkpoint repetia trabalho sobre a rota já filtrada e uma escrita parcial
+podia deixar chunk, índice e envelope em gerações diferentes. Isso contrariava
+a prioridade do tracking e do recovery local-first.
+
+### Impacto no usuário
+
+Reduz o crescimento de custo em corridas longas e evita promover uma cauda ainda
+não confirmada depois de falha parcial. O ganho e o consumo ainda precisam ser
+medidos em aparelho real.
+
+### Impacto técnico
+
+- gate focado isolado: 2 suítes e 53 testes aprovados;
+- suíte completa isolada: 53 suítes e 536 testes aprovados;
+- export Android isolado: 2.334 módulos e bundle Hermes de 10,9 MB;
+- caminho incremental, mas não O(1);
+- nenhum schema, storage key, fornecedor ou domínio novo;
+- nenhum build nativo ou teste físico executado.
+
+### Documentos relacionados
+
+- `docs/audits/2026-07-29-unidade-2-checkpoint-comprometido.md`;
+- `docs/product/direcao-estrategica-completa.md`;
+- ADR-027 existente.
+
+### Arquivos alterados
+
+- serviço canônico de tracking/checkpoint;
+- testes do serviço;
+- documentação da unidade.
+
+### Riscos restantes
+
+- chunks mutáveis recuperam o último prefixo confirmado; uma cauda totalmente
+  atômica exigiria versionamento/copy-on-write;
+- I/O, bateria, kill e corrida longa exigem validação Android física;
+- lifecycle nativo permanece na próxima unidade.
+
+
 ## 2026-07-29 - Duração canônica por timeline escalar
 
 Status: Implementada; automação aprovada e validação física pendente
