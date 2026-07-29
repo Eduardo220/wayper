@@ -29,6 +29,7 @@ const normalizeTimestamp = (value) => {
 };
 
 const normalizeOptionalNumber = (value) => {
+  if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -71,8 +72,8 @@ export function normalizeLocationPoint(location = {}) {
 }
 
 function qualityScoreForPoint(point, preset) {
-  const accuracy = Number(point?.accuracy);
-  if (!Number.isFinite(accuracy)) return 62;
+  const accuracy = normalizeOptionalNumber(point?.accuracy);
+  if (accuracy == null) return 62;
   if (accuracy <= preset.quality.excellentAccuracyMeters) return 98;
   if (accuracy <= preset.quality.goodAccuracyMeters) return 86;
   if (accuracy <= preset.quality.acceptableAccuracyMeters) return 68;
@@ -114,8 +115,8 @@ function isWarmupBadPoint(point, state, preset) {
   const startedAt = Number(state.startedAt || state.startedAtMs || 0);
   if (!startedAt || !point?.timestamp) return false;
   const ageMs = point.timestamp - startedAt;
-  const accuracy = Number(point.accuracy);
-  return ageMs >= 0 && ageMs <= 10000 && Number.isFinite(accuracy) && accuracy > preset.maxAccuracyMeters;
+  const accuracy = normalizeOptionalNumber(point.accuracy);
+  return ageMs >= 0 && ageMs <= 10000 && accuracy != null && accuracy > preset.maxAccuracyMeters;
 }
 
 function shouldRemovePreviousAsZigzag(path, next, preset) {
@@ -126,8 +127,8 @@ function shouldRemovePreviousAsZigzag(path, next, preset) {
   const ab = calculateDistanceMeters(a, b);
   const bc = calculateDistanceMeters(b, c);
   const angle = calculateTurnAngle(a, b, c);
-  const bAccuracy = Number.isFinite(Number(b.accuracy)) ? Number(b.accuracy) : preset.zigzagMinAccuracyPenaltyMeters;
-  const cAccuracy = Number.isFinite(Number(c.accuracy)) ? Number(c.accuracy) : preset.zigzagMinAccuracyPenaltyMeters;
+  const bAccuracy = normalizeOptionalNumber(b.accuracy) ?? preset.zigzagMinAccuracyPenaltyMeters;
+  const cAccuracy = normalizeOptionalNumber(c.accuracy) ?? preset.zigzagMinAccuracyPenaltyMeters;
 
   return (
     angle >= preset.zigzagAngleDegrees &&
@@ -145,7 +146,7 @@ function isShortZigzagCurrent(path, next, preset) {
   const ab = calculateDistanceMeters(a, b);
   const bc = calculateDistanceMeters(b, c);
   const angle = calculateTurnAngle(a, b, c);
-  const cAccuracy = Number.isFinite(Number(c.accuracy)) ? Number(c.accuracy) : preset.softMaxAccuracyMeters;
+  const cAccuracy = normalizeOptionalNumber(c.accuracy) ?? preset.softMaxAccuracyMeters;
   return (
     angle >= preset.zigzagAngleDegrees &&
     ab <= preset.zigzagMaxSegmentMeters &&
@@ -179,8 +180,8 @@ export function shouldAcceptPoint(rawPoint, state = {}, presetInput = "run") {
     return result(false, point, TRACKING_REJECT_REASON.stale_point, qualityScore, TRACKING_FILTER_ACTION.reject);
   }
 
-  const accuracy = Number(point.accuracy);
-  const hasAccuracy = Number.isFinite(accuracy);
+  const accuracy = normalizeOptionalNumber(point.accuracy);
+  const hasAccuracy = accuracy != null;
   const path = getAcceptedPath(state);
   const last = path[path.length - 1] || null;
   const prev = path[path.length - 2] || null;

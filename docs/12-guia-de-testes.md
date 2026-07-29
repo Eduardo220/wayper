@@ -36,6 +36,33 @@ Resultados reportados:
 
 Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam de validacao fisica Android dev/release.
 
+## Fase 1A — tracking incremental — 2026-07-29
+
+Gates executados:
+
+```bash
+npm test -- --runInBand src/services/tracking/__tests__ \
+  src/services/runTracking/__tests__/runTracking.test.js
+npm test -- --runInBand \
+  src/services/runTracking/__tests__/activeRunTrackingService.test.js \
+  src/services/tracking/__tests__/trackingPathService.test.js
+npm test -- --runInBand
+```
+
+Resultados:
+
+- tracking/render: 3 suítes e 72 testes aprovados;
+- integração active run + tracking: 2 suítes e 104 testes aprovados;
+- unidade isolada sobre `HEAD`: 53 suítes e 511 testes aprovados;
+- o resultado do gate completo final da árvore está na auditoria da fase.
+
+O export Android com `.env.development.local` gerou bundle Hermes com 2.335
+módulos. Não houve build nativo nem teste em Android físico. Casos automatizados
+novos cobrem rota longa, cache LRU, `maxPoints`, recovery + anti-zigzag,
+fronteira de pausa/gap, accuracy ausente e correção de distância no checkpoint.
+
+Detalhes: `docs/audits/2026-07-29-fase-1a-tracking-incremental.md`.
+
 ## Gate físico das Fases C/D — 2026-07-24
 
 O primeiro teste no Samsung SM-A546E, Android 16/API 36, foi **reprovado**. Tela apagada

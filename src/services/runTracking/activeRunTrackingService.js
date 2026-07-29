@@ -370,11 +370,17 @@ function buildBufferedPointSnapshot(result = {}, source = "foreground") {
   const currentLocation = result.currentPosition || activeSnapshot.currentLocation ||
     trustedPath[trustedPath.length - 1] || null;
   const lastRawPoint = rawPath[rawPath.length - 1] || currentLocation;
-  const measuredDistance = Number(result.stats?.distanceMeters ?? result.distanceMeters ?? 0) || 0;
-  const distanceMeters = Math.max(
-    Number(activeSnapshot.distanceMeters ?? activeSnapshot.distance ?? 0) || 0,
-    measuredDistance
-  );
+  const measuredDistanceValue = result.stats?.distanceMeters ?? result.distanceMeters;
+  const measuredDistance = Number(measuredDistanceValue);
+  const previousDistance = Number(
+    activeSnapshot.distanceMeters ?? activeSnapshot.distance ?? 0
+  ) || 0;
+  const distanceMeters = measuredDistanceValue != null &&
+    measuredDistanceValue !== "" &&
+    Number.isFinite(measuredDistance) &&
+    measuredDistance >= 0
+    ? measuredDistance
+    : previousDistance;
   const quality = result.pathQuality || result.gpsQualitySummary ||
     activeSnapshot.pathQuality || activeSnapshot.gpsQualitySummary || null;
 

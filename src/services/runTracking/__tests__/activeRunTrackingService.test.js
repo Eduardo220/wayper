@@ -162,6 +162,41 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(chunkPoints.length).toBeGreaterThanOrEqual(1);
   });
 
+  test("checkpoint aceita correcao de distancia quando anti-zigzag substitui a cauda", async () => {
+    const metersToLongitude = (meters) =>
+      meters / (111_320 * Math.cos((BASE_POINT.latitude * Math.PI) / 180));
+    const pointAt = (elapsedMs, eastMeters, accuracy) => ({
+      ...BASE_POINT,
+      longitude: BASE_POINT.longitude + metersToLongitude(eastMeters),
+      accuracy,
+      timestamp: BASE_TIME + elapsedMs,
+    });
+    await service.startActiveRun({
+      activeRunId: "run-distance-correction",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(pointAt(0, 0, 8), { source: "foreground" });
+    const beforeCorrection = await service.recordLocation(pointAt(4_000, 8, 24), {
+      source: "foreground",
+    });
+
+    const corrected = await service.recordLocation(pointAt(8_000, 1, 8), {
+      source: "foreground",
+    });
+
+    expect(corrected.trustedPath).toHaveLength(2);
+    expect(corrected.distanceMeters).toBeLessThan(beforeCorrection.distanceMeters);
+    await service.flushPendingActiveRunCheckpoint({
+      reason: "distance_correction_test",
+      force: true,
+    });
+    expect(getStoredActiveRun().distanceMeters).toBeCloseTo(
+      corrected.distanceMeters,
+      6
+    );
+  });
+
   test("mantem backup do snapshot canonico e usa backup se current estiver corrompido", async () => {
     await service.startActiveRun({
       activeRunId: "run-backup-restore",

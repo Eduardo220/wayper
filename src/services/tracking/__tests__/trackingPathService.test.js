@@ -9,6 +9,7 @@ import {
   getRenderableSegmentsForRun,
   normalizeLocationPoint,
   shouldAcceptPoint,
+  smoothCurrentPosition,
 } from "../index.js";
 import {
   calculateDistanceMeters,
@@ -320,6 +321,199 @@ describe("tracking pipeline", () => {
       (point) => session.processLocationPoint(point).trustedPath.length
     );
     expect(lengths).toEqual([1, 2, 3]);
+  });
+
+  test("ingestao reutiliza paths canonicos e nao faz rebuild completo por amostra", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    const points = makeRunPath(320);
+    const first = session.processLocationPoint(points[0]);
+    let latest = first;
+
+    for (let index = 1; index < points.length; index += 1) {
+      latest = session.processLocationPoint(points[index]);
+    }
+
+    const hotPathCounters = session.__getWorkCountersForTests();
+    expect(latest.rawPath).toBe(first.rawPath);
+    expect(latest.trustedPath).toBe(first.trustedPath);
+    expect(latest.liveRenderPath).toBe(first.liveRenderPath);
+    expect(hotPathCounters).toMatchObject({
+      fullPathRebuilds: 0,
+      liveRenderBuilds: 0,
+      hotPathSnapshots: points.length,
+      incrementalRawAppends: points.length,
+    });
+    expect(hotPathCounters.incrementalTrustedAppends).toBe(latest.trustedPath.length);
+
+    const explicitState = session.getState();
+    const afterExplicitRead = session.__getWorkCountersForTests();
+    expect(afterExplicitRead.fullPathRebuilds).toBe(0);
+    expect(afterExplicitRead.liveRenderBuilds).toBeGreaterThan(0);
+    expect(explicitState.liveRenderPath.length).toBeGreaterThan(1);
+  });
+
+  test("distancia e accuracy incrementais permanecem corretas ao substituir zigzag", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    const first = session.processLocationPoint(p(0, 0, 0, { accuracy: 8 }));
+    session.processLocationPoint(p(2, 0, 8, { accuracy: 24 }));
+    const result = session.processLocationPoint(p(4, 0.5, 1, { accuracy: 8 }));
+    const expectedPosition = smoothCurrentPosition(
+      first.currentPosition,
+      result.point,
+      "run"
+    );
+
+    expect(result.trustedPath).toHaveLength(2);
+    expect(result.stats.distanceMeters).toBeCloseTo(
+      calculatePathDistanceMeters(result.trustedPath),
+      6
+    );
+    expect(result.pathQuality.averageAccuracy).toBe(8);
+    expect(result.pathQuality.maxAccuracy).toBe(8);
+    expect(result.pathQuality.acceptedPoints).toBe(2);
+    expect(result.pathQuality.lastCalculatedSpeedMps).toBeCloseTo(
+      result.calculatedSpeedMps,
+      12
+    );
+    expect(result.accelerationMps2).toBeCloseTo(
+      Math.abs(result.calculatedSpeedMps) / (result.timeFromPreviousMs / 1000),
+      12
+    );
+    expect(result.currentPosition.latitude).toBeCloseTo(
+      expectedPosition.latitude,
+      12
+    );
+    expect(result.currentPosition.longitude).toBeCloseTo(
+      expectedPosition.longitude,
+      12
+    );
+    expect(session.__getWorkCountersForTests()).toMatchObject({
+      fullPathRebuilds: 0,
+      incrementalTrustedRemovals: 1,
+    });
+  });
+
+  test("recovery permite corrigir velocidade maxima ao substituir a cauda", () => {
+    const foreground = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    foreground.processLocationPoint(p(0, 0, 0, { accuracy: 8 }));
+    const beforeRecovery = foreground.processLocationPoint(p(2, 0, 8, { accuracy: 24 }));
+    const recovered = createTrackingSession({
+      mode: "run",
+      snapshot: JSON.parse(JSON.stringify(foreground.getState({ fullRender: false }))),
+    });
+
+    const corrected = recovered.processLocationPoint(p(4, 0.5, 1, { accuracy: 8 }));
+    const expectedMaxSpeed = Math.max(
+      ...corrected.trustedPath.map((point) => Number(point.calculatedSpeedMps) || 0)
+    );
+
+    expect(corrected.trustedPath).toHaveLength(2);
+    expect(corrected.stats.maxSpeedMps).toBeCloseTo(expectedMaxSpeed, 6);
+    expect(corrected.stats.maxSpeedMps).toBeLessThan(beforeRecovery.stats.maxSpeedMps);
+  });
+
+  test("accuracy ausente nao entra como zero nas metricas incrementais", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+
+    session.processLocationPoint(p(0, 0, 0, { accuracy: null }));
+    const result = session.processLocationPoint(p(2, 0, 6, { accuracy: undefined }));
+
+    expect(result.pathQuality).toMatchObject({
+      averageAccuracy: null,
+      maxAccuracy: null,
+      poorAccuracyRatio: 0,
+      lastAccuracyMeters: null,
+    });
+  });
+
+  test("sessao hidratada continua incremental no caminho headless", () => {
+    const points = makeRunPath(18);
+    const foreground = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    points.slice(0, 10).forEach((point) => foreground.processLocationPoint(point));
+    const persistedSnapshot = foreground.getState({ fullRender: false });
+    const headless = createTrackingSession({
+      mode: "run",
+      snapshot: persistedSnapshot,
+    });
+    const rawPathReference = headless.state.rawPath;
+    const trustedPathReference = headless.state.trustedPath;
+    const before = headless.__getWorkCountersForTests();
+
+    points.slice(10).forEach((point) => headless.processLocationPoint(point));
+
+    const after = headless.__getWorkCountersForTests();
+    expect(headless.state.rawPath).toBe(rawPathReference);
+    expect(headless.state.trustedPath).toBe(trustedPathReference);
+    expect(after.fullPathRebuilds).toBe(before.fullPathRebuilds);
+    expect(after.liveRenderBuilds).toBe(before.liveRenderBuilds);
+    expect(headless.state.distanceMeters).toBeCloseTo(
+      headless.state.segments.reduce(
+        (total, segment) => total + calculatePathDistanceMeters(segment.trustedPath),
+        0
+      ),
+      6
+    );
+  });
+
+  test("snapshot pausado hidratado ignora GPS ate resume explicito", () => {
+    const foreground = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    foreground.processLocationPoint(p(0, 0, 0));
+    foreground.processLocationPoint(p(2, 0, 6));
+    const paused = foreground.pause({ endedAt: BASE_TIME + 5_000 });
+    const recovered = createTrackingSession({
+      mode: "run",
+      snapshot: paused,
+    });
+    const rawCount = recovered.state.rawPath.length;
+    const trustedCount = recovered.state.trustedPath.length;
+
+    const ignored = recovered.processLocationPoint(p(4, 0, 12));
+
+    expect(ignored).toMatchObject({
+      accepted: false,
+      reason: "paused",
+      isRunning: false,
+      isPaused: true,
+    });
+    expect(recovered.state.rawPath).toHaveLength(rawCount);
+    expect(recovered.state.trustedPath).toHaveLength(trustedCount);
+
+    recovered.resume({ startedAt: BASE_TIME + 8_000 });
+    const resumed = recovered.processLocationPoint(p(5, 0, 15));
+    expect(resumed.reason).not.toBe("paused");
+    expect(resumed.isRunning).toBe(true);
+    expect(resumed.isPaused).toBe(false);
+  });
+
+  test("filtro nao remove ponto do novo segmento usando geometria anterior", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    session.processLocationPoint(p(0, 0, 0));
+    session.processLocationPoint(p(2, 0, 8));
+    session.pause({ endedAt: BASE_TIME + 5_000 });
+    session.resume({ startedAt: BASE_TIME + 7_000 });
+    session.processLocationPoint(p(4, 0, 16, { accuracy: 24 }));
+
+    const secondPoint = session.processLocationPoint(p(6, 0, 9, { accuracy: 8 }));
+    const activeSegments = secondPoint.segments.filter(
+      (segment) => segment.trustedPath.length > 0
+    );
+
+    expect(activeSegments).toHaveLength(2);
+    expect(activeSegments[1].trustedPath).toHaveLength(2);
+    expect(secondPoint.pathQuality.rejectedByZigzag).toBe(0);
+  });
+
+  test("finalizacao materializa o render lazy sem carregar o vetor incremental", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    makeRunPath(2_305).forEach((point) => session.processLocationPoint(point));
+    const explicitRender = session.getState().liveRenderPath;
+
+    const finish = session.finishTrackingSession({ durationMs: 2_305 * 2_000 });
+
+    expect(finish.liveRenderPath).toEqual(explicitRender);
+    expect(finish.liveRenderPath.length).toBeLessThan(finish.trustedPath.length);
+    expect(finish.liveRenderPath.length).toBeLessThanOrEqual(2_200);
+    expect(finish.segments[0].liveRenderPath).toEqual(explicitRender);
   });
 
   test("liveRenderPath cresce sem reiniciar automaticamente", () => {

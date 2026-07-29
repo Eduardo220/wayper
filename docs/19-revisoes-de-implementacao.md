@@ -32,6 +32,58 @@ Classificação: Alinhado | Parcialmente alinhado | Desalinhado
 ### Ações recomendadas
 ```
 
+## 2026-07-29 - Revisão da Fase 1A de tracking incremental
+
+### Documentos consultados
+
+`AGENTS.md`, direção estratégica completa, regras da corrida, arquitetura de
+tracking, auditoria do lote e testes do domínio.
+
+### Arquivos analisados
+
+Filtros GPS, sessão e paths canônicos, smoothing/render, cache visual,
+checkpoint ativo e suítes de tracking/runTracking.
+
+### Resultado
+
+Classificação: Alinhado no escopo da Fase 1A
+
+A ingestão não reconstrói nem simplifica a rota no callback GPS; renderização
+completa ocorre em fronteiras explícitas. Distância e métricas permanecem
+coerentes em segmentos, recovery e `replace_previous`.
+
+### Problemas encontrados
+
+- render incremental vazava para o payload final;
+- velocidade/aceleração podiam permanecer ligadas à aresta removida;
+- anti-zigzag atravessava a fronteira entre segmentos;
+- accuracy ausente era contabilizada como zero;
+- cache podia colidir, ser contaminado e exceder `maxPoints`;
+- snapshot ativo bloqueava correção legítima de distância.
+
+### Riscos
+
+- arrays hot são visões efêmeras pertencentes à sessão;
+- cache faz assinatura O(n) somente fora do callback crítico;
+- validação Android física segue pendente.
+
+### Melhorias sugeridas
+
+Manter o consumo hot serializado e avançar para duração canônica sem misturar
+lifecycle ou modo foco.
+
+### Documentação atualizada
+
+- `docs/audits/2026-07-29-fase-1a-tracking-incremental.md`;
+- `docs/12-guia-de-testes.md`;
+- `docs/18-changelog-produto.md`.
+
+### Ações recomendadas
+
+1. fechar o gate final e o commit seletivo da 1A;
+2. corrigir snapshots v2 contaminados antes de fechar a 1B;
+3. executar a matriz física depois das unidades da fundação.
+
 ## 2026-07-24 - Revisão de pausa e finalização sem lazy load
 
 ### Documentos consultados

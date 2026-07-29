@@ -48,8 +48,10 @@ export {
   smoothPathMovingAverage,
 } from "./trackingSmoothing.js";
 export {
+  TRACKING_RENDER_PATH_CACHE_MAX_ENTRIES,
   buildLiveRenderPath,
   buildSummaryRenderPath,
+  clearTrackingRenderPathCache,
   getBestRenderPathForRun,
   getRenderableSegmentsForRun,
   removeDuplicateVisualPoints,

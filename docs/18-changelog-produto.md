@@ -26,6 +26,61 @@ Origem:
 ### Riscos restantes
 ```
 
+## 2026-07-29 - Tracking incremental e renderização lazy da rota
+
+Status: Implementada; automação aprovada e validação física pendente
+
+Origem: Direção estratégica — fundação confiável da corrida
+
+Área: Tracking, segmentos, métricas GPS, renderização e checkpoint ativo
+
+### O que mudou
+
+- ingestão passou a atualizar paths, distância, qualidade e velocidade máxima
+  incrementalmente, sem rebuild completo por amostra;
+- render completo ficou restrito à leitura explícita e à finalização;
+- anti-zigzag, recovery e fronteiras de pausa/gap passaram a manter métricas e
+  segmentos coerentes;
+- o cache visual ficou limitado, defensivo contra colisões/mutação e com
+  `maxPoints` estrito;
+- checkpoint ativo passou a aceitar redução de distância causada por correção
+  geométrica canônica.
+
+### Por que mudou
+
+O callback GPS fazia trabalho proporcional ao tamanho da rota e algumas bordas
+podiam persistir métricas de um ponto já removido. Isso contrariava a prioridade
+do tracking e a proibição de processamento pesado no caminho crítico.
+
+### Impacto no usuário
+
+Menor crescimento de custo durante corridas longas e rota final coerente após
+pausa, gap, recovery ou correção de zigzag. Não há mudança comercial ou de fluxo
+de tela nesta fase.
+
+### Impacto técnico
+
+- unidade isolada sobre `HEAD`: 53 suítes e 511 testes aprovados;
+- árvore completa: gate final registrado na auditoria da fase;
+- export Android: 2.335 módulos e bundle Hermes gerado;
+- nenhum build nativo ou teste físico executado.
+
+### Documentos relacionados
+
+- `docs/audits/2026-07-29-fase-1a-tracking-incremental.md`;
+- `docs/product/direcao-estrategica-completa.md`.
+
+### Arquivos alterados
+
+- serviços e testes de `src/services/tracking/`;
+- hunk de distância e teste correspondente em `activeRunTrackingService`.
+
+### Riscos restantes
+
+- visões do caminho hot são efêmeras e de somente leitura;
+- GPS/background/tela apagada/corrida longa ainda exigem Android físico;
+- duração canônica permanece separada para a Fase 1B.
+
 ## 2026-07-24 - Pausa descontada e finalização sem carregamento tardio
 
 Status: Implementado; automação aprovada e reteste físico parcial aprovado
