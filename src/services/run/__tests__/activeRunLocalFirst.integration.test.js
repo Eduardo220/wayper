@@ -165,6 +165,7 @@ const {
   stopActiveRunAutoCheckpointing,
 } = await import("../runAutoSaveService.js");
 const {
+  buildActiveSnapshotFromOfflineRun,
   findRecoverableRunForUser,
   hydrateRecoverableRunCandidate,
   isLiveRecovery,
@@ -230,6 +231,29 @@ describe("active run local-first integration", () => {
     activeRunTrackingService.__resetActiveRunRuntimeForTests();
     jest.useRealTimers();
     jest.clearAllTimers();
+  });
+
+  test("recovery legado preserva pausa acumulada antes de recalcular RUNNING", () => {
+    jest.useFakeTimers({ now: BASE_TIME + 45_000 });
+
+    const snapshot = buildActiveSnapshotFromOfflineRun({
+      localRunId: "legacy-running-after-pause",
+      userId: "user-1",
+      status: OFFLINE_RUN_STATUS.RUNNING,
+      startedAt: new Date(BASE_TIME).toISOString(),
+      lastUpdatedAt: new Date(BASE_TIME + 35_000).toISOString(),
+      durationMs: 20_000,
+      totalPausedTime: 15_000,
+      points: [],
+      segments: [],
+    });
+
+    expect(snapshot).toMatchObject({
+      status: CANONICAL_RUN_STATUS.RUNNING,
+      pausedDurationMs: 15_000,
+      totalPausedMs: 15_000,
+      durationSeconds: 30,
+    });
   });
 
   test("percorre start, tracking, pause, resume, recovery, finish, historico local e fila de sync", async () => {
@@ -352,7 +376,14 @@ describe("active run local-first integration", () => {
     await activeRunTrackingService.recordLocation(point(1, 0, 8), { source: "foreground" });
     await activeRunTrackingService.recordLocation(point(2, 0, 16), { source: "foreground" });
     await activeRunTrackingService.markActiveRunFinishing({ nowMs: BASE_TIME + 5000 });
-    await activeRunTrackingService.finishActiveRun({ finishedAtMs: BASE_TIME + 6000 });
+    const frozenSnapshot = await activeRunTrackingService.finishActiveRun({
+      finishedAtMs: BASE_TIME + 6000,
+    });
+    expect(frozenSnapshot).toMatchObject({
+      status: CANONICAL_RUN_STATUS.FINISHED,
+      finishedAtMs: BASE_TIME + 5000,
+      durationSeconds: 5,
+    });
     const runData = await activeRunTrackingService.buildFinishedRunData({
       status: "completed",
       pendingSync: true,

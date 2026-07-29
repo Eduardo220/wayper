@@ -3240,11 +3240,11 @@ const MapScreen = ({ navigation, route }) => {
           }
         );
 
-        const finishedAtMs = Date.now();
+        const requestedFinishedAtMs = Date.now();
         const freezeResult = await freezeActiveRunForFinalization({
           ...RUN_FINALIZATION_FREEZE_DEPENDENCIES,
           runId: currentRunIdRef.current,
-          finishedAtMs,
+          finishedAtMs: requestedFinishedAtMs,
           reason: "finish_pressed",
           source: "MapScreen",
           screen: "MapScreen",
@@ -3262,9 +3262,11 @@ const MapScreen = ({ navigation, route }) => {
             lastAcceptedLocationRef.current ||
             null,
         }, {
-          finishedAtMs,
+          finishedAtMs: requestedFinishedAtMs,
           uiDurationMs: (timeSecRef.current || timeSec || 0) * 1000,
         });
+        const finishedAtMs =
+          finalTiming.finishedAtMs ?? requestedFinishedAtMs;
         const startedAtMs = finalTiming.startedAtMs;
         const totalPausedMs = finalTiming.totalPausedMs;
         const totalDuration = finalTiming.durationSeconds;

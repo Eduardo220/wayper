@@ -32,6 +32,57 @@ Classificação: Alinhado | Parcialmente alinhado | Desalinhado
 ### Ações recomendadas
 ```
 
+## 2026-07-29 - Revisão da Fase 1B de duração canônica
+
+### Documentos consultados
+
+`AGENTS.md`, direção estratégica completa, regras da corrida, arquitetura de
+reconciliação, bug físico de duração/pausa e auditoria da Fase 1A.
+
+### Arquivos analisados
+
+Estado e merge canônicos, transições de pausa/finalização, espelho offline,
+recovery legado, resolvedor de timing final e testes consumidores.
+
+### Resultado
+
+Classificação: Alinhado no escopo da Fase 1B
+
+A duração oficial agora deriva da timeline confiável; caches não vencem pausa,
+retomada exige prova do total pausado e a primeira fronteira terminal permanece
+congelada. O tick v2 continua O(1) e sem geometria.
+
+### Problemas encontrados
+
+- `Math.max(stored, derived)` reintroduzia pausa em snapshots v2;
+- `FINISHING`/`STOPPING` podiam crescer com `Date.now()`;
+- ponto posterior podia ultrapassar `finishedAtMs`;
+- recovery pausado e fallback legado podiam perder a fronteira;
+- merge e storage podiam combinar duração e pausa não correspondentes.
+
+### Riscos
+
+- fallback legado preserva o maior valor seguro, sem prometer precisão ausente;
+- teste automatizado não comprova lifecycle Android, relógio do aparelho, GPS
+  real, tela apagada ou fabricante com economia agressiva.
+
+### Melhorias sugeridas
+
+Manter escalares de timing atômicos nos próximos merges e fechar checkpoint
+comprometido antes do lifecycle nativo.
+
+### Documentação atualizada
+
+- `docs/audits/2026-07-29-fase-1b-duracao-canonica.md`;
+- `docs/12-guia-de-testes.md`;
+- `docs/18-changelog-produto.md`.
+
+### Ações recomendadas
+
+1. fechar o commit seletivo da 1B;
+2. avançar para checkpoint comprometido sem rebuild;
+3. executar a matriz física ao final das unidades críticas da fundação.
+
 ## 2026-07-29 - Revisão da Fase 1A de tracking incremental
 
 ### Documentos consultados

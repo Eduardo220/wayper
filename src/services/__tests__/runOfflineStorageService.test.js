@@ -197,6 +197,44 @@ describe("runOfflineStorageService", () => {
     expect(partial.distanceMeters).toBe(930);
   });
 
+  test("timeline de pausa corrige duracao inflada no envelope offline", async () => {
+    const startedAtMs = 1_700_000_000_000;
+    await createActiveRun({
+      localRunId: "run-paused-duration",
+      userId: "user-1",
+      mode: "free",
+      startedAt: new Date(startedAtMs).toISOString(),
+    });
+
+    const corrected = await saveActiveRunSnapshot({
+      localRunId: "run-paused-duration",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAt: new Date(startedAtMs).toISOString(),
+      checkpointAtMs: startedAtMs + 20_000,
+      pausedDurationMs: 0,
+      totalPausedTime: 10_000,
+      durationMs: 22_000,
+    });
+
+    expect(corrected.durationMs).toBe(10_000);
+    expect(corrected.totalPausedTime).toBe(10_000);
+
+    const monotonic = await saveActiveRunSnapshot({
+      localRunId: "run-paused-duration",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAt: new Date(startedAtMs).toISOString(),
+      checkpointAtMs: startedAtMs + 30_000,
+      pausedDurationMs: 0,
+      totalPausedTime: 5000,
+      durationMs: 25_000,
+    });
+
+    expect(monotonic.durationMs).toBe(20_000);
+    expect(monotonic.pausedDurationMs).toBe(10_000);
+    expect(monotonic.totalPausedMs).toBe(10_000);
+    expect(monotonic.totalPausedTime).toBe(10_000);
+  });
+
   test("dados locais corrompidos nao quebram o app", async () => {
     storage.set(ACTIVE_RUN_STORAGE_KEY, "{json-quebrado");
 

@@ -434,6 +434,22 @@ export function buildActiveSnapshotFromOfflineRun(offlineRun = {}, options = {})
   const rawPath = getRunRawPoints(offlineRun);
   const renderPath = getRunRenderPath(offlineRun);
   const runId = String(offlineRun.localRunId || offlineRun.activeRunId || offlineRun.id || `local_${startedAtMs}`);
+  const pausedDurationCandidates = [
+    offlineRun.pausedDurationMs,
+    offlineRun.totalPausedMs,
+    offlineRun.totalPausedTime,
+  ]
+    .filter((value) => value != null && value !== "")
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  const pausedDurationMs = pausedDurationCandidates.length > 0
+    ? Math.max(...pausedDurationCandidates)
+    : 0;
+  const pausedAtMs = toTimestampMs(
+    offlineRun.pausedAtMs ??
+    offlineRun.pausedAt ??
+    offlineRun.pauseStartedAt
+  );
 
   return normalizeActiveRunSnapshot({
     activeRunId: runId,
@@ -461,6 +477,12 @@ export function buildActiveSnapshotFromOfflineRun(offlineRun = {}, options = {})
     distanceMeters: getRunDistanceMeters(offlineRun),
     duration: getRunDurationSeconds(offlineRun),
     durationSeconds: getRunDurationSeconds(offlineRun),
+    pausedDurationMs,
+    totalPausedMs: pausedDurationMs,
+    totalPausedTime: pausedDurationMs,
+    pausedAtMs,
+    pausedAt: toIso(pausedAtMs),
+    pauseStartedAt: toIso(pausedAtMs),
     syncStatus: offlineRun.syncStatus || ACTIVE_RUN_SYNC_STATUS.LOCAL_ONLY,
     offlineStatus: offlineRun.status || null,
     pendingSync: true,

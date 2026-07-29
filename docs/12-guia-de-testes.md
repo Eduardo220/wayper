@@ -36,6 +36,45 @@ Resultados reportados:
 
 Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam de validacao fisica Android dev/release.
 
+## Fase 1B — duração canônica — 2026-07-29
+
+Gates executados:
+
+```bash
+npm test -- --runInBand \
+  src/services/runTracking/__tests__/activeRunState.test.js \
+  src/services/runTracking/__tests__/runStateReconciler.test.js \
+  src/services/runTracking/__tests__/activeRunTrackingService.test.js \
+  src/services/runTracking/__tests__/activeRunRuntimeService.test.js \
+  src/services/run/__tests__/activeRunLocalFirst.integration.test.js \
+  src/services/run/__tests__/runAutoSaveService.test.js \
+  src/services/run/__tests__/runNotificationService.test.js \
+  src/services/run/__tests__/runFinalizationService.test.js \
+  src/services/__tests__/runOfflineStorageService.test.js
+npm test -- --runInBand
+```
+
+Resultados finais:
+
+- gate focado: 9 suítes e 171 testes aprovados;
+- árvore completa: 56 suítes e 604 testes aprovados;
+- gate focado isolado sobre `HEAD + índice`: 8 suítes e 132 testes aprovados;
+- suíte completa isolada: 53 suítes e 525 testes aprovados;
+- `git diff --cached --check`: aprovado;
+- export Android isolado: aprovado, 2.334 módulos e bundle Hermes de 10,9 MB.
+
+O gate isolado tem uma suíte a menos porque
+`activeRunRuntimeService.test.js`, ainda não rastreado e pertencente à próxima
+unidade, foi corretamente excluído do índice.
+
+Casos novos cobrem cache de duração contaminado, aliases de pausa monotônicos,
+relógio regressivo, pausa/recovery idempotente, prova obrigatória de retomada,
+fronteiras `FINISHING`/`STOPPING`/`FINISHED`/`CANCELLED`, ponto tardio após o
+fim, espelho offline e fast path sem leitura de geometria. Não houve build
+nativo nem teste em Android físico.
+
+Detalhes: `docs/audits/2026-07-29-fase-1b-duracao-canonica.md`.
+
 ## Fase 1A — tracking incremental — 2026-07-29
 
 Gates executados:

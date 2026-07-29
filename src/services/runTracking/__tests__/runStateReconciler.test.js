@@ -175,6 +175,97 @@ describe("reconcileRunState active run consistency", () => {
     expect(logs.map((entry) => entry.event)).toContain("ACTIVE_RUN_ELAPSED_REGRESSION_BLOCKED");
   });
 
+  test("snapshot RUNNING stale nao reabre corrida PAUSED sem prova de retomada", () => {
+    const pausedAtMs = BASE_TIME + 70_000;
+    const current = runningSnapshot({
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      pausedAtMs,
+      pausedAt: new Date(pausedAtMs).toISOString(),
+      durationMs: 70_000,
+      lastUpdatedAtMs: BASE_TIME + 80_000,
+      segments: [{
+        ...runningSnapshot().segments[0],
+        endedAt: pausedAtMs,
+        endTimestamp: pausedAtMs,
+        endReason: "pause",
+      }],
+    });
+    const incoming = runningSnapshot({
+      durationMs: 60_000,
+      lastUpdatedAtMs: BASE_TIME + 60_000,
+      trustedPath: [point(0), point(1), point(2)],
+      rawPath: [point(0), point(1), point(2)],
+      distanceMeters: 120,
+    });
+
+    const { state, logs } = reconcileRunState({
+      currentState: current,
+      incomingState: incoming,
+      now: BASE_TIME + 80_000,
+      reason: "stale_before_pause",
+    });
+
+    expect(state.status).toBe(ACTIVE_RUN_STATUS.PAUSED);
+    expect(state.pausedAtMs).toBe(pausedAtMs);
+    expect(calculateActiveRunDurationSeconds(state, {
+      nowMs: BASE_TIME + 10 * 60_000,
+    })).toBe(70);
+    expect(logs.map((entry) => entry.event)).toContain(
+      "ACTIVE_RUN_UNPROVEN_RESUME_BLOCKED"
+    );
+  });
+
+  test("retomada stale comprovada pelo segmento e pausa acumulada continua valida", () => {
+    const pausedAtMs = BASE_TIME + 20_000;
+    const current = runningSnapshot({
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      pausedAtMs,
+      pausedAt: new Date(pausedAtMs).toISOString(),
+      durationMs: 20_000,
+      lastUpdatedAtMs: BASE_TIME + 70_000,
+      segments: [{
+        ...runningSnapshot().segments[0],
+        endedAt: pausedAtMs,
+        endTimestamp: pausedAtMs,
+        endReason: "pause",
+      }],
+    });
+    const resumedAtMs = BASE_TIME + 60_000;
+    const incoming = runningSnapshot({
+      pausedDurationMs: 40_000,
+      totalPausedMs: 40_000,
+      durationMs: 20_000,
+      lastUpdatedAtMs: resumedAtMs,
+      segments: [
+        current.segments[0],
+        {
+          index: 1,
+          reason: "resume",
+          startedAt: resumedAtMs,
+          startTimestamp: resumedAtMs,
+          endedAt: null,
+          endTimestamp: null,
+          endReason: null,
+          trustedPath: [],
+          rawPath: [],
+        },
+      ],
+    });
+
+    const { state } = reconcileRunState({
+      currentState: current,
+      incomingState: incoming,
+      now: BASE_TIME + 80_000,
+      reason: "resume_proven_by_timeline",
+    });
+
+    expect(state.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(state.pausedDurationMs).toBe(40_000);
+    expect(calculateActiveRunDurationSeconds(state, {
+      nowMs: BASE_TIME + 80_000,
+    })).toBe(40);
+  });
+
   test("G. distancia stale nao volta de 970m para 310m", () => {
     const merged = mergeActiveRunSnapshots(
       runningSnapshot({ distanceMeters: 970 }),

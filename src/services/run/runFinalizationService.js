@@ -122,7 +122,10 @@ function hasPauseEvidence(snapshot = {}) {
 
 export function resolveFinalRunTiming(snapshot = {}, options = {}) {
   const finishedAtMs = toOptionalTimestampMs(
-    options.finishedAtMs ?? snapshot.finishedAtMs ?? snapshot.finishedAt ?? snapshot.endedAt
+    snapshot.finishedAtMs ??
+    snapshot.finishedAt ??
+    snapshot.endedAt ??
+    options.finishedAtMs
   );
   const startedAtMs = toOptionalTimestampMs(
     snapshot.startedAtMs ?? snapshot.startedAt ?? options.startedAtMs

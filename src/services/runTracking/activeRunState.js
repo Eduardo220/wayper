@@ -107,9 +107,87 @@ function getStoredDurationMs(snapshot = {}) {
   return 0;
 }
 
+function getCanonicalPausedDurationMs(snapshot = {}) {
+  const values = [
+    snapshot.pausedDurationMs,
+    snapshot.totalPausedMs,
+    snapshot.totalPausedTime,
+  ]
+    .filter((value) => value != null && value !== "")
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return values.length > 0 ? Math.max(...values) : null;
+}
+
+function isCanonicalDurationSnapshot(snapshot = {}) {
+  if (!snapshot || typeof snapshot !== "object") return false;
+  const version = Math.max(
+    Number(snapshot.version || 0),
+    Number(snapshot.schemaVersion || 0),
+    Number(snapshot.formatVersion || 0)
+  );
+  return (
+    Number.isFinite(version) &&
+    version >= ACTIVE_RUN_SCHEMA_VERSION &&
+    toOptionalTimestampMs(snapshot.startedAtMs ?? snapshot.startedAt) != null &&
+    getCanonicalPausedDurationMs(snapshot) != null
+  );
+}
+
+function getExplicitLatestLocationAtMs(snapshot = {}) {
+  return Math.max(
+    toOptionalTimestampMs(snapshot.currentLocation?.timestamp) || 0,
+    toOptionalTimestampMs(snapshot.lastValidPoint?.timestamp) || 0,
+    toOptionalTimestampMs(snapshot.lastRawPoint?.timestamp) || 0,
+    toOptionalTimestampMs(snapshot.lastPoint?.timestamp) || 0,
+    toOptionalTimestampMs(snapshot.lastLocationAt) || 0
+  ) || null;
+}
+
+function getExplicitLastUpdatedAtMs(snapshot = {}) {
+  return toOptionalTimestampMs(
+    snapshot.lastUpdatedAtMs ??
+    snapshot.lastUpdatedAt ??
+    snapshot.updatedAt
+  );
+}
+
+function getValidatedDurationObservationAtMs(
+  snapshot = {},
+  startedAtMs = 0,
+  pausedMs = 0
+) {
+  const observedAtMs = getExplicitLastUpdatedAtMs(snapshot);
+  if (observedAtMs == null || observedAtMs < startedAtMs) return null;
+  const storedDurationMs = getStoredDurationMs(snapshot);
+  const observedDurationMs = Math.max(
+    0,
+    observedAtMs - startedAtMs - pausedMs
+  );
+  return Math.abs(storedDurationMs - observedDurationMs) <= 1000
+    ? observedAtMs
+    : null;
+}
+
+function getExplicitFinishedAtMs(snapshot = {}) {
+  return toOptionalTimestampMs(
+    snapshot.finishedAtMs ??
+    snapshot.finishedAt ??
+    snapshot.endedAt
+  );
+}
+
+function getExplicitPausedAtMs(snapshot = {}) {
+  return toOptionalTimestampMs(
+    snapshot.pausedAtMs ??
+    snapshot.pausedAt ??
+    snapshot.pauseStartedAt
+  );
+}
+
 function getExplicitPausedDurationMs(snapshot = {}) {
-  const pausedMs = Number(snapshot.pausedDurationMs ?? snapshot.totalPausedMs ?? snapshot.totalPausedTime);
-  return Number.isFinite(pausedMs) && pausedMs > 0 ? pausedMs : null;
+  const pausedMs = getCanonicalPausedDurationMs(snapshot);
+  return pausedMs != null && pausedMs > 0 ? pausedMs : null;
 }
 
 function dedupeRunPath(path = []) {
@@ -434,14 +512,26 @@ function calculateStartedAtElapsedMs(snapshot = {}, segments = [], options = {})
   const pausedMs = derivePausedDurationMs(snapshot, segments);
   const storedDurationMs = getStoredDurationMs(snapshot);
   const latestLocationAtMs = getLatestLocationAtMs(snapshot, segments);
+  const lastUpdatedAtMs = getExplicitLastUpdatedAtMs(snapshot);
+  const durationObservedAtMs = getValidatedDurationObservationAtMs(
+    snapshot,
+    startedAtMs,
+    pausedMs
+  );
   const hasPauseTimeline =
     status === ACTIVE_RUN_STATUS.PAUSED ||
     pausedMs > 0 ||
     segments.length > 1;
 
   if (status === ACTIVE_RUN_STATUS.PAUSED) {
-    const pausedAtMs = getPausedAtMs(snapshot, segments, nowMs);
-    return Math.max(0, pausedAtMs - startedAtMs - pausedMs);
+    const pausedAtMs = getPausedAtMs(snapshot, segments, null);
+    if (pausedAtMs != null) {
+      return Math.max(0, pausedAtMs - startedAtMs - pausedMs);
+    }
+    const lastLocationElapsedMs = latestLocationAtMs
+      ? Math.max(0, latestLocationAtMs - startedAtMs - pausedMs)
+      : 0;
+    return Math.max(storedDurationMs, lastLocationElapsedMs);
   }
 
   if (status === ACTIVE_RUN_STATUS.FINISHED) {
@@ -449,18 +539,28 @@ function calculateStartedAtElapsedMs(snapshot = {}, segments = [], options = {})
       snapshot.finishedAtMs ?? snapshot.finishedAt ?? snapshot.endedAt,
       latestLocationAtMs || nowMs
     );
-    const finishedElapsedMs = Math.max(0, finishedAtMs - startedAtMs - pausedMs);
-    const lastLocationElapsedMs = latestLocationAtMs
-      ? Math.max(0, latestLocationAtMs - startedAtMs - pausedMs)
-      : 0;
-    const derivedElapsedMs = Math.max(finishedElapsedMs, lastLocationElapsedMs);
+    const derivedElapsedMs = Math.max(0, finishedAtMs - startedAtMs - pausedMs);
+    return hasPauseTimeline ? derivedElapsedMs : Math.max(storedDurationMs, derivedElapsedMs);
+  }
+
+  if (
+    status === ACTIVE_RUN_STATUS.FINISHING ||
+    status === ACTIVE_RUN_STATUS.STOPPING ||
+    status === ACTIVE_RUN_STATUS.CANCELLED
+  ) {
+    const terminalAtMs =
+      getExplicitFinishedAtMs(snapshot) ??
+      toOptionalTimestampMs(snapshot.stoppingAtMs) ??
+      lastUpdatedAtMs;
+    if (terminalAtMs == null) return null;
+    const derivedElapsedMs = Math.max(0, terminalAtMs - startedAtMs - pausedMs);
     return hasPauseTimeline ? derivedElapsedMs : Math.max(storedDurationMs, derivedElapsedMs);
   }
 
   if (status === ACTIVE_RUN_STATUS.RUNNING || status === ACTIVE_RUN_STATUS.RECOVERING || status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE) {
     const runningEndMs = options.useLastLocationAtForRunning && latestLocationAtMs
       ? latestLocationAtMs
-      : Math.max(nowMs, latestLocationAtMs || 0);
+      : Math.max(nowMs, latestLocationAtMs || 0, durationObservedAtMs || 0);
     const derivedElapsedMs = Math.max(0, runningEndMs - startedAtMs - pausedMs);
     return hasPauseTimeline ? derivedElapsedMs : Math.max(storedDurationMs, derivedElapsedMs);
   }
@@ -468,8 +568,84 @@ function calculateStartedAtElapsedMs(snapshot = {}, segments = [], options = {})
   return null;
 }
 
+// Canonical v2 snapshots persist their complete timing timeline as scalars.
+// Keep this path geometry-blind because the active UI asks for it every second.
+function calculateCanonicalActiveRunDurationMs(snapshot = {}, options = {}) {
+  if (!isCanonicalDurationSnapshot(snapshot)) return null;
+
+  const nowMs = Number(options.nowMs || Date.now());
+  const status = normalizeStatus(snapshot.status);
+  const startedAtMs = toOptionalTimestampMs(snapshot.startedAtMs ?? snapshot.startedAt);
+  const pausedMs = getCanonicalPausedDurationMs(snapshot);
+  const latestLocationAtMs = getExplicitLatestLocationAtMs(snapshot);
+  const lastUpdatedAtMs = getExplicitLastUpdatedAtMs(snapshot);
+  const durationObservedAtMs = getValidatedDurationObservationAtMs(
+    snapshot,
+    startedAtMs,
+    pausedMs
+  );
+  const finishedAtMs = getExplicitFinishedAtMs(snapshot);
+  const pausedAtMs = getExplicitPausedAtMs(snapshot);
+  let endMs = null;
+
+  if (
+    status === ACTIVE_RUN_STATUS.PAUSED ||
+    (
+      (status === ACTIVE_RUN_STATUS.RECOVERING ||
+        status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE) &&
+      finishedAtMs == null &&
+      pausedAtMs != null
+    )
+  ) {
+    endMs = pausedAtMs;
+    if (endMs == null) return null;
+  } else if (
+    status === ACTIVE_RUN_STATUS.FINISHING ||
+    status === ACTIVE_RUN_STATUS.FINISHED ||
+    (
+      (status === ACTIVE_RUN_STATUS.RECOVERING ||
+        status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE) &&
+      finishedAtMs != null
+    )
+  ) {
+    if (finishedAtMs == null) return null;
+    endMs = finishedAtMs;
+  } else if (
+    status === ACTIVE_RUN_STATUS.STOPPING ||
+    status === ACTIVE_RUN_STATUS.CANCELLED
+  ) {
+    endMs =
+      finishedAtMs ??
+      toOptionalTimestampMs(snapshot.stoppingAtMs) ??
+      lastUpdatedAtMs;
+    if (endMs == null) return null;
+  } else if (
+    status === ACTIVE_RUN_STATUS.RUNNING ||
+    status === ACTIVE_RUN_STATUS.RECOVERING ||
+    status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE
+  ) {
+    if (options.useLastLocationAtForRunning) {
+      if (latestLocationAtMs == null) return null;
+      endMs = latestLocationAtMs;
+    } else {
+      endMs = Math.max(nowMs, latestLocationAtMs || 0, durationObservedAtMs || 0);
+    }
+  } else {
+    return null;
+  }
+
+  const derivedDurationMs = Math.max(0, endMs - startedAtMs - pausedMs);
+  return derivedDurationMs;
+}
+
 export function calculateActiveRunDurationMs(snapshot = {}, options = {}) {
   const nowMs = Number(options.nowMs || Date.now());
+  const canonicalDurationMs = calculateCanonicalActiveRunDurationMs(snapshot, {
+    ...options,
+    nowMs,
+  });
+  if (canonicalDurationMs != null) return canonicalDurationMs;
+
   const status = normalizeStatus(snapshot.status);
   const segments = normalizeSegments(snapshot.segments || snapshot.routeSegments || [], { status });
   const startedAtElapsed = calculateStartedAtElapsedMs(snapshot, segments, { ...options, nowMs });
@@ -523,6 +699,7 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
   const distance = status === ACTIVE_RUN_STATUS.RUNNING
     ? Math.max(baseDistance, measuredDistance)
     : (measuredDistance || baseDistance);
+  const pausedDurationMs = derivePausedDurationMs({ ...base, status }, segments);
   const durationSeconds = calculateActiveRunDurationSeconds(
     {
       ...base,
@@ -530,6 +707,13 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
       segments,
       startedAtMs: base.startedAtMs,
       finishedAtMs: options.finishedAtMs,
+      lastUpdatedAtMs: nowMs,
+      pausedDurationMs,
+      totalPausedMs: pausedDurationMs,
+      totalPausedTime: pausedDurationMs,
+      currentLocation,
+      lastValidPoint: currentLocation,
+      lastRawPoint,
     },
     { nowMs }
   );
@@ -539,10 +723,14 @@ export function createSnapshotFromTrackingSession(session, base = {}, options = 
     filteredPoints: trustedPath,
     segments,
   });
-  const pausedDurationMs = derivePausedDurationMs({ ...base, status }, segments);
   const pausedAtMs = status === ACTIVE_RUN_STATUS.PAUSED
-    ? getPausedAtMs(base, segments, nowMs)
-    : null;
+    ? getPausedAtMs(base, segments, null) ?? nowMs
+    : (
+        status === ACTIVE_RUN_STATUS.RECOVERING ||
+        status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE
+      ) && getExplicitFinishedAtMs(base) == null
+        ? getExplicitPausedAtMs(base)
+        : null;
   const finishedAtMs = options.finishedAtMs || base.finishedAtMs || null;
   const finishedAt = options.finishedAt || base.finishedAt || null;
 
@@ -648,19 +836,28 @@ export function normalizeActiveRunSnapshot(snapshot = {}, options = {}) {
     ? toTimestampMs(snapshot.finishedAtMs ?? snapshot.finishedAt ?? snapshot.endedAt, null)
     : null;
   const distance = Number(snapshot.distanceMeters ?? snapshot.distance ?? calculatePathDistanceMeters(trustedPath)) || 0;
+  const pausedDurationMs = derivePausedDurationMs(snapshot, segments);
   const durationSeconds = calculateActiveRunDurationSeconds({
     ...snapshot,
     status,
     segments,
     startedAtMs,
     finishedAtMs,
+    pausedDurationMs,
+    totalPausedMs: pausedDurationMs,
+    totalPausedTime: pausedDurationMs,
   }, { nowMs });
   const pace = calculatePaceSecondsPerKm(durationSeconds, distance);
   const lastUpdatedAtMs = toTimestampMs(snapshot.lastUpdatedAtMs ?? snapshot.lastUpdatedAt, nowMs);
-  const pausedDurationMs = derivePausedDurationMs(snapshot, segments);
   const pausedAtMs = status === ACTIVE_RUN_STATUS.PAUSED
-    ? getPausedAtMs(snapshot, segments, nowMs)
-    : null;
+    ? getPausedAtMs(snapshot, segments, null) ??
+      (startedAtMs + durationSeconds * 1000 + pausedDurationMs)
+    : (
+        status === ACTIVE_RUN_STATUS.RECOVERING ||
+        status === ACTIVE_RUN_STATUS.ERROR_RECOVERABLE
+      ) && getExplicitFinishedAtMs(snapshot) == null
+        ? getExplicitPausedAtMs(snapshot)
+        : null;
   const currentLocation = snapshot.currentLocation || snapshot.lastValidPoint || trustedPath[trustedPath.length - 1] || null;
   const lastRawPoint = snapshot.lastRawPoint || snapshot.lastPoint || rawPath[rawPath.length - 1] || currentLocation;
 
@@ -726,6 +923,52 @@ export function normalizeActiveRunSnapshot(snapshot = {}, options = {}) {
       activeSegmentNormalized: Boolean(snapshot.meta?.activeSegmentNormalized || activeSegmentEndCleared),
     },
   };
+}
+
+function hasCanonicalResumeProof(existing = {}, incoming = {}) {
+  if (
+    normalizeStatus(existing.status) !== ACTIVE_RUN_STATUS.PAUSED ||
+    normalizeStatus(incoming.status) !== ACTIVE_RUN_STATUS.RUNNING
+  ) {
+    return false;
+  }
+  const pausedAtMs = getExplicitPausedAtMs(existing);
+  if (pausedAtMs == null) return false;
+
+  const existingPausedMs = derivePausedDurationMs(
+    existing,
+    existing.segments || []
+  );
+  const incomingPausedMs = derivePausedDurationMs(
+    incoming,
+    incoming.segments || []
+  );
+  const resumedSegmentStarts = normalizeSegments(incoming.segments || [])
+    .filter((segment) => String(segment.reason || "")
+      .toLowerCase()
+      .includes("resume"))
+    .map(getSegmentStartMs)
+    .filter((value) => value != null && value >= pausedAtMs);
+  const inferredResumeAtMs = incomingPausedMs > existingPausedMs
+    ? pausedAtMs + (incomingPausedMs - existingPausedMs)
+    : null;
+  const resumedAtMs = resumedSegmentStarts.length > 0
+    ? Math.min(...resumedSegmentStarts)
+    : inferredResumeAtMs;
+  const incomingUpdatedAtMs = getExplicitLastUpdatedAtMs(incoming);
+  if (
+    resumedAtMs == null ||
+    incomingUpdatedAtMs == null ||
+    incomingUpdatedAtMs < resumedAtMs
+  ) {
+    return false;
+  }
+
+  const requiredPausedMs = existingPausedMs + Math.max(
+    0,
+    resumedAtMs - pausedAtMs
+  );
+  return incomingPausedMs >= requiredPausedMs;
 }
 
 export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapshot = null, options = {}) {
@@ -796,8 +1039,16 @@ export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapsho
     incomingUpdatedAtMs > 0 &&
     incomingUpdatedAtMs < existingUpdatedAtMs &&
     incomingPointsCount <= existingPointsCount &&
-    incomingDistance <= previousDistance
+      incomingDistance <= previousDistance
   );
+  const resumeWithoutPauseAccumulationBlocked = Boolean(
+    normalizeStatus(existing.status) === ACTIVE_RUN_STATUS.PAUSED &&
+    status === ACTIVE_RUN_STATUS.RUNNING &&
+    !hasCanonicalResumeProof(existing, incoming)
+  );
+  const resolvedStatus = resumeWithoutPauseAccumulationBlocked
+    ? ACTIVE_RUN_STATUS.PAUSED
+    : status;
   const previousElapsedMs = calculateActiveRunDurationMs(existing, { nowMs });
   const incomingElapsedMs = calculateActiveRunDurationMs(incoming, { nowMs });
   const elapsedPreserved = Boolean(
@@ -807,13 +1058,13 @@ export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapsho
       (incomingStoredElapsedMs > 0 && previousStoredElapsedMs > 0 && incomingStoredElapsedMs < previousStoredElapsedMs)
     )
   );
-  const scalarBase = staleSnapshotIgnored
+  const scalarBase = staleSnapshotIgnored || resumeWithoutPauseAccumulationBlocked
     ? { ...incoming, ...existing }
     : { ...existing, ...incoming };
 
   return normalizeActiveRunSnapshot({
     ...scalarBase,
-    status,
+    status: resolvedStatus,
     pausedDurationMs: nextPausedDurationMs,
     totalPausedMs: nextPausedDurationMs,
     totalPausedTime: nextPausedDurationMs,
@@ -852,6 +1103,7 @@ export function mergeActiveRunSnapshots(existingSnapshot = null, incomingSnapsho
       elapsedPreserved,
       staleSnapshotIgnored,
       staleSnapshotBlocked: staleSnapshotIgnored,
+      resumeWithoutPauseAccumulationBlocked,
       dedupedPoints: Boolean(
         existing.meta?.dedupedPoints ||
         incoming.meta?.dedupedPoints ||
@@ -935,6 +1187,9 @@ export function reconcileRunState({
   if (state.meta?.staleSnapshotIgnored) {
     logs.push({ event: "ACTIVE_RUN_STALE_SNAPSHOT_BLOCKED", reason });
     logs.push({ event: "RECOVERY_STALE_STATE_IGNORED", reason });
+  }
+  if (state.meta?.resumeWithoutPauseAccumulationBlocked) {
+    logs.push({ event: "ACTIVE_RUN_UNPROVEN_RESUME_BLOCKED", reason });
   }
   if (state.meta?.elapsedPreserved) {
     logs.push({ event: "ACTIVE_RUN_ELAPSED_REGRESSION_BLOCKED", reason });

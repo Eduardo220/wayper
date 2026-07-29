@@ -2062,8 +2062,13 @@ async function markActiveRunFinishingInternal(options = {}) {
     if (![ACTIVE_RUN_STATUS.RUNNING, ACTIVE_RUN_STATUS.PAUSED].includes(activeSnapshot.status)) {
       return activeSnapshot;
     }
-    const nowMs = Number(options.nowMs || Date.now());
-    const finishingPausedMs = getPausedDurationIncludingOpenPause(activeSnapshot, nowMs);
+    const finishedAtMs = Number(
+      options.finishedAtMs ??
+      options.nowMs ??
+      Date.now()
+    );
+    const finishedAt = options.finishedAt || nowIso(finishedAtMs);
+    const finishingPausedMs = getPausedDurationIncludingOpenPause(activeSnapshot, finishedAtMs);
     const snapshot = createSnapshotFromTrackingSession(session, {
       ...activeSnapshot,
       pausedDurationMs: finishingPausedMs,
@@ -2072,7 +2077,9 @@ async function markActiveRunFinishingInternal(options = {}) {
       recoveryPending: true,
     }, {
       status: ACTIVE_RUN_STATUS.FINISHING,
-      nowMs,
+      nowMs: finishedAtMs,
+      finishedAtMs,
+      finishedAt,
       source: options.source || "foreground",
     });
     const saved = await persistSnapshot(snapshot, "run_finishing");
@@ -2097,7 +2104,17 @@ async function finishActiveRunInternal(options = {}) {
     const session = await getActiveSession();
     if (!session || !activeSnapshot) return null;
     if (activeSnapshot.status === ACTIVE_RUN_STATUS.FINISHED) return activeSnapshot;
-    const finishedAtMs = Number(options.finishedAtMs || Date.now());
+    const frozenFinishedAtMs = activeSnapshot.status === ACTIVE_RUN_STATUS.FINISHING
+      ? toOptionalTimestampMs(
+          activeSnapshot.finishedAtMs ??
+          activeSnapshot.finishedAt ??
+          activeSnapshot.endedAt
+        )
+      : null;
+    const finishedAtMs = frozenFinishedAtMs || Number(options.finishedAtMs || Date.now());
+    const finishedAt = activeSnapshot.status === ACTIVE_RUN_STATUS.FINISHING
+      ? activeSnapshot.finishedAt || nowIso(finishedAtMs)
+      : options.finishedAt || nowIso(finishedAtMs);
     const durationMs = calculateActiveRunDurationSeconds(activeSnapshot, { nowMs: finishedAtMs }) * 1000;
     const finish = session.finishTrackingSession?.({
       durationMs,
@@ -2107,12 +2124,12 @@ async function finishActiveRunInternal(options = {}) {
       ...activeSnapshot,
       ...(finish || {}),
       finishedAtMs,
-      finishedAt: options.finishedAt || nowIso(finishedAtMs),
+      finishedAt,
     }, {
       status: ACTIVE_RUN_STATUS.FINISHED,
       nowMs: finishedAtMs,
       finishedAtMs,
-      finishedAt: options.finishedAt || nowIso(finishedAtMs),
+      finishedAt,
       source: options.source || "foreground",
     });
     const saved = await persistSnapshot(snapshot, "run_finished_snapshot_saved");

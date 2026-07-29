@@ -85,6 +85,63 @@ function isLiveStatus(status) {
   return status === ACTIVE_RUN_STATUS.RUNNING || status === ACTIVE_RUN_STATUS.PAUSED;
 }
 
+function getPausedDurationMs(run = {}) {
+  const values = [
+    run.pausedDurationMs,
+    run.totalPausedMs,
+    run.totalPausedTime,
+  ]
+    .filter((value) => value != null && value !== "")
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return values.length > 0 ? Math.max(...values) : null;
+}
+
+function deriveLiveDurationMs(
+  base = {},
+  patch = {},
+  status = ACTIVE_RUN_STATUS.RUNNING,
+  incomingCheckpointAtMs = null
+) {
+  const startedAtMs = toTimestampMs(
+    patch.startedAtMs ??
+    patch.startedAt ??
+    base.startedAtMs ??
+    base.startedAt,
+    null
+  );
+  const basePausedDurationMs = getPausedDurationMs(base);
+  const patchPausedDurationMs = getPausedDurationMs(patch);
+  const pausedDurationCandidates = [
+    basePausedDurationMs,
+    patchPausedDurationMs,
+  ].filter((value) => value != null);
+  const pausedDurationMs = pausedDurationCandidates.length > 0
+    ? Math.max(...pausedDurationCandidates)
+    : null;
+  const endedAtMs = status === ACTIVE_RUN_STATUS.PAUSED
+    ? toTimestampMs(
+        patch.pausedAtMs ??
+        patch.pausedAt ??
+        patch.pauseStartedAt ??
+        base.pausedAtMs ??
+        base.pausedAt ??
+        base.pauseStartedAt,
+        null
+      )
+    : incomingCheckpointAtMs;
+  if (
+    !Number.isFinite(startedAtMs) ||
+    startedAtMs <= 0 ||
+    !Number.isFinite(endedAtMs) ||
+    endedAtMs < startedAtMs ||
+    pausedDurationMs == null
+  ) {
+    return null;
+  }
+  return Math.max(0, endedAtMs - startedAtMs - pausedDurationMs);
+}
+
 function hasCheckpointPayload(run = {}) {
   return (
     sanitizePoints(run.points).length > 0 ||
@@ -410,16 +467,48 @@ export async function updateActiveRun(patch = {}) {
     }
     const baseDurationMs = toFiniteNumber(base.durationMs, 0) ?? 0;
     const patchDurationMs = toFiniteNumber(patch.durationMs, baseDurationMs) ?? baseDurationMs;
+    const pausedDurationCandidates = [
+      getPausedDurationMs(base),
+      getPausedDurationMs(patch),
+    ].filter((value) => value != null);
+    const pausedDurationMs = pausedDurationCandidates.length > 0
+      ? Math.max(...pausedDurationCandidates)
+      : null;
+    const derivedLiveDurationMs = isLiveStatus(incomingStatus)
+      ? deriveLiveDurationMs(
+          base,
+          patch,
+          incomingStatus,
+          incomingCheckpointAtMs
+        )
+      : null;
     const durationMs = isLiveStatus(incomingStatus)
-      ? Math.max(baseDurationMs, patchDurationMs)
+      ? derivedLiveDurationMs ?? Math.max(baseDurationMs, patchDurationMs)
       : patchDurationMs;
-    if (isLiveStatus(incomingStatus) && patchDurationMs < baseDurationMs) {
+    if (
+      isLiveStatus(incomingStatus) &&
+      derivedLiveDurationMs == null &&
+      patchDurationMs < baseDurationMs
+    ) {
       recordRunEvent("ACTIVE_RUN_ELAPSED_REGRESSION_BLOCKED", {
         localRunId: incomingLocalRunId || base.localRunId,
         status: incomingStatus,
         previousElapsedMs: baseDurationMs,
         incomingElapsedMs: patchDurationMs,
         preservedElapsedMs: durationMs,
+      });
+    }
+    if (
+      derivedLiveDurationMs != null &&
+      derivedLiveDurationMs !== Math.max(baseDurationMs, patchDurationMs)
+    ) {
+      recordRunEvent("RUN_ELAPSED_RECALCULATED", {
+        localRunId: incomingLocalRunId || base.localRunId,
+        status: incomingStatus,
+        previousElapsedMs: baseDurationMs,
+        incomingElapsedMs: patchDurationMs,
+        recalculatedElapsedMs: derivedLiveDurationMs,
+        totalPausedMs: pausedDurationMs,
       });
     }
     const checkpoint = normalizeCheckpointFields(patch);
@@ -433,6 +522,13 @@ export async function updateActiveRun(patch = {}) {
       segments,
       distanceMeters,
       durationMs,
+      ...(pausedDurationMs == null
+        ? {}
+        : {
+            pausedDurationMs,
+            totalPausedMs: pausedDurationMs,
+            totalPausedTime: pausedDurationMs,
+          }),
       territoryData: patch.territoryData === undefined ? base.territoryData : patch.territoryData,
       updatedAt: nowIso(),
       checkpointAt: checkpoint.checkpointAt,

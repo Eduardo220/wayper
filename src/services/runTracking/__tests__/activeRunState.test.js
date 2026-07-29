@@ -100,6 +100,257 @@ describe("active run persistence state", () => {
     expect(calculateActiveRunDurationSeconds(snapshot, { nowMs: BASE_TIME + 22_000 })).toBe(12);
   });
 
+  test("duracao canonica cobre corrida, pausa e retomada pelos escalares de tempo", () => {
+    const canonicalTiming = {
+      version: 2,
+      schemaVersion: 2,
+      formatVersion: 2,
+      startedAtMs: BASE_TIME,
+      durationMs: 0,
+    };
+
+    expect(calculateActiveRunDurationSeconds({
+      ...canonicalTiming,
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      pausedDurationMs: 0,
+    }, { nowMs: BASE_TIME + 12_000 })).toBe(12);
+
+    expect(calculateActiveRunDurationSeconds({
+      ...canonicalTiming,
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      pausedDurationMs: 4000,
+      pausedAtMs: BASE_TIME + 10_000,
+    }, { nowMs: BASE_TIME + 60_000 })).toBe(6);
+
+    expect(calculateActiveRunDurationSeconds({
+      ...canonicalTiming,
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      pausedDurationMs: 10_000,
+    }, { nowMs: BASE_TIME + 22_000 })).toBe(12);
+  });
+
+  test("timeline canonica vence duracao armazenada contaminada pela pausa", () => {
+    const contaminatedTiming = {
+      version: 2,
+      schemaVersion: 2,
+      formatVersion: 2,
+      startedAtMs: BASE_TIME,
+      pausedDurationMs: 10_000,
+      totalPausedMs: 10_000,
+      durationMs: 22_000,
+      durationSeconds: 22,
+      lastUpdatedAtMs: BASE_TIME + 22_000,
+    };
+
+    expect(calculateActiveRunDurationSeconds({
+      ...contaminatedTiming,
+      status: ACTIVE_RUN_STATUS.RUNNING,
+    }, { nowMs: BASE_TIME + 20_000 })).toBe(10);
+
+    expect(calculateActiveRunDurationSeconds({
+      ...contaminatedTiming,
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      pausedAtMs: BASE_TIME + 20_000,
+    }, { nowMs: BASE_TIME + 60_000 })).toBe(10);
+
+    expect(calculateActiveRunDurationSeconds({
+      ...contaminatedTiming,
+      status: ACTIVE_RUN_STATUS.FINISHED,
+      finishedAtMs: BASE_TIME + 20_000,
+      currentLocation: {
+        timestamp: BASE_TIME + 30_000,
+      },
+    }, { nowMs: BASE_TIME + 60_000 })).toBe(10);
+  });
+
+  test("total pausado canonico preserva o maior alias monotonicamente", () => {
+    expect(calculateActiveRunDurationSeconds({
+      version: 2,
+      schemaVersion: 2,
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAtMs: BASE_TIME,
+      pausedDurationMs: 0,
+      totalPausedMs: 10_000,
+      totalPausedTime: 5000,
+      durationMs: 20_000,
+    }, { nowMs: BASE_TIME + 20_000 })).toBe(10);
+  });
+
+  test("duracao canonica usa observacao coerente se o relogio regredir", () => {
+    const snapshot = {
+      version: 2,
+      schemaVersion: 2,
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAtMs: BASE_TIME,
+      pausedDurationMs: 10_000,
+      durationMs: 30_000,
+      lastUpdatedAtMs: BASE_TIME + 40_000,
+      currentLocation: {
+        timestamp: BASE_TIME + 35_000,
+      },
+    };
+
+    expect(calculateActiveRunDurationSeconds(snapshot, {
+      nowMs: BASE_TIME + 34_000,
+    })).toBe(30);
+  });
+
+  test("transicoes terminais e recovery pausado permanecem congelados", () => {
+    const frozenTiming = {
+      version: 2,
+      schemaVersion: 2,
+      startedAtMs: BASE_TIME,
+      pausedDurationMs: 10_000,
+      durationMs: 50_000,
+      lastUpdatedAtMs: BASE_TIME + 60_000,
+    };
+
+    expect(calculateActiveRunDurationSeconds({
+      ...frozenTiming,
+      status: ACTIVE_RUN_STATUS.FINISHING,
+      finishedAtMs: BASE_TIME + 20_000,
+    }, { nowMs: BASE_TIME + 90_000 })).toBe(10);
+
+    expect(calculateActiveRunDurationSeconds({
+      ...frozenTiming,
+      status: ACTIVE_RUN_STATUS.FINISHING,
+      finishedAtMs: null,
+      lastUpdatedAtMs: BASE_TIME + 20_000,
+    }, { nowMs: BASE_TIME + 90_000 })).toBe(10);
+
+    expect(calculateActiveRunDurationSeconds({
+      ...frozenTiming,
+      status: ACTIVE_RUN_STATUS.STOPPING,
+      lastUpdatedAtMs: BASE_TIME + 20_000,
+    }, { nowMs: BASE_TIME + 90_000 })).toBe(10);
+
+    expect(calculateActiveRunDurationSeconds({
+      ...frozenTiming,
+      status: ACTIVE_RUN_STATUS.CANCELLED,
+      endedAt: BASE_TIME + 20_000,
+    }, { nowMs: BASE_TIME + 90_000 })).toBe(10);
+
+    expect(calculateActiveRunDurationSeconds({
+      ...frozenTiming,
+      status: ACTIVE_RUN_STATUS.RECOVERING,
+      pausedAtMs: BASE_TIME + 20_000,
+    }, { nowMs: BASE_TIME + 90_000 })).toBe(10);
+  });
+
+  test("normalizacoes sucessivas preservam a origem pausada do recovery", () => {
+    const recoveredOnce = normalizeActiveRunSnapshot({
+      version: 2,
+      schemaVersion: 2,
+      activeRunId: "paused-recovery",
+      status: ACTIVE_RUN_STATUS.RECOVERING,
+      startedAtMs: BASE_TIME,
+      pausedDurationMs: 10_000,
+      pausedAtMs: BASE_TIME + 20_000,
+      durationMs: 50_000,
+    }, { nowMs: BASE_TIME + 60_000 });
+    const recoveredTwice = normalizeActiveRunSnapshot(recoveredOnce, {
+      nowMs: BASE_TIME + 90_000,
+    });
+
+    expect(recoveredOnce.pausedAtMs).toBe(BASE_TIME + 20_000);
+    expect(recoveredTwice.pausedAtMs).toBe(BASE_TIME + 20_000);
+    expect(recoveredOnce.durationSeconds).toBe(10);
+    expect(recoveredTwice.durationSeconds).toBe(10);
+  });
+
+  test("snapshot pausado legado sem fronteira preserva o fallback armazenado", () => {
+    const recoveredOnce = normalizeActiveRunSnapshot({
+      activeRunId: "legacy-paused-recovery",
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      startedAtMs: BASE_TIME,
+      durationMs: 60_000,
+      segments: [],
+    }, { nowMs: BASE_TIME + 60 * 60_000 });
+    const recoveredTwice = normalizeActiveRunSnapshot(recoveredOnce, {
+      nowMs: BASE_TIME + 2 * 60 * 60_000,
+    });
+
+    expect(recoveredOnce.durationSeconds).toBe(60);
+    expect(recoveredOnce.pausedAtMs).toBe(BASE_TIME + 60_000);
+    expect(recoveredTwice.durationSeconds).toBe(60);
+    expect(recoveredTwice.pausedAtMs).toBe(BASE_TIME + 60_000);
+  });
+
+  test("fast path canonico nao le geometria em nenhum estado temporal", () => {
+    const canonicalTiming = {
+      version: 2,
+      schemaVersion: 2,
+      startedAtMs: BASE_TIME,
+      pausedDurationMs: 10_000,
+      durationMs: 10_000,
+    };
+    const snapshots = [
+      { status: ACTIVE_RUN_STATUS.RUNNING },
+      { status: ACTIVE_RUN_STATUS.PAUSED, pausedAtMs: BASE_TIME + 20_000 },
+      { status: ACTIVE_RUN_STATUS.FINISHING, finishedAtMs: BASE_TIME + 20_000 },
+      { status: ACTIVE_RUN_STATUS.STOPPING, lastUpdatedAtMs: BASE_TIME + 20_000 },
+      { status: ACTIVE_RUN_STATUS.FINISHED, finishedAtMs: BASE_TIME + 20_000 },
+      { status: ACTIVE_RUN_STATUS.CANCELLED, endedAt: BASE_TIME + 20_000 },
+      { status: ACTIVE_RUN_STATUS.RECOVERING, pausedAtMs: BASE_TIME + 20_000 },
+    ].map((timing) => ({ ...canonicalTiming, ...timing }));
+    const geometryKeys = [
+      "segments",
+      "routeSegments",
+      "trustedPath",
+      "filteredPoints",
+      "points",
+      "path",
+      "rawPath",
+      "rawPoints",
+      "liveRenderPath",
+      "displayPoints",
+    ];
+    for (const snapshot of snapshots) {
+      for (const key of geometryKeys) {
+        Object.defineProperty(snapshot, key, {
+          configurable: true,
+          get() {
+            throw new Error(`geometry read on canonical duration fast path: ${key}`);
+          },
+        });
+      }
+
+      expect(calculateActiveRunDurationSeconds(snapshot, {
+        nowMs: BASE_TIME + 20_000,
+      })).toBe(10);
+    }
+  });
+
+  test("normalizacao v2 reconcilia escalares de pausa antes do fast path", () => {
+    const snapshot = normalizeActiveRunSnapshot({
+      version: 2,
+      schemaVersion: 2,
+      activeRunId: "v2-stale-pause-scalars",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAtMs: BASE_TIME,
+      pausedDurationMs: 0,
+      durationMs: 20_000,
+      segments: [
+        {
+          index: 0,
+          startedAt: BASE_TIME,
+          endedAt: BASE_TIME + 6000,
+          endReason: "pause",
+          trustedPath: [p(0), p(2)],
+        },
+        {
+          index: 1,
+          startedAt: BASE_TIME + 16_000,
+          reason: "resume",
+          trustedPath: [p(9, 30, 30, { timestamp: BASE_TIME + 18_000 })],
+        },
+      ],
+    }, { nowMs: BASE_TIME + 20_000 });
+
+    expect(snapshot.pausedDurationMs).toBe(10_000);
+    expect(snapshot.durationSeconds).toBe(10);
+  });
+
   test("duracao antiga nao reincorpora pausa depois da retomada", () => {
     const snapshot = normalizeActiveRunSnapshot({
       activeRunId: "paused-stored-duration",
@@ -429,6 +680,23 @@ describe("active run persistence state", () => {
     expect(mapScreen).toContain("RUN_PAUSE_NOT_CONFIRMED");
     expect(mapScreen).toContain("RUN_RESUME_NOT_CONFIRMED");
     expect(mapScreen).toContain("resolveFinalRunTiming");
+    const stopRunStart = mapScreen.indexOf("const stopRun = useCallback");
+    const stopRunEnd = mapScreen.indexOf(
+      "const restoreRecoveryCandidateToUi",
+      stopRunStart
+    );
+    const stopRunFlow = mapScreen.slice(stopRunStart, stopRunEnd);
+    const canonicalFinishBoundary =
+      "const finishedAtMs =\n          finalTiming.finishedAtMs ?? requestedFinishedAtMs;";
+    expect(stopRunFlow).toContain("const requestedFinishedAtMs = Date.now()");
+    expect(stopRunFlow).toContain("finishedAtMs: requestedFinishedAtMs");
+    expect(stopRunFlow).toContain(canonicalFinishBoundary);
+    expect(stopRunFlow.indexOf(canonicalFinishBoundary)).toBeLessThan(
+      stopRunFlow.indexOf("finishTrackingSession")
+    );
+    expect(stopRunFlow).toContain("finishedAt: finishedAtMs");
+    expect(stopRunFlow).toContain("new Date(finishedAtMs).toISOString()");
+    expect(stopRunFlow).not.toContain("finishedAt: requestedFinishedAtMs");
     expect(mapScreen).toContain("forceWrite: true");
     expect(mapScreen).toMatch(/onSave=\{async[\s\S]+catch \(e\) \{[\s\S]+throw e;/);
     expect(summaryModal).toContain("setSaveError(");

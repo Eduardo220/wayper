@@ -175,6 +175,27 @@ describe("runFinalizationService", () => {
     });
   });
 
+  test("retry de finalizacao preserva o primeiro instante congelado", () => {
+    const startedAtMs = 1_700_000_000_000;
+    const result = resolveFinalRunTiming({
+      startedAtMs,
+      finishedAtMs: startedAtMs + 20_000,
+      totalPausedMs: 10_000,
+      durationMs: 50_000,
+      trustedPath: [{ timestamp: startedAtMs + 30_000 }],
+    }, {
+      finishedAtMs: startedAtMs + 60_000,
+      uiDurationMs: 50_000,
+    });
+
+    expect(result).toMatchObject({
+      finishedAtMs: startedAtMs + 20_000,
+      durationMs: 10_000,
+      durationSeconds: 10,
+      usedPauseTimeline: true,
+    });
+  });
+
   test("sem evidencia de pausa preserva o maior fallback seguro de duracao", () => {
     const startedAtMs = 1_700_000_000_000;
     const result = resolveFinalRunTiming({

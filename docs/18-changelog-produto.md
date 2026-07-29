@@ -26,6 +26,61 @@ Origem:
 ### Riscos restantes
 ```
 
+## 2026-07-29 - Duração canônica por timeline escalar
+
+Status: Implementada; automação aprovada e validação física pendente
+
+Origem: Direção estratégica — fundação confiável da corrida
+
+Área: Duração, pausa, recovery, finalização e storage offline
+
+### O que mudou
+
+- timeline confiável passou a vencer `durationMs` armazenada;
+- aliases de pausa são monotônicos no snapshot canônico e no espelho offline;
+- `PAUSED`, recovery pausado e estados terminais mantêm fronteiras congeladas;
+- o primeiro `finishedAtMs` permanece autoritativo em retry/recovery;
+- merge bloqueia `PAUSED -> RUNNING` sem prova de pausa acumulada;
+- o cálculo v2 por tick usa somente escalares e não percorre geometria.
+
+### Por que mudou
+
+Um cache antigo podia reincorporar intervalos pausados, e estados de
+finalização podiam continuar contando enquanto o save ou o recovery avançavam.
+Isso contrariava a duração ativa e o congelamento do snapshot final definidos
+pela direção estratégica.
+
+### Impacto no usuário
+
+Pausas deixam de reaparecer no tempo ativo após retomada, reload ou merge. O
+tempo final não cresce depois do toque em finalizar, inclusive com retry.
+
+### Impacto técnico
+
+- gate focado: 9 suítes e 171 testes aprovados;
+- suíte completa: 56 suítes e 604 testes aprovados;
+- índice isolado: 53 suítes e 525 testes aprovados, além do export Android;
+- nenhum schema, storage key ou fornecedor novo;
+- nenhum build nativo ou teste físico executado.
+
+### Documentos relacionados
+
+- `docs/audits/2026-07-29-fase-1b-duracao-canonica.md`;
+- `docs/product/direcao-estrategica-completa.md`;
+- `docs/wayper/04-regras-corrida.md`.
+
+### Arquivos alterados
+
+- estado e serviço canônicos da corrida;
+- storage offline, recovery e finalização;
+- testes focados e de integração desses domínios.
+
+### Riscos restantes
+
+- recovery legado sem timeline completa usa fallback conservador;
+- pausa/reentrada/background/finalização ainda exigem validação Android física;
+- checkpoint comprometido e lifecycle nativo continuam nas próximas unidades.
+
 ## 2026-07-29 - Tracking incremental e renderização lazy da rota
 
 Status: Implementada; automação aprovada e validação física pendente
