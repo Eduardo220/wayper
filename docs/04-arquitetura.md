@@ -1,10 +1,49 @@
 # Arquitetura do Sistema
 
+> **Status:** vigente<br>
+> **Tipo:** fonte técnica de estado e direção<br>
+> **Escopo:** arquitetura mobile, domínios, persistência e integrações<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md)
+
 ## Visão geral
 
 O Wayper é um aplicativo mobile construído com React Native e Expo. A arquitetura atual da branch `develop` é local-first nos fluxos críticos: corrida ativa, histórico, sync de runs, territórios locais, XP/conquistas, Home social, compartilhamento e diagnóstico precisam funcionar sem Firestore obrigatório.
 
 Firebase Auth segue como autenticação. Firestore continua presente como remoto, cacheável ou destino posterior de sincronização em vários domínios, mas não é a fonte de verdade da corrida ativa nem requisito para preservar dados locais. O mapa utiliza MapLibre/OpenFreeMap, e cálculos geográficos podem usar Turf.
+
+## Estado atual, direção aprovada e lacunas
+
+**Estado atual:** a base local-first, o tracking canônico, os checkpoints, o save
+mínimo e a fila derivada existem em `develop` e devem ser confirmados no código e
+nos testes a cada alteração. O gate físico global de background, notificação,
+offline, recovery, corrida longa e preview/release continua aberto.
+
+**Direção aprovada:** a fronteira arquitetural é:
+
+```text
+tracking canônico local
+    -> checkpoints locais
+    -> snapshot final
+    -> save mínimo local
+    -> confirmação da corrida
+    -> processamento derivado
+    -> sync remoto quando possível
+```
+
+Firestore, território, XP, ranking, replay, compartilhamento e qualquer provider
+externo permanecem fora do caminho crítico. A UI consome estado; não controla o
+tracking.
+
+**Lacuna conhecida:** no estado atual, a finalização agenda o sync de runs depois
+do save mínimo e do cleanup, e a fila dá ao sync remoto prioridade anterior a
+alguns módulos derivados. Isso preserva o invariante crítico — nada remoto
+antecede ou bloqueia o save —, mas a ordem relativa ainda não reproduz
+literalmente toda a sequência normativa acima.
+
+**Fase planejada:** revisar essa ordem dentro da evolução do pipeline da
+Expedição, com ADR, testes de idempotência e rollback. Esta lacuna não autoriza
+alteração oportunista da finalização nem criação de fila paralela.
 
 ## Stack conhecida
 

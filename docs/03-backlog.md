@@ -1,6 +1,28 @@
 # Backlog
 
+> **Status:** vigente<br>
+> **Tipo:** planejamento priorizado<br>
+> **Escopo:** ações executáveis e gates pendentes<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`docs/02-roadmap.md`](02-roadmap.md)
+
 Backlog vivo de funcionalidades, melhorias e pendencias. Nao usar este arquivo para reabrir como "a fazer" algo que ja existe na branch `develop`; nesses casos, o trabalho e validacao, hardening ou desacoplamento incremental.
+
+## Fundação — prioridade máxima permanente
+
+Os itens abaixo formam um único gate e nunca são melhoria média ou opcional:
+
+- estabilidade da corrida e tracking/GPS confiáveis;
+- funcionamento com tela apagada e em background;
+- persistência local e modo offline;
+- recuperação de atividade interrompida;
+- finalização resiliente com save mínimo confirmado;
+- diagnóstico local e observabilidade segura;
+- validação em Android físico, incluindo notificação, kill/force-stop,
+  preview/release, corrida longa e economia de bateria.
+
+Relatório, retenção, planos, parceiros e pagamentos não podem reduzir a
+prioridade desse gate.
 
 ## Alta prioridade
 

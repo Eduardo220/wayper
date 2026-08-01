@@ -1,11 +1,30 @@
 # Decisões Técnicas
 
+> **Status:** vigente<br>
+> **Tipo:** registro de decisões técnicas<br>
+> **Escopo:** decisões históricas e atuais de engenharia<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte normativa relacionada:** [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md)
+
 Este arquivo registra decisões relevantes do projeto. Decisão não registrada vira arqueologia depois, e ninguém merece escavar commit velho.
 
 As decisões transversais da direção oficial de 2026-07-24 estão registradas como
-ADR-028 a ADR-038 em
+ADR-028 a ADR-039 em
 [`docs/architecture/adrs-direcao-oficial.md`](architecture/adrs-direcao-oficial.md).
 Elas complementam, e não apagam, as decisões local-first abaixo.
+
+## Governança de precedência e numeração
+
+- Cite uma decisão pelo arquivo e pelo número, porque o histórico contém duas
+  entradas `ADR-016` e há sobreposição de `ADR-028` e `ADR-039` entre esta série
+  e `docs/architecture/adrs-direcao-oficial.md`.
+- A sobreposição é uma lacuna documental conhecida. Não renumere ADRs
+  silenciosamente: uma migração futura precisa de mapa de IDs, links e impacto.
+- Dentro do mesmo domínio, uma decisão posterior pode refinar uma anterior; a
+  precedência deve ser declarada no texto, não inferida apenas pelo número.
+- Os ADRs transversais em `docs/architecture/adrs-direcao-oficial.md` orientam a
+  direção aprovada; este arquivo também preserva decisões históricas e detalhes
+  do estado técnico.
 
 ## ADR-001: Usar React Native com Expo
 
@@ -21,9 +40,12 @@ Elas complementam, e não apagam, as decisões local-first abaixo.
 
 ## ADR-002: Usar Firebase como backend inicial
 
-**Status:** aceito  
+**Status:** aceito; refinado pelas ADR-006, ADR-007 e ADR-029 transversal<br>
 **Contexto:** o app precisa de autenticação, persistência e sincronização.  
 **Decisão:** usar Firebase Auth e Firestore.  
+**Escopo vigente:** Firebase Auth permanece na autenticação. Firestore é remoto,
+cache ou destino posterior de sincronização conforme o domínio; não é requisito
+para iniciar, acompanhar, recuperar, finalizar ou salvar localmente uma corrida.
 **Consequências:**
 
 - Menos backend próprio no início.
@@ -88,7 +110,14 @@ Elas complementam, e não apagam, as decisões local-first abaixo.
 
 ## ADR-006: Persistir corrida ativa localmente antes do Firestore
 
-**Status:** aceito
+**Status:** aceito; refinado pela ADR-007
+
+**Nota de precedência:** permanece aceita a decisão de persistir localmente antes
+do Firestore. A afirmação original de que `runOfflineStorageService` era a fonte
+de verdade foi substituída pela ADR-007: `activeRunTrackingService` e
+`activeRunState` são canônicos, enquanto o storage offline é
+checkpoint/compatibilidade e rascunho final temporário.
+
 **Contexto:** a Wayper precisa garantir que uma corrida nao seja perdida por perda de internet, fechamento do app ou falha durante a atividade. O projeto ja usa AsyncStorage em servicos de perfil, sync, zonas e territorio, e a rota salva ja possui limites de pontos para historico e renderizacao.
 **Decisao:** a corrida ativa deve ter uma camada local propria (`runOfflineStorageService`) como fonte de verdade durante a atividade. Corridas ativas devem ser persistidas localmente por checkpoint continuo e sincronizadas de forma idempotente com Firestore. A sincronizacao com Firestore acontece somente apos a corrida ser finalizada e salva localmente, com status de sync pendente ate o envio remoto concluir.
 **Consequencias:**

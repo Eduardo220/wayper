@@ -1,7 +1,7 @@
 # ADRs da direção oficial
 
 **Data da decisão:** 2026-07-24  
-**Status geral:** aceito
+**Status geral:** aprovada
 
 Estas decisões complementam os ADRs históricos em
 [`docs/08-decisoes-tecnicas.md`](../08-decisoes-tecnicas.md). Uma decisão
@@ -10,11 +10,11 @@ de produção.
 
 ## ADR-028 — A corrida é a ação; o pós-corrida é o jogo
 
-**Status:** aceito
+**Status:** aprovada
 
 - **Contexto:** a Wayper já registra atividades e possui território, XP, ranking,
-  replay e share, mas a experiência ainda concentra mapa e captura durante a
-  corrida.
+  replay e share. Na auditoria-base anterior ao modo foco, a experiência ainda
+  concentrava mapa e captura durante a corrida.
 - **Problema:** exigir atenção durante esforço reduz segurança e fragmenta a
   descoberta.
 - **Decisão:** a tela ativa registra e protege; a revelação das consequências
@@ -32,7 +32,7 @@ de produção.
 
 ## ADR-029 — Tracking offline-first
 
-**Status:** aceito
+**Status:** aprovada
 
 - **Contexto:** `activeRunTrackingService`, tarefa headless e checkpoints locais
   já formam a base canônica.
@@ -53,7 +53,7 @@ de produção.
 
 ## ADR-030 — Salvamento mínimo antes de processamento derivado
 
-**Status:** aceito
+**Status:** aprovada
 
 **Evidência de implementação (2026-07-24):**
 `runFinalizationService` concentra freeze, lock idempotente, confirmação do
@@ -84,7 +84,7 @@ continua independente e pode carregar adapters próprios.
 
 ## ADR-031 — Processamento da Expedição idempotente
 
-**Status:** aceito
+**Status:** aprovada
 
 **Evidência de implementação (2026-07-24):** a fila local existente evoluiu para
 schema 2, mantém resultado por tarefa, projeta estado por módulo e reconcilia no
@@ -108,7 +108,7 @@ paralelo.
 
 ## ADR-032 — Monetização fora da corrida
 
-**Status:** aceito
+**Status:** aprovada
 
 - **Contexto:** assinatura, parceiros e anúncios são direções futuras.
 - **Problema:** monetização no esforço ameaça segurança e confiança.
@@ -127,7 +127,7 @@ paralelo.
 
 ## ADR-033 — Plus baseado em entitlements
 
-**Status:** aceito conceitualmente
+**Status:** aprovada conceitualmente
 
 - **Contexto:** Plus é a principal direção de monetização, ainda sem implementação.
 - **Problema:** `isPremium` espalhado cria inconsistência, acoplamento e falhas
@@ -145,7 +145,7 @@ paralelo.
 
 ## ADR-034 — Parceiros patrocinam a experiência
 
-**Status:** aceito conceitualmente
+**Status:** aprovada conceitualmente
 
 - **Contexto:** parceiros locais e esportivos podem financiar experiências.
 - **Problema:** pins, cupons e interrupções transformariam o produto em mapa
@@ -164,7 +164,7 @@ paralelo.
 
 ## ADR-035 — Gateway de pagamentos desacoplado
 
-**Status:** aceito conceitualmente
+**Status:** aprovada conceitualmente
 
 - **Contexto:** assinaturas, eventos e desafios pagos podem exigir pagamentos.
 - **Problema:** SDK em telas/regras impede troca, auditoria e confirmação segura.
@@ -183,7 +183,7 @@ paralelo.
 
 ## ADR-036 — Feature flags centralizadas
 
-**Status:** aceito
+**Status:** aprovada
 
 - **Contexto:** relatório, progressão e integrações comerciais serão incrementais.
 - **Problema:** condicionais dispersas dificultam kill switch e rollback.
@@ -198,10 +198,14 @@ paralelo.
 - **Impacto comercial:** desligamento emergencial de ads, pagamentos e parceiros.
 - **Impacto visual:** variantes coerentes, sem piscar conteúdo indisponível.
 - **Impacto em testes:** defaults, ambiente, cache, dependências e kill switch.
+- **Implementação local em 2026-08-01:** parcialmente implementada. O resolver central
+  já atende `FOCUS_RUN_UI`, com default local seguro e override de build, sem
+  leitura de rede no tracking. Rollout remoto, cache de configuração e kill
+  switch operacional continuam planejados.
 
 ## ADR-037 — Recompensas fora da UI
 
-**Status:** aceito
+**Status:** aprovada
 
 - **Contexto:** recompensas futuras podem vir de progressão, desafio ou parceiro.
 - **Problema:** conceder ao abrir/completar animação duplica e permite abuso.
@@ -219,7 +223,7 @@ paralelo.
 
 ## ADR-038 — Anúncios como fonte secundária
 
-**Status:** aceito conceitualmente
+**Status:** aprovada conceitualmente
 
 - **Contexto:** anúncios podem complementar receita, mas não definem o produto.
 - **Problema:** maximizar impressões degrada Free e conflita com segurança.
@@ -235,3 +239,35 @@ paralelo.
 - **Impacto visual:** espaços identificados e nunca modais obrigatórios.
 - **Impacto em testes:** política por contexto, Plus, consentimento, frequência,
   offline, falha e kill switch.
+
+## ADR-039 — Modo foco como superfície padrão da corrida
+
+**Status:** aprovada
+
+- **Contexto:** acompanhar mapa, território e animações enquanto corre exige
+  atenção incompatível com uma atividade segura.
+- **Problema:** a tela ativa concentrava mapa e processamento visual, enquanto
+  pace e a confirmação real de background não estavam na comunicação principal.
+- **Decisão:** usar o modo foco como default, com tempo, distância, pace, estado,
+  GPS crítico e controles. O mapa é opt-in, não interativo durante a atividade e
+  desenha somente a rota. Territórios, líderes, zonas e callbacks derivados
+  permanecem fora da superfície ativa.
+- **Decisão de permissões:** foreground, background e notificação são resolvidos
+  no preflight antes de `RUNNING`. Negativas opcionais permitem continuar com
+  aviso honesto; a UI só orienta guardar o celular quando a permissão de
+  background está concedida e a task foi confirmada para a corrida atual.
+- **Alternativas:** manter o mapa como centro; pedir permissões depois de iniciar;
+  assumir capacidade por permissão concedida. Rejeitadas.
+- **Consequências:** menos trabalho visual e menos decisões durante a corrida;
+  drawer/header ficam bloqueados; finalizar exige confirmação; recovery e falha
+  de save mantêm a superfície em estado seguro.
+- **Riscos:** flag atual é estática por bundle; `MapScreen` continua monolítica;
+  áudio/vibração têm status `aprovada conceitualmente` e não foram
+  implementados; ergonomia e background real exigem validação física.
+- **Critérios de revisão:** evidência em aparelho para tela apagada, reentrada,
+  acessibilidade, corrida longa e fabricantes com economia agressiva.
+- **Impacto técnico:** reutiliza tracking, checkpoints, repositories e fila
+  existentes; nenhum caminho paralelo ou dependência remota entra no GPS.
+- **Impacto visual:** mapa opcional com rota; território é revelado depois.
+- **Impacto em testes:** default/override da flag, preflight, capability real,
+  recuperação, controles, ausência de território ativo e matriz Android física.
