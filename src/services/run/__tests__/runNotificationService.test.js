@@ -36,7 +36,14 @@ const trackingService = {
       segments: [{ startedAt: BASE_TIME, endedAt: BASE_TIME + 503000 }],
       durationSeconds: 503,
     };
-    return currentSnapshot;
+    return {
+      ...currentSnapshot,
+      nativeLifecycleResult: {
+        operation: "stop",
+        confirmed: true,
+        transitionConfirmed: true,
+      },
+    };
   }),
   resumeActiveRun: jest.fn(async () => {
     currentSnapshot = {
@@ -45,7 +52,14 @@ const trackingService = {
       segments: [{ startedAt: BASE_TIME, endedAt: BASE_TIME + 503000 }, { startedAt: BASE_TIME + 600000 }],
       durationSeconds: 503,
     };
-    return currentSnapshot;
+    return {
+      ...currentSnapshot,
+      nativeLifecycleResult: {
+        operation: "start",
+        confirmed: true,
+        transitionConfirmed: true,
+      },
+    };
   }),
 };
 
@@ -241,6 +255,7 @@ describe("run notification service", () => {
       forceNotification: true,
     }));
     expect(trackingService.pauseActiveRun).toHaveBeenCalledWith(expect.objectContaining({
+      expectedRunId: "run_free",
       source: "notification",
     }));
     expect(paused.status).toBe("PAUSED");
@@ -275,6 +290,7 @@ describe("run notification service", () => {
       forceNotification: true,
     }));
     expect(trackingService.resumeActiveRun).toHaveBeenCalledWith(expect.objectContaining({
+      expectedRunId: "run_free",
       source: "notification",
     }));
     expect(resumed.status).toBe("RUNNING");
@@ -319,6 +335,62 @@ describe("run notification service", () => {
     }, { scheduleTimer: false });
     nativeModule.updateRunNotification.mockClear();
     trackingService.resumeActiveRun.mockImplementationOnce(async () => currentSnapshot);
+
+    const result = await service.resumeRunFromNotification();
+
+    expect(result.status).toBe("PAUSED");
+    expect(flushActiveRunCheckpoint).not.toHaveBeenCalled();
+    expect(nativeModule.updateRunNotification.mock.calls.at(-1)[0]).toMatchObject({
+      isPaused: true,
+      actionLabel: "Retomar",
+    });
+  });
+
+  test("nao confirma pausa quando PAUSED ainda nao possui stop nativo confirmado", async () => {
+    currentSnapshot = runningSnapshot();
+    await service.startRunNotification({
+      elapsedTimeSeconds: 503,
+      distanceKm: 1.42,
+      isPaused: false,
+    }, { scheduleTimer: false });
+    trackingService.pauseActiveRun.mockImplementationOnce(async () => ({
+      ...currentSnapshot,
+      status: "PAUSED",
+      nativeLifecycleResult: {
+        operation: "stop",
+        outcome: "timeout",
+        confirmed: false,
+        transitionConfirmed: false,
+      },
+    }));
+
+    const result = await service.pauseRunFromNotification();
+
+    expect(result.status).toBe("RUNNING");
+    expect(flushActiveRunCheckpoint).not.toHaveBeenCalled();
+    expect(nativeModule.updateRunNotification.mock.calls.at(-1)[0]).toMatchObject({
+      isPaused: false,
+      actionLabel: "Pausar",
+    });
+  });
+
+  test("nao confirma resume quando RUNNING ainda nao possui start nativo confirmado", async () => {
+    currentSnapshot = pausedSnapshot();
+    await service.startRunNotification({
+      elapsedTimeSeconds: 503,
+      distanceKm: 1.42,
+      isPaused: true,
+    }, { scheduleTimer: false });
+    trackingService.resumeActiveRun.mockImplementationOnce(async () => ({
+      ...currentSnapshot,
+      status: "RUNNING",
+      nativeLifecycleResult: {
+        operation: "start",
+        outcome: "start_failed",
+        confirmed: false,
+        transitionConfirmed: false,
+      },
+    }));
 
     const result = await service.resumeRunFromNotification();
 

@@ -344,10 +344,82 @@ function summarizeBackgroundLifecycleOperation(request, patch = {}) {
     type: request.type,
     ownerRunId: request.expectedRunId || null,
     generation: request.generation || null,
+    expectedNativeGeneration: request.expectedNativeGeneration ?? null,
     reason: request.reason || null,
     outcome: request.outcome || null,
     timedOut: request.timedOut === true,
     ...patch,
+  };
+}
+
+function buildBackgroundLifecycleResult(request, confirmed) {
+  const reconciliationRequired = Boolean(
+    request?.timedOut === true ||
+    backgroundLifecycleReconciliationRequired
+  );
+  const nativeState = confirmed === true
+    ? request.type === "start" ? "active" : "inactive"
+    : reconciliationRequired
+      ? "uncertain"
+      : backgroundStarted
+        ? "active"
+        : "inactive";
+  return {
+    operation: request.type,
+    operationId: request.operationId,
+    generation: request.generation,
+    expectedNativeGeneration: request.expectedNativeGeneration ?? null,
+    nativeGeneration: backgroundNativeGeneration,
+    ownerRunId: request.expectedRunId || null,
+    nativeOwnerRunId: backgroundNativeOwnerRunId,
+    outcome: request.outcome || "unknown",
+    confirmed: confirmed === true,
+    authoritative: request.authoritative !== false,
+    timedOut: request.timedOut === true,
+    reconciliationRequired,
+    nativeState,
+  };
+}
+
+function buildSyntheticBackgroundLifecycleResult(
+  operation,
+  outcome,
+  confirmed = false,
+  ownerRunId = activeSnapshot?.activeRunId || null
+) {
+  return {
+    operation,
+    operationId: null,
+    generation: backgroundOperationGeneration,
+    expectedNativeGeneration: backgroundNativeGeneration,
+    nativeGeneration: backgroundNativeGeneration,
+    ownerRunId,
+    nativeOwnerRunId: backgroundNativeOwnerRunId,
+    outcome,
+    confirmed: confirmed === true,
+    authoritative: true,
+    timedOut: false,
+    reconciliationRequired: backgroundLifecycleReconciliationRequired,
+    nativeState: backgroundLifecycleReconciliationRequired
+      ? "uncertain"
+      : backgroundStarted
+        ? "active"
+        : "inactive",
+  };
+}
+
+function attachNativeLifecycleResult(
+  snapshot,
+  lifecycleResult,
+  transitionConfirmed = lifecycleResult?.confirmed === true
+) {
+  if (!snapshot) return null;
+  return {
+    ...snapshot,
+    nativeLifecycleResult: {
+      ...(lifecycleResult || {}),
+      transitionConfirmed: transitionConfirmed === true,
+    },
   };
 }
 
@@ -403,6 +475,10 @@ function finishBackgroundLifecycleOperation(request, result) {
       finishedAtMs: Date.now(),
     }
   );
+  request.lifecycleResult = buildBackgroundLifecycleResult(
+    request,
+    result === true
+  );
   recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OPERATION_COMPLETED", {
     runId: request.expectedRunId,
     operation: request.type,
@@ -438,6 +514,7 @@ function markBackgroundLifecycleTimeout(request, deadlineMs) {
   updateRuntimeState({
     backgroundTaskStatus: `${request.type}_pending_timeout`,
   });
+  request.lifecycleResult = buildBackgroundLifecycleResult(request, false);
   recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OPERATION_TIMEOUT", {
     runId: request.expectedRunId,
     operation: request.type,
@@ -2641,6 +2718,48 @@ function matchesExpectedActiveRunId(options = {}, snapshot = activeSnapshot) {
   return false;
 }
 
+function isConfirmedLifecycleResultCurrent(
+  lifecycleResult,
+  operation,
+  expectedRunId
+) {
+  const generationMatches =
+    lifecycleResult?.generation === backgroundNativeGeneration ||
+    (
+      lifecycleResult?.outcome === "already_active" &&
+      lifecycleResult?.nativeGeneration === backgroundNativeGeneration
+    );
+  if (
+    lifecycleResult?.confirmed !== true ||
+    lifecycleResult.operation !== operation ||
+    !generationMatches
+  ) {
+    return false;
+  }
+  if (operation === "start") {
+    const expectedAliases = collectBackgroundOwnerAliases({ expectedRunId });
+    const nativeAliases = backgroundNativeOwnerAliases.length > 0
+      ? backgroundNativeOwnerAliases
+      : [backgroundNativeOwnerRunId].filter(Boolean);
+    return Boolean(
+      backgroundStarted &&
+      backgroundLifecycleState === BACKGROUND_LIFECYCLE_STATE.ACTIVE &&
+      backgroundOwnerAliasesIntersect(expectedAliases, nativeAliases)
+    );
+  }
+  return Boolean(
+    !backgroundStarted &&
+    !backgroundNativeOwnerRunId &&
+    backgroundLifecycleState === BACKGROUND_LIFECYCLE_STATE.IDLE
+  );
+}
+
+function isKnownOptionalBackgroundStartLimitation(lifecycleResult) {
+  return ["permission_denied", "unsupported"].includes(
+    lifecycleResult?.outcome
+  ) && lifecycleResult?.reconciliationRequired !== true;
+}
+
 function isBackgroundRequestCurrent(request) {
   return Boolean(
     request?.authoritative !== false &&
@@ -2657,16 +2776,28 @@ function getCurrentBackgroundTarget() {
 
 function isStartBackgroundRequestSafe(request) {
   const current = getCurrentBackgroundTarget();
+  const expectedStatuses = Array.isArray(request.expectedStatuses) &&
+    request.expectedStatuses.length > 0
+    ? request.expectedStatuses
+    : [ACTIVE_RUN_STATUS.RUNNING];
   return Boolean(
     isBackgroundRequestCurrent(request) &&
     request.expectedRunId &&
     current.runId === request.expectedRunId &&
-    current.status === ACTIVE_RUN_STATUS.RUNNING
+    expectedStatuses.includes(current.status)
   );
 }
 
 function isStopBackgroundRequestSafe(request, snapshot = activeSnapshot) {
   if (!isBackgroundRequestCurrent(request)) return false;
+  if (
+    request.expectedNativeGeneration != null &&
+    backgroundNativeOwnerRunId &&
+    requestMatchesBackgroundNativeOwner(request) &&
+    backgroundNativeGeneration !== request.expectedNativeGeneration
+  ) {
+    return false;
+  }
   const currentStatus = String(snapshot?.status || "").toUpperCase();
   if (
     request.requireNoRunningActiveRun &&
@@ -3204,21 +3335,45 @@ export function startBackgroundLocationUpdates(options = {}) {
   const expectedRunId = normalizeBackgroundRunId(
     options.expectedRunId || activeSnapshot?.activeRunId
   );
-  if (!expectedRunId) return Promise.resolve(false);
+  if (!expectedRunId) {
+    return Promise.resolve(
+      options.returnLifecycleResult === true
+        ? buildSyntheticBackgroundLifecycleResult(
+            "start",
+            "owner_missing",
+            false,
+            null
+          )
+        : false
+    );
+  }
   const ownerIdentity = createBackgroundOwnerIdentity(options, activeSnapshot);
+  const expectedStatuses = Array.isArray(options.expectedStatuses)
+    ? options.expectedStatuses
+    : [ACTIVE_RUN_STATUS.RUNNING];
   const request = {
     type: "start",
     expectedRunId: ownerIdentity.primaryRunId || expectedRunId,
     ownerAliases: ownerIdentity.aliases,
+    expectedStatuses: expectedStatuses
+      .map((status) => String(status || "").toUpperCase())
+      .filter(Boolean),
     reason: options.reason || "start",
     handoffRequested: Boolean(options.handoff),
   };
-  return enqueueBackgroundLifecycle(
+  const operation = enqueueBackgroundLifecycle(
     request,
     (authorizedRequest) =>
       startBackgroundLocationUpdatesInternal(authorizedRequest, options),
     options.callerTimeoutMs
   );
+  if (options.returnLifecycleResult === true) {
+    return operation.then((confirmed) =>
+      request.lifecycleResult ||
+      buildBackgroundLifecycleResult(request, confirmed)
+    );
+  }
+  return operation;
 }
 
 async function stopBackgroundLocationUpdatesInternal(request) {
@@ -3454,7 +3609,16 @@ export function stopBackgroundLocationUpdates(options = {}) {
     options.requireNoRunningActiveRun === true &&
     activeSnapshot?.status === ACTIVE_RUN_STATUS.RUNNING
   ) {
-    return Promise.resolve(false);
+    return Promise.resolve(
+      options.returnLifecycleResult === true
+        ? buildSyntheticBackgroundLifecycleResult(
+            "stop",
+            "running_active_run",
+            false,
+            options.expectedRunId || activeSnapshot.activeRunId
+          )
+        : false
+    );
   }
   const expectedRunId = normalizeBackgroundRunId(
     options.expectedRunId || activeSnapshot?.activeRunId
@@ -3468,20 +3632,44 @@ export function stopBackgroundLocationUpdates(options = {}) {
     },
     activeSnapshot
   );
+  const requestedExpectedGeneration = Number(
+    options.expectedNativeGeneration ?? options.expectedGeneration
+  );
+  const expectedNativeGeneration = Number.isInteger(
+    requestedExpectedGeneration
+  ) && requestedExpectedGeneration >= 0
+    ? requestedExpectedGeneration
+    : backgroundNativeOwnerRunId &&
+      backgroundOwnerAliasesIntersect(
+        ownerIdentity.aliases,
+        backgroundNativeOwnerAliases.length > 0
+          ? backgroundNativeOwnerAliases
+          : [backgroundNativeOwnerRunId]
+      )
+      ? backgroundNativeGeneration
+      : null;
   const request = {
     type: "stop",
     expectedRunId: ownerIdentity.primaryRunId || expectedRunId,
     ownerAliases: ownerIdentity.aliases,
+    expectedNativeGeneration,
     reason: options.reason || "manual",
     requireNoRunningActiveRun,
     handoffRequested: Boolean(options.handoff),
   };
-  return enqueueBackgroundLifecycle(
+  const operation = enqueueBackgroundLifecycle(
     request,
     (authorizedRequest) =>
       stopBackgroundLocationUpdatesInternal(authorizedRequest),
     options.callerTimeoutMs
   );
+  if (options.returnLifecycleResult === true) {
+    return operation.then((confirmed) =>
+      request.lifecycleResult ||
+      buildBackgroundLifecycleResult(request, confirmed)
+    );
+  }
+  return operation;
 }
 
 async function startActiveRunInternal(options = {}) {
@@ -3531,58 +3719,178 @@ async function startActiveRunInternal(options = {}) {
       incomingRunId: runId,
       level: "warn",
     });
+    let lifecycleResult = buildSyntheticBackgroundLifecycleResult(
+      "start",
+      "owner_mismatch",
+      false,
+      runId
+    );
     if (protectedSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) {
-      await startBackgroundLocationUpdates({ force: false });
+      lifecycleResult = await startBackgroundLocationUpdates({
+        expectedRunId: protectedSnapshot.activeRunId,
+        force: false,
+        reason: "existing_active_run",
+        callerTimeoutMs: options.callerTimeoutMs,
+        returnLifecycleResult: true,
+      });
     }
-    return protectedSnapshot;
+    return attachNativeLifecycleResult(
+      activeSnapshot || protectedSnapshot,
+      lifecycleResult,
+      false
+    );
   }
 
-  const base = {
-    activeRunId: runId,
-    id: runId,
-    userId: options.userId || "offline",
-    mode: options.mode || "free",
-    status: ACTIVE_RUN_STATUS.RUNNING,
-    startedAtMs: nowMs,
-    startedAt: options.startedAt || nowIso(nowMs),
-    lastUpdatedAtMs: nowMs,
-    lastUpdatedAt: nowIso(nowMs),
-    notificationBody: NOTIFICATION_BODY,
-    source: "foreground",
-    meta: options.meta || {},
-  };
+  if (
+    existing?.activeRunId === runId &&
+    isProtectedActiveRunStatus(existing.status)
+  ) {
+    activeSnapshot = normalizeActiveRunSnapshot(existing);
+    activeSession = ensureSession(activeSnapshot);
+    if (activeSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) {
+      const lifecycleResult = await startBackgroundLocationUpdates({
+        expectedRunId: runId,
+        force: false,
+        reason: "start_idempotent_same_owner",
+        callerTimeoutMs: options.callerTimeoutMs,
+        returnLifecycleResult: true,
+      });
+      const transitionConfirmed =
+        isConfirmedLifecycleResultCurrent(
+          lifecycleResult,
+          "start",
+          runId
+        ) || isKnownOptionalBackgroundStartLimitation(lifecycleResult);
+      return attachNativeLifecycleResult(
+        activeSnapshot,
+        lifecycleResult,
+        transitionConfirmed
+      );
+    }
+    if (activeSnapshot.status !== ACTIVE_RUN_STATUS.STARTING) {
+      return attachNativeLifecycleResult(
+        activeSnapshot,
+        buildSyntheticBackgroundLifecycleResult(
+          "start",
+          `already_${String(activeSnapshot.status || "unknown").toLowerCase()}`,
+          false,
+          runId
+        ),
+        false
+      );
+    }
+  }
 
-  clearCheckpointTimer();
-  checkpointDirty = false;
-  acceptedPointsSinceCheckpoint = 0;
-  rawPointsSinceCheckpoint = 0;
-  activeSnapshotRevision = 0;
-  lastPersistedRevision = 0;
-  pointOutcomeAggregate = {
-    accepted: 0,
-    rejected: 0,
-    deduped: 0,
-    reasons: {},
-    sources: {},
-    lastFlushedAtMs: Date.now(),
-  };
-  activeSession = createTrackingSessionFromSnapshot({
-    ...base,
-    points: [],
-    rawPoints: [],
-    segments: [],
+  let startingSnapshot = activeSnapshot?.activeRunId === runId &&
+    activeSnapshot.status === ACTIVE_RUN_STATUS.STARTING
+    ? activeSnapshot
+    : null;
+  if (!startingSnapshot) {
+    const base = {
+      activeRunId: runId,
+      id: runId,
+      userId: options.userId || "offline",
+      mode: options.mode || "free",
+      status: ACTIVE_RUN_STATUS.STARTING,
+      startedAtMs: nowMs,
+      startedAt: options.startedAt || nowIso(nowMs),
+      lastUpdatedAtMs: nowMs,
+      lastUpdatedAt: nowIso(nowMs),
+      notificationBody: NOTIFICATION_BODY,
+      source: "foreground",
+      meta: options.meta || {},
+    };
+
+    clearCheckpointTimer();
+    checkpointDirty = false;
+    acceptedPointsSinceCheckpoint = 0;
+    rawPointsSinceCheckpoint = 0;
+    activeSnapshotRevision = 0;
+    lastPersistedRevision = 0;
+    pointOutcomeAggregate = {
+      accepted: 0,
+      rejected: 0,
+      deduped: 0,
+      reasons: {},
+      sources: {},
+      lastFlushedAtMs: Date.now(),
+    };
+    activeSession = createTrackingSessionFromSnapshot({
+      ...base,
+      points: [],
+      rawPoints: [],
+      segments: [],
+    });
+    activeSession.start?.({ startedAt: nowMs });
+    const snapshot = createSnapshotFromTrackingSession(activeSession, base, {
+      status: ACTIVE_RUN_STATUS.STARTING,
+      nowMs,
+      source: "foreground",
+    });
+    startingSnapshot = await persistSnapshot(snapshot, "run_starting");
+  }
+
+  const lifecycleResult = await startBackgroundLocationUpdates({
+    expectedRunId: runId,
+    expectedStatuses: [ACTIVE_RUN_STATUS.STARTING],
+    force: true,
+    reason: "run_started",
+    callerTimeoutMs: options.callerTimeoutMs,
+    returnLifecycleResult: true,
   });
-  activeSession.start?.({ startedAt: nowMs });
-  const snapshot = createSnapshotFromTrackingSession(activeSession, base, {
-    status: ACTIVE_RUN_STATUS.RUNNING,
-    nowMs,
-    source: "foreground",
+  const nativeStartConfirmed = isConfirmedLifecycleResultCurrent(
+    lifecycleResult,
+    "start",
+    runId
+  );
+  const transitionConfirmed = nativeStartConfirmed ||
+    isKnownOptionalBackgroundStartLimitation(lifecycleResult);
+  if (
+    !transitionConfirmed ||
+    activeSnapshot?.activeRunId !== runId ||
+    activeSnapshot.status !== ACTIVE_RUN_STATUS.STARTING
+  ) {
+    const pendingSnapshot = activeSnapshot || startingSnapshot;
+    recordRunSnapshotEvent("RUN_START_FAILED", pendingSnapshot, {
+      reason: lifecycleResult.outcome || "native_start_not_confirmed",
+      nativeState: lifecycleResult.nativeState,
+      operationId: lifecycleResult.operationId,
+      generation: lifecycleResult.generation,
+      recoveryRequired: lifecycleResult.reconciliationRequired,
+      level: "warn",
+    });
+    return attachNativeLifecycleResult(
+      pendingSnapshot,
+      lifecycleResult,
+      false
+    );
+  }
+
+  const runningSnapshot = createSnapshotFromTrackingSession(
+    activeSession,
+    activeSnapshot || startingSnapshot,
+    {
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      nowMs,
+      source: "foreground",
+    }
+  );
+  const saved = await persistSnapshot(runningSnapshot, "run_started");
+  const startedSnapshot = activeSnapshot || saved;
+  recordRunSnapshotEvent("RUN_STARTED", startedSnapshot);
+  recordRunSnapshotEvent("RUN_START_SUCCESS", startedSnapshot, {
+    nativeStartConfirmed,
+    backgroundLimitation: nativeStartConfirmed
+      ? null
+      : lifecycleResult.outcome,
+    operationId: lifecycleResult.operationId,
+    generation: lifecycleResult.generation,
   });
-  const saved = await persistSnapshot(snapshot, "run_started");
-  await startBackgroundLocationUpdates({ force: true });
-  recordRunSnapshotEvent("RUN_STARTED", saved);
-  recordRunSnapshotEvent("RUN_START_SUCCESS", saved);
-  return saved;
+  return attachNativeLifecycleResult(
+    startedSnapshot,
+    lifecycleResult,
+    true
+  );
 }
 
 export function startActiveRun(options = {}) {
@@ -3845,25 +4153,180 @@ async function pauseActiveRunInternal(options = {}) {
       { ...options, transition: "pause" },
       activeSnapshot
     )) {
-      return activeSnapshot;
+      return attachNativeLifecycleResult(
+        activeSnapshot,
+        buildSyntheticBackgroundLifecycleResult(
+          "stop",
+          "owner_mismatch",
+          false,
+          options.expectedRunId || null
+        ),
+        false
+      );
     }
-    if (activeSnapshot.status === ACTIVE_RUN_STATUS.PAUSED) return activeSnapshot;
-    if (activeSnapshot.status !== ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
-    const endedAt = Number(options.endedAtMs || Date.now());
-    session.pause?.({ endedAt });
-    const snapshot = createSnapshotFromTrackingSession(session, activeSnapshot, {
-      status: ACTIVE_RUN_STATUS.PAUSED,
-      nowMs: endedAt,
-      source: options.source || "foreground",
+    if (
+      ![
+        ACTIVE_RUN_STATUS.RUNNING,
+        ACTIVE_RUN_STATUS.PAUSED,
+      ].includes(activeSnapshot.status)
+    ) {
+      return attachNativeLifecycleResult(
+        activeSnapshot,
+        buildSyntheticBackgroundLifecycleResult(
+          "stop",
+          `invalid_state_${String(activeSnapshot.status || "unknown").toLowerCase()}`,
+          false,
+          activeSnapshot.activeRunId
+        ),
+        false
+      );
+    }
+
+    let pausedSnapshot = activeSnapshot;
+    if (activeSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) {
+      const endedAt = Number(options.endedAtMs || Date.now());
+      session.pause?.({ endedAt });
+      const snapshot = createSnapshotFromTrackingSession(
+        session,
+        activeSnapshot,
+        {
+          status: ACTIVE_RUN_STATUS.PAUSED,
+          nowMs: endedAt,
+          source: options.source || "foreground",
+        }
+      );
+      pausedSnapshot = await persistSnapshot(snapshot, "run_paused");
+    }
+
+    if (
+      pausedSnapshot.meta?.backgroundTrackingStopConfirmed === true &&
+      !backgroundStarted &&
+      !backgroundNativeOwnerRunId &&
+      backgroundLifecycleState === BACKGROUND_LIFECYCLE_STATE.IDLE
+    ) {
+      return attachNativeLifecycleResult(
+        pausedSnapshot,
+        buildSyntheticBackgroundLifecycleResult(
+          "stop",
+          "already_stopped",
+          true,
+          pausedSnapshot.activeRunId
+        ),
+        true
+      );
+    }
+
+    const lifecycleResult = await stopBackgroundLocationUpdates({
+      expectedRunId: pausedSnapshot.activeRunId,
+      expectedNativeGeneration: backgroundNativeOwnerMatchesTarget(
+        pausedSnapshot
+      )
+        ? backgroundNativeGeneration
+        : undefined,
+      reason: "pause",
+      callerTimeoutMs: options.callerTimeoutMs,
+      returnLifecycleResult: true,
     });
-    const saved = await persistSnapshot(snapshot, "run_paused");
-    await stopBackgroundLocationUpdates({ reason: "pause" });
-    recordRunSnapshotEvent("PAUSE_SUCCESS", saved);
-    return saved;
+    const backgroundStopConfirmed = isConfirmedLifecycleResultCurrent(
+      lifecycleResult,
+      "stop",
+      pausedSnapshot.activeRunId
+    );
+    if (!backgroundStopConfirmed) {
+      const failedAtMs = Date.now();
+      const failedAt = nowIso(failedAtMs);
+      const stopError = new Error(
+        "background location stop was not confirmed while pausing"
+      );
+      stopError.code = "RUN_BACKGROUND_STOP_NOT_CONFIRMED";
+      const recoverySnapshot = {
+        ...(activeSnapshot || pausedSnapshot),
+        status: ACTIVE_RUN_STATUS.PAUSED,
+        recoveryPending: true,
+        lastUpdatedAtMs: failedAtMs,
+        lastUpdatedAt: failedAt,
+        updatedAt: failedAt,
+        lastError: {
+          name: stopError.name,
+          code: stopError.code,
+          message: stopError.message,
+          source: "pauseActiveRun",
+          at: failedAt,
+        },
+        meta: {
+          ...((activeSnapshot || pausedSnapshot)?.meta || {}),
+          backgroundTrackingStatus: lifecycleResult.nativeState === "uncertain"
+            ? "pause_stop_uncertain"
+            : "pause_stop_failed",
+          backgroundTrackingStopConfirmed: false,
+          pauseStopFailure: {
+            code: stopError.code,
+            at: failedAt,
+            outcome: lifecycleResult.outcome,
+            operationId: lifecycleResult.operationId,
+            generation: lifecycleResult.generation,
+          },
+        },
+      };
+      const persistedRecovery = await persistSnapshot(
+        recoverySnapshot,
+        "run_pause_background_stop_failed"
+      );
+      recordRunSnapshotEvent(
+        "RUN_BACKGROUND_STOP_NOT_CONFIRMED",
+        persistedRecovery,
+        {
+          reason: "pause",
+          outcome: lifecycleResult.outcome,
+          operationId: lifecycleResult.operationId,
+          generation: lifecycleResult.generation,
+          level: "error",
+        }
+      );
+      recordRunSnapshotEvent("PAUSE_RECOVERY_REQUIRED", persistedRecovery, {
+        reason: "background_stop_not_confirmed",
+        outcome: lifecycleResult.outcome,
+      });
+      return attachNativeLifecycleResult(
+        persistedRecovery,
+        lifecycleResult,
+        false
+      );
+    }
+
+    const stoppedSnapshot = activeSnapshot || pausedSnapshot;
+    const confirmedSnapshot = await persistSnapshot({
+      ...stoppedSnapshot,
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      meta: {
+        ...(stoppedSnapshot.meta || {}),
+        backgroundTrackingStarted: false,
+        backgroundTrackingStatus: "stopped",
+        backgroundTrackingStopConfirmed: true,
+      },
+    }, "run_paused_background_stopped");
+    recordRunSnapshotEvent("PAUSE_SUCCESS", confirmedSnapshot, {
+      operationId: lifecycleResult.operationId,
+      generation: lifecycleResult.generation,
+    });
+    return attachNativeLifecycleResult(
+      confirmedSnapshot,
+      lifecycleResult,
+      true
+    );
   } catch (error) {
     recordRunEvent("PAUSE_FAILED", { error });
     emitError(error, { fn: "pauseActiveRun" });
-    return activeSnapshot;
+    return attachNativeLifecycleResult(
+      activeSnapshot,
+      buildSyntheticBackgroundLifecycleResult(
+        "stop",
+        "pause_failed",
+        false,
+        options.expectedRunId || activeSnapshot?.activeRunId || null
+      ),
+      false
+    );
   }
 }
 
@@ -3879,12 +4342,123 @@ async function resumeActiveRunInternal(options = {}) {
       { ...options, transition: "resume" },
       activeSnapshot
     )) {
-      return activeSnapshot;
+      return attachNativeLifecycleResult(
+        activeSnapshot,
+        buildSyntheticBackgroundLifecycleResult(
+          "start",
+          "owner_mismatch",
+          false,
+          options.expectedRunId || null
+        ),
+        false
+      );
     }
-    if (activeSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
-    if (activeSnapshot.status !== ACTIVE_RUN_STATUS.PAUSED) return activeSnapshot;
+    if (activeSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) {
+      const lifecycleResult = await startBackgroundLocationUpdates({
+        expectedRunId: activeSnapshot.activeRunId,
+        force: false,
+        reason: "resume_idempotent",
+        callerTimeoutMs: options.callerTimeoutMs,
+        returnLifecycleResult: true,
+      });
+      const transitionConfirmed = isConfirmedLifecycleResultCurrent(
+        lifecycleResult,
+        "start",
+        activeSnapshot.activeRunId
+      );
+      return attachNativeLifecycleResult(
+        activeSnapshot,
+        lifecycleResult,
+        transitionConfirmed
+      );
+    }
+    if (activeSnapshot.status !== ACTIVE_RUN_STATUS.PAUSED) {
+      return attachNativeLifecycleResult(
+        activeSnapshot,
+        buildSyntheticBackgroundLifecycleResult(
+          "start",
+          `invalid_state_${String(activeSnapshot.status || "unknown").toLowerCase()}`,
+          false,
+          activeSnapshot.activeRunId
+        ),
+        false
+      );
+    }
+
+    const pausedSnapshot = activeSnapshot;
+    const lifecycleResult = await startBackgroundLocationUpdates({
+      expectedRunId: pausedSnapshot.activeRunId,
+      expectedStatuses: [ACTIVE_RUN_STATUS.PAUSED],
+      force: true,
+      reason: "resume",
+      callerTimeoutMs: options.callerTimeoutMs,
+      returnLifecycleResult: true,
+    });
+    const backgroundStartConfirmed = isConfirmedLifecycleResultCurrent(
+      lifecycleResult,
+      "start",
+      pausedSnapshot.activeRunId
+    );
+    if (
+      !backgroundStartConfirmed ||
+      activeSnapshot?.activeRunId !== pausedSnapshot.activeRunId ||
+      activeSnapshot.status !== ACTIVE_RUN_STATUS.PAUSED
+    ) {
+      const failedAtMs = Date.now();
+      const failedAt = nowIso(failedAtMs);
+      const startError = new Error(
+        "background location start was not confirmed while resuming"
+      );
+      startError.code = "RUN_BACKGROUND_START_NOT_CONFIRMED";
+      const recoverySnapshot = await persistSnapshot({
+        ...(activeSnapshot || pausedSnapshot),
+        status: ACTIVE_RUN_STATUS.PAUSED,
+        recoveryPending: true,
+        lastUpdatedAtMs: failedAtMs,
+        lastUpdatedAt: failedAt,
+        updatedAt: failedAt,
+        lastError: {
+          name: startError.name,
+          code: startError.code,
+          message: startError.message,
+          source: "resumeActiveRun",
+          at: failedAt,
+        },
+        meta: {
+          ...((activeSnapshot || pausedSnapshot).meta || {}),
+          backgroundTrackingStarted: false,
+          backgroundTrackingStatus: lifecycleResult.nativeState === "uncertain"
+            ? "resume_start_uncertain"
+            : "resume_start_failed",
+          backgroundTrackingStartConfirmed: false,
+          resumeStartFailure: {
+            code: startError.code,
+            at: failedAt,
+            outcome: lifecycleResult.outcome,
+            operationId: lifecycleResult.operationId,
+            generation: lifecycleResult.generation,
+          },
+        },
+      }, "run_resume_background_start_failed");
+      recordRunSnapshotEvent("RESUME_RECOVERY_REQUIRED", recoverySnapshot, {
+        reason: "background_start_not_confirmed",
+        outcome: lifecycleResult.outcome,
+        operationId: lifecycleResult.operationId,
+        generation: lifecycleResult.generation,
+        level: "warn",
+      });
+      return attachNativeLifecycleResult(
+        recoverySnapshot,
+        lifecycleResult,
+        false
+      );
+    }
+
     const startedAt = Number(options.startedAtMs || Date.now());
-    const pausedDurationMs = getPausedDurationIncludingOpenPause(activeSnapshot, startedAt);
+    const pausedDurationMs = getPausedDurationIncludingOpenPause(
+      activeSnapshot,
+      startedAt
+    );
     session.resume?.({ startedAt });
     const snapshot = createSnapshotFromTrackingSession(session, {
       ...activeSnapshot,
@@ -3896,14 +4470,38 @@ async function resumeActiveRunInternal(options = {}) {
       nowMs: startedAt,
       source: options.source || "foreground",
     });
-    const saved = await persistSnapshot(snapshot, "run_resumed");
-    await startBackgroundLocationUpdates({ force: true });
-    recordRunSnapshotEvent("RESUME_SUCCESS", saved);
-    return saved;
+    const saved = await persistSnapshot({
+      ...snapshot,
+      meta: {
+        ...(snapshot.meta || {}),
+        backgroundTrackingStarted: true,
+        backgroundTrackingStatus: "started",
+        backgroundTrackingStartConfirmed: true,
+      },
+    }, "run_resumed");
+    const resumedSnapshot = activeSnapshot || saved;
+    recordRunSnapshotEvent("RESUME_SUCCESS", resumedSnapshot, {
+      operationId: lifecycleResult.operationId,
+      generation: lifecycleResult.generation,
+    });
+    return attachNativeLifecycleResult(
+      resumedSnapshot,
+      lifecycleResult,
+      true
+    );
   } catch (error) {
     recordRunEvent("RESUME_FAILED", { error });
     emitError(error, { fn: "resumeActiveRun" });
-    return activeSnapshot;
+    return attachNativeLifecycleResult(
+      activeSnapshot,
+      buildSyntheticBackgroundLifecycleResult(
+        "start",
+        "resume_failed",
+        false,
+        options.expectedRunId || activeSnapshot?.activeRunId || null
+      ),
+      false
+    );
   }
 }
 

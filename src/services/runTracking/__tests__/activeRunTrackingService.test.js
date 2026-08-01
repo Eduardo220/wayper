@@ -1054,6 +1054,40 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(updated.segments[1].trustedPath.length).toBeGreaterThan(restored.segments[1].trustedPath.length);
   });
 
+  test("callbacks stale nao alteram ponto pausa ou retomada da corrida canonica", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-current-identity",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.__flushActiveRunBackgroundLifecycleForTests();
+    const beforeRunning = await service.getActiveRunSnapshot();
+
+    await service.recordLocation(nextPoint(1), {
+      source: "foreground",
+      expectedRunId: "run-stale-identity",
+    });
+    await service.pauseActiveRun({
+      endedAtMs: BASE_TIME + 5000,
+      expectedRunId: "run-stale-identity",
+    });
+
+    expect(await service.getActiveRunSnapshot()).toEqual(beforeRunning);
+
+    const paused = await service.pauseActiveRun({
+      endedAtMs: BASE_TIME + 6000,
+      expectedRunId: "run-current-identity",
+    });
+    const beforeStaleResume = await service.getActiveRunSnapshot();
+    await service.resumeActiveRun({
+      startedAtMs: BASE_TIME + 10_000,
+      expectedRunId: "run-stale-identity",
+    });
+
+    expect(paused.status).toBe(ACTIVE_RUN_STATUS.PAUSED);
+    expect(await service.getActiveRunSnapshot()).toEqual(beforeStaleResume);
+  });
+
   test("retorno active nao duplica background watcher quando location task ja esta rodando", async () => {
     await service.startActiveRun({
       activeRunId: "run-no-duplicate-watchers",
@@ -1213,6 +1247,74 @@ describe("activeRunTrackingService lifecycle", () => {
     expect(getStoredActiveRun().lastError.source).toBe("startBackgroundLocationUpdates");
   });
 
+  test("falha tardia do start serializa checkpoint com ponto foreground concorrente", async () => {
+    let rejectNativeStart;
+    let markNativeStartEntered;
+    const nativeStartEntered = new Promise((resolve) => {
+      markNativeStartEntered = resolve;
+    });
+    LocationMock.startLocationUpdatesAsync.mockImplementationOnce(
+      () => new Promise((_, reject) => {
+        rejectNativeStart = reject;
+        markNativeStartEntered();
+      })
+    );
+
+    const startRequest = service.startActiveRun({
+      activeRunId: "run-start-failure-with-point",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await nativeStartEntered;
+    const pointWrite = service.recordLocation(nextPoint(1), {
+      source: "foreground",
+    });
+    rejectNativeStart(new Error("foreground service unavailable"));
+
+    const startResult = await startRequest;
+    await pointWrite;
+    await service.__flushActiveRunBackgroundLifecycleForTests();
+
+    const snapshot = await service.getActiveRunSnapshot();
+    const stored = getStoredActiveRun();
+    const chunkPoints = getStoredTrustedPointsFromChunks(stored);
+    expect(snapshot).toMatchObject({
+      activeRunId: "run-start-failure-with-point",
+      recoveryPending: true,
+      status: ACTIVE_RUN_STATUS.STARTING,
+      trustedPath: [],
+    });
+    expect(startResult.nativeLifecycleResult).toMatchObject({
+      outcome: "start_failed",
+      transitionConfirmed: false,
+    });
+    expect(chunkPoints).toHaveLength(0);
+    expect(stored.routeChunksIndex.totalTrustedPoints).toBe(
+      chunkPoints.length
+    );
+  });
+
+  test("permissao de background negada nao tenta iniciar task e fica explicita", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-background-denied",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+      meta: {
+        permissions: {
+          backgroundLocationGranted: false,
+        },
+      },
+    });
+    await service.__flushActiveRunBackgroundLifecycleForTests();
+    const started = await service.getActiveRunSnapshot();
+
+    expect(LocationMock.startLocationUpdatesAsync).not.toHaveBeenCalled();
+    expect(started.meta).toMatchObject({
+      backgroundTrackingStarted: false,
+      backgroundTrackingStatus: "permission_denied",
+    });
+  });
+
   test("pause e resume duplicados sao idempotentes", async () => {
     await service.startActiveRun({
       activeRunId: "run-idempotent",
@@ -1230,6 +1332,118 @@ describe("activeRunTrackingService lifecycle", () => {
     const resumedAgain = await service.resumeActiveRun({ startedAtMs: BASE_TIME + 11_000 });
     expect(resumedAgain.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
     expect(resumedAgain.segments).toEqual(resumed.segments);
+  });
+
+  test("pausa persiste recuperacao quando stop background nao e confirmado", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-pause-stop-failed",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    LocationMock.stopLocationUpdatesAsync.mockRejectedValue(
+      new Error("native background stop unavailable")
+    );
+
+    try {
+      const paused = await service.pauseActiveRun({
+        endedAtMs: BASE_TIME + 5000,
+      });
+      const stored = getStoredActiveRun();
+
+      expect(LocationMock.stopLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+      expect(paused).toMatchObject({
+        activeRunId: "run-pause-stop-failed",
+        status: ACTIVE_RUN_STATUS.PAUSED,
+        recoveryPending: true,
+        lastError: {
+          code: "RUN_BACKGROUND_STOP_NOT_CONFIRMED",
+          source: "pauseActiveRun",
+        },
+        meta: {
+          backgroundTrackingStatus: "pause_stop_failed",
+          backgroundTrackingStopConfirmed: false,
+        },
+        nativeLifecycleResult: {
+          outcome: "stop_failed",
+          transitionConfirmed: false,
+        },
+      });
+      expect(stored).toMatchObject({
+        activeRunId: "run-pause-stop-failed",
+        status: ACTIVE_RUN_STATUS.PAUSED,
+        recoveryPending: true,
+        meta: {
+          backgroundTrackingStatus: "pause_stop_failed",
+          backgroundTrackingStopConfirmed: false,
+        },
+      });
+    } finally {
+      LocationMock.stopLocationUpdatesAsync.mockImplementation(async () => {
+        locationStarted = false;
+      });
+    }
+  });
+
+  test("pause aguarda stop bloqueado antes de resume rearmar a mesma corrida", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-pause-resume-native-queue",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+
+    let releaseNativeStop;
+    let markNativeStopEntered;
+    const nativeStopEntered = new Promise((resolve) => {
+      markNativeStopEntered = resolve;
+    });
+    LocationMock.stopLocationUpdatesAsync.mockImplementationOnce(async () => {
+      markNativeStopEntered();
+      await new Promise((resolve) => {
+        releaseNativeStop = resolve;
+      });
+      locationStarted = false;
+    });
+
+    let pauseSettled = false;
+    const pauseRequest = service.pauseActiveRun({
+      endedAtMs: BASE_TIME + 5000,
+    }).then((snapshot) => {
+      pauseSettled = true;
+      return snapshot;
+    });
+    await nativeStopEntered;
+    const resumeRequest = service.resumeActiveRun({
+      startedAtMs: BASE_TIME + 10_000,
+    });
+    await Promise.resolve();
+
+    expect(pauseSettled).toBe(false);
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+    releaseNativeStop();
+
+    const paused = await pauseRequest;
+    const resumed = await resumeRequest;
+    await service.__flushActiveRunBackgroundLifecycleForTests();
+
+    expect(paused).toMatchObject({
+      activeRunId: "run-pause-resume-native-queue",
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      meta: {
+        backgroundTrackingStarted: false,
+        backgroundTrackingStopConfirmed: true,
+      },
+    });
+    expect(resumed.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(LocationMock.stopLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(2);
+    expect(locationStarted).toBe(true);
+    expect(await service.getActiveRunSnapshot()).toMatchObject({
+      activeRunId: "run-pause-resume-native-queue",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      meta: {
+        backgroundTrackingStarted: true,
+      },
+    });
   });
 
   test("retomada imediata desconta a pausa aberta antes do primeiro novo ponto", async () => {

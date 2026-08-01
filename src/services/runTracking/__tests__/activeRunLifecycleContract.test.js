@@ -685,9 +685,15 @@ describe("native lifecycle liveness contract", () => {
         reconciliationRequired: false,
       });
 
-      await expect(service.startBackgroundLocationUpdates({
-        expectedRunId: "run-probe-inflight-b",
-      })).resolves.toBe(true);
+      await expect(service.startActiveRun({
+        activeRunId: "run-probe-inflight-b",
+        userId: "user-lifecycle",
+        startedAtMs: BASE_TIME + 1000,
+      })).resolves.toMatchObject({
+        activeRunId: "run-probe-inflight-b",
+        status: ACTIVE_RUN_STATUS.RUNNING,
+        nativeLifecycleResult: { transitionConfirmed: true },
+      });
       expect(lifecycleStatus()).toMatchObject({
         state: "ACTIVE",
         ownerRunId: "run-probe-inflight-b",
@@ -1100,9 +1106,15 @@ describe("native lifecycle liveness contract", () => {
         expectedRunId: "run-force-restart-fail-a",
         reason: "reconcile_failed_force_restart",
       })).resolves.toBe(true);
-      await expect(service.startBackgroundLocationUpdates({
-        expectedRunId: "run-force-restart-fail-b",
-      })).resolves.toBe(true);
+      await expect(service.startActiveRun({
+        activeRunId: "run-force-restart-fail-b",
+        userId: "user-lifecycle",
+        startedAtMs: BASE_TIME + 1000,
+      })).resolves.toMatchObject({
+        activeRunId: "run-force-restart-fail-b",
+        status: ACTIVE_RUN_STATUS.RUNNING,
+        nativeLifecycleResult: { transitionConfirmed: true },
+      });
       expect(lifecycleStatus()).toMatchObject({
         state: "ACTIVE",
         ownerRunId: "run-force-restart-fail-b",
@@ -1281,9 +1293,15 @@ describe("native lifecycle liveness contract", () => {
         reconciliationRequired: true,
       });
 
-      await expect(service.startBackgroundLocationUpdates({
-        expectedRunId: "run-late-stop-release-b",
-      })).resolves.toBe(true);
+      await expect(service.startActiveRun({
+        activeRunId: "run-late-stop-release-b",
+        userId: "user-lifecycle",
+        startedAtMs: BASE_TIME + 1000,
+      })).resolves.toMatchObject({
+        activeRunId: "run-late-stop-release-b",
+        status: ACTIVE_RUN_STATUS.RUNNING,
+        nativeLifecycleResult: { transitionConfirmed: true },
+      });
       expect(lifecycleStatus()).toMatchObject({
         state: "ACTIVE",
         ownerRunId: "run-late-stop-release-b",
@@ -1578,5 +1596,349 @@ describe("native lifecycle liveness contract", () => {
       blockedWrite.resolve();
       await Promise.allSettled([ingestionBlocker, callback]);
     }
+  });
+});
+
+describe("serialized active run transitions", () => {
+  test("29 start canônico permanece STARTING até a confirmação nativa", async () => {
+    const nativeStart = deferred();
+    LocationMock.startLocationUpdatesAsync.mockImplementationOnce(
+      () => nativeStart.promise.then(() => {
+        locationStarted = true;
+      })
+    );
+
+    const start = service.startActiveRun({
+      activeRunId: "run-canonical-start",
+      userId: "user-lifecycle",
+      startedAtMs: BASE_TIME,
+    });
+    await waitFor(() => LocationMock.startLocationUpdatesAsync.mock.calls.length === 1);
+
+    await expect(service.getActiveRunSnapshot()).resolves.toMatchObject({
+      activeRunId: "run-canonical-start",
+      status: ACTIVE_RUN_STATUS.STARTING,
+    });
+    nativeStart.resolve();
+
+    await expect(start).resolves.toMatchObject({
+      activeRunId: "run-canonical-start",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      nativeLifecycleResult: {
+        operation: "start",
+        transitionConfirmed: true,
+        confirmed: true,
+      },
+    });
+  });
+
+  test("30 starts canônicos concorrentes do mesmo owner convergem sem task duplicada", async () => {
+    const nativeStart = deferred();
+    LocationMock.startLocationUpdatesAsync.mockImplementationOnce(
+      () => nativeStart.promise.then(() => {
+        locationStarted = true;
+      })
+    );
+
+    const first = service.startActiveRun({
+      activeRunId: "run-canonical-start-duplicate",
+      userId: "user-lifecycle",
+      startedAtMs: BASE_TIME,
+    });
+    const second = service.startActiveRun({
+      activeRunId: "run-canonical-start-duplicate",
+      userId: "user-lifecycle",
+      startedAtMs: BASE_TIME,
+    });
+    await waitFor(() => LocationMock.startLocationUpdatesAsync.mock.calls.length === 1);
+    nativeStart.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({
+        status: ACTIVE_RUN_STATUS.RUNNING,
+        nativeLifecycleResult: expect.objectContaining({
+          transitionConfirmed: true,
+        }),
+      }),
+      expect.objectContaining({
+        status: ACTIVE_RUN_STATUS.RUNNING,
+        nativeLifecycleResult: expect.objectContaining({
+          transitionConfirmed: true,
+        }),
+      }),
+    ]);
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+    expect(lifecycleStatus().ownerRunId).toBe("run-canonical-start-duplicate");
+  });
+
+  test("31 start canônico de owner divergente não adota nem reinicia a task", async () => {
+    await startRun("run-canonical-owner-a");
+    LocationMock.startLocationUpdatesAsync.mockClear();
+
+    const rejected = await service.startActiveRun({
+      activeRunId: "run-canonical-owner-b",
+      userId: "user-lifecycle",
+      startedAtMs: BASE_TIME + 1000,
+    });
+
+    expect(rejected).toMatchObject({
+      activeRunId: "run-canonical-owner-a",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      meta: { protectedFromReplace: true },
+      nativeLifecycleResult: { transitionConfirmed: false },
+    });
+    expect(LocationMock.startLocationUpdatesAsync).not.toHaveBeenCalled();
+    expect(lifecycleStatus().ownerRunId).toBe("run-canonical-owner-a");
+  });
+
+  test("32 rejeição do start canônico é explícita e não publica RUNNING", async () => {
+    LocationMock.startLocationUpdatesAsync.mockRejectedValueOnce(
+      new Error("native canonical start failed")
+    );
+
+    const result = await service.startActiveRun({
+      activeRunId: "run-canonical-start-rejected",
+      userId: "user-lifecycle",
+      startedAtMs: BASE_TIME,
+    });
+
+    expect(result).toMatchObject({
+      activeRunId: "run-canonical-start-rejected",
+      status: ACTIVE_RUN_STATUS.STARTING,
+      nativeLifecycleResult: {
+        outcome: "start_failed",
+        transitionConfirmed: false,
+        nativeState: "inactive",
+      },
+    });
+    await service.__flushActiveRunBackgroundLifecycleForTests();
+    expect(lifecycleStatus()).toMatchObject({
+      state: "FAILED_RECOVERABLE",
+      logicalQueueReleased: true,
+    });
+  });
+
+  test("33 timeout do start canônico libera a fila e descarta o resultado tardio", async () => {
+    const nativeStart = deferred();
+    LocationMock.startLocationUpdatesAsync.mockImplementationOnce(
+      () => nativeStart.promise.then(() => {
+        locationStarted = true;
+      })
+    );
+
+    const result = await service.startActiveRun({
+      activeRunId: "run-canonical-start-timeout",
+      userId: "user-lifecycle",
+      startedAtMs: BASE_TIME,
+      callerTimeoutMs: 5,
+    });
+    expect(result).toMatchObject({
+      status: ACTIVE_RUN_STATUS.STARTING,
+      nativeLifecycleResult: {
+        outcome: "timeout",
+        nativeState: "uncertain",
+        transitionConfirmed: false,
+      },
+    });
+    expect(lifecycleStatus().logicalQueueReleased).toBe(true);
+
+    nativeStart.resolve();
+    await waitFor(() => lifecycleStatus().pendingNativeOperation == null);
+    expect(locationStarted).toBe(false);
+    expect((await service.getActiveRunSnapshot()).status).toBe(
+      ACTIVE_RUN_STATUS.STARTING
+    );
+  });
+
+  test("34 stop com generation antiga preserva a task e o owner atuais", async () => {
+    await startRun("run-stop-generation-guard");
+    const oldGeneration = lifecycleStatus().nativeGeneration;
+    await service.pauseActiveRun({
+      expectedRunId: "run-stop-generation-guard",
+      endedAtMs: BASE_TIME + 5000,
+    });
+    await service.resumeActiveRun({
+      expectedRunId: "run-stop-generation-guard",
+      startedAtMs: BASE_TIME + 10_000,
+    });
+    const stopsBefore = LocationMock.stopLocationUpdatesAsync.mock.calls.length;
+
+    const staleStop = await service.stopBackgroundLocationUpdates({
+      expectedRunId: "run-stop-generation-guard",
+      expectedNativeGeneration: oldGeneration,
+      returnLifecycleResult: true,
+      reason: "stale_generation_stop",
+    });
+
+    expect(staleStop).toMatchObject({
+      confirmed: false,
+      outcome: "stale_request",
+      expectedNativeGeneration: oldGeneration,
+    });
+    expect(LocationMock.stopLocationUpdatesAsync).toHaveBeenCalledTimes(
+      stopsBefore
+    );
+    expect(locationStarted).toBe(true);
+    expect(lifecycleStatus().ownerRunId).toBe("run-stop-generation-guard");
+  });
+
+  test("35 pausas concorrentes preservam PAUSED antes do stop e confirmam uma vez", async () => {
+    await startRun("run-pause-concurrent");
+    const nativeStop = deferred();
+    LocationMock.stopLocationUpdatesAsync.mockImplementationOnce(
+      () => nativeStop.promise.then(() => {
+        locationStarted = false;
+      })
+    );
+
+    const first = service.pauseActiveRun({
+      expectedRunId: "run-pause-concurrent",
+      endedAtMs: BASE_TIME + 5000,
+    });
+    const second = service.pauseActiveRun({
+      expectedRunId: "run-pause-concurrent",
+      endedAtMs: BASE_TIME + 6000,
+    });
+    await waitFor(() => LocationMock.stopLocationUpdatesAsync.mock.calls.length === 1);
+
+    await expect(service.getActiveRunSnapshot()).resolves.toMatchObject({
+      status: ACTIVE_RUN_STATUS.PAUSED,
+    });
+    let firstSettled = false;
+    first.then(() => {
+      firstSettled = true;
+    });
+    await Promise.resolve();
+    expect(firstSettled).toBe(false);
+
+    nativeStop.resolve();
+    const [paused, duplicate] = await Promise.all([first, second]);
+    expect(paused.nativeLifecycleResult.transitionConfirmed).toBe(true);
+    expect(duplicate.nativeLifecycleResult.transitionConfirmed).toBe(true);
+    expect(LocationMock.stopLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+  });
+
+  test("36 pausa não confirmada permanece canônica sem publicar sucesso", async () => {
+    await startRun("run-pause-rejected");
+    LocationMock.stopLocationUpdatesAsync.mockRejectedValueOnce(
+      new Error("native pause stop rejected")
+    );
+
+    const result = await service.pauseActiveRun({
+      expectedRunId: "run-pause-rejected",
+      endedAtMs: BASE_TIME + 5000,
+    });
+
+    expect(result).toMatchObject({
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      recoveryPending: true,
+      meta: { backgroundTrackingStopConfirmed: false },
+      nativeLifecycleResult: {
+        transitionConfirmed: false,
+        outcome: "stop_failed",
+      },
+    });
+    expect(LocationMock.stopLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+  });
+
+  test("37 resume permanece PAUSED até o start nativo e duplicatas convergem", async () => {
+    await startRun("run-resume-concurrent");
+    await service.pauseActiveRun({
+      expectedRunId: "run-resume-concurrent",
+      endedAtMs: BASE_TIME + 5000,
+    });
+    const nativeStart = deferred();
+    LocationMock.startLocationUpdatesAsync.mockImplementationOnce(
+      () => nativeStart.promise.then(() => {
+        locationStarted = true;
+      })
+    );
+
+    const first = service.resumeActiveRun({
+      expectedRunId: "run-resume-concurrent",
+      startedAtMs: BASE_TIME + 10_000,
+    });
+    const second = service.resumeActiveRun({
+      expectedRunId: "run-resume-concurrent",
+      startedAtMs: BASE_TIME + 11_000,
+    });
+    await waitFor(() => LocationMock.startLocationUpdatesAsync.mock.calls.length === 2);
+    await expect(service.getActiveRunSnapshot()).resolves.toMatchObject({
+      status: ACTIVE_RUN_STATUS.PAUSED,
+    });
+
+    nativeStart.resolve();
+    const [resumed, duplicate] = await Promise.all([first, second]);
+    expect(resumed).toMatchObject({
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      nativeLifecycleResult: { transitionConfirmed: true },
+    });
+    expect(duplicate).toMatchObject({
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      nativeLifecycleResult: { transitionConfirmed: true },
+    });
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(2);
+  });
+
+  test("38 rejeição do resume preserva PAUSED e não abre novo segmento", async () => {
+    await startRun("run-resume-rejected");
+    const paused = await service.pauseActiveRun({
+      expectedRunId: "run-resume-rejected",
+      endedAtMs: BASE_TIME + 5000,
+    });
+    LocationMock.startLocationUpdatesAsync.mockRejectedValueOnce(
+      new Error("native resume start rejected")
+    );
+
+    const result = await service.resumeActiveRun({
+      expectedRunId: "run-resume-rejected",
+      startedAtMs: BASE_TIME + 10_000,
+    });
+
+    expect(result).toMatchObject({
+      status: ACTIVE_RUN_STATUS.PAUSED,
+      recoveryPending: true,
+      meta: { backgroundTrackingStartConfirmed: false },
+      nativeLifecycleResult: {
+        transitionConfirmed: false,
+        outcome: "start_failed",
+      },
+    });
+    expect(result.segments).toEqual(paused.segments);
+  });
+
+  test("39 pause durante start e resume durante stop permanecem ordenados", async () => {
+    const nativeStart = deferred();
+    LocationMock.startLocationUpdatesAsync.mockImplementationOnce(
+      () => nativeStart.promise.then(() => {
+        locationStarted = true;
+      })
+    );
+    const start = service.startActiveRun({
+      activeRunId: "run-rapid-lifecycle",
+      userId: "user-lifecycle",
+      startedAtMs: BASE_TIME,
+    });
+    const pause = service.pauseActiveRun({
+      expectedRunId: "run-rapid-lifecycle",
+      endedAtMs: BASE_TIME + 5000,
+    });
+    const resume = service.resumeActiveRun({
+      expectedRunId: "run-rapid-lifecycle",
+      startedAtMs: BASE_TIME + 10_000,
+    });
+    await waitFor(() => LocationMock.startLocationUpdatesAsync.mock.calls.length === 1);
+    nativeStart.resolve();
+
+    const [started, paused, resumed] = await Promise.all([start, pause, resume]);
+    expect(started.nativeLifecycleResult.transitionConfirmed).toBe(true);
+    expect(paused.nativeLifecycleResult.transitionConfirmed).toBe(true);
+    expect(resumed.nativeLifecycleResult.transitionConfirmed).toBe(true);
+    expect(await service.getActiveRunSnapshot()).toMatchObject({
+      activeRunId: "run-rapid-lifecycle",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+    });
+    expect(LocationMock.stopLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+    expect(LocationMock.startLocationUpdatesAsync).toHaveBeenCalledTimes(2);
   });
 });

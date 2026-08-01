@@ -544,17 +544,20 @@ async function runNotificationActionThroughRuntime(action) {
       source: "notification",
     });
     const paused = await trackingService.pauseActiveRun?.({
+      expectedRunId: snapshot.activeRunId,
       endedAtMs: Date.now(),
       source: "notification",
     });
     const pauseConfirmed =
       paused?.activeRunId === snapshot.activeRunId &&
+      paused?.nativeLifecycleResult?.transitionConfirmed === true &&
       String(paused?.status || "").toUpperCase() === ACTIVE_RUN_STATUS.PAUSED;
     if (pauseConfirmed) {
       snapshot = paused;
       await flushActiveRunCheckpoint({
         reason: "notification_pause",
         checkpointAtMs: Date.now(),
+        expectedRunId: snapshot.activeRunId,
       });
       recordRunSnapshotEvent("PAUSE_SUCCESS", paused, {
         source: "notification",
@@ -587,17 +590,20 @@ async function runNotificationActionThroughRuntime(action) {
       source: "notification",
     });
     const resumed = await trackingService.resumeActiveRun?.({
+      expectedRunId: snapshot.activeRunId,
       startedAtMs: Date.now(),
       source: "notification",
     });
     const resumeConfirmed =
       resumed?.activeRunId === snapshot.activeRunId &&
+      resumed?.nativeLifecycleResult?.transitionConfirmed === true &&
       String(resumed?.status || "").toUpperCase() === ACTIVE_RUN_STATUS.RUNNING;
     if (resumeConfirmed) {
       snapshot = resumed;
       await flushActiveRunCheckpoint({
         reason: "notification_resume",
         checkpointAtMs: Date.now(),
+        expectedRunId: snapshot.activeRunId,
       });
       recordRunSnapshotEvent("RESUME_SUCCESS", resumed, {
         source: "notification",

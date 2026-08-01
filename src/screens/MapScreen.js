@@ -2760,12 +2760,12 @@ const MapScreen = ({ navigation, route }) => {
           return { ok: false, reason: "location_permission_denied", permission };
         }
 
-        setRunning(true);
+        setRunning(false);
         setPaused(false);
         setMode(selectedMode);
         modeRef.current = selectedMode;
-        runningRef.current = true;
-        runStatusRef.current = "active";
+        runningRef.current = false;
+        runStatusRef.current = "starting";
         setReplaying(false);
         setCaptureResult(null);
         closeSelectedTerritory();
@@ -2789,15 +2789,15 @@ const MapScreen = ({ navigation, route }) => {
           elapsedSincePressMs: Date.now() - pressedAtMs,
           screen: "MapScreen",
         });
-        recordRunEvent("RUN_STARTED", {
+        recordRunEvent("RUN_STARTING", {
           runId,
           mode: selectedMode,
-          status: "RUNNING",
+          status: "STARTING",
           screen: "MapScreen",
         });
         recordEmergencyDiagnosticsSnapshot("start", {
           runId,
-          status: ACTIVE_RUN_STATUS.RUNNING,
+          status: ACTIVE_RUN_STATUS.STARTING,
           trigger: "start_run",
         }, { force: true });
         try {
@@ -2831,6 +2831,16 @@ const MapScreen = ({ navigation, route }) => {
           if (!activeSnapshot?.activeRunId) {
             throw new Error("activeRunTrackingService.startActiveRun returned empty snapshot");
           }
+          if (
+            activeSnapshot.nativeLifecycleResult?.transitionConfirmed !== true
+          ) {
+            const error = new Error(
+              "activeRunTrackingService.startActiveRun did not confirm native lifecycle"
+            );
+            error.code = "RUN_START_NOT_CONFIRMED";
+            error.lifecycleResult = activeSnapshot.nativeLifecycleResult || null;
+            throw error;
+          }
           applyActiveRunSnapshotToUi(activeSnapshot, {
             source: "run_started",
             syncControls: false,
@@ -2850,7 +2860,6 @@ const MapScreen = ({ navigation, route }) => {
 
         startElapsedTimer();
         await startLocationWatcher();
-        await startBackgroundLocationService();
         recordRunEvent("TRACKING_STARTED", {
           marker: "tracking_started",
           runId: currentRunIdRef.current,
@@ -2911,7 +2920,7 @@ const MapScreen = ({ navigation, route }) => {
         return { ok: false, reason: "exception", error: e };
       }
     },
-    [applyActiveRunSnapshotToUi, closeSelectedTerritory, handleLocationUpdate, recordEmergencyDiagnosticsSnapshot, resetTrackingPipeline, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher, stopElapsedTimer, stopWatcherAndPolling]
+    [applyActiveRunSnapshotToUi, closeSelectedTerritory, handleLocationUpdate, recordEmergencyDiagnosticsSnapshot, resetTrackingPipeline, running, startElapsedTimer, startLocationWatcher, stopElapsedTimer, stopWatcherAndPolling]
   );
 
   const pauseRun = useCallback(async () => {
@@ -2937,13 +2946,16 @@ const MapScreen = ({ navigation, route }) => {
       return;
     }
 
+    const expectedRunId = currentRunIdRef.current;
     try {
       const pausedSnapshot = await activeRunTrackingService.pauseActiveRun?.({
+        expectedRunId,
         endedAtMs: Date.now(),
         source: "MapScreen",
       });
       if (
         !pausedSnapshot?.activeRunId ||
+        pausedSnapshot.nativeLifecycleResult?.transitionConfirmed !== true ||
         String(pausedSnapshot.status || "").toUpperCase() !== ACTIVE_RUN_STATUS.PAUSED ||
         (currentRunIdRef.current &&
           String(pausedSnapshot.activeRunId) !== String(currentRunIdRef.current))
@@ -2977,7 +2989,6 @@ const MapScreen = ({ navigation, route }) => {
       return;
     }
     stopWatcherAndPolling();
-    stopBackgroundLocationService();
     stopElapsedTimer();
     recordRunEvent("PAUSE_SUCCESS", {
       runId: currentRunIdRef.current,
@@ -2989,7 +3000,7 @@ const MapScreen = ({ navigation, route }) => {
     recordEmergencyDiagnosticsSnapshot("pause_success", {
       status: ACTIVE_RUN_STATUS.PAUSED,
     }, { force: true });
-  }, [applyActiveRunSnapshotToUi, paused, recordEmergencyDiagnosticsSnapshot, running, stopBackgroundLocationService, stopElapsedTimer, stopWatcherAndPolling]);
+  }, [applyActiveRunSnapshotToUi, paused, recordEmergencyDiagnosticsSnapshot, running, stopElapsedTimer, stopWatcherAndPolling]);
 
   const resumeRun = useCallback(async () => {
     recordRunEvent("RESUME_PRESSED", {
@@ -3014,6 +3025,7 @@ const MapScreen = ({ navigation, route }) => {
       return;
     }
 
+    const expectedRunId = currentRunIdRef.current;
     try {
       const permission = await checkLocationPermission();
       setLocationPermission(permission);
@@ -3032,11 +3044,13 @@ const MapScreen = ({ navigation, route }) => {
       }
 
       const resumedSnapshot = await activeRunTrackingService.resumeActiveRun?.({
+        expectedRunId,
         startedAtMs: Date.now(),
         source: "MapScreen",
       });
       if (
         !resumedSnapshot?.activeRunId ||
+        resumedSnapshot.nativeLifecycleResult?.transitionConfirmed !== true ||
         String(resumedSnapshot.status || "").toUpperCase() !== ACTIVE_RUN_STATUS.RUNNING ||
         (currentRunIdRef.current &&
           String(resumedSnapshot.activeRunId) !== String(currentRunIdRef.current))
@@ -3087,7 +3101,6 @@ const MapScreen = ({ navigation, route }) => {
       }
 
       await startLocationWatcher();
-      await startBackgroundLocationService();
       recordRunEvent("RESUME_SUCCESS", {
         runId: currentRunIdRef.current,
         status: "RUNNING",
@@ -3106,7 +3119,7 @@ const MapScreen = ({ navigation, route }) => {
         screen: "MapScreen",
       });
     }
-  }, [applyActiveRunSnapshotToUi, paused, recordEmergencyDiagnosticsSnapshot, running, startBackgroundLocationService, startElapsedTimer, startLocationWatcher]);
+  }, [applyActiveRunSnapshotToUi, paused, recordEmergencyDiagnosticsSnapshot, running, startElapsedTimer, startLocationWatcher]);
 
   const fadeOutRoute = useCallback(() => {
     return new Promise((resolve) => {
