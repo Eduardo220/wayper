@@ -1,9 +1,15 @@
 import { shouldAcceptPoint } from "../tracking/trackingFilters.js";
 import { getTrackingPreset } from "../tracking/trackingConfig.js";
 
-export const GPS_DEBUG_SHADOW_MODE = true;
+export const GPS_DEBUG_SHADOW_MODE =
+  typeof __DEV__ !== "undefined" && Boolean(__DEV__);
 
 const relaxedStates = new Map();
+let gpsDebugShadowModeOverride = null;
+
+export function isGpsDebugShadowEnabled() {
+  return gpsDebugShadowModeOverride ?? GPS_DEBUG_SHADOW_MODE;
+}
 
 export function getRelaxedTrackingPreset(mode = "run") {
   const current = getTrackingPreset(mode);
@@ -38,7 +44,7 @@ function getState(runId, mode) {
 }
 
 export function evaluateGpsShadowPoint(point, context = {}) {
-  if (!GPS_DEBUG_SHADOW_MODE) {
+  if (!isGpsDebugShadowEnabled()) {
     return {
       enabled: false,
       acceptedByRelaxedFilter: null,
@@ -79,11 +85,19 @@ export function resetGpsShadowRun(runId) {
 
 export function __resetGpsShadowForTests() {
   relaxedStates.clear();
+  gpsDebugShadowModeOverride = null;
+}
+
+export function __setGpsDebugShadowModeForTests(enabled) {
+  relaxedStates.clear();
+  gpsDebugShadowModeOverride = enabled == null ? null : Boolean(enabled);
+  return isGpsDebugShadowEnabled();
 }
 
 export default {
   GPS_DEBUG_SHADOW_MODE,
   evaluateGpsShadowPoint,
   getRelaxedTrackingPreset,
+  isGpsDebugShadowEnabled,
   resetGpsShadowRun,
 };

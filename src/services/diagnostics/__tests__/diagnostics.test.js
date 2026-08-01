@@ -276,6 +276,8 @@ describe("diagnostics logging", () => {
   });
 
   test("shadow relaxado aceita accuracy moderada rejeitada pelo filtro oficial", () => {
+    gpsShadow.__setGpsDebugShadowModeForTests(true);
+
     const first = gpsShadow.evaluateGpsShadowPoint({
       latitude: -30,
       longitude: -51,
