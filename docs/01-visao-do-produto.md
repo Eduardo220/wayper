@@ -1,5 +1,11 @@
 # Visão do Produto
 
+> **Status:** vigente<br>
+> **Tipo:** fonte normativa sintética<br>
+> **Escopo:** definição e proposta de valor do produto<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md)
+
 ## Nome
 
 Wayper
@@ -44,7 +50,8 @@ sem obrigar o usuário a olhar o celular durante a atividade.
 
 ## Pilares do produto
 
-1. **Atividade confiável**: GPS, métricas, background, offline e recuperação.
+1. **Atividade confiável**: GPS, métricas, background, offline, recuperação,
+   persistência e finalização resiliente.
 2. **Descoberta pós-corrida**: Relatório da Expedição modular e reabrível.
 3. **Conquista territorial**: consequência silenciosa do movimento real.
 4. **Progressão e competição**: evolução física e estratégica.
@@ -58,14 +65,17 @@ sem obrigar o usuário a olhar o celular durante a atividade.
 - Retenção após 7, 14 e 30 dias.
 - Total de zonas conquistadas.
 - Participação em rankings.
-- Tempo médio por sessão.
+- Abertura e reabertura da experiência pós-corrida, sem usar permanência na tela
+  durante a atividade como objetivo.
 - Taxa de conclusão de corridas iniciadas.
 - Taxa de atividades salvas com sucesso.
-- Relatórios abertos e reabertos.
 - Processamentos derivados concluídos/recuperados.
 - Retenção e conversão para Plus quando implementado.
 
 ## Premissas atuais
+
+Estas premissas descrevem o estado conhecido e devem ser confirmadas no código,
+nos testes e na configuração de `develop`; não alteram a direção normativa.
 
 - O app é mobile e usa React Native com Expo.
 - Firebase Auth segue como autenticacao.

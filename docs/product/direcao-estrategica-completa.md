@@ -1,3 +1,68 @@
+# Direção estratégica completa da Wayper
+
+> **Status:** aprovado<br>
+> **Tipo:** fonte normativa<br>
+> **Escopo:** produto, negócio, arquitetura, experiência da corrida e
+> pós-corrida, estabilidade, dados, monetização, testes e evolução do projeto<br>
+> **Autoridade:** fonte principal para direção e restrições permanentes; o estado
+> implementado deve ser confirmado no código, nos testes e na configuração<br>
+> **Público:** mantenedores, contribuidores, agentes de IA e responsáveis por
+> produto, design, arquitetura, operação e negócio<br>
+> **Última revisão:** 2026-08-01<br>
+> **Documentos relacionados:** [`AGENTS.md`](../../AGENTS.md),
+> [`docs/00-fontes-do-projeto.md`](../00-fontes-do-projeto.md),
+> [`docs/product/README.md`](README.md),
+> [`docs/04-arquitetura.md`](../04-arquitetura.md),
+> [`docs/02-roadmap.md`](../02-roadmap.md),
+> [`docs/03-backlog.md`](../03-backlog.md) e
+> [`docs/architecture/adrs-direcao-oficial.md`](../architecture/adrs-direcao-oficial.md)
+
+## Governança
+
+Este documento representa a direção aprovada e as restrições que orientam novas
+decisões. Agentes devem usá-lo para avaliar escopo, arquitetura, ordem de
+evolução, riscos e compatibilidade estratégica antes de propor ou implementar
+mudanças.
+
+Ele não substitui a inspeção do código atual e não é um inventário do que já está
+implementado. A presença de uma funcionalidade, fase ou integração neste texto
+não prova que ela exista. Itens marcados como hipótese, em validação, planejados
+ou conceituais não autorizam produção; fases futuras não devem preceder a
+fundação confiável.
+
+Em divergências, separe a evidência do estado atual da direção aprovada, registre
+a lacuna e corrija a fonte desatualizada. Nenhum agente pode alterar
+silenciosamente uma regra estratégica. Mudanças de direção exigem decisão humana
+explícita, atualização deste documento e alinhamento de decisões, ADRs, roadmap,
+backlog e fontes temáticas afetadas.
+
+## Como usar este documento em novas tarefas
+
+1. Leia o núcleo permanente definido em `AGENTS.md`.
+2. Confirme o estado real no código, nos testes e na configuração.
+3. Classifique a proposta como aprovada, planejada, em validação, hipótese ou
+   bloqueada antes de considerar implementação.
+4. Avalie a proposta contra os critérios estratégicos e as restrições deste
+   documento.
+5. Se houver conflito, registre-o e não implemente até existir decisão explícita.
+
+## Natureza das seções preservadas
+
+Este documento preserva, além das regras estratégicas, o blueprint que originou
+sua consolidação. Princípios, decisões e restrições de produto/arquitetura são
+normativos. Já verbos como “audite”, “crie”, “atualize”, “execute” ou “entregue”
+em roteiros, matrizes, estrutura documental e fases descrevem critérios e
+sequências de referência; não constituem uma tarefa automática para toda nova
+execução.
+
+O processo operacional vigente fica em `AGENTS.md` e
+`docs/14-instrucoes-para-ia.md`, e o roteamento de fontes fica em
+`docs/00-fontes-do-projeto.md`. Um agente só executa um bloco procedural deste
+documento quando a tarefa o autorizar e o estado real justificar. Isso não reduz
+a autoridade dos invariantes estratégicos contidos no mesmo bloco.
+
+---
+
 Você está trabalhando no projeto Wayper.
 
 Esta tarefa tem como objetivo revisar, consolidar e aplicar a nova direção oficial de produto, negócio e arquitetura da Wayper.
@@ -28,39 +93,16 @@ O objetivo é fazer a Wayper deixar de ser percebida apenas como um aplicativo d
 
 Antes de implementar qualquer coisa:
 
-1. Analise o código atual da branch `develop`.
-2. Confirme a branch ativa e o estado do Git.
-3. Use a branch `main` apenas como referência da versão estável.
-4. Verifique se já existe algo parecido implementado.
-5. Leia os arquivos relevantes em `/docs`, principalmente:
-
-   * fontes oficiais do projeto;
-   * visão do produto;
-   * arquitetura;
-   * roadmap;
-   * backlog;
-   * modelo de dados;
-   * fluxos de usuário;
-   * padrões de código;
-   * decisões técnicas;
-   * regras de negócio;
-   * design e wireframes;
-   * plano de deploy;
-   * guia de testes;
-   * bugs conhecidos;
-   * instruções para IA;
-   * documentos sobre corrida ativa;
-   * documentos sobre background;
-   * documentos sobre notificações;
-   * documentos sobre modo offline;
-   * documentos sobre diagnóstico e Sentry;
-   * documentos sobre zonas;
-   * documentos sobre ranking;
-   * documentos sobre replay;
-   * documentos sobre compartilhamento;
-   * documentos sobre finalização.
-6. Leia o `README.md`.
-7. Leia o `AGENTS.md` e qualquer outro arquivo de instruções para agentes.
+1. Leia `AGENTS.md` e o núcleo permanente definido nele.
+2. Confirme a branch ativa, o estado do Git e alterações locais existentes.
+3. Analise código, testes e configuração atuais da branch `develop`.
+4. Use `main` apenas como referência estável.
+5. Identifique o domínio e use a matriz de `docs/00-fontes-do-projeto.md` para
+   ler somente a documentação relevante; não carregue `docs/` inteiro sem
+   necessidade.
+6. Verifique se já existe implementação semelhante ou caminho legado.
+7. Trate `README.md` como resumo de entrada, não substituto da evidência de
+   estado nem desta direção normativa.
 8. Não duplique serviços, hooks, repositories, stores, contextos, componentes ou lógica existente.
 9. Se algo existir parcialmente, refatore, consolide e complete em vez de criar implementação paralela.
 10. Preserve o padrão visual, arquitetura, nomenclatura e estrutura atual quando estiverem corretos.
@@ -105,27 +147,48 @@ Antes de implementar qualquer coisa:
 
 ---
 
-# 2. ORDEM OFICIAL DAS FONTES
+# 2. SISTEMA OFICIAL DAS FONTES
 
-Utilize a seguinte ordem de prioridade:
+Não existe uma hierarquia linear única para todas as perguntas. Use o tipo de
+verdade adequado.
 
-1. Código atual da branch `develop`.
-2. Código da branch `main`.
-3. `README.md`.
-4. Documentação em `/docs`.
-5. ADRs e decisões técnicas.
-6. Issues e pull requests.
-7. Planos locais do projeto.
-8. Conversas e anotações externas.
+## 2.1 Estado atual
+
+Para descobrir o que existe e como funciona hoje, consulte:
+
+1. código atual da branch `develop`;
+2. testes atuais;
+3. configuração atual;
+4. comportamento observável com evidência;
+5. branch `main`, somente como referência estável.
+
+O código é fonte de verdade do comportamento existente. Código legado ou
+incorreto não se torna automaticamente uma decisão estratégica válida.
+
+## 2.2 Direção e decisões
+
+Para decidir como o projeto deve evoluir, consulte:
+
+1. este documento;
+2. decisões aprovadas;
+3. ADRs aceitas;
+4. princípios e regras de negócio vigentes;
+5. roadmap aprovado;
+6. backlog priorizado.
+
+README e documentação temática resumem, explicam e conectam essas fontes.
+Issues, pull requests, planos locais, conversas e anotações externas têm
+autoridade apenas dentro do próprio escopo e nunca promovem hipótese a decisão.
 
 Quando houver divergência:
 
-1. identifique a divergência;
-2. verifique o comportamento real do código;
-3. determine se o código ou a documentação está desatualizado;
-4. não faça suposições silenciosas;
-5. atualize a fonte incorreta;
-6. registre a decisão.
+1. identifique e registre a divergência;
+2. confirme o comportamento real;
+3. separe a fonte de estado atual da fonte de direção aprovada;
+4. não faça suposições silenciosas nem modifique regra estratégica por inferência;
+5. corrija ou marque a fonte desatualizada;
+6. registre decisão relevante e seus impactos;
+7. peça decisão humana se duas decisões estratégicas permanecerem incompatíveis.
 
 ---
 
@@ -484,11 +547,14 @@ Entretanto:
 
 A monetização principal deve ser baseada em planos com benefícios reais.
 
-A arquitetura deve suportar pelo menos:
+A arquitetura de entitlements deve suportar capabilities e papéis sem checks
+espalhados. Ela não deve criar plano, schema ou fluxo específico para uma
+hipótese. Os casos reconhecidos são:
 
 * plano gratuito;
 * Wayper Plus;
-* Wayper Pro, caso esse nome seja oficialmente aprovado;
+* Wayper Pro, somente se esse nome, segmento e valor forem oficialmente
+  aprovados;
 * acessos promocionais;
 * benefícios temporários;
 * usuários organizadores;
@@ -933,7 +999,7 @@ Responsável por:
 
 * plano gratuito;
 * Plus;
-* Pro;
+* Pro, somente se aprovado;
 * acesso promocional;
 * recursos liberados;
 * expiração;
@@ -1024,7 +1090,7 @@ Possíveis flags:
 * desafios;
 * anúncios;
 * Plus;
-* Pro;
+* Pro, somente se a hipótese for aprovada;
 * gateway;
 * pagamentos;
 * loja;
@@ -1098,6 +1164,12 @@ Toda ideia deve possuir status:
 * descartada;
 * bloqueada.
 
+`Hipótese` descreve a natureza de uma ideia ainda não decidida, não acrescenta
+outro status operacional a essa lista. Uma hipótese deve registrar, por exemplo,
+status `em validação` ou `bloqueada` e continua sem autorizar produção. Já o
+metadado de um documento pode usar `hipótese` para indicar que todo o seu
+conteúdo tem essa natureza; consulte `docs/14-instrucoes-para-ia.md`.
+
 Regras:
 
 * “aprovada” pode orientar implementação;
@@ -1131,7 +1203,6 @@ Registre como aprovadas:
 Registre como aprovadas conceitualmente:
 
 * Wayper Plus;
-* possível Wayper Pro;
 * recompensas patrocinadas;
 * desafios patrocinados;
 * temporadas patrocinadas;
@@ -1151,6 +1222,7 @@ Registre como aprovadas conceitualmente:
 
 Registre como hipóteses:
 
+* Wayper Pro, até decisão específica sobre segmento e valor distintos do Plus;
 * WayCoins;
 * baús;
 * recompensas aleatórias;
@@ -1258,7 +1330,7 @@ Antes de alterar produção, mapeie:
 Pesquise:
 
 * Plus;
-* Pro;
+* Pro, se aprovado;
 * premium;
 * subscription;
 * entitlement;
@@ -1406,7 +1478,11 @@ Atualize o roadmap para:
 * ausência de anúncios;
 * recursos avançados.
 
-## Fase 6 — Wayper Pro
+## Fase 6 — Wayper Pro (condicional)
+
+Esta fase só entra no roadmap executável se a hipótese for promovida por decisão
+explícita sobre segmento e valor distintos do Plus. A lista abaixo não autoriza
+implementação.
 
 * organizadores;
 * eventos;
@@ -1492,7 +1568,7 @@ Não implementar fases futuras antes da fundação.
 
 * gratuito;
 * Plus;
-* Pro;
+* Pro, se aprovado;
 * promocional;
 * expirado;
 * restauração;
@@ -1698,7 +1774,7 @@ Não alterar produção.
 * entitlements;
 * gratuito;
 * Plus;
-* Pro;
+* Pro, somente se a hipótese tiver sido promovida por decisão explícita;
 * feature flags.
 
 ## Etapa H — Monetização futura

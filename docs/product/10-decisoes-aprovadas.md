@@ -1,6 +1,6 @@
 # Decisões aprovadas
 
-**Atualizado em:** 2026-07-24
+**Atualizado em:** 2026-08-01
 
 1. A corrida é a ação e o pós-corrida é o jogo.
 2. O usuário não precisa olhar o celular durante a corrida.
@@ -24,10 +24,14 @@
 
 Orientam arquitetura, mas não autorizam integração de produção:
 
-- Wayper Plus e um possível Wayper Pro;
+- Wayper Plus;
 - recompensas, desafios, temporadas e territórios patrocinados;
 - parceiros locais, marcas esportivas e criadores;
 - eventos, campeonatos, grupos e assinaturas;
 - gateway de pagamentos, desafios pagos e marketplace futuro.
 
 Consulte os ADRs antes de implementar.
+
+Wayper Pro permanece uma hipótese em avaliação, não uma decisão conceitual.
+Consulte [`docs/product/11-hipoteses-em-avaliacao.md`](11-hipoteses-em-avaliacao.md)
+e a direção estratégica antes de promovê-lo.

@@ -35,11 +35,13 @@ No MVP, a conquista deve seguir uma regra simples:
 
 1. O usuário inicia uma atividade de caminhada ou corrida.
 2. O app coleta pontos GPS válidos durante a atividade.
-3. Ao finalizar, a rota é processada.
-4. O sistema identifica trechos válidos da rota.
-5. Esses trechos geram território conquistado ou progresso territorial.
-6. O resumo mostra distância, duração, XP e conquista.
-7. O app salva a atividade e os dados derivados localmente e agenda sync remoto posterior quando aplicavel.
+3. Ao finalizar, o app bloqueia concorrência e congela o snapshot canônico.
+4. A atividade mínima é persistida e confirmada localmente.
+5. O app marca a corrida finalizada e libera a confirmação para a UI.
+6. Uma tarefa persistente identifica os trechos válidos da rota.
+7. Esses trechos geram território ou progresso territorial sem bloquear o save.
+8. O relatório mostra resultados prontos e pendências honestas.
+9. O sync remoto ocorre quando possível.
 
 No MVP, esse território deve representar progresso individual do usuário. Ele não deve definir posse global, disputa contra outros usuários ou controle compartilhado de áreas.
 
@@ -49,7 +51,8 @@ No MVP, esse território deve representar progresso individual do usuário. Ele 
 - Pontos GPS inválidos não devem contar para território.
 - Trechos com precisão ruim devem ser ignorados ou marcados como suspeitos.
 - Território deve estar ligado à rota real, não apenas à distância total.
-- A conquista deve ser calculada no encerramento da atividade no MVP.
+- A conquista deve ser calculada no processamento pós-corrida, depois do save
+  mínimo confirmado.
 - O usuário deve conseguir ver o resultado da conquista no mapa ou no resumo.
 - A regra inicial deve evitar disputa direta entre usuários até que ranking e anti-cheat estejam mais maduros.
 - Nenhum usuário deve perder território no MVP.
