@@ -1,4 +1,11 @@
-import { beforeEach, describe, expect, jest, test } from "@jest/globals";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  jest,
+  test,
+} from "@jest/globals";
 
 const storage = new Map();
 const AsyncStorageMock = {
@@ -127,6 +134,10 @@ beforeEach(async () => {
   TaskManagerMock.isTaskDefined.mockReturnValue(false);
   service.__resetActiveRunRuntimeForTests();
   await clearLogs();
+});
+
+afterEach(() => {
+  service.__resetActiveRunRuntimeForTests();
 });
 
 describe("activeRunTrackingService lifecycle", () => {
@@ -1185,11 +1196,16 @@ describe("activeRunTrackingService lifecycle", () => {
       userId: "user-1",
       startedAtMs: BASE_TIME,
     });
+    await service.__flushActiveRunBackgroundLifecycleForTests();
 
     const snapshot = await service.getActiveRunSnapshot();
     expect(snapshot).toMatchObject({
       activeRunId: "run-service-start-failed",
       recoveryPending: true,
+      meta: {
+        backgroundTrackingStarted: false,
+        backgroundTrackingStatus: "start_failed",
+      },
       lastError: {
         source: "startBackgroundLocationUpdates",
       },
@@ -1457,6 +1473,15 @@ describe("activeRunTrackingService lifecycle", () => {
       startedAtMs: BASE_TIME,
     });
     service.__resetActiveRunRuntimeForTests();
+    await service.restoreActiveRun({ restartTracking: false });
+    await expect(service.startBackgroundLocationUpdates({
+      expectedRunId: "run-headless-recovery",
+      reason: "headless_process_recovery_claim",
+      ownerClaim: {
+        mode: "process_recovery",
+        reason: "canonical_snapshot_revalidated",
+      },
+    })).resolves.toBe(true);
 
     await expect(backgroundTaskHandler({
       data: {

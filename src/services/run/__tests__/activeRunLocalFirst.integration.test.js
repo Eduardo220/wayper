@@ -321,6 +321,14 @@ describe("active run local-first integration", () => {
     expect(runningHydrated.snapshot.activeRunId).toBe("run-full-flow");
     expect(runningHydrated.snapshot.status).toBe(CANONICAL_RUN_STATUS.RUNNING);
     expect(runningHydrated.snapshot.rawPath.length).toBeGreaterThanOrEqual(runningHydrated.snapshot.trustedPath.length);
+    await expect(activeRunTrackingService.startBackgroundLocationUpdates({
+      expectedRunId: "run-full-flow",
+      reason: "integration_process_recovery_claim",
+      ownerClaim: {
+        mode: "process_recovery",
+        reason: "canonical_snapshot_revalidated",
+      },
+    })).resolves.toBe(true);
 
     await flushActiveRunCheckpoint({
       reason: "before_finish",

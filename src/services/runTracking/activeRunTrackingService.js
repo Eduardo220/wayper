@@ -36,6 +36,15 @@ export const ACTIVE_RUN_ROUTE_CHUNK_SIZE = 250;
 export const ACTIVE_RUN_CHECKPOINT_INTERVAL_MS = 5000;
 export const ACTIVE_RUN_CHECKPOINT_ACCEPTED_POINTS = 5;
 export const ACTIVE_RUN_CHECKPOINT_RAW_POINTS = 10;
+export const ACTIVE_RUN_BACKGROUND_CALLER_TIMEOUT_MS = 5000;
+
+const BACKGROUND_LIFECYCLE_STATE = Object.freeze({
+  IDLE: "IDLE",
+  STARTING: "STARTING",
+  ACTIVE: "ACTIVE",
+  STOPPING: "STOPPING",
+  FAILED_RECOVERABLE: "FAILED_RECOVERABLE",
+});
 
 const NOTIFICATION_BODY = "Sua corrida esta sendo salva mesmo com a tela bloqueada.";
 const DEFAULT_NOTIFICATION_COLOR = "#00E676";
@@ -53,6 +62,22 @@ const PROTECTED_ACTIVE_RUN_STATUSES = new Set([
 let activeSession = null;
 let activeSnapshot = null;
 let backgroundStarted = false;
+let backgroundOperationGeneration = 0;
+let backgroundLifecycleOperationId = 0;
+let backgroundLifecycleQueue = Promise.resolve();
+let backgroundLifecycleActiveOperation = null;
+let backgroundLifecyclePendingNativeOperation = null;
+let backgroundLifecycleLastOperation = null;
+let backgroundLifecycleLastLateOutcome = null;
+let backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.IDLE;
+let backgroundLifecycleReconciliationRequired = false;
+let backgroundLifecycleQueueReleased = true;
+let backgroundNativeOwnerRunId = null;
+let backgroundNativeOwnerAliases = [];
+let backgroundNativeGeneration = 0;
+let backgroundNativeActivatedAtMs = 0;
+let backgroundStatusProbeOperationId = 0;
+let backgroundStatusProbeInFlight = null;
 let storage = AsyncStorage;
 let debugEnabled = typeof __DEV__ !== "undefined" && __DEV__;
 let writeQueue = Promise.resolve();
@@ -305,6 +330,273 @@ function enqueueLocationIngestion(task) {
   return locationIngestionQueue;
 }
 
+function getBackgroundLifecycleDeadlineMs(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : ACTIVE_RUN_BACKGROUND_CALLER_TIMEOUT_MS;
+}
+
+function summarizeBackgroundLifecycleOperation(request, patch = {}) {
+  if (!request) return null;
+  return {
+    operationId: request.operationId,
+    type: request.type,
+    ownerRunId: request.expectedRunId || null,
+    generation: request.generation || null,
+    reason: request.reason || null,
+    outcome: request.outcome || null,
+    timedOut: request.timedOut === true,
+    ...patch,
+  };
+}
+
+function setBackgroundLifecycleOutcome(request, outcome) {
+  if (request) request.outcome = String(outcome || "unknown");
+  return request?.outcome || "unknown";
+}
+
+function recordBackgroundLifecycleQueueReleased(request, result) {
+  backgroundLifecycleQueueReleased = true;
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_QUEUE_RELEASED", {
+    runId: request.expectedRunId,
+    operation: request.type,
+    operationId: request.operationId,
+    reason: request.reason,
+    generation: request.generation,
+    outcome: request.outcome,
+    result: Boolean(result),
+  });
+}
+
+function finishBackgroundLifecycleOperation(request, result) {
+  if (backgroundLifecycleActiveOperation?.operationId === request.operationId) {
+    backgroundLifecycleActiveOperation = null;
+  }
+  if (result === true) {
+    backgroundLifecycleReconciliationRequired = false;
+    backgroundLifecycleState = request.type === "start"
+      ? BACKGROUND_LIFECYCLE_STATE.ACTIVE
+      : BACKGROUND_LIFECYCLE_STATE.IDLE;
+  } else if (
+    backgroundLifecycleReconciliationRequired ||
+    [
+      "operation_failed",
+      "start_failed",
+      "stop_failed",
+      "status_probe_failed",
+      "stale_start_cleanup_failed",
+    ].includes(request.outcome)
+  ) {
+    backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.FAILED_RECOVERABLE;
+  } else if (backgroundStarted) {
+    backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.ACTIVE;
+  } else if (request.outcome?.includes("mismatch")) {
+    backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.IDLE;
+  } else {
+    backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.FAILED_RECOVERABLE;
+  }
+  backgroundLifecycleLastOperation = summarizeBackgroundLifecycleOperation(
+    request,
+    {
+      result: Boolean(result),
+      finishedAtMs: Date.now(),
+    }
+  );
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OPERATION_COMPLETED", {
+    runId: request.expectedRunId,
+    operation: request.type,
+    operationId: request.operationId,
+    reason: request.reason,
+    generation: request.generation,
+    outcome: request.outcome,
+    result: Boolean(result),
+    state: backgroundLifecycleState,
+  });
+  recordBackgroundLifecycleQueueReleased(request, result);
+  return Boolean(result);
+}
+
+function markBackgroundLifecycleTimeout(request, deadlineMs) {
+  request.authoritative = false;
+  request.timedOut = true;
+  setBackgroundLifecycleOutcome(request, "timeout");
+  if (backgroundLifecycleActiveOperation?.operationId === request.operationId) {
+    backgroundLifecycleActiveOperation = null;
+  }
+  backgroundLifecyclePendingNativeOperation = request;
+  backgroundLifecycleReconciliationRequired = true;
+  backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.FAILED_RECOVERABLE;
+  backgroundLifecycleLastOperation = summarizeBackgroundLifecycleOperation(
+    request,
+    {
+      result: false,
+      timedOut: true,
+      finishedAtMs: Date.now(),
+    }
+  );
+  updateRuntimeState({
+    backgroundTaskStatus: `${request.type}_pending_timeout`,
+  });
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OPERATION_TIMEOUT", {
+    runId: request.expectedRunId,
+    operation: request.type,
+    operationId: request.operationId,
+    reason: request.reason,
+    generation: request.generation,
+    timeoutMs: deadlineMs,
+    reconciliationRequired: true,
+    level: "warn",
+  });
+  recordBackgroundLifecycleQueueReleased(request, false);
+}
+
+function observeLateBackgroundLifecycleResult(request, status, value) {
+  if (
+    backgroundLifecyclePendingNativeOperation?.operationId ===
+    request.operationId
+  ) {
+    backgroundLifecyclePendingNativeOperation = null;
+  }
+  backgroundLifecycleLastLateOutcome = summarizeBackgroundLifecycleOperation(
+    request,
+    {
+      status,
+      settledAtMs: Date.now(),
+    }
+  );
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_LATE_RESULT_DISCARDED", {
+    runId: request.expectedRunId,
+    operation: request.type,
+    operationId: request.operationId,
+    reason: request.reason,
+    generation: request.generation,
+    status,
+    result: status === "resolved" ? Boolean(value) : false,
+    error: status === "rejected"
+      ? value?.message || String(value || "native_operation_failed")
+      : null,
+    reconciliationRequired: true,
+    level: "warn",
+  });
+}
+
+function executeBackgroundLifecycleOperation(request, task, timeoutMs) {
+  request.generation = ++backgroundOperationGeneration;
+  request.authoritative = true;
+  request.startedAtMs = Date.now();
+  backgroundLifecycleActiveOperation = request;
+  backgroundLifecycleQueueReleased = false;
+  backgroundLifecycleState = request.type === "start"
+    ? BACKGROUND_LIFECYCLE_STATE.STARTING
+    : BACKGROUND_LIFECYCLE_STATE.STOPPING;
+
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OPERATION_STARTED", {
+    runId: request.expectedRunId,
+    operation: request.type,
+    operationId: request.operationId,
+    reason: request.reason,
+    generation: request.generation,
+    previousState: request.previousState,
+    state: backgroundLifecycleState,
+  });
+
+  if (
+    backgroundLifecyclePendingNativeOperation &&
+    backgroundLifecyclePendingNativeOperation.operationId !==
+      request.operationId
+  ) {
+    request.authoritative = false;
+    setBackgroundLifecycleOutcome(request, "reconciliation_required");
+    backgroundLifecycleReconciliationRequired = true;
+    recordRunEvent("RUN_BACKGROUND_LIFECYCLE_RECONCILIATION_REQUIRED", {
+      runId: request.expectedRunId,
+      operation: request.type,
+      operationId: request.operationId,
+      generation: request.generation,
+      pendingOperationId:
+        backgroundLifecyclePendingNativeOperation.operationId,
+      pendingGeneration:
+        backgroundLifecyclePendingNativeOperation.generation,
+      reason: "native_operation_unresolved",
+      level: "warn",
+    });
+    return Promise.resolve(
+      finishBackgroundLifecycleOperation(request, false)
+    );
+  }
+
+  const deadlineMs = getBackgroundLifecycleDeadlineMs(timeoutMs);
+  const taskPromise = Promise.resolve().then(() => task(request));
+
+  return new Promise((resolve) => {
+    let logicalSettled = false;
+    const settle = (status, value) => {
+      if (logicalSettled) {
+        observeLateBackgroundLifecycleResult(request, status, value);
+        return;
+      }
+      logicalSettled = true;
+      clearTimeout(timeoutId);
+      if (status === "rejected") {
+        setBackgroundLifecycleOutcome(request, "operation_failed");
+        recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OPERATION_FAILED", {
+          runId: request.expectedRunId,
+          operation: request.type,
+          operationId: request.operationId,
+          reason: request.reason,
+          generation: request.generation,
+          error: value?.message || String(value || "native_operation_failed"),
+          level: "warn",
+        });
+        resolve(finishBackgroundLifecycleOperation(request, false));
+        return;
+      }
+      if (!request.outcome) {
+        setBackgroundLifecycleOutcome(
+          request,
+          value === true ? `${request.type}_confirmed` : `${request.type}_failed`
+        );
+      }
+      resolve(finishBackgroundLifecycleOperation(request, value === true));
+    };
+    const timeoutId = setTimeout(() => {
+      if (logicalSettled) return;
+      logicalSettled = true;
+      markBackgroundLifecycleTimeout(request, deadlineMs);
+      resolve(false);
+    }, deadlineMs);
+
+    taskPromise.then(
+      (result) => settle("resolved", result),
+      (error) => settle("rejected", error)
+    );
+  });
+}
+
+function enqueueBackgroundLifecycle(request, task, timeoutMs) {
+  request.operationId = ++backgroundLifecycleOperationId;
+  request.previousState = backgroundLifecycleState;
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OPERATION_REQUESTED", {
+    runId: request.expectedRunId,
+    operation: request.type,
+    operationId: request.operationId,
+    reason: request.reason,
+    previousState: request.previousState,
+  });
+  const runTask = () => executeBackgroundLifecycleOperation(
+    request,
+    task,
+    timeoutMs
+  );
+  const operation = backgroundLifecycleQueue.then(runTask, runTask);
+  backgroundLifecycleQueue = operation.then(
+    () => true,
+    () => true
+  );
+  return operation;
+}
+
 async function waitForLocationIngestion() {
   try {
     await locationIngestionQueue;
@@ -387,6 +679,49 @@ function setActiveRunError(error, source = "active_run") {
   activeSnapshotRevision += 1;
   checkpointDirty = true;
   scheduleCheckpointTimer();
+}
+
+function setActiveRunBackgroundCapability(started, status = "unknown") {
+  if (!activeSnapshot?.activeRunId) return null;
+  activeSnapshot = {
+    ...activeSnapshot,
+    meta: {
+      ...(activeSnapshot.meta || {}),
+      backgroundTrackingStarted: Boolean(started),
+      backgroundTrackingStatus: String(status || "unknown"),
+    },
+  };
+  activeSnapshotRevision += 1;
+  checkpointDirty = true;
+  scheduleCheckpointTimer();
+  if (
+    activeSnapshot.status === ACTIVE_RUN_STATUS.RUNNING &&
+    status !== "stopped"
+  ) {
+    emitSnapshot(activeSnapshot, "background_capability_changed");
+  }
+  return activeSnapshot;
+}
+
+function setActiveRunBackgroundPermission(granted, status = "unknown") {
+  if (!activeSnapshot?.activeRunId || typeof granted !== "boolean") {
+    return activeSnapshot;
+  }
+  activeSnapshot = {
+    ...activeSnapshot,
+    meta: {
+      ...(activeSnapshot.meta || {}),
+      permissions: {
+        ...(activeSnapshot.meta?.permissions || {}),
+        backgroundLocationGranted: granted,
+        backgroundLocationStatus: String(status || "unknown"),
+      },
+    },
+  };
+  activeSnapshotRevision += 1;
+  checkpointDirty = true;
+  scheduleCheckpointTimer();
+  return activeSnapshot;
 }
 
 function buildBufferedPointSnapshot(result = {}, source = "foreground") {
@@ -1727,6 +2062,38 @@ export function getTrackingRuntimeStatus() {
     activeSnapshotRevision,
     lastPersistedRevision,
     backgroundStarted,
+    backgroundLifecycle: {
+      state: backgroundLifecycleState,
+      generation: backgroundOperationGeneration,
+      nativeGeneration: backgroundNativeGeneration,
+      ownerRunId: backgroundNativeOwnerRunId,
+      ownerAliases: [...backgroundNativeOwnerAliases],
+      activeOperation: summarizeBackgroundLifecycleOperation(
+        backgroundLifecycleActiveOperation
+      ),
+      pendingNativeOperation: summarizeBackgroundLifecycleOperation(
+        backgroundLifecyclePendingNativeOperation
+      ),
+      lastOperation: backgroundLifecycleLastOperation
+        ? { ...backgroundLifecycleLastOperation }
+        : null,
+      lastLateOutcome: backgroundLifecycleLastLateOutcome
+        ? { ...backgroundLifecycleLastLateOutcome }
+        : null,
+      reconciliationRequired:
+        backgroundLifecycleReconciliationRequired,
+      logicalQueueReleased: backgroundLifecycleQueueReleased,
+      activatedAtMs: backgroundNativeActivatedAtMs || null,
+      statusProbe: backgroundStatusProbeInFlight
+        ? {
+            operationId: backgroundStatusProbeInFlight.operationId,
+            generation: backgroundStatusProbeInFlight.generation,
+            lifecycleOperationId:
+              backgroundStatusProbeInFlight.lifecycleOperationId,
+            timedOut: backgroundStatusProbeInFlight.timedOut === true,
+          }
+        : null,
+    },
     taskName: ACTIVE_RUN_LOCATION_TASK,
   };
 }
@@ -1735,18 +2102,139 @@ export function setRunRuntimeSurfaceState(patch = {}) {
   return updateRuntimeState(patch);
 }
 
-export async function getBackgroundLocationTaskStatus() {
-  if (Platform.OS === "web") {
-    return {
-      taskName: ACTIVE_RUN_LOCATION_TASK,
-      started: false,
-      status: "unsupported",
-      checkedAt: nowIso(),
-    };
+function releaseBackgroundStatusProbe(probe) {
+  if (
+    backgroundStatusProbeInFlight?.operationId === probe.operationId
+  ) {
+    backgroundStatusProbeInFlight = null;
   }
+}
+
+async function runBackgroundLocationTaskStatusProbe(probe, deadlineMs) {
   try {
-    const started = await Location.hasStartedLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK);
+    const nativeProbe = Promise.resolve().then(() =>
+      Location.hasStartedLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK)
+    );
+    probe.nativePromise = nativeProbe;
+    const started = await new Promise((resolve, reject) => {
+      let settled = false;
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        probe.timedOut = true;
+        resolve(null);
+      }, deadlineMs);
+      nativeProbe.then(
+        (value) => {
+          releaseBackgroundStatusProbe(probe);
+          if (settled) {
+            recordRunEvent("RUN_BACKGROUND_STATUS_PROBE_LATE_RESULT_DISCARDED", {
+              operationId: probe.operationId,
+              generation: probe.generation,
+              currentGeneration: backgroundOperationGeneration,
+              result: Boolean(value),
+              level: "warn",
+            });
+            return;
+          }
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve(Boolean(value));
+        },
+        (error) => {
+          releaseBackgroundStatusProbe(probe);
+          if (settled) {
+            recordRunEvent("RUN_BACKGROUND_STATUS_PROBE_LATE_RESULT_DISCARDED", {
+              operationId: probe.operationId,
+              generation: probe.generation,
+              currentGeneration: backgroundOperationGeneration,
+              error: error?.message || String(error || "probe_failed"),
+              level: "warn",
+            });
+            return;
+          }
+          settled = true;
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      );
+    });
+    if (
+      probe.authoritative === false ||
+      probe.generation !== backgroundOperationGeneration ||
+      probe.lifecycleOperationId != null ||
+      backgroundLifecycleActiveOperation != null
+    ) {
+      recordRunEvent("RUN_BACKGROUND_STATUS_PROBE_STALE_RESULT_DISCARDED", {
+        operationId: probe.operationId,
+        generation: probe.generation,
+        currentGeneration: backgroundOperationGeneration,
+        lifecycleOperationId: probe.lifecycleOperationId,
+        currentLifecycleOperationId:
+          backgroundLifecycleActiveOperation?.operationId || null,
+        result: started == null ? null : Boolean(started),
+        timedOut: started == null,
+        level: "warn",
+      });
+      return {
+        taskName: ACTIVE_RUN_LOCATION_TASK,
+        started: backgroundStarted,
+        status: "probe_stale",
+        checkedAt: nowIso(),
+      };
+    }
+    if (started == null) {
+      backgroundLifecycleReconciliationRequired = true;
+      backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.FAILED_RECOVERABLE;
+      recordRunEvent("RUN_BACKGROUND_STATUS_PROBE_TIMEOUT", {
+        operationId: probe.operationId,
+        generation: probe.generation,
+        timeoutMs: deadlineMs,
+        level: "warn",
+      });
+      return {
+        taskName: ACTIVE_RUN_LOCATION_TASK,
+        started: backgroundStarted,
+        status: "probe_timeout",
+        checkedAt: nowIso(),
+      };
+    }
     backgroundStarted = Boolean(started);
+    const nativeOwnerMatchesActiveTarget =
+      backgroundNativeOwnerMatchesTarget(activeSnapshot);
+    const nativeIdentityIsConsistent = started
+      ? Boolean(backgroundNativeOwnerRunId) &&
+        nativeOwnerMatchesActiveTarget &&
+        backgroundLifecycleState === BACKGROUND_LIFECYCLE_STATE.ACTIVE
+      : !backgroundNativeOwnerRunId &&
+        backgroundLifecycleState === BACKGROUND_LIFECYCLE_STATE.IDLE;
+    if (!nativeIdentityIsConsistent) {
+      const previousState = backgroundLifecycleState;
+      backgroundLifecycleReconciliationRequired = true;
+      backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.FAILED_RECOVERABLE;
+      const mismatchStatus = started
+        ? "started_reconciliation_required"
+        : "stopped_reconciliation_required";
+      updateRuntimeState({
+        backgroundTaskStatus: mismatchStatus,
+      });
+      recordRunEvent("RUN_BACKGROUND_STATUS_PROBE_IDENTITY_MISMATCH", {
+        operationId: probe.operationId,
+        generation: probe.generation,
+        started: Boolean(started),
+        ownerRunId: backgroundNativeOwnerRunId,
+        previousState,
+        state: backgroundLifecycleState,
+        status: mismatchStatus,
+        level: "warn",
+      });
+      return {
+        taskName: ACTIVE_RUN_LOCATION_TASK,
+        started: Boolean(started),
+        status: mismatchStatus,
+        checkedAt: nowIso(),
+      };
+    }
     updateRuntimeState({
       backgroundTaskStatus: started ? "started" : "stopped",
     });
@@ -1765,6 +2253,43 @@ export async function getBackgroundLocationTaskStatus() {
       error: error?.message || String(error),
     };
   }
+}
+
+export function getBackgroundLocationTaskStatus(options = {}) {
+  if (Platform.OS === "web") {
+    return Promise.resolve({
+      taskName: ACTIVE_RUN_LOCATION_TASK,
+      started: false,
+      status: "unsupported",
+      checkedAt: nowIso(),
+    });
+  }
+  if (backgroundStatusProbeInFlight) {
+    recordRunEvent("RUN_BACKGROUND_STATUS_PROBE_COALESCED", {
+      operationId: backgroundStatusProbeInFlight.operationId,
+      generation: backgroundStatusProbeInFlight.generation,
+      timedOut: backgroundStatusProbeInFlight.timedOut === true,
+    });
+    return backgroundStatusProbeInFlight.resultPromise;
+  }
+  const probe = {
+    operationId: ++backgroundStatusProbeOperationId,
+    generation: backgroundOperationGeneration,
+    lifecycleOperationId:
+      backgroundLifecycleActiveOperation?.operationId || null,
+    startedAtMs: Date.now(),
+    timedOut: false,
+    authoritative: true,
+    nativePromise: null,
+    resultPromise: null,
+  };
+  const deadlineMs = getBackgroundLifecycleDeadlineMs(options.timeoutMs);
+  probe.resultPromise = runBackgroundLocationTaskStatusProbe(
+    probe,
+    deadlineMs
+  );
+  backgroundStatusProbeInFlight = probe;
+  return probe.resultPromise;
 }
 
 function summarizeStoredSnapshot(raw, source) {
@@ -1881,15 +2406,575 @@ export function setActiveRunDebug(enabled = true) {
   debugEnabled = !!enabled;
 }
 
-export async function startBackgroundLocationUpdates(options = {}) {
-  try {
-    if (Platform.OS === "web") return false;
-    const snapshot = activeSnapshot || (await loadPersistedSnapshot());
-    if (!snapshot || snapshot.status !== ACTIVE_RUN_STATUS.RUNNING) return false;
+function normalizeBackgroundRunId(value) {
+  const normalized = String(value || "").trim();
+  return normalized || null;
+}
 
-    const started = await Location.hasStartedLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK).catch(() => false);
+const BACKGROUND_OWNER_ID_KEYS = [
+  "activeRunId",
+  "localRunId",
+  "runId",
+  "id",
+  "legacyId",
+];
+
+function collectBackgroundOwnerAliases(source = {}) {
+  const aliases = new Set();
+  for (const key of BACKGROUND_OWNER_ID_KEYS) {
+    const value = normalizeBackgroundRunId(source?.[key]);
+    if (value) aliases.add(value);
+  }
+  const expectedRunId = normalizeBackgroundRunId(source?.expectedRunId);
+  if (expectedRunId) aliases.add(expectedRunId);
+  for (const value of source?.ownerAliases || []) {
+    const alias = normalizeBackgroundRunId(value);
+    if (alias) aliases.add(alias);
+  }
+  return [...aliases];
+}
+
+function backgroundOwnerAliasesIntersect(left = [], right = []) {
+  if (!left.length || !right.length) return false;
+  const rightAliases = new Set(right);
+  return left.some((alias) => rightAliases.has(alias));
+}
+
+function createBackgroundOwnerIdentity(options = {}, snapshot = activeSnapshot) {
+  const requestedAliases = collectBackgroundOwnerAliases(options);
+  const snapshotAliases = collectBackgroundOwnerAliases(snapshot || {});
+  const matchesSnapshot = requestedAliases.length === 0 ||
+    backgroundOwnerAliasesIntersect(requestedAliases, snapshotAliases);
+  const aliases = new Set(requestedAliases);
+  if (matchesSnapshot) {
+    for (const alias of snapshotAliases) aliases.add(alias);
+  }
+  const primaryRunId = matchesSnapshot
+    ? normalizeBackgroundRunId(
+        snapshot?.activeRunId ||
+        snapshot?.localRunId ||
+        snapshot?.runId ||
+        snapshot?.id
+      ) || requestedAliases[0] || null
+    : requestedAliases[0] || null;
+  if (primaryRunId) aliases.add(primaryRunId);
+  return {
+    primaryRunId,
+    aliases: [...aliases],
+  };
+}
+
+function requestMatchesBackgroundNativeOwner(request) {
+  if (!backgroundNativeOwnerRunId) return false;
+  return backgroundOwnerAliasesIntersect(
+    request.ownerAliases || [request.expectedRunId].filter(Boolean),
+    backgroundNativeOwnerAliases.length > 0
+      ? backgroundNativeOwnerAliases
+      : [backgroundNativeOwnerRunId]
+  );
+}
+
+function backgroundNativeOwnerMatchesTarget(snapshot = activeSnapshot) {
+  if (!backgroundNativeOwnerRunId) return false;
+  const targetAliases = collectBackgroundOwnerAliases(snapshot || {});
+  const nativeOwnerAliases = backgroundNativeOwnerAliases.length > 0
+    ? backgroundNativeOwnerAliases
+    : [backgroundNativeOwnerRunId];
+  return Boolean(
+    targetAliases.length > 0 &&
+    backgroundOwnerAliasesIntersect(nativeOwnerAliases, targetAliases)
+  );
+}
+
+function requestMatchesCurrentBackgroundTarget(
+  request,
+  snapshot = activeSnapshot
+) {
+  const requestAliases = request?.ownerAliases || [
+    request?.expectedRunId,
+  ].filter(Boolean);
+  const currentAliases = collectBackgroundOwnerAliases(snapshot || {});
+  if (requestAliases.length === 0 || currentAliases.length === 0) return true;
+  return backgroundOwnerAliasesIntersect(requestAliases, currentAliases);
+}
+
+function requestCanReleaseConfirmedNativeOwner(request) {
+  const ownsPendingTimedOutBoundary = Boolean(
+    request?.timedOut === true &&
+    backgroundLifecyclePendingNativeOperation?.operationId ===
+      request.operationId
+  );
+  return Boolean(
+    requestMatchesBackgroundNativeOwner(request) &&
+    backgroundNativeGeneration <= request.generation &&
+    (isBackgroundRequestCurrent(request) || ownsPendingTimedOutBoundary)
+  );
+}
+
+function requireBackgroundLifecycleReconciliation(
+  request,
+  outcome,
+  reason
+) {
+  setBackgroundLifecycleOutcome(request, outcome);
+  backgroundLifecycleReconciliationRequired = true;
+  backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.FAILED_RECOVERABLE;
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_RECONCILIATION_REQUIRED", {
+    runId: request.expectedRunId,
+    operation: request.type,
+    operationId: request.operationId,
+    generation: request.generation,
+    ownerRunId: backgroundNativeOwnerRunId,
+    reason,
+    outcome,
+    level: "warn",
+  });
+}
+
+function recordBackgroundOwnerMismatch(request, reason = "owner_mismatch") {
+  if (!backgroundNativeOwnerMatchesTarget(activeSnapshot)) {
+    requireBackgroundLifecycleReconciliation(
+      request,
+      "owner_target_mismatch",
+      "native_owner_does_not_match_active_target"
+    );
+  } else {
+    setBackgroundLifecycleOutcome(request, "owner_mismatch");
+  }
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OWNER_MISMATCH", {
+    runId: request.expectedRunId,
+    operation: request.type,
+    operationId: request.operationId,
+    generation: request.generation,
+    ownerRunId: backgroundNativeOwnerRunId,
+    reason,
+    level: "warn",
+  });
+  if (request.handoffRequested) {
+    recordRunEvent("RUN_BACKGROUND_LIFECYCLE_HANDOFF_REJECTED", {
+      runId: request.expectedRunId,
+      operation: request.type,
+      operationId: request.operationId,
+      generation: request.generation,
+      ownerRunId: backgroundNativeOwnerRunId,
+      reason: "active_handoff_prohibited",
+      level: "warn",
+    });
+  }
+}
+
+function claimBackgroundNativeOwner(request, reason, options = {}) {
+  const previousOwnerRunId = backgroundNativeOwnerRunId;
+  backgroundNativeOwnerRunId = request.expectedRunId;
+  backgroundNativeOwnerAliases = [
+    ...new Set(
+      (request.ownerAliases || [request.expectedRunId])
+        .map(normalizeBackgroundRunId)
+        .filter(Boolean)
+    ),
+  ];
+  backgroundNativeGeneration = request.generation;
+  backgroundNativeActivatedAtMs = Number.isFinite(
+    Number(options.activatedAtMs)
+  )
+    ? Math.max(0, Number(options.activatedAtMs))
+    : Date.now();
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OWNER_CLAIMED", {
+    runId: request.expectedRunId,
+    operationId: request.operationId,
+    generation: request.generation,
+    previousOwnerRunId,
+    ownerRunId: backgroundNativeOwnerRunId,
+    reason,
+  });
+}
+
+function canExplicitlyClaimExistingBackgroundOwner(
+  request,
+  options,
+  snapshot
+) {
+  const claim = options?.ownerClaim;
+  const reason = String(claim?.reason || "").trim();
+  return Boolean(
+    claim?.mode === "process_recovery" &&
+    reason &&
+    isBackgroundRequestCurrent(request) &&
+    request.expectedRunId &&
+    normalizeBackgroundRunId(snapshot?.activeRunId) === request.expectedRunId &&
+    String(snapshot?.status || "").toUpperCase() === ACTIVE_RUN_STATUS.RUNNING
+  );
+}
+
+function releaseBackgroundNativeOwner(request, reason) {
+  const previousOwnerRunId = backgroundNativeOwnerRunId;
+  backgroundNativeOwnerRunId = null;
+  backgroundNativeOwnerAliases = [];
+  backgroundNativeGeneration = request.generation;
+  backgroundNativeActivatedAtMs = 0;
+  recordRunEvent("RUN_BACKGROUND_LIFECYCLE_OWNER_RELEASED", {
+    runId: request.expectedRunId,
+    operationId: request.operationId,
+    generation: request.generation,
+    previousOwnerRunId,
+    reason,
+  });
+}
+
+function matchesExpectedActiveRunId(options = {}, snapshot = activeSnapshot) {
+  const expectedAliases = collectBackgroundOwnerAliases(options);
+  const currentAliases = collectBackgroundOwnerAliases(snapshot || {});
+  if (
+    expectedAliases.length === 0 ||
+    currentAliases.length === 0 ||
+    backgroundOwnerAliasesIntersect(expectedAliases, currentAliases)
+  ) {
+    return true;
+  }
+  recordRunEvent("RUN_ACTIVE_TRANSITION_ID_MISMATCH_BLOCKED", {
+    expectedRunId: expectedAliases[0] || null,
+    activeRunId: currentAliases[0] || null,
+    transition: options.transition || "unknown",
+    reason: options.reason || null,
+    level: "warn",
+  });
+  return false;
+}
+
+function isBackgroundRequestCurrent(request) {
+  return Boolean(
+    request?.authoritative !== false &&
+    request?.generation === backgroundOperationGeneration
+  );
+}
+
+function getCurrentBackgroundTarget() {
+  return {
+    runId: normalizeBackgroundRunId(activeSnapshot?.activeRunId),
+    status: String(activeSnapshot?.status || "").toUpperCase(),
+  };
+}
+
+function isStartBackgroundRequestSafe(request) {
+  const current = getCurrentBackgroundTarget();
+  return Boolean(
+    isBackgroundRequestCurrent(request) &&
+    request.expectedRunId &&
+    current.runId === request.expectedRunId &&
+    current.status === ACTIVE_RUN_STATUS.RUNNING
+  );
+}
+
+function isStopBackgroundRequestSafe(request, snapshot = activeSnapshot) {
+  if (!isBackgroundRequestCurrent(request)) return false;
+  const currentStatus = String(snapshot?.status || "").toUpperCase();
+  if (
+    request.requireNoRunningActiveRun &&
+    currentStatus === ACTIVE_RUN_STATUS.RUNNING
+  ) {
+    return false;
+  }
+  if (!requestMatchesCurrentBackgroundTarget(request, snapshot)) {
+    return requestMatchesBackgroundNativeOwner(request);
+  }
+  return true;
+}
+
+function recordBackgroundRequestSkipped(request, stage, snapshot = activeSnapshot) {
+  recordRunSnapshotEvent(
+    request.type === "start"
+      ? "RUN_BACKGROUND_START_ABORTED_STALE"
+      : "RUN_BACKGROUND_STOP_ABORTED_STALE",
+    snapshot || {},
+    {
+      reason: request.reason,
+      expectedRunId: request.expectedRunId,
+      generation: request.generation,
+      currentGeneration: backgroundOperationGeneration,
+      stage,
+    }
+  );
+}
+
+function captureBackgroundCallbackFence(data = {}) {
+  const explicitGeneration = Number(
+    data.lifecycleGeneration ??
+    data.generation ??
+    data.meta?.lifecycleGeneration
+  );
+  const ownerIdentity = createBackgroundOwnerIdentity(
+    {
+      expectedRunId:
+        data.expectedRunId ??
+        data.ownerRunId ??
+        data.meta?.ownerRunId ??
+        backgroundNativeOwnerRunId,
+      ownerAliases:
+        data.ownerAliases ??
+        data.meta?.ownerAliases ??
+        backgroundNativeOwnerAliases,
+    },
+    activeSnapshot
+  );
+  return {
+    generation: Number.isInteger(explicitGeneration) && explicitGeneration >= 0
+      ? explicitGeneration
+      : backgroundNativeGeneration,
+    generationWasExplicit:
+      Number.isInteger(explicitGeneration) && explicitGeneration >= 0,
+    ownerRunId:
+      ownerIdentity.primaryRunId || backgroundNativeOwnerRunId || null,
+    ownerAliases: ownerIdentity.aliases,
+    nativeOwnerWasKnown: Boolean(backgroundNativeOwnerRunId),
+    activatedAtMs: backgroundNativeActivatedAtMs,
+    capturedAtMs: Date.now(),
+  };
+}
+
+function isBackgroundCallbackFenceCurrent(
+  fence,
+  snapshot = activeSnapshot
+) {
+  if (!fence) return true;
+  if (
+    fence.nativeOwnerWasKnown !== true ||
+    !backgroundNativeOwnerRunId
+  ) {
+    return false;
+  }
+  if (
+    fence.generation !== backgroundNativeGeneration &&
+    !(
+      fence.generationWasExplicit !== true &&
+      fence.nativeOwnerWasKnown !== true &&
+      backgroundNativeOwnerRunId
+    )
+  ) {
+    return false;
+  }
+  const snapshotAliases = collectBackgroundOwnerAliases(snapshot || {});
+  if (
+    fence.ownerAliases?.length > 0 &&
+    snapshotAliases.length > 0 &&
+    !backgroundOwnerAliasesIntersect(fence.ownerAliases, snapshotAliases)
+  ) {
+    return false;
+  }
+  if (
+    backgroundNativeOwnerAliases.length > 0 &&
+    fence.ownerAliases?.length > 0 &&
+    !backgroundOwnerAliasesIntersect(
+      fence.ownerAliases,
+      backgroundNativeOwnerAliases
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isBackgroundLocationInsideFence(location, fence) {
+  if (!fence?.activatedAtMs) return true;
+  const timestampMs = Number(location?.timestamp);
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) return true;
+  const nowMs = Date.now();
+  const timestampLooksRealtime = Math.abs(nowMs - timestampMs) <= 86_400_000;
+  if (!timestampLooksRealtime) return true;
+  return timestampMs + 5000 >= fence.activatedAtMs;
+}
+
+function recordBackgroundCallbackFenceMismatch(fence, reason, snapshot) {
+  recordRunEvent("RUN_BACKGROUND_CALLBACK_FENCE_MISMATCH", {
+    runId: snapshot?.activeRunId || null,
+    ownerRunId: fence?.ownerRunId || null,
+    generation: fence?.generation ?? null,
+    currentGeneration: backgroundNativeGeneration,
+    reason,
+    level: "warn",
+  }, {
+    category: LOG_CATEGORIES.BACKGROUND,
+  });
+}
+
+function setBackgroundCapabilityForRequest(request, started, status) {
+  if (
+    request.expectedRunId &&
+    normalizeBackgroundRunId(activeSnapshot?.activeRunId) === request.expectedRunId
+  ) {
+    setActiveRunBackgroundCapability(started, status);
+  }
+}
+
+async function startBackgroundLocationUpdatesInternal(request, options = {}) {
+  let snapshot = activeSnapshot;
+  try {
+    if (Platform.OS === "web") {
+      backgroundStarted = false;
+      setBackgroundLifecycleOutcome(request, "unsupported");
+      setBackgroundCapabilityForRequest(request, false, "unsupported");
+      updateRuntimeState({ backgroundTaskStatus: "unsupported" });
+      return false;
+    }
+    if (
+      backgroundNativeOwnerRunId &&
+      !requestMatchesBackgroundNativeOwner(request)
+    ) {
+      recordBackgroundOwnerMismatch(request, "start_requested_by_different_owner");
+      return false;
+    }
+    if (!snapshot) {
+      if (!isBackgroundRequestCurrent(request)) {
+        recordBackgroundRequestSkipped(request, "before_snapshot_load");
+        return false;
+      }
+      snapshot = await loadPersistedSnapshot();
+      if (!isBackgroundRequestCurrent(request)) {
+        recordBackgroundRequestSkipped(request, "after_snapshot_load", snapshot);
+        return false;
+      }
+      if (
+        snapshot?.activeRunId === request.expectedRunId &&
+        snapshot.status === ACTIVE_RUN_STATUS.RUNNING
+      ) {
+        activeSnapshot = normalizeActiveRunSnapshot(snapshot);
+        snapshot = activeSnapshot;
+      }
+    }
+    if (!isStartBackgroundRequestSafe(request)) {
+      setBackgroundLifecycleOutcome(request, "stale_request");
+      recordBackgroundRequestSkipped(request, "before_permission_check", snapshot);
+      return false;
+    }
+    snapshot = activeSnapshot;
+    if (typeof options.backgroundPermissionGranted === "boolean") {
+      setActiveRunBackgroundPermission(
+        options.backgroundPermissionGranted,
+        options.backgroundPermissionStatus || "checked"
+      );
+      snapshot = activeSnapshot || snapshot;
+    }
+    if (
+      Platform.OS === "android" &&
+      options.backgroundPermissionGranted !== true &&
+      snapshot.meta?.permissions?.backgroundLocationGranted === false
+    ) {
+      backgroundStarted = false;
+      setBackgroundLifecycleOutcome(request, "permission_denied");
+      setBackgroundCapabilityForRequest(request, false, "permission_denied");
+      updateRuntimeState({ backgroundTaskStatus: "permission_denied" });
+      recordBackgroundTaskStatus("permission_denied", {
+        runId: request.expectedRunId,
+        reason: request.reason,
+      });
+      return false;
+    }
+
+    if (!isStartBackgroundRequestSafe(request)) {
+      recordBackgroundRequestSkipped(request, "before_status_probe", snapshot);
+      return false;
+    }
+    let started;
+    try {
+      started = await Location.hasStartedLocationUpdatesAsync(
+        ACTIVE_RUN_LOCATION_TASK
+      );
+    } catch (probeError) {
+      requireBackgroundLifecycleReconciliation(
+        request,
+        "status_probe_failed",
+        "native_status_unknown_before_start"
+      );
+      recordRunEvent("RUN_BACKGROUND_START_STATUS_PROBE_FAILED", {
+        runId: request.expectedRunId,
+        operationId: request.operationId,
+        generation: request.generation,
+        reason: request.reason,
+        error: probeError?.message || String(probeError || "probe_failed"),
+        level: "warn",
+      });
+      return false;
+    }
+    if (!isStartBackgroundRequestSafe(request)) {
+      backgroundStarted = Boolean(started);
+      if (started && requestMatchesBackgroundNativeOwner(request)) {
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "owner_target_mismatch",
+          "native_owner_retained_after_active_run_changed"
+        );
+      } else if (started && !backgroundNativeOwnerRunId) {
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "owner_unknown",
+          "native_task_active_after_target_changed_without_owner"
+        );
+      } else if (
+        !started &&
+        requestCanReleaseConfirmedNativeOwner(request)
+      ) {
+        releaseBackgroundNativeOwner(
+          request,
+          "status_probe_confirmed_stopped_after_target_changed"
+        );
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "stopped_after_target_changed",
+          "native_stop_observed_after_active_run_changed"
+        );
+      } else {
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "stale_start_target_changed",
+          "start_target_changed_after_status_probe"
+        );
+      }
+      recordBackgroundRequestSkipped(request, "after_status_probe", snapshot);
+      return false;
+    }
+    if (started && !backgroundNativeOwnerRunId) {
+      backgroundStarted = true;
+      if (
+        canExplicitlyClaimExistingBackgroundOwner(
+          request,
+          options,
+          snapshot
+        )
+      ) {
+        claimBackgroundNativeOwner(
+          request,
+          `explicit_process_recovery:${options.ownerClaim.reason}`,
+          { activatedAtMs: 0 }
+        );
+        setBackgroundLifecycleOutcome(request, "owner_claimed_explicitly");
+        recordRunEvent("RUN_BACKGROUND_LIFECYCLE_HANDOFF", {
+          runId: request.expectedRunId,
+          operationId: request.operationId,
+          generation: request.generation,
+          fromOwnerRunId: null,
+          toOwnerRunId: request.expectedRunId,
+          reason: options.ownerClaim.reason,
+          mode: options.ownerClaim.mode,
+        });
+      } else {
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "owner_unknown",
+          "native_task_active_without_process_owner"
+        );
+        return false;
+      }
+    }
+    if (started && !requestMatchesBackgroundNativeOwner(request)) {
+      backgroundStarted = true;
+      recordBackgroundOwnerMismatch(request, "native_task_owned_by_another_run");
+      return false;
+    }
     if (started && options.forceRestart !== true) {
       backgroundStarted = true;
+      if (!request.outcome) {
+        setBackgroundLifecycleOutcome(request, "already_active");
+      }
+      setBackgroundCapabilityForRequest(request, true, "already_started");
       updateRuntimeState({
         backgroundTaskStatus: "started",
       });
@@ -1902,17 +2987,61 @@ export async function startBackgroundLocationUpdates(options = {}) {
         taskName: ACTIVE_RUN_LOCATION_TASK,
       });
       recordBackgroundTaskStatus("already_started", {
-        runId: snapshot.activeRunId,
-        reason: options.reason || "start",
+        runId: request.expectedRunId,
+        reason: request.reason,
       });
       logRunRecovery("watcher alive", {
-        activeRunId: snapshot.activeRunId,
+        activeRunId: request.expectedRunId,
         task: ACTIVE_RUN_LOCATION_TASK,
       });
       return true;
     }
 
+    if (started && options.forceRestart === true) {
+      if (!isStartBackgroundRequestSafe(request)) {
+        recordBackgroundRequestSkipped(request, "before_forced_native_stop", snapshot);
+        return false;
+      }
+      try {
+        await Location.stopLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK);
+      } catch (error) {
+        if (!isMissingBackgroundTaskError(error)) throw error;
+      }
+      const forcedStopOwnedNativeBoundary =
+        requestCanReleaseConfirmedNativeOwner(request);
+      if (forcedStopOwnedNativeBoundary) {
+        backgroundStarted = false;
+        releaseBackgroundNativeOwner(
+          request,
+          "force_restart_stop_confirmed"
+        );
+      }
+      if (!isStartBackgroundRequestSafe(request)) {
+        if (isBackgroundRequestCurrent(request)) {
+          requireBackgroundLifecycleReconciliation(
+            request,
+            "forced_stop_after_target_changed",
+            "forced_native_stop_confirmed_after_active_run_changed"
+          );
+        }
+        recordBackgroundRequestSkipped(request, "after_forced_native_stop", snapshot);
+        return false;
+      }
+      if (!forcedStopOwnedNativeBoundary) {
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "forced_stop_owner_mismatch",
+          "forced_native_stop_could_not_release_expected_owner"
+        );
+        return false;
+      }
+    }
+
     if (!started) {
+      backgroundStarted = false;
+      if (backgroundNativeOwnerRunId) {
+        releaseBackgroundNativeOwner(request, "status_probe_confirmed_stopped");
+      }
       recordRunSnapshotEvent("LOCATION_WATCHER_RESTARTED", snapshot, {
         watcherStatus: "restarting",
         backgroundTaskStatus: ACTIVE_RUN_LOCATION_TASK,
@@ -1922,23 +3051,73 @@ export async function startBackgroundLocationUpdates(options = {}) {
         taskName: ACTIVE_RUN_LOCATION_TASK,
       });
       recordBackgroundTaskStatus("not_started_while_running", {
-        runId: snapshot.activeRunId,
-        reason: options.reason || "start",
+        runId: request.expectedRunId,
+        reason: request.reason,
       });
       logRunRecovery("restarting watcher without clearing path", {
-        activeRunId: snapshot.activeRunId,
+        activeRunId: request.expectedRunId,
         task: ACTIVE_RUN_LOCATION_TASK,
       });
+    }
+    if (!isStartBackgroundRequestSafe(request)) {
+      recordBackgroundRequestSkipped(request, "before_native_start", snapshot);
+      return false;
     }
     await Location.startLocationUpdatesAsync(
       ACTIVE_RUN_LOCATION_TASK,
       getBackgroundOptions(snapshot.notificationBody || NOTIFICATION_BODY)
     );
+    if (!isStartBackgroundRequestSafe(request)) {
+      recordBackgroundRequestSkipped(request, "after_native_start", snapshot);
+      const pendingTimedOutStartStillOwnsNativeBoundary = Boolean(
+        request.timedOut === true &&
+        backgroundLifecyclePendingNativeOperation?.operationId ===
+          request.operationId &&
+        !backgroundNativeOwnerRunId
+      );
+      if (
+        isBackgroundRequestCurrent(request) ||
+        pendingTimedOutStartStillOwnsNativeBoundary
+      ) {
+        try {
+          await Location.stopLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK);
+          if (
+            isBackgroundRequestCurrent(request) ||
+            backgroundLifecyclePendingNativeOperation?.operationId ===
+              request.operationId
+          ) {
+            backgroundStarted = false;
+            setBackgroundLifecycleOutcome(request, "stale_start_cleaned");
+            recordRunEvent("RUN_BACKGROUND_STALE_START_CLEANED", {
+              runId: request.expectedRunId,
+              operationId: request.operationId,
+              generation: request.generation,
+              reason: request.reason,
+              timedOut: request.timedOut === true,
+            });
+          }
+        } catch (cleanupError) {
+          if (!isMissingBackgroundTaskError(cleanupError)) {
+            requireBackgroundLifecycleReconciliation(
+              request,
+              "stale_start_cleanup_failed",
+              "native_start_completed_after_target_changed"
+            );
+          }
+        }
+      }
+      return false;
+    }
     backgroundStarted = true;
+    claimBackgroundNativeOwner(request, "native_start_confirmed");
+    setBackgroundLifecycleOutcome(request, "started");
+    setBackgroundCapabilityForRequest(request, true, "started");
     updateRuntimeState({
       backgroundTaskStatus: "started",
     });
-    log("background_tracking_started", { activeRunId: snapshot.activeRunId });
+    log("background_tracking_started", {
+      activeRunId: request.expectedRunId,
+    });
     recordRunSnapshotEvent("LOCATION_WATCHER_STARTED", snapshot, {
       watcherStatus: "started",
       backgroundTaskStatus: ACTIVE_RUN_LOCATION_TASK,
@@ -1949,73 +3128,360 @@ export async function startBackgroundLocationUpdates(options = {}) {
       force: Boolean(options.force),
     });
     recordBackgroundTaskStatus("started", {
-      runId: snapshot.activeRunId,
+      runId: request.expectedRunId,
       force: Boolean(options.force),
-      reason: options.reason || "start",
+      reason: request.reason,
     });
     return true;
   } catch (error) {
-    backgroundStarted = false;
-    setActiveRunError(error, "startBackgroundLocationUpdates");
-    updateRuntimeState({
-      backgroundTaskStatus: "start_failed",
-    });
-    recordBackgroundTaskStatus("start_failed", {
-      reason: options.reason || "start",
-      error,
-    });
-    emitError(error, { fn: "startBackgroundLocationUpdates" });
-    await performPendingCheckpoint({
-      reason: "background_service_start_failed",
-      force: true,
-      insideIngestionQueue: true,
+    if (!isStartBackgroundRequestSafe(request)) {
+      if (isBackgroundRequestCurrent(request)) {
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "start_failed_after_target_changed",
+          "native_start_or_forced_stop_failed_after_active_run_changed"
+        );
+      }
+      recordRunEvent("RUN_BACKGROUND_START_STALE_FAILURE_IGNORED", {
+        runId: request.expectedRunId,
+        reason: request.reason,
+        generation: request.generation,
+        error,
+        level: "warn",
+      });
+      return false;
+    }
+    setBackgroundLifecycleOutcome(request, "start_failed");
+    void enqueueLocationIngestion(async () => {
+      if (!isStartBackgroundRequestSafe(request)) {
+        recordRunEvent("RUN_BACKGROUND_START_STALE_FAILURE_IGNORED", {
+          runId: request.expectedRunId,
+          reason: request.reason,
+          generation: request.generation,
+          error,
+          stage: "serialized_failure_handler",
+          level: "warn",
+        });
+        return false;
+      }
+      backgroundStarted = false;
+      if (requestMatchesBackgroundNativeOwner(request)) {
+        releaseBackgroundNativeOwner(request, "native_start_failed");
+      }
+      setBackgroundCapabilityForRequest(request, false, "start_failed");
+      setActiveRunError(error, "startBackgroundLocationUpdates");
+      updateRuntimeState({
+        backgroundTaskStatus: "start_failed",
+      });
+      recordBackgroundTaskStatus("start_failed", {
+        runId: request.expectedRunId,
+        reason: request.reason,
+        error,
+      });
+      emitError(error, { fn: "startBackgroundLocationUpdates" });
+      await performPendingCheckpoint({
+        reason: "background_service_start_failed",
+        force: true,
+        insideIngestionQueue: true,
+      });
+      return true;
+    }).catch((failureHandlerError) => {
+      recordRunEvent("RUN_BACKGROUND_START_FAILURE_HANDLER_FAILED", {
+        runId: request.expectedRunId,
+        operationId: request.operationId,
+        generation: request.generation,
+        error:
+          failureHandlerError?.message ||
+          String(failureHandlerError || "failure_handler_failed"),
+        level: "warn",
+      });
     });
     return false;
   }
 }
 
-export async function stopBackgroundLocationUpdates(options = {}) {
+export function startBackgroundLocationUpdates(options = {}) {
+  const expectedRunId = normalizeBackgroundRunId(
+    options.expectedRunId || activeSnapshot?.activeRunId
+  );
+  if (!expectedRunId) return Promise.resolve(false);
+  const ownerIdentity = createBackgroundOwnerIdentity(options, activeSnapshot);
+  const request = {
+    type: "start",
+    expectedRunId: ownerIdentity.primaryRunId || expectedRunId,
+    ownerAliases: ownerIdentity.aliases,
+    reason: options.reason || "start",
+    handoffRequested: Boolean(options.handoff),
+  };
+  return enqueueBackgroundLifecycle(
+    request,
+    (authorizedRequest) =>
+      startBackgroundLocationUpdatesInternal(authorizedRequest, options),
+    options.callerTimeoutMs
+  );
+}
+
+async function stopBackgroundLocationUpdatesInternal(request) {
   try {
-    if (Platform.OS === "web") return false;
-    const runId = activeSnapshot?.activeRunId || null;
-    const started = await Location.hasStartedLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK).catch(() => backgroundStarted);
+    if (Platform.OS === "web") {
+      setBackgroundLifecycleOutcome(request, "unsupported");
+      return false;
+    }
+    if (
+      backgroundNativeOwnerRunId &&
+      request.expectedRunId &&
+      !requestMatchesBackgroundNativeOwner(request)
+    ) {
+      recordBackgroundOwnerMismatch(request, "stop_requested_by_different_owner");
+      return false;
+    }
+    let validationSnapshot = activeSnapshot;
+    if (request.requireNoRunningActiveRun && !validationSnapshot) {
+      if (!isBackgroundRequestCurrent(request)) {
+        recordBackgroundRequestSkipped(request, "before_snapshot_load");
+        return false;
+      }
+      validationSnapshot = await loadPersistedSnapshot();
+      if (!isBackgroundRequestCurrent(request)) {
+        recordBackgroundRequestSkipped(
+          request,
+          "after_snapshot_load",
+          validationSnapshot
+        );
+        return false;
+      }
+    }
+    if (!isStopBackgroundRequestSafe(request, validationSnapshot)) {
+      setBackgroundLifecycleOutcome(request, "stale_request");
+      recordBackgroundRequestSkipped(
+        request,
+        "before_status_probe",
+        validationSnapshot
+      );
+      return false;
+    }
+    let started = true;
+    try {
+      started = await Location.hasStartedLocationUpdatesAsync(
+        ACTIVE_RUN_LOCATION_TASK
+      );
+    } catch (probeError) {
+      if (
+        !backgroundNativeOwnerRunId ||
+        !requestMatchesBackgroundNativeOwner(request)
+      ) {
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "status_probe_failed",
+          "owner_not_confirmed_after_status_probe_failure"
+        );
+        return false;
+      }
+      recordRunEvent("RUN_BACKGROUND_STOP_STATUS_PROBE_FAILED", {
+        runId: request.expectedRunId,
+        reason: request.reason,
+        action: "attempt_native_stop",
+        error: probeError,
+        level: "warn",
+      });
+    }
+    if (!isStopBackgroundRequestSafe(request, activeSnapshot || validationSnapshot)) {
+      recordBackgroundRequestSkipped(
+        request,
+        "after_status_probe",
+        activeSnapshot || validationSnapshot
+      );
+      return false;
+    }
     if (started) {
+      if (!backgroundNativeOwnerRunId) {
+        backgroundStarted = true;
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "owner_unknown",
+          "native_task_active_without_process_owner"
+        );
+        return false;
+      }
+      if (!requestMatchesBackgroundNativeOwner(request)) {
+        backgroundStarted = true;
+        recordBackgroundOwnerMismatch(
+          request,
+          "native_task_owned_by_another_run"
+        );
+        return false;
+      }
+      if (!isStopBackgroundRequestSafe(request, activeSnapshot || validationSnapshot)) {
+        recordBackgroundRequestSkipped(
+          request,
+          "before_native_stop",
+          activeSnapshot || validationSnapshot
+        );
+        return false;
+      }
       try {
         await Location.stopLocationUpdatesAsync(ACTIVE_RUN_LOCATION_TASK);
       } catch (error) {
         if (!isMissingBackgroundTaskError(error)) throw error;
       }
+      const confirmedStopOwnedNativeBoundary =
+        requestCanReleaseConfirmedNativeOwner(request);
+      const targetChanged = !requestMatchesCurrentBackgroundTarget(
+        request,
+        activeSnapshot || validationSnapshot
+      );
+      if (
+        !isBackgroundRequestCurrent(request) ||
+        targetChanged
+      ) {
+        recordBackgroundRequestSkipped(
+          request,
+          "after_native_stop",
+          activeSnapshot || validationSnapshot
+        );
+        if (confirmedStopOwnedNativeBoundary) {
+          backgroundStarted = false;
+          releaseBackgroundNativeOwner(
+            request,
+            "native_stop_confirmed_after_target_changed"
+          );
+          if (isBackgroundRequestCurrent(request)) {
+            setBackgroundLifecycleOutcome(
+              request,
+              "stopped_after_target_changed"
+            );
+          }
+          recordRunEvent("RUN_BACKGROUND_STOP_TARGET_CHANGED_CONFIRMED", {
+            runId: request.expectedRunId,
+            activeRunId: activeSnapshot?.activeRunId || null,
+            operationId: request.operationId,
+            generation: request.generation,
+            reason: request.reason,
+            timedOut: request.timedOut === true,
+          });
+        }
+        return true;
+      }
+      if (!confirmedStopOwnedNativeBoundary) {
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "stop_owner_mismatch",
+          "native_stop_confirmed_without_expected_owner_boundary"
+        );
+        return false;
+      }
+      backgroundStarted = false;
+      releaseBackgroundNativeOwner(request, "native_stop_confirmed");
+      setBackgroundLifecycleOutcome(request, "stopped");
+    } else {
+      backgroundStarted = false;
+      if (backgroundNativeOwnerRunId) {
+        releaseBackgroundNativeOwner(request, "status_probe_confirmed_stopped");
+      } else {
+        backgroundNativeGeneration = request.generation;
+        backgroundNativeActivatedAtMs = 0;
+      }
+      setBackgroundLifecycleOutcome(request, "already_stopped");
     }
-    backgroundStarted = false;
+    setBackgroundCapabilityForRequest(request, false, "stopped");
     updateRuntimeState({
       backgroundTaskStatus: "stopped",
     });
-    log("background_tracking_stopped", { reason: options.reason || "manual" });
+    log("background_tracking_stopped", {
+      expectedRunId: request.expectedRunId,
+      reason: request.reason,
+    });
     recordRunEvent("LOCATION_WATCHER_STOPPED", {
-      runId,
-      reason: options.reason || "manual",
+      runId: request.expectedRunId,
+      reason: request.reason,
       watcherStatus: "stopped",
       backgroundTaskStatus: ACTIVE_RUN_LOCATION_TASK,
     });
     recordRunEvent("RUN_BACKGROUND_TASK_CANCELLED_OR_STOPPED", {
-      runId,
-      reason: options.reason || "manual",
+      runId: request.expectedRunId,
+      reason: request.reason,
       backgroundTaskStatus: "stopped",
       taskName: ACTIVE_RUN_LOCATION_TASK,
     });
     recordBackgroundTaskStatus("stopped", {
-      runId,
-      reason: options.reason || "manual",
+      runId: request.expectedRunId,
+      reason: request.reason,
     });
     return true;
   } catch (error) {
+    const targetChanged = !requestMatchesCurrentBackgroundTarget(
+      request,
+      activeSnapshot
+    );
+    if (
+      !isBackgroundRequestCurrent(request) ||
+      targetChanged ||
+      !isStopBackgroundRequestSafe(request, activeSnapshot)
+    ) {
+      if (isBackgroundRequestCurrent(request)) {
+        requireBackgroundLifecycleReconciliation(
+          request,
+          "stop_failed_after_target_changed",
+          "native_stop_failed_after_active_run_changed"
+        );
+      }
+      recordRunEvent("RUN_BACKGROUND_STOP_STALE_FAILURE_IGNORED", {
+        runId: request.expectedRunId,
+        reason: request.reason,
+        generation: request.generation,
+        activeRunId: activeSnapshot?.activeRunId || null,
+        error,
+        level: "warn",
+      });
+      return false;
+    }
+    setBackgroundLifecycleOutcome(request, "stop_failed");
     recordBackgroundTaskStatus("stop_failed", {
-      reason: options.reason || "manual",
+      runId: request.expectedRunId,
+      reason: request.reason,
       error,
     });
-    emitError(error, { fn: "stopBackgroundLocationUpdates", reason: options.reason || "manual" });
+    emitError(error, {
+      fn: "stopBackgroundLocationUpdates",
+      reason: request.reason,
+    });
     return false;
   }
+}
+
+export function stopBackgroundLocationUpdates(options = {}) {
+  if (
+    options.requireNoRunningActiveRun === true &&
+    activeSnapshot?.status === ACTIVE_RUN_STATUS.RUNNING
+  ) {
+    return Promise.resolve(false);
+  }
+  const expectedRunId = normalizeBackgroundRunId(
+    options.expectedRunId || activeSnapshot?.activeRunId
+  );
+  const requireNoRunningActiveRun =
+    options.requireNoRunningActiveRun === true;
+  const ownerIdentity = createBackgroundOwnerIdentity(
+    {
+      ...options,
+      expectedRunId,
+    },
+    activeSnapshot
+  );
+  const request = {
+    type: "stop",
+    expectedRunId: ownerIdentity.primaryRunId || expectedRunId,
+    ownerAliases: ownerIdentity.aliases,
+    reason: options.reason || "manual",
+    requireNoRunningActiveRun,
+    handoffRequested: Boolean(options.handoff),
+  };
+  return enqueueBackgroundLifecycle(
+    request,
+    (authorizedRequest) =>
+      stopBackgroundLocationUpdatesInternal(authorizedRequest),
+    options.callerTimeoutMs
+  );
 }
 
 async function startActiveRunInternal(options = {}) {
@@ -2279,6 +3745,40 @@ async function recordLocationInternal(location = {}, options = {}) {
       });
       return null;
     }
+    if (!matchesExpectedActiveRunId(
+      { ...options, transition: "record_location" },
+      activeSnapshot
+    )) {
+      return activeSnapshot;
+    }
+    if (
+      options.backgroundLifecycleFence &&
+      !isBackgroundCallbackFenceCurrent(
+        options.backgroundLifecycleFence,
+        activeSnapshot
+      )
+    ) {
+      recordBackgroundCallbackFenceMismatch(
+        options.backgroundLifecycleFence,
+        "before_location_ingestion",
+        activeSnapshot
+      );
+      return activeSnapshot;
+    }
+    if (
+      options.backgroundLifecycleFence &&
+      !isBackgroundLocationInsideFence(
+        location,
+        options.backgroundLifecycleFence
+      )
+    ) {
+      recordBackgroundCallbackFenceMismatch(
+        options.backgroundLifecycleFence,
+        "location_predates_native_generation",
+        activeSnapshot
+      );
+      return activeSnapshot;
+    }
     if (activeSnapshot.status !== ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
 
     const source = options.source || location.source || "foreground";
@@ -2341,6 +3841,12 @@ async function pauseActiveRunInternal(options = {}) {
   try {
     const session = await getActiveSession();
     if (!session || !activeSnapshot) return null;
+    if (!matchesExpectedActiveRunId(
+      { ...options, transition: "pause" },
+      activeSnapshot
+    )) {
+      return activeSnapshot;
+    }
     if (activeSnapshot.status === ACTIVE_RUN_STATUS.PAUSED) return activeSnapshot;
     if (activeSnapshot.status !== ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
     const endedAt = Number(options.endedAtMs || Date.now());
@@ -2369,6 +3875,12 @@ async function resumeActiveRunInternal(options = {}) {
   try {
     const session = await getActiveSession();
     if (!session || !activeSnapshot) return null;
+    if (!matchesExpectedActiveRunId(
+      { ...options, transition: "resume" },
+      activeSnapshot
+    )) {
+      return activeSnapshot;
+    }
     if (activeSnapshot.status === ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
     if (activeSnapshot.status !== ACTIVE_RUN_STATUS.PAUSED) return activeSnapshot;
     const startedAt = Number(options.startedAtMs || Date.now());
@@ -2613,6 +4125,7 @@ export function cancelActiveRun(options = {}) {
 }
 
 async function handleBackgroundLocations(data = {}) {
+  const lifecycleFence = captureBackgroundCallbackFence(data);
   const locations = (Array.isArray(data.locations) ? data.locations : [])
     .filter((loc) => loc?.coords)
     .slice()
@@ -2624,33 +4137,68 @@ async function handleBackgroundLocations(data = {}) {
       if (!Number.isFinite(right)) return -1;
       return left - right;
     });
+  const snapshot = activeSnapshot || (await loadPersistedSnapshot());
+  if (!isBackgroundCallbackFenceCurrent(lifecycleFence, snapshot)) {
+    recordBackgroundCallbackFenceMismatch(
+      lifecycleFence,
+      "before_background_batch",
+      snapshot
+    );
+    return snapshot || null;
+  }
   updateRuntimeState({
     backgroundTaskStatus: "handled",
   });
   recordRunEvent("RUN_BACKGROUND_TASK_HANDLED", {
     taskName: ACTIVE_RUN_LOCATION_TASK,
     locationsCount: locations.length,
-    runId: activeSnapshot?.activeRunId || null,
+    runId: snapshot?.activeRunId || null,
+    generation: lifecycleFence.generation,
   }, {
     category: LOG_CATEGORIES.BACKGROUND,
   });
   recordBackgroundTaskStatus("handled", {
-    runId: activeSnapshot?.activeRunId || null,
+    runId: snapshot?.activeRunId || null,
     locationsCount: locations.length,
+    generation: lifecycleFence.generation,
   });
-  if (locations.length === 0) return activeSnapshot;
-  const snapshot = activeSnapshot || (await loadPersistedSnapshot());
-  if (!snapshot?.activeRunId) {
+  if (
+    !snapshot?.activeRunId ||
+    snapshot.status !== ACTIVE_RUN_STATUS.RUNNING
+  ) {
     recordRunEvent("RUN_BACKGROUND_TASK_NO_ACTIVE_SESSION", {
       taskName: ACTIVE_RUN_LOCATION_TASK,
       locationsCount: locations.length,
+      runId: snapshot?.activeRunId || null,
+      status: snapshot?.status || null,
     }, {
       category: LOG_CATEGORIES.BACKGROUND,
     });
-    return null;
+    await stopBackgroundLocationUpdates({
+      expectedRunId: snapshot?.activeRunId || null,
+      reason: "orphaned_background_task",
+      requireNoRunningActiveRun: true,
+    });
+    return snapshot || null;
   }
+  if (locations.length === 0) return snapshot;
   for (const loc of locations) {
-    lastRawPointReceivedAt = loc.timestamp || Date.now();
+    if (!isBackgroundCallbackFenceCurrent(lifecycleFence, snapshot)) {
+      recordBackgroundCallbackFenceMismatch(
+        lifecycleFence,
+        "during_background_batch",
+        snapshot
+      );
+      break;
+    }
+    if (!isBackgroundLocationInsideFence(loc, lifecycleFence)) {
+      recordBackgroundCallbackFenceMismatch(
+        lifecycleFence,
+        "location_predates_native_generation",
+        snapshot
+      );
+      continue;
+    }
     await recordLocation({
       latitude: loc.coords.latitude,
       longitude: loc.coords.longitude,
@@ -2661,7 +4209,15 @@ async function handleBackgroundLocations(data = {}) {
       altitudeAccuracy: loc.coords.altitudeAccuracy,
       timestamp: loc.timestamp,
       source: "background",
-    }, { source: "background", deferCheckpoint: true });
+    }, {
+      source: "background",
+      deferCheckpoint: true,
+      expectedRunId: snapshot.activeRunId,
+      backgroundLifecycleFence: lifecycleFence,
+    });
+  }
+  if (!isBackgroundCallbackFenceCurrent(lifecycleFence, snapshot)) {
+    return activeSnapshot || snapshot;
   }
   return flushPendingActiveRunCheckpoint({
     reason: "background_batch",
@@ -2670,7 +4226,16 @@ async function handleBackgroundLocations(data = {}) {
 }
 
 export async function handleActiveRunLocationTask({ data, error } = {}) {
+  const lifecycleFence = captureBackgroundCallbackFence(data || {});
   if (error) {
+    if (!isBackgroundCallbackFenceCurrent(lifecycleFence, activeSnapshot)) {
+      recordBackgroundCallbackFenceMismatch(
+        lifecycleFence,
+        "background_task_error",
+        activeSnapshot
+      );
+      return activeSnapshot;
+    }
     updateRuntimeState({
       backgroundTaskStatus: "error",
     });
@@ -2704,11 +4269,47 @@ export function __getActiveRunCheckpointWorkCountersForTests() {
   return { ...checkpointWorkCounters };
 }
 
+export async function __flushActiveRunBackgroundLifecycleForTests() {
+  try {
+    await backgroundLifecycleQueue;
+  } catch {
+    // The operation already records its own failure.
+  }
+  try {
+    await locationIngestionQueue;
+  } catch {
+    // The serialized failure handler already records its own failure.
+  }
+}
+
 export function __resetActiveRunRuntimeForTests() {
   clearCheckpointTimer();
+  if (backgroundLifecycleActiveOperation) {
+    backgroundLifecycleActiveOperation.authoritative = false;
+  }
+  if (backgroundLifecyclePendingNativeOperation) {
+    backgroundLifecyclePendingNativeOperation.authoritative = false;
+  }
+  if (backgroundStatusProbeInFlight) {
+    backgroundStatusProbeInFlight.authoritative = false;
+  }
   activeSession = null;
   activeSnapshot = null;
   backgroundStarted = false;
+  backgroundOperationGeneration += 1;
+  backgroundLifecycleQueue = Promise.resolve();
+  backgroundLifecycleActiveOperation = null;
+  backgroundLifecyclePendingNativeOperation = null;
+  backgroundLifecycleLastOperation = null;
+  backgroundLifecycleLastLateOutcome = null;
+  backgroundLifecycleState = BACKGROUND_LIFECYCLE_STATE.IDLE;
+  backgroundLifecycleReconciliationRequired = false;
+  backgroundLifecycleQueueReleased = true;
+  backgroundNativeOwnerRunId = null;
+  backgroundNativeOwnerAliases = [];
+  backgroundNativeGeneration = backgroundOperationGeneration;
+  backgroundNativeActivatedAtMs = 0;
+  backgroundStatusProbeInFlight = null;
   writeQueue = Promise.resolve();
   locationIngestionQueue = Promise.resolve();
   pendingFlushCount = 0;
