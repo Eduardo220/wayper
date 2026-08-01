@@ -1,5 +1,15 @@
 # Problemas conhecidos e riscos técnicos
 
+> **Status:** histórico<br>
+> **Tipo:** referência técnica complementar<br>
+> **Escopo:** riscos gerais preservados da documentação inicial<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`docs/13-bugs-conhecidos.md`](../13-bugs-conhecidos.md)
+
+Use `docs/13-bugs-conhecidos.md` para bugs e riscos vigentes. Este arquivo
+preserva contexto geral e não deve reabrir item encerrado nem prevalecer sobre o
+registro principal.
+
 ## Objetivo
 
 Este arquivo registra riscos, problemas técnicos e limitações conhecidas. Itens daqui devem ser revisados antes de features que dependam de GPS, mapa, Firestore, território, XP ou ranking.
@@ -190,7 +200,8 @@ Impactos:
 
 Mitigação inicial:
 
-- Evitar feed social no MVP.
+- Manter a Home social sem publicar rota ou localização detalhada por padrão;
+  feed não transforma dado local, cache ou demo em exposição pública.
 - Não tornar rotas públicas por padrão.
 - Planejar modo privado antes de recursos sociais.
 

@@ -1,18 +1,27 @@
 # Wayper - Índice da documentação
 
-Este diretório preserva documentação detalhada e histórica da Wayper. Ele não
-precede o comportamento real da branch `develop` nem a direção oficial em
-`docs/product/`.
+> **Status:** vigente como índice temático; conteúdo misto técnico e histórico<br>
+> **Tipo:** índice complementar<br>
+> **Escopo:** documentos em `docs/wayper/`<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`docs/00-fontes-do-projeto.md`](../00-fontes-do-projeto.md)
 
-A ordem vigente está em `../00-fontes-do-projeto.md`: código de `develop`, código
-de `main` como referência, README, documentação, ADRs, issues/PRs, planos e notas
-externas. Em conflito, a divergência deve ser registrada e a fonte incorreta
-atualizada.
+Este diretório preserva documentação detalhada e histórica da Wayper. Ele não
+precede o comportamento real da branch `develop` nem a direção normativa em
+[`docs/product/direcao-estrategica-completa.md`](../product/direcao-estrategica-completa.md).
+
+A hierarquia vigente está em `../00-fontes-do-projeto.md` e distingue duas
+perguntas: código, testes, configuração e evidência em `develop` mostram o estado
+atual; a direção estratégica, decisões aprovadas e ADRs aceitas orientam a
+evolução. `main` é apenas referência estável. Em conflito, a divergência deve ser
+registrada e a fonte desatualizada corrigida ou marcada.
 
 ## Como usar esta documentação
 
-- Leia este índice antes de mexer no projeto.
-- Leia também `../../AGENTS.md` e `../product/README.md`.
+- Leia este índice quando a matriz de fontes encaminhar a tarefa para
+  `docs/wayper/`; ele não integra sozinho o núcleo permanente.
+- Leia antes `../../AGENTS.md`, `../00-fontes-do-projeto.md`,
+  `../product/direcao-estrategica-completa.md` e `../../README.md`.
 - Consulte os arquivos específicos antes de implementar qualquer feature.
 - Registre decisões importantes em [[10-decisoes-do-projeto]].
 - Registre propostas novas antes de transformar a ideia em implementação.

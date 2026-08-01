@@ -1,9 +1,11 @@
 # Decisões do projeto
 
 **Nota de precedência (2026-07-24):** decisões históricas permanecem como memória,
-mas as decisões vigentes de produto estão em
+mas a direção normativa está em
+`../product/direcao-estrategica-completa.md`, as decisões vigentes de produto em
 `../product/10-decisoes-aprovadas.md` e os ADRs transversais em
-`../architecture/adrs-direcao-oficial.md`.
+`../architecture/adrs-direcao-oficial.md`. A hierarquia completa está em
+`../00-fontes-do-projeto.md`.
 
 ## Como usar
 

@@ -1,113 +1,111 @@
 # Regras permanentes para agentes
 
-Este arquivo vale para todo o repositório Wayper. Antes de alterar código ou
-documentação, leia esta orientação e os documentos indicados para o domínio.
+Este arquivo é a entrada canônica de instruções para todo o repositório Wayper.
+Arquivos de agentes em subdiretórios podem apenas acrescentar regras do próprio
+escopo; nunca podem contradizer este documento.
 
-## Ordem oficial das fontes
+## Contexto do projeto
 
-1. código atual da branch `develop`;
-2. código da branch `main`, somente como referência estável;
-3. `README.md`;
-4. documentação em `docs/`;
-5. ADRs e decisões técnicas;
-6. issues e pull requests;
-7. planos locais;
-8. conversas e anotações externas.
+- Wayper é um aplicativo mobile de exercício físico gamificado, construído com
+  React Native e Expo.
+- `develop` é a branch de desenvolvimento ativo; `main` é a referência estável.
+- A prioridade atual é a estabilidade da corrida: tracking, background,
+  offline, recuperação, persistência e finalização segura.
 
-Em uma divergência, confirme o comportamento real, determine qual fonte está
-desatualizada, atualize-a e registre a decisão. Não faça suposições silenciosas.
+## Núcleo obrigatório em toda tarefa
 
-## Direção oficial
+Leia, nesta ordem, antes de alterar código ou documentação:
 
-> A Wayper transforma exercício físico em uma aventura contínua. Durante a
-> atividade, o usuário apenas corre. Depois da atividade, descobre tudo o que
-> conquistou.
+1. `AGENTS.md`;
+2. [`docs/00-fontes-do-projeto.md`](docs/00-fontes-do-projeto.md);
+3. [`docs/product/direcao-estrategica-completa.md`](docs/product/direcao-estrategica-completa.md);
+4. [`README.md`](README.md).
 
-Regra central: **a corrida é a ação; o pós-corrida é o jogo**.
+Depois, identifique o domínio da tarefa e use a matriz de leitura em
+`docs/00-fontes-do-projeto.md`. Não carregue `docs/` inteiro sem necessidade.
+O processo detalhado para agentes está em
+[`docs/14-instrucoes-para-ia.md`](docs/14-instrucoes-para-ia.md).
 
-A Wayper é uma plataforma de exercício físico gamificada, territorial, social e
-progressiva. Não é um agregador de cupons, mapa comercial, carteira digital,
-marketplace genérico, cópia do Strava ou Pokémon GO, nem um produto centrado em
-anúncios.
+## Dois tipos de verdade
 
-## Regras invioláveis da corrida
+- **Estado atual:** código e testes de `develop`, configuração e comportamento
+  observável mostram o que existe hoje; `main` serve apenas como referência
+  estável.
+- **Direção e decisões:** a direção estratégica, decisões aprovadas e ADRs
+  aceitas definem como o projeto deve evoluir e quais limites são permanentes.
 
-- tracking, checkpoints, recuperação e salvamento têm prioridade absoluta;
-- iniciar, acompanhar, finalizar, salvar e recuperar não dependem do Firestore;
-- a atividade deve funcionar localmente, offline, com tela apagada e em
-  background;
-- o caminho crítico do GPS não recebe processamento pesado, chamadas comerciais
-  ou efeitos derivados;
-- lógica crítica não depende de componente montado;
-- a transação crítica de finalização/recovery até save mínimo, cleanup e
-  liberação da UI usa dependências locais já carregadas; tarefas derivadas
-  posteriores podem carregar adapters próprios sem bloquear a corrida;
-- o total pausado é monotônico; retomar acumula a pausa antes de publicar
-  `RUNNING`;
-- a tela ativa é mínima: tempo, distância, pace, estado, GPS crítico, pausa,
-  retomada, finalização e segurança;
-- território é consequência silenciosa, apresentada principalmente depois;
-- não há anúncios, ofertas, upgrade, parceiros ou recompensas durante atividade
-  ativa/pausada, recuperação ou finalização;
-- o salvamento mínimo acontece antes de território, XP, ranking, conquistas,
-  recompensa, anúncio, replay, exportação, compartilhamento e sync remoto;
-- falhas derivadas são retomáveis e nunca invalidam uma atividade salva.
+O código não valida automaticamente uma decisão estratégica legada ou incorreta.
+Roadmap e backlog ordenam trabalho; hipóteses não autorizam implementação.
 
-## Arquitetura
+## Checklist inicial obrigatório
 
-- verifique serviços, hooks, repositories, stores, contextos, componentes e
-  utilitários existentes antes de criar outro;
-- se houver implementação parcial, consolide-a; não crie um caminho paralelo;
-- preserve `activeRunTrackingService`, checkpoints, repositories e a fila
-  pós-corrida como bases até uma migração explícita;
-- mantenha domínio separado de Firebase, mapas, analytics, anúncios, pagamentos
-  e outros fornecedores;
-- entitlements, feature flags, política de anúncios, recompensas e pagamentos
-  devem ter decisões centrais, não condicionais espalhadas por telas;
-- gateway é infraestrutura substituível e nunca pertence ao domínio de tracking;
-- recompensas são concedidas por domínio/aplicação, nunca por componente visual;
-- qualquer remoção exige inventário de usos, impacto, substituição e rollback.
+Antes de alterar qualquer coisa:
 
-## Produto e negócio
+- confirme a branch e execute `git status --short`;
+- identifique e preserve alterações locais existentes;
+- leia o núcleo obrigatório e as fontes específicas do domínio;
+- localize a implementação atual, caminhos legados e trabalho semelhante;
+- identifique testes existentes e bugs conhecidos relacionados;
+- confronte estado atual com direção aprovada e registre divergências;
+- defina o escopo e a fase autorizada, com validação e rollback;
+- evite duplicar serviço, hook, repository, store, contexto, componente,
+  utilitário, storage ou pipeline.
 
-- o Relatório da Expedição é a experiência pós-corrida principal;
-- o relatório é modular, persistente, pulável, reabrível, offline-first e aceita
-  resultados parciais honestos;
-- Free preserva a experiência central;
-- Plus entrega valor positivo; remoção de anúncios não pode ser seu único valor;
-- Pro é hipótese até decisão específica;
-- parceiros participam da experiência por desafios, eventos, temporadas ou
-  recompensas; não interrompem o corredor;
-- anúncios são uma fonte secundária, desacoplada e desligável;
-- pagamentos, moedas, carteira, split e marketplace não são autorizados apenas
-  por constarem como possibilidade futura.
+## Princípios permanentes
 
-## Status de ideias
+- **A corrida é a ação; o pós-corrida é o jogo.**
+- Durante corrida ativa, estabilidade possui prioridade absoluta.
+- O usuário deve poder correr sem olhar para o celular.
+- O tracking deve funcionar offline, em background e com a tela apagada, dentro
+  dos limites reais e documentados da plataforma.
+- A interface não é a fonte canônica do estado da corrida.
+- Firestore não pode ser obrigatório para iniciar, acompanhar, finalizar,
+  salvar ou recuperar uma atividade.
+- O save mínimo local ocorre antes de qualquer processamento derivado.
+- Territórios, XP, ranking, recompensas, replay, exportação, compartilhamento e
+  sync remoto não podem bloquear o salvamento.
+- Não execute processamento pesado no caminho crítico do GPS.
+- Não acople lógica crítica a componente montado.
+- Pesquise e consolide o caminho existente antes de criar implementação nova.
+- Não implemente hipótese como decisão aprovada.
+- Não declare teste, lint, deploy ou validação física que não ocorreu.
+- Toda alteração relevante atualiza documentação e testes correspondentes.
+- Trabalhe em fases pequenas, verificáveis, reversíveis e com commits separados;
+  não faça commit sem autorização da tarefa.
 
-Use somente: `aprovada`, `aprovada conceitualmente`, `planejada`, `em validação`,
-`implementada`, `parcialmente implementada`, `descartada` ou `bloqueada`.
+## Protocolo de divergência
 
-- “aprovada” orienta implementação;
-- “aprovada conceitualmente” orienta arquitetura, não autoriza produção;
-- “planejada” pode entrar no roadmap;
-- “em validação” não autoriza código de produção;
-- “descartada” exige nova decisão para retornar;
-- “bloqueada” registra o motivo.
+Quando código e documentação divergirem:
 
-## Processo obrigatório
+1. registre a divergência sem escolher silenciosamente;
+2. verifique o comportamento real no código, testes, configuração e, quando
+   aplicável, em execução observável;
+3. identifique a fonte que descreve o estado atual;
+4. identifique a fonte que representa a direção ou decisão aprovada;
+5. não transforme comportamento legado em regra estratégica;
+6. corrija ou marque claramente a fonte desatualizada;
+7. registre decisão relevante em ADR ou documento equivalente;
+8. apresente risco, impacto, migração e rollback.
 
-1. confirme branch e estado do Git;
-2. leia README, documentação do domínio, ADRs, testes e bugs conhecidos;
-3. procure implementação semelhante e caminhos legados;
-4. trabalhe em fases pequenas, verificáveis e reversíveis;
-5. execute testes proporcionais ao risco;
-6. nunca declare teste, Android físico ou deploy que não ocorreu;
-7. atualize documentação, ADR, changelog e revisão correspondente;
-8. use commits separados por fase.
+Se duas decisões estratégicas continuarem incompatíveis, registre o bloqueio e
+solicite decisão humana. Não altere uma regra estratégica por inferência.
 
-Ao fim de cada fase, registre diagnóstico, arquivos analisados/alterados,
-justificativa, testes/resultados, riscos, validações físicas pendentes, próximos
-passos e commit.
+## Limite de escopo
 
-Comece por [docs/product/README.md](docs/product/README.md) e
-[docs/00-fontes-do-projeto.md](docs/00-fontes-do-projeto.md).
+Não aproveite uma tarefa pequena para reescrever o projeto, criar arquitetura
+paralela, trocar fornecedor, alterar domínio não relacionado, remover
+compatibilidade ou executar limpeza ampla não solicitada. Remoções exigem
+inventário de usos, substituição, impacto, migração e rollback.
+
+## Entrega por fase
+
+Ao final de cada fase, registre:
+
+- diagnóstico e fontes consultadas;
+- arquivos analisados e alterados;
+- justificativas e decisões;
+- testes e validações realmente executados, com resultados;
+- riscos e validações físicas pendentes;
+- divergências e pendências;
+- rollback e próximo passo;
+- commit sugerido.

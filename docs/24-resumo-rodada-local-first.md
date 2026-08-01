@@ -11,7 +11,9 @@ Este documento nao substitui os demais arquivos em `/docs`; ele resume o estado 
 
 **Nota de 2026-07-24:** este é um snapshot técnico, não a visão de produto vigente.
 Para produto, negócio e arquitetura-alvo, consultar `AGENTS.md`,
-`docs/product/README.md` e `docs/architecture/adrs-direcao-oficial.md`.
+`docs/00-fontes-do-projeto.md`,
+`docs/product/direcao-estrategica-completa.md` e
+`docs/architecture/adrs-direcao-oficial.md`.
 
 ## Escopo implementado
 

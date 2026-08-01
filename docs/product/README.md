@@ -1,36 +1,45 @@
 # Direção de produto
 
-Este diretório é o contexto normativo da nova direção de produto e negócio da
-Wayper. Ele não substitui o código como primeira fonte do comportamento
-implementado.
+> **Status:** vigente<br>
+> **Tipo:** índice temático<br>
+> **Escopo:** produto, negócio e experiência<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal:** [`docs/product/direcao-estrategica-completa.md`](direcao-estrategica-completa.md)
 
-## Leitura recomendada
+Este diretório organiza a direção de produto e negócio da Wayper. A fonte
+normativa principal é
+[`direcao-estrategica-completa.md`](direcao-estrategica-completa.md); os arquivos
+numerados são recortes temáticos complementares e não criam versões concorrentes
+da estratégia.
 
-1. [Visão oficial](00-visao-oficial.md)
-2. [Princípios do produto](01-principios-do-produto.md)
-3. [Experiência durante a corrida](07-experiencia-durante-a-corrida.md)
-4. [Relatório da Expedição](08-relatorio-da-expedicao.md)
-5. [Decisões aprovadas](10-decisoes-aprovadas.md)
-6. [Hipóteses em avaliação](11-hipoteses-em-avaliacao.md)
-7. [Critérios para novas features](12-criterios-para-novas-features.md)
+## Leitura
 
-Modelo de negócio, planos, parcerias, monetização, eventos e economia estão nos
-demais documentos numerados.
+1. [Direção estratégica completa](direcao-estrategica-completa.md)
+2. [Visão oficial](00-visao-oficial.md)
+3. [Princípios do produto](01-principios-do-produto.md)
+4. [Experiência durante a corrida](07-experiencia-durante-a-corrida.md)
+5. [Relatório da Expedição](08-relatorio-da-expedicao.md)
+6. [Decisões aprovadas](10-decisoes-aprovadas.md)
+7. [Hipóteses em avaliação](11-hipoteses-em-avaliacao.md)
+8. [Critérios para novas features](12-criterios-para-novas-features.md)
 
-Analytics e eventos planejados estão em
-[13-analytics.md](13-analytics.md). A estratégia de flags está em
-[docs/architecture/feature-flags.md](../architecture/feature-flags.md).
+Modelo de negócio, planos, parcerias, monetização, eventos, economia e analytics
+estão nos demais documentos numerados. A estratégia de flags está em
+[`docs/architecture/feature-flags.md`](../architecture/feature-flags.md).
 
 ## Como interpretar
 
-- estes documentos definem a direção aprovada;
-- “aprovada conceitualmente” orienta limites e contratos, mas não autoriza
-  integração de produção;
-- a presença de um conceito aqui não significa que esteja implementado;
-- o estado real está na matriz da
-  [auditoria de 2026-07-24](../audits/2026-07-24-direcao-oficial-produto.md);
+- a direção completa define decisões e limites aprovados;
+- os documentos temáticos explicam domínios e podem registrar maturidade local;
+- “aprovado conceitualmente” orienta arquitetura, mas não autoriza integração;
+- hipótese ou item em validação não autoriza código de produção;
+- a presença de um conceito não significa que ele esteja implementado;
+- código, testes e configuração de `develop` mostram o estado atual;
+- auditorias em [`docs/audits/`](../audits/) são evidências datadas, não fontes
+  normativas permanentes;
 - ADRs ficam em
-  [docs/architecture/adrs-direcao-oficial.md](../architecture/adrs-direcao-oficial.md).
+  [`docs/architecture/adrs-direcao-oficial.md`](../architecture/adrs-direcao-oficial.md)
+  e [`docs/08-decisoes-tecnicas.md`](../08-decisoes-tecnicas.md).
 
-`direcao-estrategica-completa.md` é o material integral da revisão de 2026-07-24.
-Os arquivos numerados são a versão operacional e permanente da direção.
+A hierarquia completa e o protocolo de divergência estão em
+[`docs/00-fontes-do-projeto.md`](../00-fontes-do-projeto.md).

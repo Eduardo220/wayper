@@ -1,35 +1,36 @@
 # Prompts para IA
 
-## Prompt base obrigatorio
+> **Status:** vigente como biblioteca de exemplos<br>
+> **Tipo:** referência operacional auxiliar<br>
+> **Escopo:** prompts temáticos para tarefas do Wayper<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`AGENTS.md`](../../AGENTS.md)
 
-Use antes de qualquer tarefa de implementacao ou documentacao do Wayper:
+Este arquivo não define regras próprias para agentes. Os prompts abaixo só
+acrescentam contexto temático ao núcleo permanente.
+
+## Entrada canônica para qualquer prompt
+
+Use uma referência curta, sem copiar outra versão das regras:
 
 ```txt
-Voce esta trabalhando no projeto Wayper.
-
-Antes de implementar qualquer coisa:
-1. Analise o codigo atual da branch develop.
-2. Analise git status.
-3. Verifique se ja existe algo parecido implementado.
-4. Leia os arquivos relevantes em /docs, incluindo o resumo local-first quando aplicavel.
-5. Nao duplique services, hooks, repositories, componentes ou logica existente.
-6. Se algo ja existir parcialmente, refatore e complete em vez de criar implementacao paralela.
-7. Preserve padrao visual, arquitetura, nomenclatura e estrutura atual.
-8. Nao dependa obrigatoriamente de Firestore nos fluxos local-first.
-9. Nao reative runService.js, zones legado, xpService ou MedalsWidget como fonte oficial.
-10. Preserve: a corrida e a acao; o pos-corrida e o jogo.
-11. Nao bloqueie save minimo com processamento derivado.
-12. Documente decisoes importantes e rode testes antes de concluir.
+Siga AGENTS.md e o Context Gate de docs/14-instrucoes-para-ia.md.
+Leia o nucleo permanente e use a matriz de docs/00-fontes-do-projeto.md para
+selecionar as fontes adicionais deste dominio. Confronte a tarefa com
+docs/product/direcao-estrategica-completa.md antes de alterar qualquer arquivo.
 ```
 
-Para a rodada consolidada em 2026-06-19, consulte tambem `docs/24-resumo-rodada-local-first.md`.
+`docs/24-resumo-rodada-local-first.md` é um snapshot datado e só deve ser lido
+quando a matriz ou o domínio da tarefa o exigir.
 
 ## Como usar
 
 Use estes prompts com Codex, Claude ou GPT quando precisar evoluir a Wayper. Antes
-de executar qualquer prompt, peça para ler `AGENTS.md`,
-`docs/00-fontes-do-projeto.md`, `docs/product/README.md` e [[00-index]]. O código
-de `develop` é a primeira fonte do comportamento implementado.
+de executar qualquer prompt, carregue `AGENTS.md`,
+`docs/00-fontes-do-projeto.md`,
+`docs/product/direcao-estrategica-completa.md` e `README.md`. As fontes citadas
+em cada exemplo são adicionais. O código de `develop` é a primeira fonte do
+comportamento implementado, não da direção estratégica.
 
 ## Revisar arquitetura
 
@@ -45,8 +46,8 @@ Explique impactos em GPS, mapa, Firestore, performance e experiência do usuári
 
 ```text
 Leia docs/wayper/00-index.md, docs/wayper/02-mvp.md e qualquer documento relacionado à feature.
-Implemente a feature seguindo o escopo do MVP.
-Se a feature estiver fora do MVP, explique a justificativa antes de implementar e registre proposta na documentação.
+Implemente a feature somente se estiver no escopo aprovado da tarefa.
+Se estiver fora do escopo aprovado ou for hipótese, registre a proposta e aguarde decisão explícita; não implemente.
 Não crie coleção nova no Firestore sem atualizar docs/wayper/08-firebase-firestore.md e docs/wayper/10-decisoes-do-projeto.md.
 Ao final, liste arquivos alterados e riscos restantes.
 ```
@@ -99,7 +100,7 @@ Leia docs/wayper/07-telas-e-fluxos.md e docs/wayper/02-mvp.md.
 Planeje a tela ou fluxo solicitado para React Native com Expo.
 Mantenha o foco no ciclo principal do MVP.
 Descreva estados vazios, carregamento, erro, permissão de GPS e ações principais.
-Não inclua features futuras como clans ou ranking global sem justificar.
+Não inclua features futuras como clans ou ranking global sem decisão aprovada.
 ```
 
 ## Criar proposta de decisão

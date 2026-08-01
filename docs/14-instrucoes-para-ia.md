@@ -1,334 +1,195 @@
 # Instruções para IA no Projeto Wayper
 
-Use este arquivo como fonte para configurar o Project/GPT do Wayper.
+> **Status:** vigente<br>
+> **Tipo:** fonte operacional detalhada<br>
+> **Escopo:** agentes de IA e fluxos assistidos<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte normativa relacionada:** [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md)
 
-## Contexto
+Este documento explica o processo detalhado de trabalho dos agentes. As regras
+curtas e obrigatórias ficam em [`AGENTS.md`](../AGENTS.md); a hierarquia e a
+matriz de leitura ficam em
+[`docs/00-fontes-do-projeto.md`](00-fontes-do-projeto.md). Não copie a estratégia
+ou regras técnicas completas para prompts paralelos.
 
-A Wayper é uma plataforma mobile de exercício físico gamificada.
+## Fluxo antes da tarefa
 
-> A Wayper transforma exercício físico em uma aventura contínua. Durante a
-> atividade, o usuário apenas corre. Depois da atividade, descobre tudo o que
-> conquistou.
+1. Identifique o tipo, o domínio e a autorização da tarefa.
+2. Carregue o núcleo permanente: `AGENTS.md`, o catálogo de fontes, a direção
+   estratégica completa e `README.md`.
+3. Consulte a matriz “tipo de tarefa → documentos” no catálogo.
+4. Inspecione o código, os testes e a configuração reais do domínio.
+5. Pesquise implementação semelhante, caminhos legados e dependências.
+6. Consulte testes existentes, bugs conhecidos e evidências físicas aplicáveis.
+7. Identifique divergências entre estado atual, decisões e planejamento.
+8. Apresente ou registre um plano em fases pequenas, com risco, teste e rollback.
+9. Execute somente a fase autorizada.
 
-Regra obrigatória: **a corrida é a ação; o pós-corrida é o jogo**. Durante a
-atividade, tracking e segurança dominam. Território, progressão, competição,
-recompensa e negócio aparecem principalmente depois.
+Uma tarefa documental segue o mesmo fluxo, mas não precisa carregar detalhes de
+código alheios ao tema nem executar build do aplicativo sem motivo proporcional.
 
-## Branches
+## Context Gate
 
-- `develop`: desenvolvimento ativo.
-- `main`: versão oficial/estável.
+Antes de escrever código ou documentação, registre internamente ou na resposta:
 
-## Prioridade de fontes
+| Campo | Evidência mínima |
+| --- | --- |
+| Branch ativa | resultado de `git branch --show-current` |
+| Estado do Git | resultado de `git status --short` e alterações locais relevantes |
+| Núcleo lido | quatro fontes permanentes |
+| Fontes específicas | documentos selecionados pela matriz |
+| Implementação existente | arquivos, serviços, funções, componentes e caminhos legados encontrados |
+| Testes existentes | suítes, scripts e checklists reais relacionados |
+| Restrições | regras estratégicas e técnicas que limitam a fase |
+| Divergências | estado atual versus direção, decisão, roadmap ou documento antigo |
+| Escopo da fase | o que será e o que não será alterado |
+| Testes planejados | comandos ou validações proporcionais ao risco |
+| Rollback | como desfazer a fase sem perda de dados ou compatibilidade |
 
-1. Código atual do repositório na branch `develop`.
-2. Código da branch `main`, somente como referência estável.
-3. `README.md`.
-4. Arquivos em `/docs`.
-5. ADRs e decisões técnicas.
-6. Issues e PRs.
-7. Planos locais.
-8. Conversas e anotações externas.
+Se um campo não se aplicar, registre o motivo. O Context Gate impede começar a
+escrever antes de compreender o projeto; ele não é uma formalidade para preencher
+depois da alteração.
 
-## Protocolo Obsidian como mente do projeto
+## Como interpretar as fontes
 
-O Obsidian e os arquivos Markdown em `/docs` funcionam como a memoria viva do Wayper. O codigo mostra o que esta implementado na branch atual; os Markdown registram intencao, planejamento, decisoes, bugs, ideias, propostas, riscos e proximos caminhos. Uma alteracao relevante no app so fica completa quando o codigo e a documentacao contam a mesma historia.
+### Estado atual
 
-### Papel das fontes
+Código, testes, configuração e comportamento observado em `develop` mostram o
+que existe. `main` é referência estável. Afirmações de implementação exigem
+evidência nessas fontes.
 
-1. `develop` e a fonte da verdade implementada: antes de afirmar que algo existe, leia o codigo atual e o estado do worktree.
-2. `main` representa a referencia estavel/producao quando a pergunta for sobre release.
-3. `/docs` e a fonte da intencao, memoria, historico, decisoes, riscos e planejamento do projeto.
-4. Conversas externas, notas soltas e conhecimento geral so podem complementar quando nao contradizem codigo e docs.
-5. Propostas novas precisam de validacao do Eduardo antes de virar implementacao.
+### Direção e decisões
 
-### Arquivos para consultar sempre
+A direção estratégica mostra como o produto deve evoluir. Decisões aprovadas e
+ADRs aceitas definem contratos. Roadmap define sequência; backlog define ações
+priorizadas. Hipóteses e propostas pendentes não autorizam implementação.
 
-- `AGENTS.md`
-- `docs/00-fontes-do-projeto.md`
-- `docs/product/README.md`
-- `docs/product/10-decisoes-aprovadas.md`
-- `docs/product/11-hipoteses-em-avaliacao.md`
-- `docs/product/12-criterios-para-novas-features.md`
-- `docs/14-instrucoes-para-ia.md`
-- `docs/24-resumo-rodada-local-first.md`
-- `docs/13-bugs-conhecidos.md`
-- `docs/16-ideias-de-melhoria.md`
-- `docs/17-propostas-pendentes.md`
-- `docs/wayper/12-ideias-futuras.md`
-- `docs/04-arquitetura.md`
-- `docs/08-decisoes-tecnicas.md`
-- `docs/10-regras-de-negocio.md`
-- `docs/12-guia-de-testes.md`
-- `docs/wayper/00-index.md`
-- `docs/wayper/09-arquitetura-tecnica.md`
-- `docs/wayper/10-decisoes-do-projeto.md`
+Nunca resuma essa relação como “o código sempre vence a documentação”. O código
+pode revelar uma lacuna ou legado que precisa ser preservado até uma migração,
+sem transformar o legado em direção aprovada.
 
-Consulte tambem docs de dominio conforme a tarefa: roadmap, backlog, modelo de dados, fluxos, padroes de codigo, permissoes/onboarding, GPS, corrida, Firestore, sharing, diagnostico ou qualquer arquivo citado por uma decisao anterior.
+## Planejamento e execução em fases
 
-### Antes de alterar
+Cada fase deve ter:
 
-- Confirmar branch `develop` e revisar `git status --short`.
-- Ler o codigo atual envolvido e procurar implementacao parecida.
-- Ler os docs relevantes do dominio afetado.
-- Verificar `docs/13-bugs-conhecidos.md`.
-- Verificar `docs/16-ideias-de-melhoria.md`.
-- Verificar `docs/17-propostas-pendentes.md`.
-- Verificar `docs/wayper/12-ideias-futuras.md`.
-- Verificar se a tarefa ja esta registrada no backlog, roadmap, decisoes tecnicas ou decisoes do projeto.
-- Identificar services, hooks, repositories, componentes, storages e helpers existentes antes de propor qualquer novo arquivo.
+- objetivo e critérios de aceite;
+- arquivos previstos;
+- dependências e compatibilidade;
+- riscos de dados, corrida ativa, UX e operação;
+- testes automatizados e manuais proporcionais;
+- validações externas ou físicas pendentes;
+- rollback;
+- commit independente sugerido.
 
-### Durante a alteracao
+Não amplie a autorização. Uma tarefa de diagnóstico não autoriza correção; uma
+tarefa documental não autoriza alteração de produção; uma feature pequena não
+autoriza refatoração geral.
 
-- Implementar apenas o que foi pedido ou aprovado explicitamente.
-- Nao executar ideia pendente sem autorizacao do Eduardo.
-- Nao transformar ideia em tarefa ativa sem decisao humana.
-- Nao criar feature paralela, service paralelo, repository paralelo, hook paralelo, storage paralelo ou componente duplicado.
-- Refatorar/completar o caminho existente quando ja houver implementacao parcial.
-- Preservar local-first e Firestore como remoto/best effort nos fluxos ja consolidados.
-- Preservar diferenca entre implementado, em validacao, pendente de decisao, ideia futura, bug conhecido, proposta aprovada e proposta rejeitada.
-- Nao alterar arquivos locais/visuais do Obsidian, como `docs/.obsidian/workspace.json`, `graph.json`, cache, plugins, temas ou arquivos equivalentes.
+Durante a implementação:
 
-### Depois da alteracao
+- preserve alterações locais que não pertencem à tarefa;
+- consolide a implementação existente em vez de abrir caminho paralelo;
+- mantenha estado de domínio fora de componentes quando a regra exigir;
+- preserve contratos locais, migração e rollback;
+- interrompa e registre qualquer conflito estratégico não resolvido;
+- atualize testes e fontes documentais afetadas pela mudança real.
 
-- Atualizar docs tecnicos afetados pelo comportamento alterado.
-- Atualizar bug conhecido se corrigiu, reproduziu ou encontrou problema.
-- Registrar decisao tecnica quando houver mudanca de arquitetura, regra, sync, dados, permissao, diagnostico ou fluxo critico.
-- Registrar em `docs/16-ideias-de-melhoria.md` pelo menos uma oportunidade real relacionada a uma alteracao relevante, salvo mudanca puramente mecanica e justificada.
-- Registrar em `docs/17-propostas-pendentes.md` quando a oportunidade ja tiver escopo de proxima tarefa e precisar de decisao do Eduardo.
-- Registrar em `docs/wayper/12-ideias-futuras.md` quando a oportunidade for maior, de medio/longo prazo ou depender de backend/sync remoto/validacao real.
-- Documentar testes, validacao manual, riscos e pendencias.
-- Deixar claro o que esta implementado, em validacao, pendente ou apenas sugerido.
+## Protocolo de divergência
 
-### Convencao de status
+1. Descreva a divergência com arquivos e evidências.
+2. Confirme o comportamento real.
+3. Classifique cada fonte: estado atual, normativa, decisão, técnica,
+   planejamento, operação, histórico ou hipótese.
+4. Identifique qual fonte está desatualizada.
+5. Preserve compatibilidade até existir migração segura.
+6. Atualize ou marque a fonte incorreta sem apagar o histórico.
+7. Registre decisão importante em ADR ou documento equivalente.
+8. Informe impacto, risco, validação e rollback.
 
-Para ideias e decisões de produto, use os estados normativos: `APROVADA`,
-`APROVADA_CONCEITUALMENTE`, `PLANEJADA`, `EM_VALIDACAO`, `IMPLEMENTADA`,
-`PARCIALMENTE_IMPLEMENTADA`, `DESCARTADA` ou `BLOQUEADA`.
+Quando duas decisões estratégicas forem incompatíveis, não escolha por
+conveniência. Marque como `bloqueado`, exponha as alternativas e solicite decisão
+humana.
 
-Arquivos operacionais históricos também usam os estados abaixo. Ao atualizá-los,
-registre a equivalência sem apagar contexto anterior:
+## Regras contra alucinação e afirmações falsas
 
-- `AGUARDANDO_VALIDAÇÃO_EDU`: sugestao registrada; Eduardo ainda nao decidiu.
-- `APROVADO`: Eduardo aprovou a proposta ou decisao.
-- `EM_IMPLEMENTAÇÃO`: trabalho autorizado esta em andamento.
-- `IMPLEMENTADO`: codigo ou documentacao foi entregue.
-- `EM_VALIDAÇÃO`: entregue, mas ainda precisa validacao manual, real ou de produto.
-- `REJEITADO`: Eduardo rejeitou ou a ideia foi descartada com motivo.
-- `ADIADO`: valido, mas fora da rodada atual.
-- `BLOQUEADO`: depende de credencial, aparelho, decisao, backend, dado real ou contexto externo.
-- `LEGADO`: existe para compatibilidade/historico; nao e fonte oficial nova.
-- `CORRIGIDO`: bug corrigido com evidencia registrada.
-- `PRECISA_TESTE_REAL`: nao pode ser encerrado sem teste fisico ou ambiente real.
-- `PENDENTE_DECISÃO`: proposta com escopo claro aguardando decisao do Eduardo.
+- Não invente arquivo, função, serviço, coleção, script ou configuração.
+- Não invente teste, resultado, log, commit, build, deploy ou comportamento.
+- Não assuma que documentação antiga ainda vale; verifique status e precedência.
+- Não declare Android físico, GPS real, tela apagada ou background como validados
+  sem execução real e evidência registrada.
+- Não declare lint se o script ou a ferramenta não existir.
+- Não afirme que SDK, gateway, provider, backend ou sync remoto está integrado
+  sem evidência no código e na configuração.
+- Não trate mock, demo, cache ou plano como dado real.
+- Não transforme presença em roadmap ou documento futuro em implementação.
+- Não esconda falha de comando, teste pulado ou validação pendente.
 
-Quando o arquivo precisar ficar 100% ASCII por consistencia local, use as grafias sem acento `AGUARDANDO_VALIDACAO_EDU` e `PENDENTE_DECISAO` como equivalentes operacionais.
+Separe explicitamente:
 
-### Bugs
+- **fato:** evidência observada em fonte real;
+- **inferência:** conclusão derivada, com a base indicada;
+- **hipótese:** possibilidade ainda não confirmada;
+- **recomendação:** ação proposta, ainda não executada ou aprovada.
 
-Bugs pertencem a `docs/13-bugs-conhecidos.md`. Nao apague bug conhecido sem registrar motivo. Ao corrigir, mova para "Bugs corrigidos" ou altere o status para `CORRIGIDO`, incluindo correcao aplicada, evidencia e teste necessario. Se o bug exige aparelho fisico, build release, credenciais ou ambiente externo, mantenha como `PRECISA_TESTE_REAL`, `BLOQUEADO` ou `EM_VALIDAÇÃO` ate haver evidencia.
+## Status documental
 
-### Ideias
+Use, quando aplicável: `aprovado`, `vigente`, `em revisão`,
+`parcialmente implementado`, `planejado`, `hipótese`, `histórico`, `substituído`
+ou `bloqueado`.
 
-Ideias pertencem a `docs/16-ideias-de-melhoria.md`. Ideia nao e tarefa aprovada. Toda ideia criada pela IA deve ter origem, tarefa relacionada, arquivos afetados quando conhecidos, data, status, proximo passo e, quando util, prompt futuro sugerido. Ideias geradas ao final de uma alteracao relevante devem ser uteis, especificas e relacionadas ao que mudou.
+Status documental não substitui status de bug, execução ou validação física. Um
+documento `vigente` pode descrever uma feature `parcialmente implementada`; um
+checklist existente não significa que seus itens foram executados.
 
-### Propostas pendentes
+Também não confunda metadado documental com status de ideia. `Hipótese` pode ser
+o tipo ou o status documental de uma fonte inteira; cada ideia dentro dela usa o
+vocabulário operacional da direção estratégica, como `em validação` ou
+`bloqueada`, sem adquirir autorização de implementação.
 
-Propostas pertencem a `docs/17-propostas-pendentes.md`. Use proposta quando a ideia ja tem escopo executavel, criterios de aceite e decisao necessaria do Eduardo. Proposta pendente nao pode ser implementada automaticamente. Se Eduardo aprovar, registre a decisao, atualize status para `APROVADO` ou mova para "Propostas aprovadas", e so entao implemente quando solicitado.
+## Atualização documental por tipo de mudança
 
-### Ideias futuras
+| Mudança | Fonte a atualizar |
+| --- | --- |
+| Decisão técnica | `docs/08-decisoes-tecnicas.md` ou `docs/architecture/adrs-direcao-oficial.md`; template em `docs/templates/template-decisao-tecnica.md` |
+| Bug, risco ou regressão | `docs/13-bugs-conhecidos.md`; issue quando aplicável |
+| Teste automatizado ou matriz manual | `docs/12-guia-de-testes.md`; checklist físico específico quando aplicável |
+| Arquitetura ou fonte de estado | `docs/04-arquitetura.md`, modelo de dados e documento técnico do domínio |
+| Regra de negócio | `docs/10-regras-de-negocio.md` e documento de produto relacionado |
+| Roadmap ou gate | `docs/02-roadmap.md` |
+| Prioridade ou ação executável | `docs/03-backlog.md` |
+| Definição de produto ou experiência | `docs/01-visao-do-produto.md` e recorte correspondente em `docs/product/` |
+| Build, release, ambiente ou rollback operacional | `docs/11-plano-de-deploy.md` e guia de testes |
+| Hipótese ou ideia ainda não autorizada | `docs/product/11-hipoteses-em-avaliacao.md`, `docs/16-ideias-de-melhoria.md` ou `docs/17-propostas-pendentes.md`, conforme maturidade |
+| Mudança estratégica | `docs/product/direcao-estrategica-completa.md`, decisões aprovadas, ADRs, roadmap, backlog e fontes temáticas afetadas |
+| Entrega concluída | changelog e revisão de implementação, quando aplicáveis à fase |
 
-Ideias maiores, de medio/longo prazo, dependentes de backend/sync remoto, validacao real ou mudanca de produto pertencem a `docs/wayper/12-ideias-futuras.md`. Elas nao entram no backlog ativo sem aprovacao explicita. Nao documente sync remoto como implementado quando existe apenas estrutura local `PENDING_SYNC`.
+Documento substituído deve manter aviso e link para a fonte sucessora. Auditoria
+datada registra evidência histórica e não deve ser reescrita para parecer atual.
 
-### Regra da ideia final obrigatoria
+## Validação honesta
 
-Ao final de toda alteracao relevante no app, registre uma oportunidade de melhoria em `docs/16-ideias-de-melhoria.md`:
+- Descubra scripts em `package.json`; não presuma nomes usuais.
+- Execute a menor validação suficiente para o risco e amplie quando necessário.
+- Para mudanças só em Markdown, prefira `git diff --check`, verificação de links,
+  busca por caminhos absolutos e lint Markdown apenas se já configurado.
+- Não instale dependência só para simular uma validação documental.
+- Teste automatizado não substitui validação física de GPS/background.
+- Registre comando, resultado, falha, item não executado e razão.
 
-- A ideia deve estar relacionada ao que foi alterado.
-- A ideia deve ter utilidade real para produto, qualidade, operacao, diagnostico ou UX.
-- O status inicial deve ser `AGUARDANDO_VALIDAÇÃO_EDU`.
-- A ideia nao pode ser implementada automaticamente na mesma rodada.
-- O proximo passo deve deixar claro como Eduardo valida, rejeita ou converte em proposta.
+## Entrega por fase
 
-Se a mudanca for puramente mecanica, formatacao, renomeacao sem impacto de produto ou ajuste sem aprendizado novo, registre na entrega que nao houve ideia relevante e explique o motivo.
+Ao concluir, informe de forma verificável:
 
-### Regra de decisao do Eduardo
+1. diagnóstico;
+2. fontes consultadas;
+3. arquivos analisados e alterados;
+4. decisões e justificativas;
+5. testes realmente executados e resultados;
+6. divergências resolvidas e não resolvidas;
+7. riscos e validações físicas pendentes;
+8. rollback;
+9. próximo passo;
+10. commit sugerido.
 
-- Codex pode sugerir.
-- Codex pode registrar.
-- Codex pode organizar.
-- Codex nao pode aprovar sozinho.
-- Codex nao pode transformar proposta em implementacao sem pedido explicito.
-- Eduardo decide o que entra na proxima rodada, o que fica adiado e o que e rejeitado.
-
-### Rastreabilidade
-
-Use IDs previsiveis quando registrar novas entradas:
-
-- `BUG-YYYYMMDD-001`
-- `IDEA-YYYYMMDD-001`
-- `PROP-YYYYMMDD-001`
-- `FUTURE-YYYYMMDD-001`
-
-Toda ideia/proposta/bug/futuro deve mencionar origem, tarefa relacionada, arquivos afetados quando souber, data, status e proxima acao.
-
-### Checklist pos-alteracao
-
-- [ ] Atualizei docs tecnicos afetados?
-- [ ] Atualizei bugs conhecidos, se corrigi/encontrei bug?
-- [ ] Registrei decisao tecnica, se houve mudanca de arquitetura?
-- [ ] Registrei pelo menos uma ideia de melhoria relacionada?
-- [ ] Se a ideia exige aprovacao como proxima tarefa, deixei em propostas pendentes?
-- [ ] Marquei claramente o que esta implementado vs pendente?
-- [ ] Rodei testes relevantes?
-- [ ] Documentei riscos?
-- [ ] Nao alterei `.obsidian` local/visual?
-- [ ] Nao implementei ideia nao aprovada?
-
-## Regras de resposta
-
-Quando responder sobre o Wayper:
-
-- Comece analisando a branch `develop`, `git status`, codigo existente e docs relevantes.
-- Consulte o contexto do repositório antes de sugerir mudanças.
-- Não invente estrutura se o código mostrar outra.
-- Aponte arquivos prováveis de alteração.
-- Separe solução rápida de solução bem feita.
-- Quando algo não estiver definido, marque como suposição.
-- Priorize segurança, privacidade e consistência dos dados.
-- Não sugira expor credenciais, tokens ou arquivos `.env`.
-- Não trate documentação antiga como verdade se ela contradiz o código.
-- Use `docs/24-resumo-rodada-local-first.md` como resumo rapido do estado consolidado em 2026-06-19.
-
-## Regras técnicas
-
-- Respeitar React Native/Expo.
-- Respeitar Firebase Auth e Firestore.
-- Tratar Firestore como remoto/best effort nos fluxos local-first consolidados; nao afirmar que foi removido.
-- Respeitar MapLibre/OpenFreeMap.
-- Usar Turf para geometrias quando fizer sentido.
-- Testar regras críticas de corrida, zona e ranking.
-- Cuidar de permissão de localização e falhas de GPS.
-- Preservar a arquitetura local-first atual: corrida ativa em `wayper:activeRun:v2`, historico em `runs` via `sync.js`, sync de runs por `runSyncQueueService`.
-- Preferir repositories/facades existentes antes de chamar Firestore em telas.
-- Nao reativar `runService.js` legado nem `wayper_unsynced_runs_v2` como base nova.
-- Para territorios, usar `TerritoryRepository`/`territoryStorageService` e os storages atuais `wayper_territories_v1`, `wayper_territory_events_v1` e `wayper_territory_leaderboards_v1`.
-- Nao gravar novo dado territorial em `zones` ou `@wayper_zones`; esses storages sao legado/migracao explicita.
-- Corrida livre nao pode ganhar `area`, `geometry`, `zoneCoords`, `territorySummary` ou eventos territoriais falsos.
-- Corrida por zonas deve preservar `area`, `areaM2`, `geometry`, `zoneCoords`, `territorySummary`, `territoryEvents` e `capturedCells` quando a captura local existir.
-- Para XP/progresso/conquistas, usar `ProgressionRepository` e `AchievementRepository` com os storages `wayper_user_progress_v1`, `wayper_xp_events_v1`, `wayper_achievements_v1` e `wayper_achievement_progress_v1`.
-- Nao usar `xpService`, `MedalsWidget`, `medals` ou `@wayper:medals_awarded_v1` como fonte de progresso real sem migracao explicita.
-- XP so deve ser aplicado apos corrida finalizada salva localmente; corrida ativa ou `FINISHING` nao gera XP.
-- Para `Inicio`/Home principal, usar `socialHomeRepository` como composicao social local-first; nao chamar Firestore direto na tela.
-- Home deve mostrar stories, amigos recentes/presenca real-cacheada e feed de atividades; nao deve virar dashboard pessoal.
-- Dashboard pessoal deve ficar em `Dashboard`, `Perfil` ou resumo dedicado, podendo reaproveitar `homeDashboardRepository`/`profileStats`.
-- Home nao deve mostrar demo/mock como story, amigo, online, feed, ranking real, progresso real, avatar real ou territorio real.
-- Home nao deve pausar/finalizar/retomar corrida diretamente; deve navegar para `Mapa` quando houver corrida ativa/pausada preservada.
-- Home nao deve renderizar mapa/rota pesada nem carregar `rawPath` para preview; detalhes ficam para Historico/Detalhe/Mapa.
-- "Adicionar ao story" deve usar `RunRepository`, salvar em `wayper_run_stories_v1` como `PENDING_SYNC`, excluir corrida ativa/`FINISHING` e nao fingir publicacao remota.
-- Feed social cacheado deve usar origem explicita (`remote`, `cache`, `local`, `empty`) e nunca cair em demo silencioso.
-- Para diagnostico/debug, usar `src/screens/DiagnosticsScreen.js`, `localDiagnosticsService`, `runDiagnosticsService`, `diagnosticExportService`, `logStorageService` e `logger.js`; nao criar logger, export ZIP, service de storage ou tela debug paralelos.
-- Diagnostico local deve funcionar offline e sem Firestore obrigatorio.
-- Logs novos devem passar pelo logger central, com categoria adequada e contexto sanitizado.
-- Para Sentry/observabilidade remota, usar `src/services/monitoring/sentryService.js`, `sentrySanitizer.js` e `monitoringBridge.js`; nao criar observability service paralelo.
-- Erro de corrida deve usar `captureRunError` ou logger central com contexto resumido; freeze provavel deve seguir o watchdog de `performanceDiagnosticsService`.
-- Eventos de GPS de alta frequencia devem ser agregados/throttled antes de virar breadcrumb remoto.
-- Sentry event deve carregar `release`, `dist`, `environment`, `buildProfile`, `appVariant` e `sentryEventId` correlacionavel com o log local quando houver envio.
-- `SENTRY_AUTH_TOKEN` nunca deve aparecer em docs com valor real, logs, `.env.example`, `app.json`, `sentry.properties` commitado ou commits.
-- Coordenadas exatas, `rawPath` completo, tokens, emails completos, imagens privadas e payload completo de terceiros nao devem entrar em export/resumo padrao.
-- Debug de alta frequencia deve usar buffer/file-system existente; nao gravar ponto GPS por evento no AsyncStorage.
-- Acoes destrutivas em debug exigem confirmacao explicita e nao devem limpar corridas/runs por padrao.
-- Para permissoes, usar `src/services/permissions.js`; nao criar facade paralela.
-- Onboarding deve informar sem pedir permissao nativa cedo demais.
-- Foreground location e obrigatoria para iniciar/retomar corrida; background location e notificacoes sao limitacoes comunicadas quando negadas.
-- Nao pedir permissao em loop no mount/focus; pedidos nativos devem vir de acao explicita ou preflight contextual.
-- Estados vazios/erro/offline/permissao devem reutilizar `src/components/states` quando possivel.
-- Usuario offline ou sem Firestore deve ver local/cache/vazio honesto, sem spinner infinito e sem mock como dado real.
-- Nao adicionar SQLite sem ADR, medicao e plano incremental.
-- Nao afirmar que background/tela bloqueada esta 100% validado sem teste fisico Android dev/release.
-- Nao afirmar que stories, XP/conquistas ou territorio ja possuem sync remoto completo enquanto os contratos forem futuros.
-- Não tornar Firestore obrigatório para iniciar, acompanhar, finalizar, salvar ou
-  recuperar atividade.
-- Não executar processamento pesado no caminho crítico do GPS.
-- Não acoplar lógica crítica de tracking/finalização a componente montado.
-- Não usar `import()` tardio nem depender de carregamento de bundle na transação
-  crítica de finalização/recovery até save mínimo, cleanup e liberação da UI;
-  adapters obrigatórios devem estar pré-carregados e ser injetados pela
-  composição. Tarefas derivadas posteriores podem carregar adapters próprios.
-- Não permitir regressão de `totalPausedMs`; a retomada acumula a pausa aberta
-  antes de publicar `RUNNING`.
-- Não segurar finalização por território, XP, ranking, recompensa, anúncio,
-  replay, exportação, share ou sync.
-- Não mostrar anúncio, parceiro, upgrade ou recompensa durante atividade,
-  recuperação ou finalização.
-- Evoluir a fila pós-corrida existente em vez de criar pipeline paralelo.
-- Tratar Plus como valor por entitlement; Pro e integrações comerciais não estão
-  autorizados apenas por serem hipóteses documentadas.
-- Gateway, ads, mapa e backend são adapters; nenhum pertence ao tracking.
-- Recompensa é concedida pelo domínio, nunca por componente visual.
-- Nao alterar ou commitar `docs/.obsidian/workspace.json`, `docs/.obsidian/graph.json` ou arquivos com apenas ruído de line-ending.
-
-## Prompt base obrigatorio para IA/Codex
-
-```txt
-Antes de implementar qualquer coisa:
-1. Analise o codigo atual da branch develop.
-2. Verifique se ja existe algo parecido implementado.
-3. Leia os arquivos relevantes em /docs.
-4. Nao duplique services, hooks, repositories, componentes ou logica existente.
-5. Se algo ja existir parcialmente, refatore e complete em vez de criar implementacao paralela.
-6. Preserve padrao visual, arquitetura, nomenclatura e estrutura atual.
-7. Nao remova funcionalidades existentes sem justificar.
-8. Nao dependa obrigatoriamente de Firestore nos fluxos local-first.
-9. Preserve a regra: a corrida e a acao; o pos-corrida e o jogo.
-10. Nao bloqueie o save minimo por processamento derivado.
-11. Atualize docs/ADRs quando criar ou consolidar decisao tecnica importante.
-12. Trabalhe em fases pequenas, verificaveis e reversiveis.
-13. Ao final, entregue diagnostico, arquivos, decisoes, testes reais, riscos,
-    validacoes fisicas pendentes e proximo commit.
-```
-
-## Estilo de implementação
-
-- Código pequeno e claro.
-- Componentes visuais sem regra de negócio pesada.
-- Serviços para Firebase, localização, ranking e zonas.
-- Funções puras para cálculos críticos.
-- Evitar dependência nova sem justificativa.
-
-## Checklist para respostas com código
-
-Antes de sugerir código, validar:
-
-- Qual branch/contexto?
-- Qual arquivo será alterado?
-- Existe função/componente parecido?
-- Isso afeta Firestore?
-- Isso afeta permissão/localização?
-- Precisa de teste?
-- Precisa atualizar documentação?
-
-## Prompt recomendado para o Project
-
-```txt
-Este projeto é o contexto central do Wayper.
-
-Sempre que eu pedir algo relacionado ao código, documentação, arquitetura ou decisões do Wayper, use primeiro o repositório conectado no GitHub.
-
-Priorize as fontes nesta ordem:
-1. Código atual na branch develop.
-2. Código estável na branch main.
-3. README.md.
-4. Documentação em /docs.
-5. Issues e pull requests.
-6. Conhecimento geral apenas quando faltar informação.
-
-Ao sugerir mudanças:
-- Respeite a estrutura atual do projeto.
-- Indique arquivos que provavelmente precisam ser alterados.
-- Separe solução rápida de solução robusta.
-- Explique riscos técnicos.
-- Não invente dependências sem justificar.
-- Não exponha segredos, tokens ou credenciais.
-- Atualize a documentação quando a mudança afetar regras, arquitetura, deploy ou dados.
-```
+Não faça commit, push, deploy, publicação ou alteração externa sem autorização
+explícita da tarefa.

@@ -32,9 +32,19 @@ existem em níveis diferentes de maturidade. O Relatório da Expedição, planos
 entitlements, parceiros, anúncios e pagamentos ainda não estão implementados como
 domínios completos.
 
-A direção oficial está em [docs/product](docs/product/README.md) e a aderência do
-código foi registrada na
-[auditoria de 2026-07-24](docs/audits/2026-07-24-direcao-oficial-produto.md).
+A prioridade atual é concluir a fundação confiável da corrida antes de antecipar
+gamificação ou monetização futura.
+
+## Contexto canônico
+
+- [AGENTS.md](AGENTS.md): regras obrigatórias para agentes;
+- [fontes do projeto](docs/00-fontes-do-projeto.md): hierarquia e matriz de
+  leitura;
+- [direção estratégica completa](docs/product/direcao-estrategica-completa.md):
+  fonte normativa de direção e restrições;
+- [índice de produto](docs/product/README.md): recortes temáticos;
+- [auditoria de 2026-07-24](docs/audits/2026-07-24-direcao-oficial-produto.md):
+  evidência histórica de aderência, não inventário permanente.
 
 ## 🛠️ Tecnologias Utilizadas
 

@@ -1,6 +1,16 @@
 # Workflow Obsidian + IA da Wayper
 
-Este e o fluxo central para usar Obsidian, Markdown e assistentes de IA como cerebro vivo da Wayper. Use `docs/14-instrucoes-para-ia.md` como protocolo operacional do "Obsidian como mente do projeto".
+> **Status:** vigente como fluxo complementar<br>
+> **Tipo:** fonte operacional auxiliar<br>
+> **Escopo:** registro de ideias, propostas, bugs e revisões em Markdown<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md)
+
+Este é um workflow complementar para usar Markdown e Obsidian como memória
+operacional. As regras canônicas estão em `AGENTS.md`,
+`docs/00-fontes-do-projeto.md`,
+`docs/product/direcao-estrategica-completa.md` e
+`docs/14-instrucoes-para-ia.md`; este arquivo não mantém outra versão delas.
 
 ## Ciclo de trabalho
 
@@ -25,8 +35,12 @@ Este e o fluxo central para usar Obsidian, Markdown e assistentes de IA como cer
 - Toda implementacao relevante deve gerar revisao ou resumo rastreavel.
 - Toda proposta nova precisa de aprovacao explicita do Eduardo antes de virar implementacao.
 - Ideia nova pode ser registrada e organizada pela IA, mas nao pode virar backlog ativo nem implementacao sem decisao do Eduardo.
-- Toda alteracao relevante deve gerar uma oportunidade de melhoria relacionada em `docs/16-ideias-de-melhoria.md`, salvo mudanca puramente mecanica justificada.
-- O MVP continua priorizando corrida real, GPS confiavel, historico, zonas, ranking simples, seguranca do Firestore e UX de localizacao.
+- Uma oportunidade de melhoria relacionada pode ser registrada em
+  `docs/16-ideias-de-melhoria.md` quando fizer parte do escopo; isso não autoriza
+  ampliar a tarefa nem cria obrigação paralela às fontes canônicas.
+- A fundação prioriza tracking/GPS confiável, background, tela apagada, offline,
+  persistência local, recovery, finalização resiliente, diagnóstico e validação
+  Android física antes de expansão pós-corrida ou comercial.
 
 ## Tabela de registro
 
@@ -58,7 +72,8 @@ Use estas categorias:
 - Propostas que pedem aprovacao: `docs/17-propostas-pendentes.md`
 - Ideias futuras/medio e longo prazo: `docs/wayper/12-ideias-futuras.md`
 - Decisoes tecnicas: `docs/08-decisoes-tecnicas.md`
-- Decisoes de produto em `docs/wayper`: `docs/wayper/10-decisoes-do-projeto.md`
+- Decisões de produto vigentes: `docs/product/10-decisoes-aprovadas.md`
+- Memória de decisões em `docs/wayper`: `docs/wayper/10-decisoes-do-projeto.md`
 - Regras de negocio: `docs/10-regras-de-negocio.md`
 - Bugs e riscos: `docs/13-bugs-conhecidos.md`
 - Changelog apos implementacao: `docs/18-changelog-produto.md`
