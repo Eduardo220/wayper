@@ -421,10 +421,12 @@ export function buildGpsFilterReport(logs = [], options = {}) {
     acc[reason] = (acc[reason] || 0) + 1;
     return acc;
   }, {});
-  const acceptedByRelaxedFilter = decisions.filter((log) => (
-    log.event === "LOCATION_POINT_ACCEPTED" ||
-    log.context?.acceptedByRelaxedFilter === true
-  )).length;
+  const relaxedDecisions = decisions.filter((log) => (
+    typeof log.context?.acceptedByRelaxedFilter === "boolean"
+  ));
+  const acceptedByRelaxedFilter = relaxedDecisions.length > 0
+    ? relaxedDecisions.filter((log) => log.context.acceptedByRelaxedFilter === true).length
+    : null;
   const lastRawPointAtMs = rawEvents.map(pointTimestampMs).filter(Number.isFinite).sort((a, b) => b - a)[0] || null;
   const lastAcceptedPointAtMs = acceptedEvents.map(pointTimestampMs).filter(Number.isFinite).sort((a, b) => b - a)[0] || null;
   const nowMs = Number(options.nowMs || Date.now());

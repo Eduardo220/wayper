@@ -275,6 +275,24 @@ describe("diagnostics logging", () => {
     expect(report.accuracyStats).toMatchObject({ min: 10, max: 55, avg: 22.5 });
   });
 
+  test("gpsFilterReport marca shadow relaxado como indisponível sem decisões shadow", () => {
+    const logs = [{
+      event: "LOCATION_POINT_ACCEPTED",
+      timestamp: new Date(1_000).toISOString(),
+      context: { timestamp: 1_000 },
+    }, {
+      event: "LOCATION_POINT_REJECTED",
+      timestamp: new Date(2_000).toISOString(),
+      context: { timestamp: 2_000, reason: "bad_accuracy" },
+    }];
+
+    expect(diagnostics.buildGpsFilterReport(logs, { nowMs: 3_000 })).toMatchObject({
+      acceptedByCurrentFilter: 1,
+      rejectedByCurrentFilter: 1,
+      acceptedByRelaxedFilter: null,
+    });
+  });
+
   test("shadow relaxado aceita accuracy moderada rejeitada pelo filtro oficial", () => {
     gpsShadow.__setGpsDebugShadowModeForTests(true);
 

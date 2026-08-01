@@ -421,7 +421,7 @@ export default function DiagnosticsScreen() {
         <StatRow label="raw recebidos" value={gpsSummary.rawPointsReceived ?? 0} />
         <StatRow label="aceitos" value={gpsSummary.acceptedPoints ?? 0} />
         <StatRow label="descartados" value={gpsSummary.rejectedPoints ?? 0} />
-        <StatRow label="relaxed aceitos" value={gpsSummary.acceptedByRelaxedFilter ?? 0} />
+        <StatRow label="relaxed aceitos" value={gpsSummary.acceptedByRelaxedFilter ?? "indisponível"} />
         <StatRow label="motivos descarte" value={formatTopReasons(gpsSummary.topRejectReasons)} />
         <StatRow label="ultima accuracy" value={lastPoint ? `${formatNumber(lastPoint.accuracy, 1)} m` : formatStatus(gpsSummary.lastAccuracy)} />
         <StatRow label="ultima speed" value={formatStatus(gpsSummary.lastSpeed)} />
