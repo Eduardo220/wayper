@@ -8,12 +8,10 @@
 
 Use estes exemplos no Codex quando quiser transformar uma mensagem em entrada formal da Wayper.
 
-Estes exemplos não são instruções canônicas. Antes de qualquer lista “Quais
-documentos deve ler”, carregue o núcleo permanente definido em `AGENTS.md` e use
-a lista do exemplo somente como leitura adicional. Em divergência, prevalecem
-`docs/00-fontes-do-projeto.md` e
-`docs/product/direcao-estrategica-completa.md` dentro das respectivas
-finalidades.
+Estes exemplos não são instruções canônicas. Carregue `AGENTS.md` e
+`docs/00-fontes-do-projeto.md`; trate a lista de cada exemplo como sugestão
+adicional sujeita à matriz atual. Em divergência, o catálogo define a fonte
+correta para estado, direção ou planejamento.
 
 ## 1. Ideia Wayper
 
