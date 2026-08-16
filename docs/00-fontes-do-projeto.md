@@ -3,7 +3,7 @@
 > **Status:** vigente<br>
 > **Tipo:** fonte operacional e índice canônico<br>
 > **Escopo:** todo o repositório<br>
-> **Última revisão:** 2026-08-01<br>
+> **Última revisão:** 2026-08-16<br>
 > **Fonte normativa relacionada:** [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md)
 
 ## Finalidade
@@ -19,15 +19,14 @@ Toda tarefa começa por:
 
 1. [`AGENTS.md`](../AGENTS.md): regras operacionais curtas e obrigatórias;
 2. [`docs/00-fontes-do-projeto.md`](00-fontes-do-projeto.md): hierarquia,
-   catálogo e roteamento de leitura;
-3. [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md):
-   direção normativa e restrições permanentes;
-4. [`README.md`](../README.md): entrada humana, visão resumida, stack e estado
-   geral.
+   catálogo e roteamento de leitura.
 
-Depois do núcleo, leia somente as fontes relacionadas à tarefa. O processo
-detalhado dos agentes está em
-[`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md).
+Depois do núcleo, leia somente as fontes relacionadas à tarefa. A direção
+estratégica completa é obrigatória quando a tarefa decide produto, arquitetura
+ou encontra conflito de direção; `README.md` é uma entrada humana rápida, não
+contexto permanente. O processo detalhado está em
+[`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md) e a arquitetura do
+Harness em [`docs/ai/harness-v1.md`](ai/harness-v1.md).
 
 ## Dois tipos de verdade
 
@@ -159,7 +158,7 @@ próprio documento.
 | Testes | [`docs/12-guia-de-testes.md`](12-guia-de-testes.md) | [`docs/22-teste-real-corrida-background.md`](22-teste-real-corrida-background.md), [`docs/wayper/15-checklist-validacao-corrida-ativa.md`](wayper/15-checklist-validacao-corrida-ativa.md), [`docs/13-bugs-conhecidos.md`](13-bugs-conhecidos.md) | Fonte operacional | Vigente |
 | Deploy | [`docs/11-plano-de-deploy.md`](11-plano-de-deploy.md) | `package.json`, [`docs/12-guia-de-testes.md`](12-guia-de-testes.md), [`docs/diagnostics.md`](diagnostics.md) | Fonte operacional | Em revisão |
 | Bugs conhecidos | [`docs/13-bugs-conhecidos.md`](13-bugs-conhecidos.md) | [`docs/wayper/13-problemas-conhecidos.md`](wayper/13-problemas-conhecidos.md), [`docs/audits/`](audits/) | Registro operacional | Vigente |
-| Instruções para IA | [`AGENTS.md`](../AGENTS.md) | [`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md), este catálogo | Fonte operacional | Vigente |
+| Instruções para IA | [`AGENTS.md`](../AGENTS.md) | [`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md), [`docs/ai/harness-v1.md`](ai/harness-v1.md), este catálogo | Fonte operacional | Vigente; Harness V1 Foundation |
 
 ## Matriz: tipo de tarefa e leitura adicional
 
@@ -178,7 +177,7 @@ As fontes abaixo são adicionais ao núcleo permanente.
 | Parceiros | [`docs/product/04-parcerias-e-patrocinios.md`](product/04-parcerias-e-patrocinios.md), [`docs/product/02-modelo-de-negocio.md`](product/02-modelo-de-negocio.md), [`docs/product/09-economia-e-recompensas.md`](product/09-economia-e-recompensas.md), [`docs/product/12-criterios-para-novas-features.md`](product/12-criterios-para-novas-features.md) e ADR-034 em [`docs/architecture/adrs-direcao-oficial.md`](architecture/adrs-direcao-oficial.md) |
 | Pagamentos | [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md), [`docs/product/02-modelo-de-negocio.md`](product/02-modelo-de-negocio.md), ADR-035 em [`docs/architecture/adrs-direcao-oficial.md`](architecture/adrs-direcao-oficial.md), [`docs/product/11-hipoteses-em-avaliacao.md`](product/11-hipoteses-em-avaliacao.md), [`docs/product/03-planos-e-entitlements.md`](product/03-planos-e-entitlements.md) e [`docs/architecture/feature-flags.md`](architecture/feature-flags.md); confirme a ausência atual de contrato implementado |
 | Build ou deploy | [`docs/11-plano-de-deploy.md`](11-plano-de-deploy.md), `package.json`, `.env.example`, [`docs/12-guia-de-testes.md`](12-guia-de-testes.md), [`docs/diagnostics.md`](diagnostics.md) e [`docs/13-bugs-conhecidos.md`](13-bugs-conhecidos.md) |
-| Documentação ou instruções de agentes | [`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md), [`docs/product/README.md`](product/README.md), [`docs/wayper/00-index.md`](wayper/00-index.md), [`docs/08-decisoes-tecnicas.md`](08-decisoes-tecnicas.md), [`docs/18-changelog-produto.md`](18-changelog-produto.md) e [`docs/19-revisoes-de-implementacao.md`](19-revisoes-de-implementacao.md) |
+| Documentação, Harness ou instruções de agents | [`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md), [`docs/ai/harness-v1.md`](ai/harness-v1.md), [`docs/product/README.md`](product/README.md), [`docs/wayper/00-index.md`](wayper/00-index.md), [`docs/08-decisoes-tecnicas.md`](08-decisoes-tecnicas.md), [`docs/18-changelog-produto.md`](18-changelog-produto.md) e [`docs/19-revisoes-de-implementacao.md`](19-revisoes-de-implementacao.md) |
 
 ## Protocolo de conflito
 

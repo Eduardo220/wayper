@@ -573,3 +573,27 @@ retry visível se o save não for confirmado.
 - recuperação e edição convergem no serviço oficial em vez de criar caminhos
   paralelos;
 - o gate continua dependente de reteste físico Android.
+
+## Decisão técnica: Wayper AI Harness V1 Foundation
+
+**Status:** aceita em 2026-08-16
+
+**Contexto:** o Harness estava distribuído entre o repositório mobile, um
+workspace pai sem Git, configuração global, nove skills, quinze custom agents,
+hooks locais e outputs gerados. O mobile carregava regras extensas e a
+orquestração histórica repetia docs, papéis nativos e políticas de ferramenta.
+
+**Decisão:** `AGENTS.md` do mobile é a única entrada operacional do app.
+Detalhes pertencem a docs; quatro skills project-scoped fornecem contexto de
+domínio sob demanda; quatro especialistas project-scoped são read-only e não
+fixam modelo. Papéis genéricos usam recursos nativos do Codex. Preferências,
+RTK e plugins permanecem globais. Graphify é índice auxiliar e seus outputs são
+generated, nunca fonte de verdade. O repositório não ganha config ou hook sem
+necessidade comprovada.
+
+**Consequências:** contexto permanente diminui, ownership fica versionado e
+skills/agents deixam de depender do workspace pai. Task Classifier, Context
+Router, review multi-agent completo, novo graph/memory e nova compressão ficam
+explicitamente fora desta decisão. Arquitetura e inventário estão em
+`docs/ai/harness-v1.md` e
+`docs/audits/2026-08-16-ai-harness-v1-foundation.md`.
