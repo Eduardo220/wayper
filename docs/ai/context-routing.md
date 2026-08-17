@@ -20,9 +20,10 @@ subconjunto a abrir para a tarefa atual.
 4. selecionar processo somente quando ele acrescentar disciplina;
 5. escolher somente os domínios realmente afetados;
 6. iniciar no menor context level suficiente;
-7. carregar as skills e fontes indicadas, depois confirmar source/callers/testes;
-8. usar Graphify ou specialist apenas quando incerteza/risco justificar;
-9. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
+7. consultar memory somente quando task, domínio e risco justificarem;
+8. carregar as skills e fontes indicadas, depois confirmar source/callers/testes;
+9. usar Graphify ou specialist apenas quando incerteza/risco justificar;
+10. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
 
 Palavra não é gatilho: “corrida” em texto não implica `RUN_RUNTIME`; “mapa”
 visual não implica `TERRITORY_GEO`; “Firebase” em doc não chama reviewer de
@@ -39,6 +40,23 @@ ativa `META_GOAL_MODE` sem intenção de outcome contínuo.
 
 Meta Goal compõe classifier, processos e domains por slice. Não cria classe,
 skill, specialist ou gate de qualidade próprio.
+
+## Memory lookup gate
+
+Repo memory é contexto opcional e segue
+[`memory-policy.md`](memory-policy.md). Default: `0` bytes.
+
+| Contexto observado | Route |
+| --- | --- |
+| `TRIVIAL`, copy, styling ou doc pequena | não abrir index/topic |
+| `BOUNDED` sem domínio/risco relacionado | não abrir index/topic |
+| `BUG`, `INVESTIGATION`, `ARCHITECTURAL`, Meta slice ou `CRITICAL_RUNTIME` relevante | abrir o index pequeno e filtrar por domain + risk |
+| 1–3 matches fortes | abrir apenas esses topics |
+| muitos matches | refinar; não despejar memória no contexto |
+
+Memory contradita ou com invalidation condition atingida é revalidada contra
+source/docs. Em `CRITICAL/HIGH`, confirmar source atual é obrigatório. Palavra
+isolada — “corrida”, “Firestore”, “meta” — não cria match sem intenção/domínio.
 
 ## Process routing
 
@@ -388,7 +406,8 @@ branch atual sempre confirmam ownership.
 - **Primary owners:** `AGENTS.md` para permanentes, `harness-v1.md` para
   arquitetura, classifier/router/process-workflows para decisão e cada
   skill/agent para workflow especializado; `quality-gates.md` para gates/review;
-  `meta-goal-runtime.md` para metas contínuas e autonomia.
+  `meta-goal-runtime.md` para metas contínuas/autonomia e `memory-policy.md` para
+  hard-earned learning on-demand.
 - **Docs:** estes arquivos e a linha de IA em `docs/00-fontes-do-projeto.md`.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
   produto para garantir ausência de regressão.
@@ -450,6 +469,9 @@ material. O projeto funciona sem RTK e não possui adapter próprio.
   arquitetura/recovery; não carregar site/marketing/territory sem integração.
 - **Pós-corrida visual:** UI/fluxo e owner da tela; não carregar tracking ativo
   só porque a tela mostra uma corrida.
+- **Memory:** tarefa trivial ou bounded não relacionada carrega zero; bug
+  screen-off pode consultar lifecycle/run, Firestore social não consulta run
+  memory automaticamente.
 - **Decisão de produto:** fontes aprovadas do recorte e owner técnico afetado;
   roadmap/backlog isolado não basta.
 

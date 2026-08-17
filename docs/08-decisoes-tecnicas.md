@@ -723,3 +723,22 @@ Candidate ranking combina impacto, confiança, validação, risco, coupling e cu
 Goal Budget evita perfeccionismo; quality/review controlam cada slice; follow-ups,
 Learning Delta e stop conditions impedem expansão silenciosa e falsa conclusão.
 A política canônica está em `docs/ai/meta-goal-runtime.md`.
+
+### Adendo — High-Signal Memory + Hard-Earned Learning
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** memória técnica do Wayper é repo-scoped, versionada e on-demand,
+mas nunca source of truth. Learning Delta só pode ser promovido depois de
+synthesis/validation quando for non-derivable, future-useful, stable e também
+hard-earned, failure-preventing ou caro de redescobrir. Um índice ativo pequeno
+roteia no máximo 1–3 topics por domínio/risco; tarefa trivial ou não relacionada
+carrega zero. Source, testes e docs/ADRs canônicas sempre precedem memory.
+
+**Consequências:** não há store executável, embeddings, vector DB, dependency,
+hook ou integração obrigatória com memória nativa do Codex. A capability nativa
+está desativada no runtime auditado e seus detalhes não observáveis permanecem
+`UNKNOWN`. O seed inicial fica vazio porque os candidatos reais já eram
+deriváveis, temporários ou corretamente registrados em ADR/source/testes. A
+política, budgets, staleness e promotion estão em
+`docs/ai/memory-policy.md`; AGENTS, skills e specialists não cresceram.

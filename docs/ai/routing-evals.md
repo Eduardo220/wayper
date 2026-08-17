@@ -5,7 +5,8 @@
 > **Owners:** [`task-classification.md`](task-classification.md) e
 > [`context-routing.md`](context-routing.md), com safety de waves em
 > [`orchestration.md`](orchestration.md) e gates/review em
-> [`quality-gates.md`](quality-gates.md)
+> [`quality-gates.md`](quality-gates.md), com memory em
+> [`memory-policy.md`](memory-policy.md)
 
 Cada caso passa quando a classificação respeita todos os campos e não ativa os
 recursos proibidos. `POTENTIAL` significa selecionar o recurso somente depois
@@ -243,7 +244,7 @@ que a inspeção confirmar a flag; não é ativação default.
 | L2 | source/teste prova a hipótese inicial errada | `REJECTED_ASSUMPTIONS`; replanear candidatos afetados |
 | L3 | fato é facilmente derivável e irrelevante ao próximo trabalho | não propagar |
 | L4 | surge pitfall de lifecycle | `NEW_PITFALLS`; somente briefings com lifecycle recebem |
-| L5 | learning parece reutilizável no futuro | manter session/task-local; não criar memória persistente nesta unidade |
+| L5 | learning parece reutilizável no futuro | manter session/task-local e classificar como candidate; promotion exige synthesis/validation e política de memory |
 
 ## Goal stop conditions
 
@@ -261,7 +262,77 @@ que a inspeção confirmar a flag; não é ativação default.
 
 | # | Meta / slices | Expected state transitions | Required properties |
 | --- | --- | --- | --- |
-| LR1 | Meta “reduzir dívida estrutural”; A alto ROI passa e melhora métrica; B passa, revela dependency e causa re-ranking; C recebe finding `HIGH` confirmado e é corrigido/replanejado antes de avançar; D conservador passa, restando apenas cleanup cosmético | `A: PASS -> re-measure`; `B: PASS -> NEW_DEPENDENCY -> re-rank`; `C: REVIEW_BLOCKER -> fix/replan -> proof`; `D: PASS -> ROI_EXHAUSTED` | não seguir plano antigo, zero pergunta técnica, quality controla avanço, learning é delta, nenhuma memória e stop justificado |
+| LR1 | Meta “reduzir dívida estrutural”; A alto ROI passa e melhora métrica; B passa, revela dependency e causa re-ranking; C recebe finding `HIGH` confirmado e é corrigido/replanejado antes de avançar; D conservador passa, restando apenas cleanup cosmético | `A: PASS -> re-measure`; `B: PASS -> NEW_DEPENDENCY -> re-rank`; `C: REVIEW_BLOCKER -> fix/replan -> proof`; `D: PASS -> ROI_EXHAUSTED` | não seguir plano antigo, zero pergunta técnica, quality controla avanço, learning é delta, nenhuma promotion automática e stop justificado |
+
+## Memory candidates
+
+| # | Learning | Expected decision |
+| --- | --- | --- |
+| M1 | owner de recovery está claro em source/docs | `DO_NOT_SAVE`; derivável/canônico |
+| M2 | race continua possível e só surgiu após investigação profunda | `MEMORY_CANDIDATE`, depois de evidence/validation |
+| M3 | warning count atual | `DO_NOT_SAVE`; temporário e medido pelo gate |
+| M4 | failed approach caro que outra sessão provavelmente repetiria | `MEMORY_CANDIDATE` se estável e non-derivable |
+| M5 | regra de negócio já está em fonte canônica | `DO_NOT_SAVE / DOC_OWNER` |
+| M6 | pitfall Android de validação não documentado e confirmado | candidate `VALIDATION_LESSON`; promover só após synthesis/validation |
+| M7 | lesson virou derivável após refactor/doc canônica | retirar/supersede memory; doc/source vence |
+| M8 | memory contradiz source atual | `STALE_MEMORY`; não usar para decisão |
+| M9 | mesma causa/lesson já existe | `MERGE / UPDATE`; não duplicar entry |
+| M10 | current Goal candidates/baseline | `DO_NOT_SAVE`; execution state |
+
+## Memory routing
+
+| # | Task | Expected memory load |
+| --- | --- | --- |
+| MR1 | typo/copy `TRIVIAL` | 0 B; não abrir index/topic |
+| MR2 | styling de mapa sem dado geo | 0 B de runtime/geo memory |
+| MR3 | bug de screen-off/lifecycle | index + somente topics `RUN_RUNTIME`/`LIFECYCLE` relevantes |
+| MR4 | bug de replay/persistência | somente matches `PERSISTENCE_SYNC`/risks relacionados |
+| MR5 | bug de geometria territorial | somente matches `TERRITORY_GEO`/`GPS_GEO` |
+| MR6 | query produz 10 matches | refinar domain/risk; abrir no máximo 1–3, não todos |
+
+## Memory promotion
+
+| # | Candidate | Expected result |
+| --- | --- | --- |
+| MP1 | hard-earned + non-derivable + stable + future-useful | `PROMOTE` |
+| MP2 | hard-earned, mas agora canônico em docs | atualizar/usar doc; nenhuma duplicação em memory |
+| MP3 | non-derivable, porém temporário | `REJECT` |
+| MP4 | útil, mas ainda speculation/LOW confidence | `REJECT_PENDING_VALIDATION` |
+| MP5 | critical lesson com evidence confirmada e invalidation condition | `PROMOTE` após synthesis/validation |
+
+## Memory staleness
+
+| # | State | Expected action |
+| --- | --- | --- |
+| MS1 | invalidation condition não ocorreu e evidence segue coerente | `ACTIVE` |
+| MS2 | owner citado mudou | revalidar antes de usar; não confiar por recência |
+| MS3 | source/decisão contradiz lesson | `SUPERSEDED` ou `RETIRED`; remover do active index |
+| MS4 | topic está em archive | não retornar em lookup default |
+
+## Memory token economy
+
+| # | Scenario | Expected budget behavior |
+| --- | --- | --- |
+| MT1 | tarefa trivial | +0 memory bytes |
+| MT2 | bug relevante | index pequeno + somente topic match |
+| MT3 | muitas memories do mesmo domínio | refinar e respeitar limite de 1–3 topics |
+| MT4 | active index excede budget | `MEMORY_OVER_BUDGET`; sanitation antes de aumentar |
+| MT5 | topic é narrativa excessiva | reduzir/retirar; topic acima do hard limit não passa review |
+
+## Native memory ownership
+
+| # | Capability/state | Expected behavior |
+| --- | --- | --- |
+| NM1 | native memory indisponível | repo memory continua sem fallback daemon/runtime |
+| NM2 | native memory passa a existir | não duplicar nem depender exclusivamente dela para verdade técnica |
+| NM3 | preferência geral do usuário | considerar owner native/user-global somente se suportado |
+| NM4 | invariante crítico Wayper | canonical repo docs, nunca native-only |
+
+## Memory long-run simulation
+
+| # | Meta / learning delta | Expected promotion and next slice |
+| --- | --- | --- |
+| ML1 | slice A produz um fato derivável, uma decisão canônica, um pitfall hard-earned confirmado e estado temporário; slice B tem domínio do pitfall | derivável/temporário são descartados; decisão vai ao doc owner; só pitfall vira candidate e, se promoted, apenas esse topic pode ser carregado por B |
 
 ## Validation protocol
 
@@ -276,8 +347,10 @@ que a inspeção confirmar a flag; não é ativação default.
    G/RV/C/QN;
 6. conferir Goal/autonomy/questions/follow-ups/learnings/stops contra
    `docs/ai/meta-goal-runtime.md` e os casos MG/A/QH/F/L/ST/LR;
-7. validar links/paths do Harness;
-8. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
+7. conferir promotion/routing/staleness/token/native memory contra
+   `docs/ai/memory-policy.md` e os casos M/MR/MP/MS/MT/NM/ML;
+8. validar links/paths do Harness;
+9. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
 
 Como o router é uma política interpretada e não um programa, estes evals não

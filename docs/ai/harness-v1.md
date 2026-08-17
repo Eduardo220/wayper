@@ -3,7 +3,8 @@
 > **Status:** vigente<br>
 > **Escopo:** repositório mobile<br>
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
-> Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal V1,
+> Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
+> Memory V1,
 > 2026-08-17<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
@@ -23,7 +24,7 @@ AGENTS.md
         -> diff real + Q0-Q3 gate + R0-R3 review
         -> process contract quando necessário + context map mínimo
            -> decisão S0 single ou delegação com valor comprovado
-           -> docs/00-fontes-do-projeto.md + skill sob demanda
+           -> docs/00-fontes-do-projeto.md + memory match/skill sob demanda
            -> source, callers e testes atuais
               -> waves/read-only specialists quando necessário
                  -> synthesis + validation pelo agente principal
@@ -53,6 +54,9 @@ evidência datada.
 - `docs/ai/meta-goal-runtime.md`: Goal contract, autonomia, Execution Kernel,
   candidate ranking, budget, follow-ups, learning delta e stop conditions;
   carregado somente para intenção contínua.
+- `docs/ai/memory-policy.md` e `docs/ai/memory/index.json`: promotion de
+  hard-earned learning e discovery por domínio/risco; index/topics nunca são
+  contexto permanente nem source of truth.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
@@ -99,9 +103,11 @@ do usuário. Nenhum deles é fonte de regras do mobile.
 2. distinguir task pontual de meta contínua; carregar Goal contract só na meta;
 3. classificar tarefa/flags e selecionar gate/review pelo diff real;
 4. selecionar processo, domínios, catálogo/docs e skills mínimas;
-5. permanecer single-agent ou decompor somente por valor e independência;
-6. confirmar código, callers e testes;
-7. sintetizar e subir contexto, Graphify ou especialista só por evidência.
+5. consultar o memory index somente quando domínio/risco justificar e abrir no
+   máximo os topics relevantes;
+6. permanecer single-agent ou decompor somente por valor e independência;
+7. confirmar código, callers e testes; memory nunca substitui essa confirmação;
+8. sintetizar e subir contexto, Graphify ou especialista só por evidência.
 
 Não existe ciclo `AGENTS -> docs -> skill -> AGENTS`: skills referenciam owners,
 mas não redefinem política nem orquestram agents; apenas recomendam specialists
@@ -111,14 +117,17 @@ pelas flags.
 
 Não existe wave planner executável, custom orchestrator, adjudicator, agent
 genérico novo, benchmark automático de concorrência ou worktree permanente.
-Knowledge graph novo, memory system, token proxy e framework/DSL de boundaries
-permanecem fora. Boundaries simples de import e o ratchet owner-specific estão
-implementados sem nova dependência.
+Knowledge graph novo, memory runtime/search engine, token proxy e framework/DSL
+de boundaries permanecem fora. A repo memory é somente política, índice pequeno
+e topics on-demand. Boundaries simples de import e o ratchet owner-specific
+estão implementados sem nova dependência.
 As quatro skills possuem workflows de domínio; processos genéricos permanecem
 nativos e usam os contratos de
 [`docs/ai/process-workflows.md`](process-workflows.md). A delegação segue
 [`docs/ai/orchestration.md`](orchestration.md).
 `wayper-brain` permanece somente no backup histórico, sem reativar código, agent
 ou configuração. Meta Goal é contrato declarativo em
-[`meta-goal-runtime.md`](meta-goal-runtime.md), não runtime custom. Memória
-persistente e seleção de hard-earned learning permanecem fora desta unidade.
+[`meta-goal-runtime.md`](meta-goal-runtime.md), não runtime custom. Promotion e
+staleness de memória pertencem a
+[`memory-policy.md`](memory-policy.md); Learning Delta não é salvo
+automaticamente.

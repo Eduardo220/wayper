@@ -257,8 +257,10 @@ aplicável. Não existe custom security reviewer.
 Entre waves/reviews, propague somente fatos relevantes classificados como
 `NEW_FACTS`, `NEW_PITFALLS`, `NEW_DEPENDENCIES`, `REJECTED_ASSUMPTIONS` ou
 `NEW_DECISIONS`; não copie o histórico. Em Meta Goal, o formato, filtro por
-relevância e boundary de não persistência pertencem a
-[`meta-goal-runtime.md`](meta-goal-runtime.md).
+relevância e timing pertencem a
+[`meta-goal-runtime.md`](meta-goal-runtime.md). Persistência excepcional de uma
+lição validada passa pelo promotion check de
+[`memory-policy.md`](memory-policy.md); review output nunca vira memória direto.
 
 Síntese interna final:
 

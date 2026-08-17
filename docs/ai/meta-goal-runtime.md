@@ -8,7 +8,7 @@
 
 Este contrato ensina o agente principal a transformar um resultado de alto nível
 em slices técnicos seguros. É política declarativa, não planner, Brain, daemon,
-memória ou runtime JS. O Codex continua sendo executor e orquestrador.
+runtime de memória ou runtime JS. O Codex continua sendo executor e orquestrador.
 
 ## Contrato da meta
 
@@ -283,9 +283,10 @@ NEW_DECISIONS
 ```
 
 O agente principal filtra por task: um pitfall de lifecycle não entra em styling.
-Fato derivável sem relevância não é propagado. Learning Delta é local à
-sessão/task e não vira memória persistente nesta unidade; o critério de memória
-pertence a trabalho futuro.
+Fato derivável sem relevância não é propagado. Learning Delta continua local à
+sessão/task por padrão. Somente depois de synthesis e validation,
+`HARD_EARNED_LEARNING_CANDIDATES` passam pelo promotion check de
+[`memory-policy.md`](memory-policy.md); não há persistência automática.
 
 ## Quality e review por slice
 
@@ -369,4 +370,5 @@ HARD_EARNED_LEARNING_CANDIDATES
 ```
 
 O relatório é síntese, não log cronológico. `HARD_EARNED_LEARNING_CANDIDATES`
-apenas prepara avaliação futura; não persiste memória.
+é apenas entrada do promotion check. Candidato derivável, canônico, temporário,
+instável ou não validado é descartado, não persistido.

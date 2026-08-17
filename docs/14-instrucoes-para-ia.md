@@ -17,6 +17,7 @@ conteúdos em prompts, skills, agents ou hooks.
 | --- | --- |
 | `AGENTS.md` | comportamento permanente e invariantes universais |
 | `docs/` | estado, direção, decisões e explicações detalhadas |
+| `docs/ai/memory/` | índice/topics técnicos hard-earned, somente sob demanda |
 | `.agents/skills/` | workflow de domínio carregado sob demanda |
 | `.codex/agents/` | especialização read-only com gatilho concreto |
 | hooks | enforcement determinístico; não substituem documentação |
@@ -29,7 +30,10 @@ Classificação, flags e seleção mínima pertencem a
 pertencem a [`docs/ai/orchestration.md`](ai/orchestration.md). Gates/review
 adaptativos pertencem a [`docs/ai/quality-gates.md`](ai/quality-gates.md). Metas
 contínuas, autonomia e Human Decision Boundary pertencem a
-[`docs/ai/meta-goal-runtime.md`](ai/meta-goal-runtime.md).
+[`docs/ai/meta-goal-runtime.md`](ai/meta-goal-runtime.md). Promotion, routing e
+staleness de hard-earned learning pertencem a
+[`docs/ai/memory-policy.md`](ai/memory-policy.md); memory nunca precede source,
+testes ou decisão canônica.
 
 ## Context Gate
 
