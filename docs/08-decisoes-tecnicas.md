@@ -685,3 +685,22 @@ duplica Turf; módulos `runService`, zones/xp legacy não ganham consumers. Exce
 é exact-path, limitada e revisável. Inventários, ownership, cycle signal e
 anti-gaming estão em `docs/ai/architecture-boundaries.md`. Nenhum source
 funcional foi refatorado.
+
+### Adendo — Adaptive Multi-Agent Review + Quality Gate Synthesis
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** classe, risk flags, domínios e diff real selecionam gates `Q0-Q3` e
+review `R0-R3`. Um agregador Node sem dependência executa somente lint JSON,
+size, architecture e diff-check FAST, compara warnings por `file + rule` e
+destaca bug signals novos/tocados. Jest completo, Expo Doctor, Graphify,
+specialists e validação física continuam DEEP e seletivos. Findings exigem
+failure scenario, evidence, safeguard e confidence; síntese deduplica e resolve
+discordância por evidência, nunca por maioria.
+
+**Consequências:** dívida legada intacta não é regression; erro, bug signal,
+size ou architecture regression novos bloqueiam. O Harness distingue `PASS`,
+`PASS_WITH_DEBT`, `FAIL` e `INCONCLUSIVE`, preserva physical validation pendente
+e mantém os quatro specialists read-only. Nenhum generic/security reviewer,
+Brain, adjudicator, hook, dependência ou código funcional foi criado. A política
+canônica está em `docs/ai/quality-gates.md`.

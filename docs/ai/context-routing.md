@@ -13,12 +13,14 @@ subconjunto a abrir para a tarefa atual.
 ## Sequência
 
 1. classificar a tarefa e marcar flags semânticas;
-2. selecionar processo somente quando ele acrescentar disciplina;
-3. escolher somente os domínios realmente afetados;
-4. iniciar no menor context level suficiente;
-5. carregar as skills e fontes indicadas, depois confirmar source/callers/testes;
-6. usar Graphify ou specialist apenas quando incerteza/risco justificar;
-7. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
+2. inspecionar o diff real e selecionar `GATE_LEVEL`/`REVIEW_MODE` por
+   [`quality-gates.md`](quality-gates.md);
+3. selecionar processo somente quando ele acrescentar disciplina;
+4. escolher somente os domínios realmente afetados;
+5. iniciar no menor context level suficiente;
+6. carregar as skills e fontes indicadas, depois confirmar source/callers/testes;
+7. usar Graphify ou specialist apenas quando incerteza/risco justificar;
+8. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
 
 Palavra não é gatilho: “corrida” em texto não implica `RUN_RUNTIME`; “mapa”
 visual não implica `TERRITORY_GEO`; “Firebase” em doc não chama reviewer de
@@ -327,14 +329,14 @@ branch atual sempre confirmam ownership.
 - **Docs:** `docs/12-guia-de-testes.md`, `docs/11-plano-de-deploy.md`,
   `docs/13-bugs-conhecidos.md`, `docs/ai/static-analysis.md` para lint,
   `docs/ai/code-budgets.md` para tamanho e `docs/ai/architecture-boundaries.md`
-  para gate arquitetural.
+  para gate arquitetural; `docs/ai/quality-gates.md` seleciona FAST/DEEP.
 - **Tests:** suíte direcionada e `npm test -- --runInBand` quando o gate pedir.
 - **Skills:** nenhuma por padrão; skill de domínio apenas se o teste cobre esse
   domínio.
 - **Specialists:** nenhum por padrão; papéis de tester/debugger são nativos.
-- **Tools:** comandos canônicos do `package.json`; `npm run lint`,
-  `npm run quality:size` e `npm run quality:architecture` são vigentes e não
-  existe typecheck canônico.
+- **Tools:** comandos canônicos do `package.json`; `npm run quality:gate` agrega
+  o FAST gate, enquanto lint/size/architecture continuam executáveis
+  separadamente. Não existe typecheck canônico.
 - **Validation:** exit code, contagem, baseline, config syntax e diff check.
 - **Risk flags:** `BUILD_TOOLING`, `PERFORMANCE`, `NATIVE_ANDROID`.
 - **Escalation:** dependency/config pública, pipeline ou vários ambientes pode
@@ -371,7 +373,7 @@ branch atual sempre confirmam ownership.
   `.agents/skills/` e `.codex/agents/`.
 - **Primary owners:** `AGENTS.md` para permanentes, `harness-v1.md` para
   arquitetura, classifier/router/process-workflows para decisão e cada
-  skill/agent para workflow especializado.
+  skill/agent para workflow especializado; `quality-gates.md` para gates/review.
 - **Docs:** estes arquivos e a linha de IA em `docs/00-fontes-do-projeto.md`.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
   produto para garantir ausência de regressão.

@@ -4,6 +4,7 @@
 > **Escopo:** delegação e waves no repositório mobile<br>
 > **Owner:** [`docs/ai/harness-v1.md`](harness-v1.md)<br>
 > **Router:** [`docs/ai/context-routing.md`](context-routing.md)<br>
+> **Quality:** [`docs/ai/quality-gates.md`](quality-gates.md)<br>
 > **Evals:** [`docs/ai/routing-evals.md`](routing-evals.md)
 
 O agente principal do Codex é o único orquestrador. Multi-agent é opt-in por
@@ -77,6 +78,8 @@ CLASS:
 RISK_FLAGS:
 DOMAINS:
 PROCESS:
+GATE_LEVEL:
+REVIEW_MODE:
 FILES_READ:
 FILES_WRITE:
 DEPENDS_ON:
@@ -178,6 +181,8 @@ LINE:
 CLAIM:
 FAILURE_SCENARIO:
 EVIDENCE:
+EXISTING_SAFEGUARD:
+CONFIDENCE:
 ```
 
 Sem cenário e evidência, não promover claim a bug confirmado. Read-only retorna
@@ -204,12 +209,17 @@ Sem cenário e evidência, não promover claim a bug confirmado. Read-only retor
 
 O agente principal não concatena outputs:
 
-1. identifica conclusões comuns;
-2. deduplica findings equivalentes;
+1. coleta e normaliza;
+2. deduplica pela mesma causa + mesmo failure scenario;
 3. confirma claims materiais no source/teste;
-4. resolve divergências pela evidência, não por maioria;
-5. descarta falso positivo;
-6. ordena por risco e decide ação.
+4. verifica safeguards existentes e confidence;
+5. resolve divergências pela evidência, não por maioria;
+6. descarta/rebaixa falsos positivos;
+7. ordena por risco e decide bloqueio.
+
+Em review `R3`, specialists permanecem independentes até essa síntese. Zero
+findings é válido. O contrato completo de finding, severidade, confidence e
+status está em [`quality-gates.md`](quality-gates.md).
 
 Conflito de tasks para integração antes de continuar:
 
@@ -232,6 +242,10 @@ Falha de agent é `TOOL_FAILURE`, `CONTEXT_MISSING`, `TASK_AMBIGUOUS` ou
 crie loop. Para contexto faltante, forneça somente o delta. Se houver stall, o
 principal interrompe, preserva evidence e replana; não existe daemon/timeout
 custom do projeto.
+
+Entre waves, propague somente deltas factuais relevantes como `NEW_FACT`,
+`NEW_PITFALL`, `NEW_DEPENDENCY` ou `REJECTED_ASSUMPTION`; não replique o
+histórico completo para tasks seguintes.
 
 ## Git e worktrees
 

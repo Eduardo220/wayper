@@ -111,8 +111,10 @@ para aceitar output novo.
   implemente o menor delta, valide e faça review leve. Não crie `wayper-feature`.
 - **Code review:** reporte apenas bug, regressão, violação arquitetural, risco
   concreto ou validação ausente. Cada finding exige `FILE/LINE`, `SEVERITY`,
-  `CLAIM`, `FAILURE_SCENARIO` e `EVIDENCE`; sem cenário/evidência, não chame de
-  bug. Use specialists existentes pelas flags, nunca generic reviewer custom.
+  `CLAIM`, `FAILURE_SCENARIO`, `EVIDENCE`, `EXISTING_SAFEGUARD` e `CONFIDENCE`;
+  sem cenário/evidência, não chame de bug. Use specialists existentes pelas
+  flags, nunca generic reviewer custom. Síntese e bloqueio pertencem a
+  [`quality-gates.md`](quality-gates.md).
 - **Project sanitation:** inventarie/baseline, classifique cada remoção, limpe em
   passos reversíveis e compare before/after. Para imports locais óbvios, use
   apenas `BOUNDED` e validação direcionada.
@@ -165,9 +167,9 @@ Esses campos disciplinam tarefas complexas; não precisam aparecer na resposta.
 BUG: EVIDENCE | ROOT_CAUSE | REGRESSION | FIX | VALIDATION
 SAFE_REFACTOR: BASELINE | BOUNDARY | STEP | BEHAVIOR_CHECK | RESULT
 ARCHITECTURAL: CURRENT_STATE | CONSTRAINTS | OPTIONS | DECISION | MIGRATION | VALIDATION
-REVIEW: FINDINGS | RISKS | TEST_GAPS
+REVIEW: FINDINGS | SAFEGUARDS | CONFIDENCE | QUALITY_STATUS | TEST_GAPS
 ```
 
-Comandos vêm do `package.json` atual. `npm run lint`, `npm run quality:size` e
-`npm run quality:architecture` são canônicos; typecheck não existe. Não invente
-build/test e registre ausência.
+Comandos vêm do `package.json` atual. `npm run quality:gate` agrega lint, size,
+architecture e diff-check FAST; cada comando permanece canônico isoladamente.
+Typecheck não existe. Não invente build/test e registre ausência.

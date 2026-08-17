@@ -22,6 +22,8 @@ ser provisória durante a primeira inspeção e deve escalar quando surgir risco
 Os contratos detalhados e a decisão entre workflow nativo/skill estão em
 [`docs/ai/process-workflows.md`](process-workflows.md). A classe continua sendo
 owner da seleção; o documento de processo não reclassifica a tarefa.
+Gate e review proporcionais são selecionados depois da inspeção do diff, pela
+matriz de [`quality-gates.md`](quality-gates.md).
 
 `INVESTIGATION` não produz código permanente por padrão. Um pedido de
 refatoração não vira `ARCHITECTURAL` pela palavra usada: precisa alterar
@@ -114,6 +116,8 @@ TASK_CLASS:
 RISK_FLAGS:
 DOMAINS:
 CONTEXT_LEVEL:
+GATE_LEVEL:
+REVIEW_MODE:
 PROCESS:
 SKILLS:
 SPECIALISTS:

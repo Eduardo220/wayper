@@ -156,6 +156,25 @@ O baseline machine-readable agora tem consumer único no ratchet e vive em
 `scripts/quality/code-size-baseline.json`. Ele registra apenas dívida acima do
 target, sem timestamp, e nunca é atualizado automaticamente.
 
+## Lint delta e FAST gate
+
+`npm run quality:gate` consome o JSON oficial do ESLint, compara contadores por
+`file + rule` e assinaturas estáveis `file + rule + message` de bug signal com
+`scripts/quality/lint-baseline.json`. A baseline contém 336 warnings e identifica
+somente os 6 `rules-of-hooks` e 4 `import/export` confirmados como bug signals.
+Ela não armazena AST, output bruto ou timestamps e não possui update automático.
+Captura: parent HEAD `fd6053c` em 2026-08-17.
+
+O agregador executa lint, size, architecture e `git diff --check` em paralelo.
+Erro lint novo, bug signal novo, size regression e architecture regression
+bloqueiam. Warning geral novo aparece como `PASS_WITH_DEBT`; bug signal legado
+cuja linha foi tocada torna a prova `INCONCLUSIVE` até review explícito. Dívida
+inalterada não falha. `--details` mostra deltas; `--json` emite resultado para
+consumo por ferramenta. Full Jest e Expo Doctor permanecem fora do FAST gate.
+
+Seleção Q0-Q3, review, confidence e status pertencem a
+[`quality-gates.md`](quality-gates.md).
+
 ## Saúde externa observada
 
 `npx expo-doctor` passou 18/18 checks e `npx expo config --type public` resolveu
@@ -165,7 +184,6 @@ Nenhum `npm audit fix` ou upgrade forçado foi executado.
 
 ## Próximos gates
 
-CI futuro deve executar `npm run lint`, `npm run quality:size` e
-`npm run quality:architecture`; CI não foi alterado aqui. Próximos passos são
-burn-down explícito e síntese de quality gates. Prettier, TypeScript,
+CI futuro pode executar `npm run quality:gate` ou seus três gates separadamente;
+CI não foi alterado aqui. Próximos passos são burn-down explícito. Prettier, TypeScript,
 `--max-warnings 0` e plugins arquiteturais não pertencem a esta fundação.

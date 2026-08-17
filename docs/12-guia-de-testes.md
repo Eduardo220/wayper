@@ -22,7 +22,8 @@ Análise estática canônica:
 npm run lint
 npm run quality:size
 npm run quality:architecture
-node --test scripts/quality/check-code-size.test.mjs scripts/quality/check-architecture.test.mjs
+npm run quality:gate
+node --test scripts/quality/*.test.mjs
 ```
 
 O baseline de warnings pertence a
@@ -30,7 +31,9 @@ O baseline de warnings pertence a
 [`docs/ai/code-budgets.md`](ai/code-budgets.md). Owners, exceções e evals do gate
 arquitetural pertencem a
 [`docs/ai/architecture-boundaries.md`](ai/architecture-boundaries.md). Não
-existe typecheck canônico.
+existe typecheck canônico. `quality:gate` é o agregado FAST; full Jest e Expo
+Doctor só entram quando a matriz de
+[`docs/ai/quality-gates.md`](ai/quality-gates.md) selecionar DEEP.
 
 ## Validacao consolidada da rodada local-first
 

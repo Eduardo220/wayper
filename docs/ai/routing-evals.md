@@ -4,7 +4,8 @@
 > **Tipo:** suíte declarativa, sem API externa<br>
 > **Owners:** [`task-classification.md`](task-classification.md) e
 > [`context-routing.md`](context-routing.md), com safety de waves em
-> [`orchestration.md`](orchestration.md)
+> [`orchestration.md`](orchestration.md) e gates/review em
+> [`quality-gates.md`](quality-gates.md)
 
 Cada caso passa quando a classificação respeita todos os campos e não ativa os
 recursos proibidos. `POTENTIAL` significa selecionar o recurso somente depois
@@ -133,6 +134,57 @@ que a inspeção confirmar a flag; não é ativação default.
 | BN4 | “divida a função em duas sem reduzir branching/responsabilidade” | structural review aberto | chamar a extração de sucesso automaticamente |
 | BN5 | “minifique/junte statements para passar” | `REJECT` | aceitar gaming da métrica |
 
+## Adaptive quality gate routing
+
+| # | Change | Expected gate/review | Expected result |
+| --- | --- | --- | --- |
+| G1 | typo em doc | `Q0 / R0` | prova targeted; sem Jest/Doctor/painel |
+| G2 | comportamento pequeno de UI | `Q1 / R1` | targeted + FAST |
+| G3 | bug de persistência | `Q2 / R2 persistence` | FAST + testes do owner + deep proporcional |
+| G4 | bug de distância GPS | `Q2 / R2 geospatial`; `Q3` se houver perda | severidade vem do failure scenario, não da palavra GPS |
+| G5 | bug de corrida ativa em background com race | `Q3 / R3 lifecycle + concurrency` | baseline, regression, full gates e failure modes |
+| G6 | safe refactor arquitetural | mínimo `Q2 / R1` + specialists pelas flags | comportamento/ownership revisados além de size |
+| G7 | novo ESLint error | gate selecionado | `FAIL` |
+| G8 | novo `BUG_SIGNAL` warning | gate selecionado | `FAIL` |
+| G9 | warning legado inalterado e não tocado | gate selecionado | `PASS`; debt somente se relevante |
+| G10 | baseline size melhora sem outro problema | gate selecionado | `PASS / RESOLVED`, sem chamar refactor de correto só pelo número |
+| G11 | size regression | gate selecionado | `FAIL` |
+| G12 | architecture regression | gate selecionado | `FAIL` |
+| G13 | full Jest falha por baseline preexistente comprovada e sem relação | `Q2/Q3` | registrar baseline; não atribuir ao diff automaticamente |
+| G14 | comportamento Android físico obrigatório não executado | `Q3` | `CODE_GATES_PASS + PHYSICAL_VALIDATION_PENDING + INCONCLUSIVE` |
+
+## Review synthesis
+
+| # | Input | Expected synthesis |
+| --- | --- | --- |
+| RV1 | finding sem failure scenario | `REJECT` como bug confirmado |
+| RV2 | dois reviewers descrevem mesma causa/cenário | `DEDUPE`; melhor evidência + corroboration |
+| RV3 | safeguard real cobre o cenário | `REJECT` ou baixar severidade |
+| RV4 | reviewers discordam | resolver por source/test/runtime contract; nunca maioria |
+| RV5 | `CRITICAL` com cenário e evidência fortes | `CONFIRMED / BLOCK` |
+| RV6 | `MEDIUM` de maintainability concreto | non-blocking por default |
+| RV7 | reviewers retornam zero findings | resultado válido |
+| RV8 | finding fora do diff e sem relação causal | debt/follow-up, não blocker |
+
+## Confidence
+
+| # | Evidence | Expected confidence/action |
+| --- | --- | --- |
+| C1 | source + reprodução/teste demonstram | `HIGH` |
+| C2 | source sustenta e reprodução é parcial | `MEDIUM` |
+| C3 | hipótese plausível sem prova; claim diz `HIGH` severity | `LOW / UNRESOLVED`; investigar antes de confirmar |
+
+## Negative quality/review routing
+
+| # | Probe | Must remain | Must not happen |
+| --- | --- | --- | --- |
+| QN1 | “arquivo grande” | structural signal | bug confirmado sem cenário |
+| QN2 | “muita complexidade” | review/budget signal | blocker automático |
+| QN3 | “poderia extrair helper” | sugestão opcional | finding bloqueante |
+| QN4 | warning legado não tocado | preexisting | bloquear a mudança |
+| QN5 | dois specialists leem o mesmo diff | `S2` permitido | tratar read-only como write conflict ou voto |
+| QN6 | mudança `Q1` local | FAST + review leve | painel completo, full Jest ou Expo Doctor sem motivo |
+
 ## Validation protocol
 
 1. conferir cada linha contra classes, flags, domínios, skills e specialists
@@ -142,8 +194,10 @@ que a inspeção confirmar a flag; não é ativação default.
 3. conferir modes, status, DAG/wave e safety matrix contra
    `docs/ai/orchestration.md`;
 4. conferir budgets/ratchet contra `docs/ai/code-budgets.md` e os casos B/BN;
-5. validar links/paths do Harness;
-6. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
+5. conferir gate/review/status contra `docs/ai/quality-gates.md` e os casos
+   G/RV/C/QN;
+6. validar links/paths do Harness;
+7. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
 
 Como o router é uma política interpretada e não um programa, estes evals não

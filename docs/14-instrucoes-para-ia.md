@@ -26,7 +26,8 @@ A arquitetura e as fronteiras project/global/generated estão em
 Classificação, flags e seleção mínima pertencem a
 [`docs/ai/task-classification.md`](ai/task-classification.md) e
 [`docs/ai/context-routing.md`](ai/context-routing.md). Delegação, waves e síntese
-pertencem a [`docs/ai/orchestration.md`](ai/orchestration.md).
+pertencem a [`docs/ai/orchestration.md`](ai/orchestration.md). Gates/review
+adaptativos pertencem a [`docs/ai/quality-gates.md`](ai/quality-gates.md).
 
 ## Context Gate
 
@@ -49,7 +50,7 @@ motivo proporcional. Um campo que não se aplica pode ser omitido com motivo.
 ## Descoberta progressiva
 
 1. Leia `AGENTS.md` e o catálogo.
-2. Classifique tarefa/flags e selecione somente os domínios indicados no router.
+2. Classifique tarefa/flags, leia o diff e selecione gate/review proporcionais.
 3. Leia os documentos mínimos e acione skill apenas quando o gatilho casar.
 4. Use Graphify apenas para reduzir incerteza estrutural; confirme no source.
 5. Leia implementação, callers, testes, configuração e bugs relevantes.

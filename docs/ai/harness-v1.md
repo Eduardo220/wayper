@@ -3,7 +3,7 @@
 > **Status:** vigente<br>
 > **Escopo:** repositório mobile<br>
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
-> Analysis + Code Budgets + Architecture Boundaries V1, 2026-08-17<br>
+> Analysis + Budgets + Boundaries + Adaptive Quality V1, 2026-08-17<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -17,8 +17,9 @@ configuração de ferramentas.
 ```text
 AGENTS.md
   -> task class + risk flags
-     -> process contract quando necessário + context map mínimo
-        -> decisão S0 single ou delegação com valor comprovado
+     -> diff real + Q0-Q3 gate + R0-R3 review
+        -> process contract quando necessário + context map mínimo
+           -> decisão S0 single ou delegação com valor comprovado
            -> docs/00-fontes-do-projeto.md + skill sob demanda
            -> source, callers e testes atuais
               -> waves/read-only specialists quando necessário
@@ -44,6 +45,8 @@ evidência datada.
   ranking estrutural; `npm run quality:size` é o gate de regressão.
 - `docs/ai/architecture-boundaries.md`: owners reais, inventários e boundaries
   sob demanda; `npm run quality:architecture` impede novos consumers inválidos.
+- `docs/ai/quality-gates.md`: Q0-Q3, R0-R3, delta, finding contract e síntese;
+  `npm run quality:gate` agrega somente os gates FAST de repositório.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
@@ -87,7 +90,7 @@ do usuário. Nenhum deles é fonte de regras do mobile.
 ## Progressive disclosure
 
 1. carregar `AGENTS.md` e metadata de descoberta;
-2. classificar tarefa, flags e menor context level;
+2. classificar tarefa/flags e selecionar gate/review pelo diff real;
 3. selecionar processo, domínios, catálogo/docs e skills mínimas;
 4. permanecer single-agent ou decompor somente por valor e independência;
 5. confirmar código, callers e testes;
@@ -109,4 +112,5 @@ nativos e usam os contratos de
 [`docs/ai/process-workflows.md`](process-workflows.md). A delegação segue
 [`docs/ai/orchestration.md`](orchestration.md).
 `wayper-brain` permanece somente no backup histórico, sem reativar código, agent
-ou configuração.
+ou configuração. Autonomy Contract, Human Decision Boundary e meta-goal runtime
+permanecem fora desta unidade.
