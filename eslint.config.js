@@ -29,6 +29,20 @@ export default defineConfig([
     },
   },
   {
+    files: ['App.js', 'index.js', 'googleAuth.js', 'src/**/*.{js,jsx,mjs}'],
+    ignores: ['src/**/__tests__/**', 'src/**/__fixtures__/**', 'src/**/*.{test,spec}.{js,jsx,mjs}'],
+    rules: {
+      complexity: ['warn', 50],
+      'max-depth': ['warn', 4],
+      'max-lines': ['warn', { max: 350, skipBlankLines: true, skipComments: true }],
+      'max-lines-per-function': [
+        'warn',
+        { max: 200, skipBlankLines: true, skipComments: true },
+      ],
+      'max-params': ['warn', 4],
+    },
+  },
+  {
     rules: {
       // Existing findings are tracked in docs/ai/static-analysis.md.
       'import/export': 'warn',

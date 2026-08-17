@@ -67,11 +67,13 @@ Use somente quando o objetivo explícito é preservar comportamento.
 5. Faça um passo reversível, sem abstração especulativa ou feature escondida.
 6. Compare comportamento/testes com a baseline antes do próximo passo.
 7. Repita apenas enquanto cada passo mantiver evidência e rollback simples.
-8. Rode regressão final e reporte qualquer risco não caracterizado.
+8. Verifique os budgets sem dividir/minificar código para melhorar score.
+9. Rode regressão final e reporte qualquer risco não caracterizado.
 
 Nome/typo/rename local não aciona este fluxo completo. Um refactor de
 `MapScreen` é `ARCHITECTURAL` até dependency/ownership map provar fronteiras e
-pode receber `CRITICAL_RUNTIME`; esta decisão não autoriza executá-lo.
+pode receber `CRITICAL_RUNTIME`; esta decisão não autoriza executá-lo. Targets,
+ratchet e anti-gaming pertencem a [`code-budgets.md`](code-budgets.md).
 
 ## `ARCHITECTURAL_CHANGE`
 
@@ -162,5 +164,5 @@ ARCHITECTURAL: CURRENT_STATE | CONSTRAINTS | OPTIONS | DECISION | MIGRATION | VA
 REVIEW: FINDINGS | RISKS | TEST_GAPS
 ```
 
-Comandos vêm do `package.json` atual. `npm run lint` é canônico; typecheck não
-existe. Não invente build/test e registre qualquer ausência.
+Comandos vêm do `package.json` atual. `npm run lint` e `npm run quality:size` são
+canônicos; typecheck não existe. Não invente build/test e registre ausência.

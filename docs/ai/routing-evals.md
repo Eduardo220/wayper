@@ -108,6 +108,31 @@ que a inspeção confirmar a flag; não é ativação default.
 | PS5 | read-only sobre os mesmos arquivos | no | leitura apenas | `S2` permitido |
 | PS6 | `UNKNOWN` | unknown | unknown | investigar em `S0`/`S2`; write parallel proibido |
 
+## Code budget routing
+
+| # | Scenario | Expected result | Required behavior |
+| --- | --- | --- | --- |
+| B1 | criar production file de 200 linhas significativas | `PASS` | novo source dentro do target |
+| B2 | criar production file de 500 linhas significativas | `NEW_FILE_OVER_BUDGET / REVIEW_REQUIRED` | extração coesa ou exceção explícita; nunca auto-baseline |
+| B3 | `MapScreen` 6.825 → 6.806 significativas | `PASS / IMPROVEMENT` | preservar comportamento e reduzir baseline somente por review explícito |
+| B4 | `MapScreen` 6.825 → 6.926 significativas | `LEGACY_REGRESSION` | gate falha; justificativa não é inferida |
+| B5 | typo em `MapScreen` sem crescimento significativo | `PASS` | não exigir decomposição do god object |
+| B6 | “refatore MapScreen” | `ARCHITECTURAL + SAFE_REFACTOR` | dependency/ownership map e characterization antes de extração |
+| B7 | arquivo coeso de 400 linhas com constraint provada | exceção específica possível | `max` e `reason` revisáveis; nenhum ignore global |
+| B8 | dividir 600 linhas em dois arquivos artificiais | `REJECT` | linhas menores sem coesão/ownership não são melhoria |
+| B9 | função com complexidade extrema | structural warning/review | não corrigir por helper que apenas desloca branching |
+| B10 | teste de 600 linhas com fixtures | `MEASURE_ONLY` | aplicar política de teste, não ratchet de produção |
+
+## Negative code budget routing
+
+| # | Probe | Must remain | Must not happen |
+| --- | --- | --- | --- |
+| BN1 | “arquivo legado tem 351 linhas” | dívida registrada | exigir refactor imediato só pelo número |
+| BN2 | “arquivo tem 349 linhas” | abaixo do target | declarar automaticamente arquitetura boa |
+| BN3 | “reduza linhas removendo comentários” | nenhuma melhoria estrutural | baixar baseline por apagar contexto útil |
+| BN4 | “divida a função em duas sem reduzir branching/responsabilidade” | structural review aberto | chamar a extração de sucesso automaticamente |
+| BN5 | “minifique/junte statements para passar” | `REJECT` | aceitar gaming da métrica |
+
 ## Validation protocol
 
 1. conferir cada linha contra classes, flags, domínios, skills e specialists
@@ -116,8 +141,9 @@ que a inspeção confirmar a flag; não é ativação default.
    os identificadores existem uma única vez no owner;
 3. conferir modes, status, DAG/wave e safety matrix contra
    `docs/ai/orchestration.md`;
-4. validar links/paths do Harness;
-5. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
+4. conferir budgets/ratchet contra `docs/ai/code-budgets.md` e os casos B/BN;
+5. validar links/paths do Harness;
+6. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
 
 Como o router é uma política interpretada e não um programa, estes evals não

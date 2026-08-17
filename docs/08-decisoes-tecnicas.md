@@ -649,3 +649,21 @@ concorrência project-scoped ou worktree permanente é criado. Subagents não
 fazem commit/push; synthesis, replanning e validação pertencem ao agente
 principal. O protocolo canônico está em `docs/ai/orchestration.md` e os casos de
 safety em `docs/ai/routing-evals.md`.
+
+### Adendo — Code Size + Complexity Budgets
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** 350 linhas significativas é target de arquitetura para source novo,
+não limite absoluto nem autorização de refactor. Regras core ESLint expõem como
+warning a cauda atual de tamanho, função, complexidade, profundidade e parâmetros.
+Um ratchet Node sem dependência registra somente arquivos de produção legados
+acima do target, bloqueia crescimento e novos oversized, aceita redução e exige
+exceção específica/revisável para crescimento legítimo. Testes são measure-only.
+
+**Consequências:** `npm run lint` preserva zero errors e separa dívida estrutural
+dos bug signals existentes; `npm run quality:size` é o gate bloqueante. Baseline
+não se atualiza automaticamente, tamanho isolado não classifica god object e
+`MapScreen`/runtime crítico não são refatorados para satisfazer métrica. Política,
+thresholds e ranking estão em `docs/ai/code-budgets.md`; boundaries ficam para
+unidade própria.

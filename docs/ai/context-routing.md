@@ -321,13 +321,14 @@ branch atual sempre confirmam ownership.
   `eas.json`, `app.json`, `scripts/` e `android/`.
 - **Primary owners:** scripts/config atuais e a suíte relacionada.
 - **Docs:** `docs/12-guia-de-testes.md`, `docs/11-plano-de-deploy.md`,
-  `docs/13-bugs-conhecidos.md` e `docs/ai/static-analysis.md` para lint.
+  `docs/13-bugs-conhecidos.md`, `docs/ai/static-analysis.md` para lint e
+  `docs/ai/code-budgets.md` para mudança estrutural.
 - **Tests:** suíte direcionada e `npm test -- --runInBand` quando o gate pedir.
 - **Skills:** nenhuma por padrão; skill de domínio apenas se o teste cobre esse
   domínio.
 - **Specialists:** nenhum por padrão; papéis de tester/debugger são nativos.
-- **Tools:** comandos canônicos do `package.json`; `npm run lint` é o lint
-  vigente e não existe typecheck canônico.
+- **Tools:** comandos canônicos do `package.json`; `npm run lint` e
+  `npm run quality:size` são vigentes e não existe typecheck canônico.
 - **Validation:** exit code, contagem, baseline, config syntax e diff check.
 - **Risk flags:** `BUILD_TOOLING`, `PERFORMANCE`, `NATIVE_ANDROID`.
 - **Escalation:** dependency/config pública, pipeline ou vários ambientes pode

@@ -50,6 +50,7 @@ o próprio escopo.
 
 - Aplique Ponytail FULL: menor código correto, preservando validação, segurança,
   compatibilidade, acessibilidade, erros e proteção de dados.
+- Novo source busca ~350 linhas; legado não cresce sem justificativa.
 - Não amplie escopo nem remova consumidores sem evidência. Atualize testes e a
   documentação dona da decisão.
 - Trabalhe em fases verificáveis e reversíveis. Commit só quando autorizado;
