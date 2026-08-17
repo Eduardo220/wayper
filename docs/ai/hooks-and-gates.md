@@ -69,7 +69,7 @@ política do projeto nem substitui review.
 | --- | --- | --- | --- | --- | --- |
 | RTK command adapter | `~/.codex/hooks.json` → `<workspace>/.codex/hooks/rtk-codex.js`; `USER_GLOBAL`/`SHARED_WORKSPACE` | user; `PreToolUse:Bash` | adaptação RTK; timeout 5 s | best-effort/fail-open | `KEEP` |
 | Ponytail lifecycle 4.9.0 | plugin manifest/cache; `PLUGIN` | plugin; `SessionStart`, `UserPromptSubmit`, `SubagentStart` | regras/mode tracking; timeout 5 s por handler | best-effort/fail-open | `KEEP` |
-| Wayper completion backstop | `.codex/hooks.json`; `WAYPER_PROJECT` | Harness; `Stop` | gate por scope; 43 ms–9,84 s medidos | blocker em `FAIL`/`TOOLING_ERROR` do script; runtime pode fail-open | `ADD` |
+| Wayper completion backstop | `.codex/hooks.json`; `WAYPER_PROJECT` | Harness; `Stop` | gate por scope; 48 ms–9,22 s medidos | blocker em `FAIL`/`TOOLING_ERROR` do script; runtime pode fail-open | `ADD` |
 | Graphify post-commit | `.git/hooks/post-commit`; `GIT_LOCAL`/`GENERATED_RUNTIME` | Graphify; Git `post-commit` | update assíncrono; só custo de launch no Git foreground | detached/fail-open | `KEEP` |
 | Graphify post-checkout | `.git/hooks/post-checkout`; `GIT_LOCAL`/`GENERATED_RUNTIME` | Graphify; Git `post-checkout` | refresh assíncrono em troca de branch; só launch foreground | detached/fail-open | `KEEP` |
 
@@ -263,9 +263,9 @@ project-scoped de aproximadamente 0 s/0 bytes.
 
 | Event/scenario | Commands run | Practical sample | Output |
 | --- | --- | --- | --- |
-| `Stop`/no changes | Git root + two changed-file queries | p50 43,2 ms (5 runs) | 0 bytes |
-| `Stop`/docs only | Git discovery + untracked/diff checks | p50 51,2 ms (5 runs) | 0 bytes |
-| `Stop`/product-equivalent mixed diff | associated tooling test + FAST gate | 9,84 s (1 run) | 0 bytes |
+| `Stop`/no changes | Git root + two changed-file queries | p50 47,9 ms (5 runs) | 0 bytes |
+| `Stop`/docs only | Git discovery + untracked/diff checks | p50 60,3 ms (5 runs) | 0 bytes |
+| `Stop`/product source | untracked check + FAST gate | 9,22 s (1 run) | 0 bytes |
 | 100 tool calls | no project hook | 0 commands/backstops; projected 0 s | 0 bytes |
 
 Um hook frequente de 0,1 s, 2 s ou 10 s custaria respectivamente 10 s, 200 s
