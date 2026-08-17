@@ -597,3 +597,20 @@ Router, review multi-agent completo, novo graph/memory e nova compressão ficam
 explicitamente fora desta decisão. Arquitetura e inventário estão em
 `docs/ai/harness-v1.md` e
 `docs/audits/2026-08-16-ai-harness-v1-foundation.md`.
+
+### Adendo — Task Classifier + Context Router
+
+**Status:** aceito em 2026-08-16
+
+**Decisão:** o Harness classifica tarefas por objetivo, combina risk flags e
+seleciona contexto em cinco níveis. O router é política Markdown sob demanda,
+não software nem novo agent central. Doze domínios apontam para owners, docs,
+testes, skills e specialists existentes; `CRITICAL_RUNTIME` sobrepõe a classe
+quando há risco real para a corrida. Evals positivas e negativas fixam o
+contrato sem heurística de palavras ou API externa.
+
+**Consequências:** `AGENTS.md` recebe apenas um Context Gate curto. O mapa grande
+não entra no contexto permanente, skills/agents continuam seletivos, Graphify e
+RTK continuam globais/opcionais e o `wayper-brain` permanece depreciado. A
+política canônica está em `docs/ai/task-classification.md`,
+`docs/ai/context-routing.md` e `docs/ai/routing-evals.md`.

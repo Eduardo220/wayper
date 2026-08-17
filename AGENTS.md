@@ -37,9 +37,10 @@ o próprio escopo.
 
 ## Progressive disclosure
 
-- Use `.agents/skills/` somente quando o gatilho do domínio casar.
-- Use especialistas read-only em `.codex/agents/` só para risco concreto; agentes
-  nativos cobrem descoberta, implementação e revisão geral.
+- Antes de aprofundar, classifique tarefa/flags e use
+  `docs/ai/context-routing.md`; carregue o mínimo e escale por risco.
+- Skill só quando o gatilho casar; especialista read-only só por risco concreto.
+  Agentes nativos cobrem trabalho genérico.
 - Workflow: `docs/14-instrucoes-para-ia.md`. Arquitetura do Harness:
   `docs/ai/harness-v1.md`.
 - Graphs, maps e caches nunca são verdade. RTK é ferramenta global opcional.

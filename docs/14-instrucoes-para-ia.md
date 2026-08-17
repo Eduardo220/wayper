@@ -23,6 +23,9 @@ conteúdos em prompts, skills, agents ou hooks.
 
 A arquitetura e as fronteiras project/global/generated estão em
 [`docs/ai/harness-v1.md`](ai/harness-v1.md).
+Classificação, flags e seleção mínima pertencem a
+[`docs/ai/task-classification.md`](ai/task-classification.md) e
+[`docs/ai/context-routing.md`](ai/context-routing.md).
 
 ## Context Gate
 
@@ -45,8 +48,8 @@ motivo proporcional. Um campo que não se aplica pode ser omitido com motivo.
 ## Descoberta progressiva
 
 1. Leia `AGENTS.md` e o catálogo.
-2. Selecione somente os documentos indicados para o domínio.
-3. Acione uma skill apenas quando sua descrição casar com a tarefa.
+2. Classifique tarefa/flags e selecione somente os domínios indicados no router.
+3. Leia os documentos mínimos e acione skill apenas quando o gatilho casar.
 4. Use Graphify apenas para reduzir incerteza estrutural; confirme no source.
 5. Leia implementação, callers, testes, configuração e bugs relevantes.
 6. Acione especialista somente quando houver risco específico que justifique o

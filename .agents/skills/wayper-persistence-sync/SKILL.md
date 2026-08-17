@@ -1,6 +1,6 @@
 ---
 name: wayper-persistence-sync
-description: Use for Wayper finished-run save, finalization, recovery handoff, deferred queue, retry/replay, idempotency, or sync; not live GPS.
+description: Use for Wayper durable run save/finalization/recovery storage, deferred queue, migration, retry/replay, Firestore sync, or consistency; not live GPS or UI-only changes.
 ---
 
 # Wayper persistence and sync

@@ -1,6 +1,6 @@
 ---
 name: wayper-mobile-shell
-description: Use for Wayper app entry, providers, auth gate, root navigation, deep links, onboarding, or permission entry; not run internals.
+description: Use for Wayper app entry, providers, auth gate, root navigation, deep links, onboarding, permissions, or shell UI; not active-run internals or post-run processing.
 ---
 
 # Wayper mobile shell

@@ -1,6 +1,6 @@
 ---
 name: wayper-active-run
-description: Use for Wayper active-run GPS lifecycle, background, pause/resume, notification, recovery, or finish handoff; not derived post-run work.
+description: Use for Wayper live-run state or GPS lifecycle, background, pause/resume, notification, recovery, or finish handoff; not run-button copy/style or post-run UI/derived work.
 ---
 
 # Wayper active run

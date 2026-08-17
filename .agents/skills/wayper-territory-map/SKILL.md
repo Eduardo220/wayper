@@ -1,6 +1,6 @@
 ---
 name: wayper-territory-map
-description: Use for Wayper territory geometry, capture, storage, MapLibre adaptation, or rendering; not live GPS lifecycle or post-run queues.
+description: Use for Wayper territory geometry/capture/storage, coordinate handling, MapLibre data adaptation, or territory rendering; not visual map styling, live-run lifecycle, or post-run queues.
 ---
 
 # Wayper territory and map

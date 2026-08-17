@@ -1,8 +1,8 @@
-# Wayper AI Harness V1 Foundation
+# Wayper AI Harness V1
 
 > **Status:** vigente<br>
 > **Escopo:** repositório mobile<br>
-> **Versão:** Foundation V1, 2026-08-16<br>
+> **Versão:** Foundation + Task Routing V1, 2026-08-16<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -15,8 +15,9 @@ configuração de ferramentas.
 
 ```text
 AGENTS.md
-  -> docs/00-fontes-do-projeto.md
-     -> docs do domínio ou skill sob demanda
+  -> task class + risk flags
+     -> context map mínimo
+        -> docs/00-fontes-do-projeto.md + skill sob demanda
         -> source, callers e testes atuais
            -> especialista read-only quando houver risco concreto
               -> ferramentas e hooks
@@ -29,6 +30,9 @@ evidência datada.
 
 ## Recursos project-scoped
 
+- `docs/ai/task-classification.md` e `docs/ai/context-routing.md`: decisão
+  declarativa sob demanda; não existe processo/router executável.
+- `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro rotas de contexto do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
 - `.codex/agents/`: quatro revisores especializados, todos read-only e sem modelo
@@ -70,18 +74,20 @@ do usuário. Nenhum deles é fonte de regras do mobile.
 
 ## Progressive disclosure
 
-1. carregar `AGENTS.md` e o catálogo;
-2. selecionar docs pela matriz;
-3. carregar no máximo as skills dos domínios afetados;
-4. confirmar código e testes;
-5. usar especialista somente por risco concreto.
+1. carregar `AGENTS.md` e metadata de descoberta;
+2. classificar tarefa, flags e menor context level;
+3. selecionar domínios, catálogo/docs e skills mínimas;
+4. confirmar código, callers e testes;
+5. subir contexto, Graphify ou especialista somente por evidência.
 
 Não existe ciclo `AGENTS -> docs -> skill -> AGENTS`: skills referenciam owners,
 mas não redefinem política nem roteiam agentes.
 
-## Fora da V1 Foundation
+## Fora da V1
 
-Ainda não foram implementados Task Classifier, Context Router, review
+Ainda não foram implementados quality/process workflows das skills, review
 multi-agent completo, knowledge graph novo, memory system, token proxy, regras
 ESLint ou limite de tamanho de arquivo. `wayper-brain` permanece somente no
-backup histórico para informar a próxima unidade; ele não é recurso ativo.
+backup histórico; conceitos úteis foram classificados em
+[`docs/ai/task-classification.md`](task-classification.md), sem reativar código,
+agent ou configuração.
