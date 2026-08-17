@@ -2,8 +2,8 @@
 
 > **Status:** vigente<br>
 > **Escopo:** repositório mobile<br>
-> **Versão:** Foundation + Routing + Skill Workflows + Orchestration V1,
-> 2026-08-16<br>
+> **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
+> Analysis V1, 2026-08-17<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -38,6 +38,8 @@ evidência datada.
   skill-vs-native; não é skill nem novo orquestrador.
 - `docs/ai/orchestration.md`: modos, decomposition, waves, synthesis e políticas
   de escrita; não é planner executável nem custom orchestrator.
+- `docs/ai/static-analysis.md`: stack, severidades e baseline do comando
+  canônico `npm run lint`; detalhes são carregados somente em `TEST_BUILD`.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
@@ -95,8 +97,8 @@ pelas flags.
 
 Não existe wave planner executável, custom orchestrator, adjudicator, agent
 genérico novo, benchmark automático de concorrência ou worktree permanente.
-Knowledge graph novo, memory system, token proxy, regras ESLint e limite de
-tamanho de arquivo também permanecem fora. As quatro skills possuem workflows
+Knowledge graph novo, memory system, token proxy, budgets ESLint, boundaries e
+limite de tamanho de arquivo permanecem fora. As quatro skills possuem workflows
 de domínio; processos genéricos permanecem nativos e usam os contratos de
 [`docs/ai/process-workflows.md`](process-workflows.md). A delegação segue
 [`docs/ai/orchestration.md`](orchestration.md).

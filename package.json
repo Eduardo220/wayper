@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node scripts/with-env.cjs .env.development -- expo start --dev-client",
+    "lint": "eslint .",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand",
     "start:clean": "node scripts/with-env.cjs .env.development -- expo start --dev-client -c",
     "dev": "node scripts/with-env.cjs .env.development -- npm run dev:emulator",
@@ -137,7 +138,10 @@
   },
   "devDependencies": {
     "concurrently": "^10.0.3",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~10.0.0",
     "firebase-admin": "^13.10.0",
+    "globals": "^16.5.0",
     "jest": "^29.7.0",
     "wait-on": "^8.0.3"
   },

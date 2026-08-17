@@ -16,6 +16,16 @@ Para validacao completa local antes de fechar uma mudanca grande:
 npm test -- --runInBand
 ```
 
+Análise estática canônica:
+
+```bash
+npm run lint
+```
+
+O baseline e a política de warnings pertencem a
+[`docs/ai/static-analysis.md`](ai/static-analysis.md). Não existe typecheck
+canônico.
+
 ## Validacao consolidada da rodada local-first
 
 Ultima rodada reportada em 2026-06-19:
@@ -32,7 +42,8 @@ Resultados reportados:
 - `git diff --check`: aprovado, com warnings LF/CRLF conhecidos quando aplicavel.
 - `compileDevDebugKotlin`: aprovado.
 - Checagem estatica simples de imports relativos: 234 arquivos verificados.
-- `lint`, `typecheck`, `test:ci` e `validate` nao existem no `package.json`; nao cite esses scripts como executados enquanto nao forem adicionados.
+- Naquela rodada, `lint`, `typecheck`, `test:ci` e `validate` ainda nao existiam
+  no `package.json`.
 
 Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam de validacao fisica Android dev/release.
 

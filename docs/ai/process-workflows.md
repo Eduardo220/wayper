@@ -162,5 +162,5 @@ ARCHITECTURAL: CURRENT_STATE | CONSTRAINTS | OPTIONS | DECISION | MIGRATION | VA
 REVIEW: FINDINGS | RISKS | TEST_GAPS
 ```
 
-Comandos vêm do `package.json` atual. Não invente lint, typecheck, build ou test;
-quando não houver comando canônico, registre a ausência.
+Comandos vêm do `package.json` atual. `npm run lint` é canônico; typecheck não
+existe. Não invente build/test e registre qualquer ausência.

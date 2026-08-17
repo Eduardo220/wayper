@@ -54,8 +54,8 @@ canonical store or making Firestore part of the critical path.
 
 Validate readers/writers, save-before-effects ordering, offline recovery,
 duplicate delivery, retry/replay, remote failure and migration compatibility.
-Use only commands that exist in `package.json`; there is no canonical lint or
-typecheck command in this baseline.
+Use only commands that exist in `package.json`; `npm run lint` is canonical and
+there is no typecheck command.
 
 ## Escalation and specialists
 
