@@ -13,15 +13,32 @@ subconjunto a abrir para a tarefa atual.
 ## Sequência
 
 1. classificar a tarefa e marcar flags semânticas;
-2. escolher somente os domínios realmente afetados;
-3. iniciar no menor context level suficiente;
-4. carregar as skills e fontes indicadas, depois confirmar source/callers/testes;
-5. usar Graphify ou specialist apenas quando incerteza/risco justificar;
-6. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
+2. selecionar processo somente quando ele acrescentar disciplina;
+3. escolher somente os domínios realmente afetados;
+4. iniciar no menor context level suficiente;
+5. carregar as skills e fontes indicadas, depois confirmar source/callers/testes;
+6. usar Graphify ou specialist apenas quando incerteza/risco justificar;
+7. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
 
 Palavra não é gatilho: “corrida” em texto não implica `RUN_RUNTIME`; “mapa”
 visual não implica `TERRITORY_GEO`; “Firebase” em doc não chama reviewer de
 persistência; “teste” não cria agent tester.
+
+## Process routing
+
+Carregue [`docs/ai/process-workflows.md`](process-workflows.md) somente quando a
+sequência acrescentar disciplina além do classifier/domain skill.
+
+| Sinal | Processo | Composição mínima |
+| --- | --- | --- |
+| bug verificável | `BUG_INVESTIGATION` | classe + domínio; domain skill/reviewer só por escopo/flags |
+| refactor explicitamente behavior-preserving e não trivial | `SAFE_REFACTOR` | classe + owners/consumers; Graphify apenas se mapa amplo |
+| mudança de owner/boundary/migration | `ARCHITECTURAL_CHANGE` | classe + domínios + decisão/migração |
+| falha de teste | `TEST_FAILURE_INVESTIGATION` | `TEST_BUILD` + domínio do contrato afetado |
+| feature bounded | workflow nativo | classe + domínio; não criar feature skill genérica |
+| code review | contrato nativo de review | specialists somente por risk flag |
+| sanitation/document sync | workflow nativo leve | nenhuma process skill |
+| critical runtime | workflow de `wayper-active-run` | não criar `wayper-critical-runtime` |
 
 ## Level 1 — índice rápido
 
@@ -325,7 +342,8 @@ branch atual sempre confirmam ownership.
 - **Entry points:** `AGENTS.md`, `docs/ai/`, `docs/14-instrucoes-para-ia.md`,
   `.agents/skills/` e `.codex/agents/`.
 - **Primary owners:** `AGENTS.md` para permanentes, `harness-v1.md` para
-  arquitetura, classifier/router para decisão e cada skill/agent para workflow.
+  arquitetura, classifier/router/process-workflows para decisão e cada
+  skill/agent para workflow especializado.
 - **Docs:** estes arquivos e a linha de IA em `docs/00-fontes-do-projeto.md`.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
   produto para garantir ausência de regressão.

@@ -158,7 +158,7 @@ próprio documento.
 | Testes | [`docs/12-guia-de-testes.md`](12-guia-de-testes.md) | [`docs/22-teste-real-corrida-background.md`](22-teste-real-corrida-background.md), [`docs/wayper/15-checklist-validacao-corrida-ativa.md`](wayper/15-checklist-validacao-corrida-ativa.md), [`docs/13-bugs-conhecidos.md`](13-bugs-conhecidos.md) | Fonte operacional | Vigente |
 | Deploy | [`docs/11-plano-de-deploy.md`](11-plano-de-deploy.md) | `package.json`, [`docs/12-guia-de-testes.md`](12-guia-de-testes.md), [`docs/diagnostics.md`](diagnostics.md) | Fonte operacional | Em revisão |
 | Bugs conhecidos | [`docs/13-bugs-conhecidos.md`](13-bugs-conhecidos.md) | [`docs/wayper/13-problemas-conhecidos.md`](wayper/13-problemas-conhecidos.md), [`docs/audits/`](audits/) | Registro operacional | Vigente |
-| Instruções para IA | [`AGENTS.md`](../AGENTS.md) | [`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md), [`docs/ai/harness-v1.md`](ai/harness-v1.md), [`docs/ai/task-classification.md`](ai/task-classification.md), [`docs/ai/context-routing.md`](ai/context-routing.md), este catálogo | Fonte operacional | Vigente; Harness V1 + routing |
+| Instruções para IA | [`AGENTS.md`](../AGENTS.md) | [`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md), [`docs/ai/harness-v1.md`](ai/harness-v1.md), [`docs/ai/task-classification.md`](ai/task-classification.md), [`docs/ai/context-routing.md`](ai/context-routing.md), [`docs/ai/process-workflows.md`](ai/process-workflows.md), este catálogo | Fonte operacional | Vigente; Harness V1 + skill workflows |
 
 ## Matriz: tipo de tarefa e leitura adicional
 

@@ -614,3 +614,19 @@ não entra no contexto permanente, skills/agents continuam seletivos, Graphify e
 RTK continuam globais/opcionais e o `wayper-brain` permanece depreciado. A
 política canônica está em `docs/ai/task-classification.md`,
 `docs/ai/context-routing.md` e `docs/ai/routing-evals.md`.
+
+### Adendo — Skill Quality + Process Workflows
+
+**Status:** aceito em 2026-08-16
+
+**Decisão:** as quatro skills mobile permanecem únicas e passam a conter
+preconditions, contexto mínimo, workflow, invariantes, validação, escalada,
+specialists seletivos e output contract. Processos transversais de bug, refactor
+seguro, mudança arquitetural e falha de teste são contratos declarativos sob
+demanda; feature, review, sanitation e documentation sync continuam nativos.
+`CRITICAL_RUNTIME_CHANGE` pertence a `wayper-active-run`.
+
+**Consequências:** nenhuma skill/process agent genérico é criado e o contexto
+permanente muda apenas pela metadata discriminativa das quatro skills. O owner
+processual é `docs/ai/process-workflows.md`; o router somente referencia o
+processo, e domain knowledge permanece nas skills/docs existentes.

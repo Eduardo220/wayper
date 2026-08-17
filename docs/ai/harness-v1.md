@@ -2,7 +2,7 @@
 
 > **Status:** vigente<br>
 > **Escopo:** repositório mobile<br>
-> **Versão:** Foundation + Task Routing V1, 2026-08-16<br>
+> **Versão:** Foundation + Routing + Skill Workflows V1, 2026-08-16<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -16,7 +16,7 @@ configuração de ferramentas.
 ```text
 AGENTS.md
   -> task class + risk flags
-     -> context map mínimo
+     -> process contract quando necessário + context map mínimo
         -> docs/00-fontes-do-projeto.md + skill sob demanda
         -> source, callers e testes atuais
            -> especialista read-only quando houver risco concreto
@@ -32,8 +32,10 @@ evidência datada.
 
 - `docs/ai/task-classification.md` e `docs/ai/context-routing.md`: decisão
   declarativa sob demanda; não existe processo/router executável.
+- `docs/ai/process-workflows.md`: processos transversais sob demanda e decisão
+  skill-vs-native; não é skill nem novo orquestrador.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
-- `.agents/skills/`: quatro rotas de contexto do mobile. Apenas `name` e
+- `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
 - `.codex/agents/`: quatro revisores especializados, todos read-only e sem modelo
   fixado pelo projeto.
@@ -76,18 +78,20 @@ do usuário. Nenhum deles é fonte de regras do mobile.
 
 1. carregar `AGENTS.md` e metadata de descoberta;
 2. classificar tarefa, flags e menor context level;
-3. selecionar domínios, catálogo/docs e skills mínimas;
+3. selecionar processo, domínios, catálogo/docs e skills mínimas;
 4. confirmar código, callers e testes;
 5. subir contexto, Graphify ou especialista somente por evidência.
 
 Não existe ciclo `AGENTS -> docs -> skill -> AGENTS`: skills referenciam owners,
-mas não redefinem política nem roteiam agentes.
+mas não redefinem política nem orquestram agents; apenas recomendam specialists
+pelas flags.
 
 ## Fora da V1
 
-Ainda não foram implementados quality/process workflows das skills, review
-multi-agent completo, knowledge graph novo, memory system, token proxy, regras
-ESLint ou limite de tamanho de arquivo. `wayper-brain` permanece somente no
-backup histórico; conceitos úteis foram classificados em
-[`docs/ai/task-classification.md`](task-classification.md), sem reativar código,
-agent ou configuração.
+Ainda não foram implementados review multi-agent completo, waves paralelas,
+knowledge graph novo, memory system, token proxy, regras ESLint ou limite de
+tamanho de arquivo. As quatro skills
+possuem workflows de domínio; processos genéricos permanecem nativos e usam os
+contratos de [`docs/ai/process-workflows.md`](process-workflows.md).
+`wayper-brain` permanece somente no backup histórico, sem reativar código, agent
+ou configuração.

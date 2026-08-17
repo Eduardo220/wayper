@@ -35,11 +35,36 @@ que a inspeção confirmar a flag; não é ativação default.
 | N5 | “refatore este typo de comentário” | `TRIVIAL`, `DOCUMENTATION` | promover para `ARCHITECTURAL` pela palavra “refatore” |
 | N6 | “atualize o AGENTS para apontar este doc” | `BOUNDED`, `DOCUMENTATION`, `HARNESS_AI` | carregar runtime/docs de corrida sem integração real |
 
+## Process routing
+
+| # | User task | Expected process composition | Required behavior |
+| --- | --- | --- | --- |
+| P1 | “o texto de erro do login fica vermelho quando deveria ficar cinza” | `BUG + UI_DESIGN + BUG_INVESTIGATION` leve | confirmar causa/regressão; sem active-run ou specialist pesado |
+| P2 | “a corrida perde distância depois de voltar do background” | `BUG + CRITICAL_RUNTIME + RUN_RUNTIME + BUG_INVESTIGATION + wayper-active-run` | mapear lifecycle/owner e selecionar lifecycle/concurrency/geospatial reviewers somente pelas flags |
+| P3 | “refatore MapScreen sem mudar comportamento” | `ARCHITECTURAL + SAFE_REFACTOR`, com `RUN_RUNTIME` após mapear escopo | baseline/dependency/consumer map antes de editar; Graphify potencial; sem refactor cego |
+| P4 | “adicione uma pequena ação social usando o feed existente” | `BOUNDED + SOCIAL + native feature workflow` | reutilizar owner/pattern; nenhuma feature skill genérica |
+| P5 | “faça code review deste diff” | native review contract | findings com cenário/evidência; sem custom generic reviewer |
+| P6 | “limpe imports mortos deste módulo” | `BOUNDED + native sanitation gate` | baseline e validação direcionada; nenhuma sanitation skill |
+| P7 | “corrija esta falha de teste” | `TEST_FAILURE_INVESTIGATION + TEST_BUILD` | decidir se contrato correto está no teste/produto; não editar teste cegamente |
+| P8 | “atualize a documentação desse rename” | native documentation sync | confirmar owner/links; sem carregar runtime não afetado |
+
+## Negative process routing
+
+| # | Probe | Must remain | Must not happen |
+| --- | --- | --- | --- |
+| PN1 | “corrigir typo” | `TRIVIAL` | carregar `SAFE_REFACTOR` completo |
+| PN2 | “mudar spacing deste botão” | `TRIVIAL + UI_DESIGN` | carregar feature workflow pesado |
+| PN3 | “faça review ortográfico deste doc” | doc review leve | aplicar technical code-review contract |
+| PN4 | “refatore o nome desta variável local” | `TRIVIAL` ou `BOUNDED` local | disparar `ARCHITECTURAL_CHANGE` |
+| PN5 | “a cor do erro está errada” | `BUG + UI_DESIGN` | ativar `CRITICAL_RUNTIME` |
+| PN6 | “arrume o snapshot que falhou” | `TEST_FAILURE_INVESTIGATION` | assumir bug de produção ou aceitar snapshot novo automaticamente |
+
 ## Validation protocol
 
 1. conferir cada linha contra classes, flags, domínios, skills e specialists
    canônicos;
-2. validar que todos os identificadores existem uma única vez no owner;
+2. conferir processos contra `docs/ai/process-workflows.md` e validar que todos
+   os identificadores existem uma única vez no owner;
 3. validar links/paths do Harness;
 4. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.

@@ -11,13 +11,17 @@ ser provisória durante a primeira inspeção e deve escalar quando surgir risco
 
 ## Classes primárias
 
-| Classe | Quando usar | Workflow mínimo |
+| Classe | Quando usar | Rota de processo |
 | --- | --- | --- |
-| `TRIVIAL` | Mudança pequena, inequívoca, local e de baixo risco, como texto, spacing, rename local, comentário ou doc curta | `inspect -> edit -> targeted validation` |
-| `BOUNDED` | Mudança funcional delimitada dentro de owner e arquitetura existentes | `inspect -> targeted context -> short plan -> implement -> targeted validation -> lightweight review` |
-| `INVESTIGATION` | O objetivo é localizar, explicar, diagnosticar ou auditar | `evidence -> map -> verify -> conclusion` |
-| `BUG` | Há comportamento incorreto, regressão ou sintoma verificável | `reproduce/evidence -> root cause -> regression -> minimal fix -> verification` |
-| `ARCHITECTURAL` | Muda ownership/boundary, cria subsistema ou abstração importante, cruza domínios ou exige migração | `dependency map -> constraints -> alternatives -> design -> implementation plan -> staged implementation -> review` |
+| `TRIVIAL` | Mudança pequena, inequívoca, local e de baixo risco, como texto, spacing, rename local, comentário ou doc curta | nativo: inspect, edit, targeted validation |
+| `BOUNDED` | Mudança funcional delimitada dentro de owner e arquitetura existentes | nativo: targeted context, short plan, implementation, validation, light review |
+| `INVESTIGATION` | O objetivo é localizar, explicar, diagnosticar ou auditar | nativo: evidence, map, verify, conclusion |
+| `BUG` | Há comportamento incorreto, regressão ou sintoma verificável | `BUG_INVESTIGATION` |
+| `ARCHITECTURAL` | Muda ownership/boundary, cria subsistema ou abstração importante, cruza domínios ou exige migração | `ARCHITECTURAL_CHANGE` |
+
+Os contratos detalhados e a decisão entre workflow nativo/skill estão em
+[`docs/ai/process-workflows.md`](process-workflows.md). A classe continua sendo
+owner da seleção; o documento de processo não reclassifica a tarefa.
 
 `INVESTIGATION` não produz código permanente por padrão. Um pedido de
 refatoração não vira `ARCHITECTURAL` pela palavra usada: precisa alterar
@@ -110,6 +114,7 @@ TASK_CLASS:
 RISK_FLAGS:
 DOMAINS:
 CONTEXT_LEVEL:
+PROCESS:
 SKILLS:
 SPECIALISTS:
 VALIDATION:
