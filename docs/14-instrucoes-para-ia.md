@@ -27,7 +27,9 @@ Classificação, flags e seleção mínima pertencem a
 [`docs/ai/task-classification.md`](ai/task-classification.md) e
 [`docs/ai/context-routing.md`](ai/context-routing.md). Delegação, waves e síntese
 pertencem a [`docs/ai/orchestration.md`](ai/orchestration.md). Gates/review
-adaptativos pertencem a [`docs/ai/quality-gates.md`](ai/quality-gates.md).
+adaptativos pertencem a [`docs/ai/quality-gates.md`](ai/quality-gates.md). Metas
+contínuas, autonomia e Human Decision Boundary pertencem a
+[`docs/ai/meta-goal-runtime.md`](ai/meta-goal-runtime.md).
 
 ## Context Gate
 

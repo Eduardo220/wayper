@@ -704,3 +704,22 @@ size ou architecture regression novos bloqueiam. O Harness distingue `PASS`,
 e mantém os quatro specialists read-only. Nenhum generic/security reviewer,
 Brain, adjudicator, hook, dependência ou código funcional foi criado. A política
 canônica está em `docs/ai/quality-gates.md`.
+
+### Adendo — Meta Goal Runtime + Autonomy Contract
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** intenção distingue `TASK_MODE` de `META_GOAL_MODE`. Metas amplas
+declaram outcome, success criteria, constraints e non-goals e avançam em safe
+slices reclassificados e validados individualmente. Decisões técnicas deriváveis
+do repositório são autônomas; ambiguidades técnicas reversíveis usam a alternativa
+conservadora; somente decisões essencialmente humanas atravessam um Decision
+Packet. Goal mode nativo é preferido quando exposto pelo runtime, mas não é
+dependência do Harness.
+
+**Consequências:** o agente principal continua orquestrador; não existem Brain,
+planner, daemon, loop JS, meta specialist, YOLO project-scoped ou memória nova.
+Candidate ranking combina impacto, confiança, validação, risco, coupling e custo;
+Goal Budget evita perfeccionismo; quality/review controlam cada slice; follow-ups,
+Learning Delta e stop conditions impedem expansão silenciosa e falsa conclusão.
+A política canônica está em `docs/ai/meta-goal-runtime.md`.

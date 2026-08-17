@@ -39,6 +39,14 @@ permanente.
 
 Nenhum candidato obteve ROI para `CREATE_SKILL` nesta unidade.
 
+## Composição com Meta Goal
+
+[`meta-goal-runtime.md`](meta-goal-runtime.md) não substitui estes processos. Em
+`META_GOAL_MODE`, cada safe slice recebe sua classe e compõe apenas o workflow
+necessário: por exemplo, uma meta de reduzir dívida pode usar `SAFE_REFACTOR` em
+um slice e `ARCHITECTURAL_CHANGE` em outro. Gate e review continuam adaptativos
+ao slice, não ao tamanho da meta.
+
 ## `BUG_INVESTIGATION`
 
 Use quando há comportamento incorreto ou regressão verificável.

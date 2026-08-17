@@ -255,9 +255,10 @@ aplicável. Não existe custom security reviewer.
 ## Learning delta e conclusão
 
 Entre waves/reviews, propague somente fatos relevantes classificados como
-`NEW_FACT`, `NEW_PITFALL`, `NEW_DEPENDENCY` ou `REJECTED_ASSUMPTION`; não copie o
-histórico. Isso atualiza contexto da tarefa, não implementa runtime autônomo ou
-Human Decision Boundary.
+`NEW_FACTS`, `NEW_PITFALLS`, `NEW_DEPENDENCIES`, `REJECTED_ASSUMPTIONS` ou
+`NEW_DECISIONS`; não copie o histórico. Em Meta Goal, o formato, filtro por
+relevância e boundary de não persistência pertencem a
+[`meta-goal-runtime.md`](meta-goal-runtime.md).
 
 Síntese interna final:
 

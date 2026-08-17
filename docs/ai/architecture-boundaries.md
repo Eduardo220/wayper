@@ -218,9 +218,9 @@ não justificam construir uma DSL ou parser próprio.
 ## Evals e comandos
 
 `node --test scripts/quality/check-architecture.test.mjs` cobre 10 casos
-positivos/policy, 8 negativos/anti-falso-positivo e 6 casos do ratchet. Os 73
-evals de routing permanecem em `routing-evals.md`; architecture evals não alteram
-a baseline Jest do produto.
+positivos/policy, 8 negativos/anti-falso-positivo e 6 casos do ratchet. A suíte
+de routing permanece em `routing-evals.md`; architecture evals não alteram a
+baseline Jest do produto.
 
 Comandos canônicos:
 

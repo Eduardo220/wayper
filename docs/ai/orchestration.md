@@ -5,6 +5,7 @@
 > **Owner:** [`docs/ai/harness-v1.md`](harness-v1.md)<br>
 > **Router:** [`docs/ai/context-routing.md`](context-routing.md)<br>
 > **Quality:** [`docs/ai/quality-gates.md`](quality-gates.md)<br>
+> **Meta Goal:** [`docs/ai/meta-goal-runtime.md`](meta-goal-runtime.md)<br>
 > **Evals:** [`docs/ai/routing-evals.md`](routing-evals.md)
 
 O agente principal do Codex é o único orquestrador. Multi-agent é opt-in por
@@ -243,9 +244,10 @@ crie loop. Para contexto faltante, forneça somente o delta. Se houver stall, o
 principal interrompe, preserva evidence e replana; não existe daemon/timeout
 custom do projeto.
 
-Entre waves, propague somente deltas factuais relevantes como `NEW_FACT`,
-`NEW_PITFALL`, `NEW_DEPENDENCY` ou `REJECTED_ASSUMPTION`; não replique o
-histórico completo para tasks seguintes.
+Entre waves, propague somente deltas factuais relevantes como `NEW_FACTS`,
+`NEW_PITFALLS`, `NEW_DEPENDENCIES`, `REJECTED_ASSUMPTIONS` ou `NEW_DECISIONS`;
+não replique o histórico completo para tasks seguintes. Em Meta Goal, seleção,
+relevância e não persistência seguem `meta-goal-runtime.md`.
 
 ## Git e worktrees
 

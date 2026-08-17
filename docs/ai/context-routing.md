@@ -12,19 +12,33 @@ subconjunto a abrir para a tarefa atual.
 
 ## Sequência
 
-1. classificar a tarefa e marcar flags semânticas;
-2. inspecionar o diff real e selecionar `GATE_LEVEL`/`REVIEW_MODE` por
+1. inferir pela intenção `TASK_MODE` ou `META_GOAL_MODE`; carregar
+   [`meta-goal-runtime.md`](meta-goal-runtime.md) somente no segundo;
+2. classificar a tarefa e marcar flags semânticas;
+3. inspecionar o diff real e selecionar `GATE_LEVEL`/`REVIEW_MODE` por
    [`quality-gates.md`](quality-gates.md);
-3. selecionar processo somente quando ele acrescentar disciplina;
-4. escolher somente os domínios realmente afetados;
-5. iniciar no menor context level suficiente;
-6. carregar as skills e fontes indicadas, depois confirmar source/callers/testes;
-7. usar Graphify ou specialist apenas quando incerteza/risco justificar;
-8. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
+4. selecionar processo somente quando ele acrescentar disciplina;
+5. escolher somente os domínios realmente afetados;
+6. iniciar no menor context level suficiente;
+7. carregar as skills e fontes indicadas, depois confirmar source/callers/testes;
+8. usar Graphify ou specialist apenas quando incerteza/risco justificar;
+9. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
 
 Palavra não é gatilho: “corrida” em texto não implica `RUN_RUNTIME`; “mapa”
 visual não implica `TERRITORY_GEO`; “Firebase” em doc não chama reviewer de
-persistência; “teste” não cria agent tester.
+persistência; “teste” não cria agent tester; “meta” citada em copy/source/doc não
+ativa `META_GOAL_MODE` sem intenção de outcome contínuo.
+
+## Execution mode gate
+
+| Intenção observada | Mode | Contexto adicional |
+| --- | --- | --- |
+| objetivo pontual, mesmo grande | `TASK_MODE` | nenhum Goal contract |
+| outcome amplo com melhoria iterativa e vários slices | `META_GOAL_MODE` | `meta-goal-runtime.md` |
+| palavra “meta” dentro do conteúdo alterado | inferir pelo pedido real | não ativar por keyword |
+
+Meta Goal compõe classifier, processos e domains por slice. Não cria classe,
+skill, specialist ou gate de qualidade próprio.
 
 ## Process routing
 
@@ -373,7 +387,8 @@ branch atual sempre confirmam ownership.
   `.agents/skills/` e `.codex/agents/`.
 - **Primary owners:** `AGENTS.md` para permanentes, `harness-v1.md` para
   arquitetura, classifier/router/process-workflows para decisão e cada
-  skill/agent para workflow especializado; `quality-gates.md` para gates/review.
+  skill/agent para workflow especializado; `quality-gates.md` para gates/review;
+  `meta-goal-runtime.md` para metas contínuas e autonomia.
 - **Docs:** estes arquivos e a linha de IA em `docs/00-fontes-do-projeto.md`.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
   produto para garantir ausência de regressão.

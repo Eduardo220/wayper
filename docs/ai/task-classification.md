@@ -25,6 +25,11 @@ owner da seleção; o documento de processo não reclassifica a tarefa.
 Gate e review proporcionais são selecionados depois da inspeção do diff, pela
 matriz de [`quality-gates.md`](quality-gates.md).
 
+Antes da classe, a intenção seleciona `TASK_MODE` para um resultado pontual ou
+`META_GOAL_MODE` para progresso contínuo em vários slices. O modo não substitui
+nem eleva a classe: cada slice de uma meta é classificado normalmente. O
+contrato pertence a [`meta-goal-runtime.md`](meta-goal-runtime.md).
+
 `INVESTIGATION` não produz código permanente por padrão. Um pedido de
 refatoração não vira `ARCHITECTURAL` pela palavra usada: precisa alterar
 estrutura, ownership, fronteira ou vários domínios. Um relato de comportamento
@@ -112,6 +117,7 @@ Para tarefas não triviais, o agente pode manter este resumo no plano interno,
 sem imprimi-lo em toda resposta:
 
 ```text
+EXECUTION_MODE:
 TASK_CLASS:
 RISK_FLAGS:
 DOMAINS:

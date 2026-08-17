@@ -3,7 +3,8 @@
 > **Status:** vigente<br>
 > **Escopo:** repositório mobile<br>
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
-> Analysis + Budgets + Boundaries + Adaptive Quality V1, 2026-08-17<br>
+> Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal V1,
+> 2026-08-17<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -16,8 +17,10 @@ configuração de ferramentas.
 
 ```text
 AGENTS.md
-  -> task class + risk flags
-     -> diff real + Q0-Q3 gate + R0-R3 review
+  -> TASK_MODE ou META_GOAL_MODE pela intenção
+     -> goal contract quando a intenção for contínua
+     -> task class + risk flags
+        -> diff real + Q0-Q3 gate + R0-R3 review
         -> process contract quando necessário + context map mínimo
            -> decisão S0 single ou delegação com valor comprovado
            -> docs/00-fontes-do-projeto.md + skill sob demanda
@@ -47,6 +50,9 @@ evidência datada.
   sob demanda; `npm run quality:architecture` impede novos consumers inválidos.
 - `docs/ai/quality-gates.md`: Q0-Q3, R0-R3, delta, finding contract e síntese;
   `npm run quality:gate` agrega somente os gates FAST de repositório.
+- `docs/ai/meta-goal-runtime.md`: Goal contract, autonomia, Execution Kernel,
+  candidate ranking, budget, follow-ups, learning delta e stop conditions;
+  carregado somente para intenção contínua.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
@@ -90,11 +96,12 @@ do usuário. Nenhum deles é fonte de regras do mobile.
 ## Progressive disclosure
 
 1. carregar `AGENTS.md` e metadata de descoberta;
-2. classificar tarefa/flags e selecionar gate/review pelo diff real;
-3. selecionar processo, domínios, catálogo/docs e skills mínimas;
-4. permanecer single-agent ou decompor somente por valor e independência;
-5. confirmar código, callers e testes;
-6. sintetizar e subir contexto, Graphify ou especialista só por evidência.
+2. distinguir task pontual de meta contínua; carregar Goal contract só na meta;
+3. classificar tarefa/flags e selecionar gate/review pelo diff real;
+4. selecionar processo, domínios, catálogo/docs e skills mínimas;
+5. permanecer single-agent ou decompor somente por valor e independência;
+6. confirmar código, callers e testes;
+7. sintetizar e subir contexto, Graphify ou especialista só por evidência.
 
 Não existe ciclo `AGENTS -> docs -> skill -> AGENTS`: skills referenciam owners,
 mas não redefinem política nem orquestram agents; apenas recomendam specialists
@@ -112,5 +119,6 @@ nativos e usam os contratos de
 [`docs/ai/process-workflows.md`](process-workflows.md). A delegação segue
 [`docs/ai/orchestration.md`](orchestration.md).
 `wayper-brain` permanece somente no backup histórico, sem reativar código, agent
-ou configuração. Autonomy Contract, Human Decision Boundary e meta-goal runtime
-permanecem fora desta unidade.
+ou configuração. Meta Goal é contrato declarativo em
+[`meta-goal-runtime.md`](meta-goal-runtime.md), não runtime custom. Memória
+persistente e seleção de hard-earned learning permanecem fora desta unidade.
