@@ -113,12 +113,29 @@ para aceitar output novo.
 - **Documentation sync:** confirme rename/owner/consumers, atualize links/fontes
   afetadas e valide referências. Não carregue domínio técnico sem impacto real.
 
+## Orchestration boundary
+
+O processo estabiliza causa, owner e sequência antes de qualquer decomposition.
+Use [`docs/ai/orchestration.md`](orchestration.md) somente quando isolamento,
+especialização, paralelismo real ou review independente acrescentarem valor.
+
+- `BUG_INVESTIGATION`: root cause vem antes de separar reproduction/fix/tests.
+- `ARCHITECTURAL_CHANGE`: exploração read-only pode ser paralela; writes esperam
+  ownership, interfaces, shared files e migration order estáveis.
+- `SAFE_REFACTOR`: baseline e boundaries são seriais no início; extrações só
+  compartilham wave quando independentes e behavior-preserving.
+- `CRITICAL_RUNTIME`: `wayper-active-run` concentra o workflow; implementação do
+  mesmo fluxo é serial por default e reviewers podem compor wave read-only.
+
+O modo de orquestração não reclassifica a tarefa nem cria process skill. Se file
+scope ou dependência forem desconhecidos, investigar primeiro.
+
 ## Composition
 
 Componha apenas arquivos que acrescentem informação:
 
 ```text
-TASK CLASS + DOMAIN SKILL + PROCESS + SPECIALIST BY FLAG
+TASK CLASS + DOMAIN SKILL + PROCESS + ORCHESTRATION MODE + SPECIALIST BY FLAG
 ```
 
 Exemplos:

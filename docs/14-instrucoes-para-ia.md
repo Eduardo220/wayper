@@ -25,7 +25,8 @@ A arquitetura e as fronteiras project/global/generated estão em
 [`docs/ai/harness-v1.md`](ai/harness-v1.md).
 Classificação, flags e seleção mínima pertencem a
 [`docs/ai/task-classification.md`](ai/task-classification.md) e
-[`docs/ai/context-routing.md`](ai/context-routing.md).
+[`docs/ai/context-routing.md`](ai/context-routing.md). Delegação, waves e síntese
+pertencem a [`docs/ai/orchestration.md`](ai/orchestration.md).
 
 ## Context Gate
 
@@ -55,9 +56,10 @@ motivo proporcional. Um campo que não se aplica pode ser omitido com motivo.
 6. Acione especialista somente quando houver risco específico que justifique o
    contexto adicional.
 
-Skills não decidem prioridade nem autorizam produto. Agents não orquestram
-outros agents e não substituem o agente principal. Outputs derivados de
-Graphify, benchmarks e caches são pistas reproduzíveis, nunca autoridade.
+Skills não decidem prioridade nem autorizam produto. Specialists não orquestram
+outros agents nem substituem o agente principal; delegação é opt-in e segue o
+protocolo de orchestration. Outputs derivados de Graphify, benchmarks e caches
+são pistas reproduzíveis, nunca autoridade.
 
 ## Planejamento e execução
 

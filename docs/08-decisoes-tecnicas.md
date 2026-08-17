@@ -630,3 +630,22 @@ demanda; feature, review, sanitation e documentation sync continuam nativos.
 permanente muda apenas pela metadata discriminativa das quatro skills. O owner
 processual é `docs/ai/process-workflows.md`; o router somente referencia o
 processo, e domain knowledge permanece nas skills/docs existentes.
+
+### Adendo — Multi-Agent Orchestration + Parallel Waves
+
+**Status:** aceito em 2026-08-16
+
+**Decisão:** single-agent é default. Delegação só ocorre por isolamento de
+contexto, especialização real, paralelismo independente ou review read-only que
+reduza risco. O agente principal permanece o único orquestrador. Quatro modos
+declarativos cobrem execução single, specialist assist, parallel read e parallel
+work; escrita paralela exige DAG, files conhecidos/disjuntos, ausência de shared
+resource/contrato e integração definida. `CRITICAL_RUNTIME` mantém
+implementação serial por padrão.
+
+**Consequências:** os quatro specialists continuam read-only e nenhum Brain,
+custom orchestrator, generic worker/reviewer, wave planner, limite de
+concorrência project-scoped ou worktree permanente é criado. Subagents não
+fazem commit/push; synthesis, replanning e validação pertencem ao agente
+principal. O protocolo canônico está em `docs/ai/orchestration.md` e os casos de
+safety em `docs/ai/routing-evals.md`.

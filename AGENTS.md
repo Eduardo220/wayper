@@ -39,8 +39,9 @@ o próprio escopo.
 
 - Antes de aprofundar, classifique tarefa/flags e use
   `docs/ai/context-routing.md`; carregue o mínimo e escale por risco.
-- Skill só quando o gatilho casar; especialista read-only só por risco concreto.
-  Agentes nativos cobrem trabalho genérico.
+- Skill/especialista só por gatilho/risco; nativos cobrem o genérico.
+- Multi-agent é opt-in; prefira leitura paralela. Escrita paralela exige escopo
+  disjunto conhecido. Protocolo: `docs/ai/orchestration.md`.
 - Workflow: `docs/14-instrucoes-para-ia.md`. Arquitetura do Harness:
   `docs/ai/harness-v1.md`.
 - Graphs, maps e caches nunca são verdade. RTK é ferramenta global opcional.

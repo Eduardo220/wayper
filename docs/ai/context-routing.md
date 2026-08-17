@@ -40,6 +40,26 @@ sequência acrescentar disciplina além do classifier/domain skill.
 | sanitation/document sync | workflow nativo leve | nenhuma process skill |
 | critical runtime | workflow de `wayper-active-run` | não criar `wayper-critical-runtime` |
 
+## Orchestration gate
+
+Depois de classificar processo/domínio, permaneça em `S0 — SINGLE` salvo valor
+material de isolamento, especialização, paralelismo real ou review independente.
+O protocolo completo pertence a
+[`docs/ai/orchestration.md`](orchestration.md); este router apenas seleciona o
+menor modo.
+
+| Evidência | Route |
+| --- | --- |
+| tarefa local/bounded sem especialização | `S0` |
+| um risco concreto casa com um specialist | `S1` |
+| investigações/reviews read-only independentes | `S2` |
+| writers independentes, DAG/arquivos/shared resources conhecidos | `S3`, somente com eligibility explícita |
+
+File scope `UNKNOWN`, mesmo arquivo, shared contract, root cause ainda incerta ou
+fluxo crítico interdependente impedem write paralelo. `CRITICAL_RUNTIME` prefere
+implementação serial e review `S1`/`S2`; specialists continuam selecionados
+pelas flags, nunca pela quantidade disponível.
+
 ## Level 1 — índice rápido
 
 Leia esta tabela para escolher domínio; abra abaixo somente as seções escolhidas.
@@ -370,7 +390,8 @@ branch atual sempre confirmam ownership.
 ## Specialist routing
 
 Custom agent nunca é default. Delegue só quando especialização ou isolamento de
-contexto superar o overhead.
+contexto superar o overhead. Specialists read-only independentes podem compor a
+mesma wave `S2`; não conversam entre si e o agente principal sintetiza.
 
 | Specialist | Trigger | Negative trigger |
 | --- | --- | --- |
@@ -382,7 +403,8 @@ contexto superar o overhead.
 Descoberta, pesquisa, teste, debugging, arquitetura, implementação e review
 genérico usam o agente principal ou subagentes nativos do Codex. Não recriar
 `mapper`, `researcher`, `tester`, `debugger`, `architect`, `implementer` ou
-reviewer genérico.
+reviewer genérico. Workers nativos só escrevem em paralelo segundo
+[`docs/ai/orchestration.md`](orchestration.md).
 
 ## Graphify e RTK
 

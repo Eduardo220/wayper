@@ -3,7 +3,8 @@
 > **Status:** vigente<br>
 > **Tipo:** suíte declarativa, sem API externa<br>
 > **Owners:** [`task-classification.md`](task-classification.md) e
-> [`context-routing.md`](context-routing.md)
+> [`context-routing.md`](context-routing.md), com safety de waves em
+> [`orchestration.md`](orchestration.md)
 
 Cada caso passa quando a classificação respeita todos os campos e não ativa os
 recursos proibidos. `POTENTIAL` significa selecionar o recurso somente depois
@@ -59,14 +60,64 @@ que a inspeção confirmar a flag; não é ativação default.
 | PN5 | “a cor do erro está errada” | `BUG + UI_DESIGN` | ativar `CRITICAL_RUNTIME` |
 | PN6 | “arrume o snapshot que falhou” | `TEST_FAILURE_INVESTIGATION` | assumir bug de produção ou aceitar snapshot novo automaticamente |
 
+## Orchestration routing
+
+| # | Scenario | Expected mode/waves | Required behavior |
+| --- | --- | --- | --- |
+| O1 | mudança pequena em um componente conhecido | `S0` | agente principal executa; sem planner/reviewer cerimonial |
+| O2 | bug de runtime com lifecycle + concurrency | implementação serial, depois `S2` read review | root cause antes do fix; lifecycle/concurrency reviewers pelas flags |
+| O3 | três reviewers independentes e relevantes | uma wave `S2` | escopos distintos, sem conversa/voto entre agents; síntese pelo principal |
+| O4 | dois arquivos independentes, sem dependency/shared resource | `S3` elegível após scope conhecido | registrar `PARALLEL_WRITE_ELIGIBLE=YES`, owners e integração |
+| O5 | task A cria serviço e task B o consome | waves seriais: A antes de B | dependência de código/interface impede mesma wave |
+| O6 | dois workers precisam alterar `MapScreen.js` | serial | `ONE_FILE + ONE_WRITER + PER_WAVE` |
+| O7 | worker descobre que precisa alterar `package.json` | `REPLAN_REQUIRED` | não editar; atualizar DAG/shared resources antes de continuar |
+| O8 | architectural com ownership incerto | `S2` exploration primeiro; sem write wave | estabilizar dependency/ownership/interface map antes da implementação |
+| O9 | territory e persistence review do mesmo diff | `S2` quando ambas as flags existirem | mesma leitura é permitida; findings continuam independentes |
+| O10 | critical runtime em tracking/recovery/notification | implementação serial; `S1`/`S2` review | não dividir o fluxo crítico entre parallel writers |
+
+## Negative orchestration routing
+
+| # | Probe | Must remain | Must not happen |
+| --- | --- | --- | --- |
+| ON1 | “trocar a copy do botão” | `S0` | spawnar planner/implementer/reviewer |
+| ON2 | “mudar o spacing deste card” | `S0` | usar multi-agent por velocidade aparente |
+| ON3 | “corrigir typo em dois arquivos” | `S0` | criar uma wave por arquivo |
+| ON4 | “escrever teste de um helper simples” | `S0` | delegar tester custom ou writer paralelo |
+| ON5 | “refatore MapScreen” | exploration/dependency map primeiro | spawnar vários implementers antes de conhecer boundaries |
+| ON6 | “corrija este bug desconhecido” | investigação/root cause primeiro | implementar fix e teste em paralelo sem causa |
+| ON7 | dois arquivos diferentes dependem do mesmo schema central | waves seriais | considerar disjunção textual como independência semântica |
+| ON8 | dois reviewers read-only leem o mesmo arquivo | `S2` permitido se as flags justificarem | tratar leitura compartilhada como write conflict |
+
+## Synthesis
+
+| # | Inputs | Expected synthesis |
+| --- | --- | --- |
+| S1 | reviewers A/B reportam o mesmo finding | deduplicar e manter a evidência mais completa |
+| S2 | reviewer afirma bug sem failure scenario | registrar hipótese/concern; não promover a bug confirmado |
+| S3 | reviewers discordam | consultar evidence/source; não decidir por maioria |
+| S4 | finding material fora do escopo | registrar concern/follow-up; não editar silenciosamente |
+
+## Parallel safety matrix
+
+| # | `FILES_WRITE` overlap? | Dependency? | Shared resource? | Expected mode |
+| --- | --- | --- | --- | --- |
+| PS1 | no | no | no | `S3` elegível após owners/integration conhecidos |
+| PS2 | yes | qualquer | qualquer | serial |
+| PS3 | no | yes, inclusive transitiva | no | waves seriais |
+| PS4 | no | no | yes, como contrato de `package.json` | serial salvo prova excepcional |
+| PS5 | read-only sobre os mesmos arquivos | no | leitura apenas | `S2` permitido |
+| PS6 | `UNKNOWN` | unknown | unknown | investigar em `S0`/`S2`; write parallel proibido |
+
 ## Validation protocol
 
 1. conferir cada linha contra classes, flags, domínios, skills e specialists
    canônicos;
 2. conferir processos contra `docs/ai/process-workflows.md` e validar que todos
    os identificadores existem uma única vez no owner;
-3. validar links/paths do Harness;
-4. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
+3. conferir modes, status, DAG/wave e safety matrix contra
+   `docs/ai/orchestration.md`;
+4. validar links/paths do Harness;
+5. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
 
 Como o router é uma política interpretada e não um programa, estes evals não
