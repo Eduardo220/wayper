@@ -4,7 +4,7 @@
 > **Escopo:** repositório mobile<br>
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
 > Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
-> Memory V1,
+> Memory + Automated Gates V1,
 > 2026-08-17<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
@@ -57,15 +57,16 @@ evidência datada.
 - `docs/ai/memory-policy.md` e `docs/ai/memory/index.json`: promotion de
   hard-earned learning e discovery por domínio/risco; index/topics nunca são
   contexto permanente nem source of truth.
+- `docs/ai/hooks-and-gates.md`: capability audit e completion backstop
+  project-scoped; automatiza somente gates determinísticos por changed-scope.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
 - `.codex/agents/`: quatro revisores especializados, todos read-only e sem modelo
   fixado pelo projeto.
-- Não há `.codex/config.toml` do projeto: a fundação não precisa sobrescrever a
-  configuração do usuário ou fixar concorrência para funcionar.
-- Não há hook Codex versionado: nenhum enforcement adicional foi provado
-  necessário nesta unidade.
+- Não há `.codex/config.toml` do projeto: o Harness não sobrescreve modelo,
+  permissões ou concorrência do usuário. `.codex/hooks.json` possui somente o
+  backstop `Stop`; ele não é approval/security boundary.
 
 Papéis genéricos de descoberta, implementação, segurança e revisão usam
 capacidades nativas do Codex. Agents project-scoped existem somente para
@@ -95,7 +96,9 @@ sistema de compressão e deve continuar operável com shell comum.
 
 Os hooks Git `post-commit` e `post-checkout` instalados pelo Graphify são runtime
 local, assíncrono e fail-open. O hook Codex/RTK e hooks de plugins são configuração
-do usuário. Nenhum deles é fonte de regras do mobile.
+do usuário. O único hook do projeto é o completion backstop descrito em
+[`hooks-and-gates.md`](hooks-and-gates.md); nenhum hook é fonte de regras do
+mobile ou substitui Q/R.
 
 ## Progressive disclosure
 

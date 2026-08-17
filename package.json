@@ -9,6 +9,7 @@
     "quality:size": "node scripts/quality/check-code-size.mjs",
     "quality:architecture": "node scripts/quality/check-architecture.mjs",
     "quality:gate": "node scripts/quality/check-quality-gate.mjs",
+    "quality:backstop": "node scripts/quality/check-completion-backstop.mjs",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand",
     "start:clean": "node scripts/with-env.cjs .env.development -- expo start --dev-client -c",
     "dev": "node scripts/with-env.cjs .env.development -- npm run dev:emulator",

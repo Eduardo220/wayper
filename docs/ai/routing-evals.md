@@ -2,11 +2,13 @@
 
 > **Status:** vigente<br>
 > **Tipo:** suíte declarativa, sem API externa<br>
+> **Contagem:** 225 evals anteriores + 25 de hooks = 250<br>
 > **Owners:** [`task-classification.md`](task-classification.md) e
 > [`context-routing.md`](context-routing.md), com safety de waves em
 > [`orchestration.md`](orchestration.md) e gates/review em
 > [`quality-gates.md`](quality-gates.md), com memory em
-> [`memory-policy.md`](memory-policy.md)
+> [`memory-policy.md`](memory-policy.md) e automated backstop em
+> [`hooks-and-gates.md`](hooks-and-gates.md)
 
 Cada caso passa quando a classificação respeita todos os campos e não ativa os
 recursos proibidos. `POTENTIAL` significa selecionar o recurso somente depois
@@ -334,6 +336,56 @@ que a inspeção confirmar a flag; não é ativação default.
 | --- | --- | --- |
 | ML1 | slice A produz um fato derivável, uma decisão canônica, um pitfall hard-earned confirmado e estado temporário; slice B tem domínio do pitfall | derivável/temporário são descartados; decisão vai ao doc owner; só pitfall vira candidate e, se promoted, apenas esse topic pode ser carregado por B |
 
+## Hook event selection
+
+| # | Scenario | Expected | Forbidden |
+| --- | --- | --- | --- |
+| H1 | typo em doc comum | `DOCS_ONLY`; diff check | product FAST, full Jest ou Expo por reflexo |
+| H2 | source de produção alterado | completion FAST backstop | concluir sem gate determinístico |
+| H3 | tarefa executa 100 tool calls | zero execuções project-scoped de quality por tool call | `quality:gate` 100 vezes |
+| H4 | slice Q3 de runtime | hook cobre no máximo FAST | usar hook como DEEP/review/physical proof |
+| H5 | Stop com worktree limpa | `SKIP`, stdout vazio e custo near-zero | iniciar npm/Jest/Expo |
+| H6 | tool event não cobre todo write/surface | reliability `LIMITED`; não usar como security boundary | garantia de write enforcement |
+
+## Hook failure semantics
+
+| # | Scenario | Expected |
+| --- | --- | --- |
+| HF1 | `quality:size` reporta regression | completion `FAIL`; indicar details |
+| HF2 | architecture reporta regression | completion `FAIL`; indicar details |
+| HF3 | lint JSON contém novo BUG_SIGNAL | completion `FAIL` |
+| HF4 | backstop/process/parser falha | `TOOLING_ERROR`, distinto de código inválido |
+| HF5 | FAST passa, mas device proof está pendente | hook não promove a conclusão; Q3 segue `PHYSICAL_VALIDATION_PENDING`/`INCONCLUSIVE` |
+| HF6 | warnings legacy permanecem idênticos | `PASS`; não atribuir dívida preexistente ao diff |
+
+## Hook economy
+
+| # | Scenario | Expected |
+| --- | --- | --- |
+| HE1 | hook passa | 0 bytes em hook stdout |
+| HE2 | hook falha | JSON/feedback curto com blocker e um comando de detalhe |
+| HE3 | diff docs-only | somente diff check; nenhum product gate pesado |
+| HE4 | três edições sequenciais em source | nenhum gate por edit; um backstop no attempted Stop |
+| HE5 | agente já validou o mesmo diff | duplicação única no Stop é aceita conscientemente; nenhum cache complexo/versionado |
+
+## Hook safety
+
+| # | Scenario | Expected |
+| --- | --- | --- |
+| HS1 | baseline é alterada para esconder regression | hook nunca atualiza/aceita baseline automaticamente; alteração permanece revisável |
+| HS2 | proposta de `eslint --fix` no hook | rejeitar; hook valida, agente corrige |
+| HS3 | proposta de auto-commit | rejeitar; Git history pertence ao orquestrador |
+| HS4 | proposta de auto-push | rejeitar; ação externa nunca é autorizada pelo hook |
+| HS5 | evento/surface não observado | `UNKNOWN`/`DO_NOT_USE`; não bloquear com capability presumida |
+
+## Hook and Goal integration
+
+| # | Scenario | Expected |
+| --- | --- | --- |
+| HG1 | Meta com quatro slices | cada slice usa Q/R normal; hook apenas backstop no Stop |
+| HG2 | specialist confirma blocker HIGH | review bloqueia/replaneja; hook não seleciona próximo candidate |
+| HG3 | Goal depende de decisão humana de produto | Human Decision Boundary; hook não pergunta nem decide |
+
 ## Validation protocol
 
 1. conferir cada linha contra classes, flags, domínios, skills e specialists
@@ -349,8 +401,10 @@ que a inspeção confirmar a flag; não é ativação default.
    `docs/ai/meta-goal-runtime.md` e os casos MG/A/QH/F/L/ST/LR;
 7. conferir promotion/routing/staleness/token/native memory contra
    `docs/ai/memory-policy.md` e os casos M/MR/MP/MS/MT/NM/ML;
-8. validar links/paths do Harness;
-9. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
+8. conferir event selection/failure/economy/safety/Goal contra
+   `docs/ai/hooks-and-gates.md` e os casos H/HF/HE/HS/HG;
+9. validar links/paths do Harness;
+10. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
 
 Como o router é uma política interpretada e não um programa, estes evals não

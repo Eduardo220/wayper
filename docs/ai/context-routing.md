@@ -362,13 +362,15 @@ branch atual sempre confirmam ownership.
   `docs/13-bugs-conhecidos.md`, `docs/ai/static-analysis.md` para lint,
   `docs/ai/code-budgets.md` para tamanho e `docs/ai/architecture-boundaries.md`
   para gate arquitetural; `docs/ai/quality-gates.md` seleciona FAST/DEEP.
+  `docs/ai/hooks-and-gates.md` só entra quando hook/backstop é o objeto da tarefa.
 - **Tests:** suíte direcionada e `npm test -- --runInBand` quando o gate pedir.
 - **Skills:** nenhuma por padrão; skill de domínio apenas se o teste cobre esse
   domínio.
 - **Specialists:** nenhum por padrão; papéis de tester/debugger são nativos.
 - **Tools:** comandos canônicos do `package.json`; `npm run quality:gate` agrega
   o FAST gate, enquanto lint/size/architecture continuam executáveis
-  separadamente. Não existe typecheck canônico.
+  separadamente. `npm run quality:backstop` reproduz o completion backstop;
+  não existe typecheck canônico.
 - **Validation:** exit code, contagem, baseline, config syntax e diff check.
 - **Risk flags:** `BUILD_TOOLING`, `PERFORMANCE`, `NATIVE_ANDROID`.
 - **Escalation:** dependency/config pública, pipeline ou vários ambientes pode
@@ -407,7 +409,8 @@ branch atual sempre confirmam ownership.
   arquitetura, classifier/router/process-workflows para decisão e cada
   skill/agent para workflow especializado; `quality-gates.md` para gates/review;
   `meta-goal-runtime.md` para metas contínuas/autonomia e `memory-policy.md` para
-  hard-earned learning on-demand.
+  hard-earned learning on-demand; `hooks-and-gates.md` somente para runtime de
+  hooks/automação determinística.
 - **Docs:** estes arquivos e a linha de IA em `docs/00-fontes-do-projeto.md`.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
   produto para garantir ausência de regressão.

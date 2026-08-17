@@ -108,7 +108,9 @@ FAST:
 `npm run quality:gate` agrega os checks FAST de repositório em paralelo e tem
 output curto; targeted tests continuam separados porque dependem da tarefa. O
 comando aceita `--details` ou `--json`. Ele não roda Jest completo, Expo Doctor
-ou review.
+ou review. O completion backstop de
+[`hooks-and-gates.md`](hooks-and-gates.md) pode invocar esse FAST gate por
+changed-scope em `Stop`; ele não escolhe Q-level nem transforma FAST em DEEP.
 
 DEEP, somente quando selecionado:
 

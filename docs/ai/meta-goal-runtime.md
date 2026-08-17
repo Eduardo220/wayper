@@ -294,6 +294,10 @@ Cada slice usa Q/R adaptativos já definidos. `npm run quality:gate` é o loop
 FAST; testes direcionados ficam separados. Q2/Q3 adicionam full Jest, Expo,
 specialists e prova física somente conforme classe, flags e diff.
 
+O completion backstop de [`hooks-and-gates.md`](hooks-and-gates.md) só protege a
+tentativa de encerrar com regressão determinística. Ele não rankeia candidates,
+não avança slice, não decide `GOAL_SATISFIED` e não substitui review/DEEP.
+
 Quando comportamento de aparelho for obrigatório e não executado:
 
 ```text
