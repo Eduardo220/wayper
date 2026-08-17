@@ -3,7 +3,7 @@
 > **Status:** vigente<br>
 > **Tipo:** fonte técnica de estado e direção<br>
 > **Escopo:** arquitetura mobile, domínios, persistência e integrações<br>
-> **Última revisão:** 2026-08-01<br>
+> **Última revisão:** 2026-08-17<br>
 > **Fonte principal relacionada:** [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md)
 
 ## Visão geral
@@ -114,6 +114,25 @@ Responsável por:
 - Desenhar zonas conquistadas.
 - Exibir áreas próprias e de outros usuários.
 - Atualizar feedback visual durante a corrida.
+
+## Ownership e boundaries observados
+
+A dependência segue da composição/UI para owners de domínio; repositories,
+services, storage, tasks e utils não dependem de screens, components ou
+navigation. UI pode consumir as facades públicas de corrida — hoje
+`activeRunTrackingService` e `activeRunRuntimeService` —, mas não controla
+`activeRunState`, task headless, bridge/notification internals nem filtros GPS.
+
+Turf e cálculo geográfico pertencem aos services de tracking/territory; MapLibre
+renderiza/adapta dados. Firestore pertence aos owners remotos registrados e não
+entra diretamente nos owners críticos de start, tracking, recovery e save
+mínimo. Trabalho remoto em `runSyncQueueService`, deferred queue e `sync.js` é
+permitido somente depois da preservação local.
+
+Há dívida social e de storage na UI e módulos de compatibilidade ainda presentes.
+Ela está inventariada e ratcheted, não legitimada nem migrada em massa. O mapa
+operacional, as exceções específicas e o enforcement pertencem a
+[`docs/ai/architecture-boundaries.md`](ai/architecture-boundaries.md).
 
 ## Fluxo macro de corrida
 

@@ -73,7 +73,9 @@ Use somente quando o objetivo explícito é preservar comportamento.
 Nome/typo/rename local não aciona este fluxo completo. Um refactor de
 `MapScreen` é `ARCHITECTURAL` até dependency/ownership map provar fronteiras e
 pode receber `CRITICAL_RUNTIME`; esta decisão não autoriza executá-lo. Targets,
-ratchet e anti-gaming pertencem a [`code-budgets.md`](code-budgets.md).
+ratchet de tamanho e anti-gaming pertencem a
+[`code-budgets.md`](code-budgets.md); ownership e dependências proibidas, a
+[`architecture-boundaries.md`](architecture-boundaries.md).
 
 ## `ARCHITECTURAL_CHANGE`
 
@@ -81,11 +83,13 @@ Antes de editar:
 
 1. descreva `CURRENT_STATE` e owners reais;
 2. registre constraints/invariantes e consumers;
-3. compare opções, inclusive manter o caminho atual;
-4. escolha decisão e responsabilidade única;
-5. defina migration/compatibility, failure modes e rollback;
-6. implemente em fases pequenas com validação por boundary;
-7. faça review especializado apenas pelas flags.
+3. leia [`architecture-boundaries.md`](architecture-boundaries.md) quando a
+   mudança cruzar UI, runtime, persistence, Firebase, native ou geo;
+4. compare opções, inclusive manter o caminho atual;
+5. escolha decisão e responsabilidade única;
+6. defina migration/compatibility, failure modes e rollback;
+7. implemente em fases pequenas com validação por boundary;
+8. faça review especializado apenas pelas flags.
 
 “Faça um plano” sem mudança de boundary não ativa este workflow.
 
@@ -164,5 +168,6 @@ ARCHITECTURAL: CURRENT_STATE | CONSTRAINTS | OPTIONS | DECISION | MIGRATION | VA
 REVIEW: FINDINGS | RISKS | TEST_GAPS
 ```
 
-Comandos vêm do `package.json` atual. `npm run lint` e `npm run quality:size` são
-canônicos; typecheck não existe. Não invente build/test e registre ausência.
+Comandos vêm do `package.json` atual. `npm run lint`, `npm run quality:size` e
+`npm run quality:architecture` são canônicos; typecheck não existe. Não invente
+build/test e registre ausência.

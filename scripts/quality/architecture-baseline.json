@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "categories": {
+    "uiFirestoreImports": {
+      "legacy": {
+        "src/components/Group/CreateGroupModal.js": 1,
+        "src/components/Group/GroupChat.js": 1,
+        "src/components/Group/GroupMembersList.js": 1,
+        "src/hooks/useFriends.js": 1,
+        "src/hooks/useFriendsAdvanced.js": 1,
+        "src/screens/FeedScreen.js": 1,
+        "src/screens/Friends/FriendProfileScreen.js": 1,
+        "src/screens/Friends/FriendRunsScreen.js": 1,
+        "src/screens/Friends/FriendsScreen.js": 1,
+        "src/screens/Group/GroupChatScreen.js": 1,
+        "src/screens/Group/GroupDetailScreen.js": 1,
+        "src/screens/Group/GroupsScreen.js": 1
+      },
+      "allowed": {},
+      "exceptions": []
+    },
+    "uiLowLevelStorageImports": {
+      "legacy": {
+        "src/components/MedalsWidget.js": 2,
+        "src/screens/Runs/DashboardScreen.js": 1
+      },
+      "allowed": {},
+      "exceptions": [
+        {
+          "path": "src/screens/MapScreen.js",
+          "max": 2,
+          "boundary": "UI_TO_LOW_LEVEL_STORAGE",
+          "reason": "The current critical-run composition still owns local draft and sync handoff in MapScreen.",
+          "owner": "MapScreen with runFinalizationService",
+          "reviewCondition": "Remove when the critical-run composition moves behind an existing owner without changing lifecycle behavior."
+        }
+      ]
+    },
+    "domainToUiImports": { "legacy": {}, "allowed": {}, "exceptions": [] },
+    "uiRuntimeInternalImports": { "legacy": {}, "allowed": {}, "exceptions": [] },
+    "uiTurfImports": { "legacy": {}, "allowed": {}, "exceptions": [] },
+    "legacyModuleImports": { "legacy": {}, "allowed": {}, "exceptions": [] },
+    "runCriticalFirestoreImports": { "legacy": {}, "allowed": {}, "exceptions": [] },
+    "firestoreOwnerImports": {
+      "legacy": {
+        "src/components/Group/CreateGroupModal.js": 1,
+        "src/components/Group/GroupChat.js": 1,
+        "src/components/Group/GroupMembersList.js": 1,
+        "src/hooks/useFriends.js": 1,
+        "src/hooks/useFriendsAdvanced.js": 1,
+        "src/screens/FeedScreen.js": 1,
+        "src/screens/Friends/FriendProfileScreen.js": 1,
+        "src/screens/Friends/FriendRunsScreen.js": 1,
+        "src/screens/Friends/FriendsScreen.js": 1,
+        "src/screens/Group/GroupChatScreen.js": 1,
+        "src/screens/Group/GroupDetailScreen.js": 1,
+        "src/screens/Group/GroupsScreen.js": 1,
+        "src/services/runService.js": 1,
+        "src/services/xp/xpService.js": 1,
+        "src/services/zones/zoneService.js": 1
+      },
+      "allowed": {
+        "src/firebaseConfig.js": 1,
+        "src/repositories/rankingRepository.js": 1,
+        "src/repositories/userProfileRepository.js": 1,
+        "src/services/checkpoints/checkpointService.js": 1,
+        "src/services/diagnostics/diagnosticUploadService.js": 1,
+        "src/services/feed/feedInteractionService.js": 1,
+        "src/services/feed/feedPostActionsService.js": 1,
+        "src/services/feed/feedService.js": 1,
+        "src/services/friends/friendsService.js": 1,
+        "src/services/notifications/notificationService.js": 1,
+        "src/services/profile/profileService.js": 1,
+        "src/services/ranking/fetchFirestore.js": 1,
+        "src/services/ranking/ranking.localLeaders.js": 1,
+        "src/services/territory/territoryFeedService.js": 1,
+        "src/services/territory/territoryMigrationService.js": 1,
+        "src/services/territory/territoryStatsService.js": 1,
+        "src/services/territory/territoryStorageService.js": 1,
+        "src/services/userService.js": 1,
+        "src/utils/sync.js": 1
+      },
+      "exceptions": []
+    },
+    "rawStorageOwnerImports": {
+      "legacy": {
+        "src/components/MedalsWidget.js": 1,
+        "src/services/runService.js": 1,
+        "src/services/xp/xpService.js": 1,
+        "src/services/zones/zoneService.js": 1,
+        "src/storage/zonesStorage.js": 1
+      },
+      "allowed": {
+        "src/firebaseConfig.js": 1,
+        "src/repositories/achievementRepository.js": 1,
+        "src/repositories/localMetadataRepository.js": 1,
+        "src/repositories/progressionRepository.js": 1,
+        "src/repositories/rankingRepository.js": 1,
+        "src/repositories/socialHomeRepository.js": 1,
+        "src/repositories/territoryRepository.js": 1,
+        "src/screens/Friends/FriendRunsScreen.js": 1,
+        "src/screens/Runs/ZoneDetailScreen.js": 1,
+        "src/services/checkpoints/checkpointService.js": 1,
+        "src/services/diagnostics/diagnosticExportService.js": 1,
+        "src/services/diagnostics/diagnosticsPreferencesService.js": 1,
+        "src/services/diagnostics/localDiagnosticsService.js": 1,
+        "src/services/diagnostics/logStorageService.js": 2,
+        "src/services/feed/feedPostActionsService.js": 1,
+        "src/services/feed/feedService.js": 1,
+        "src/services/location/locationService.js": 1,
+        "src/services/onboarding/onboardingService.js": 1,
+        "src/services/permissions.js": 1,
+        "src/services/profile/profileService.js": 1,
+        "src/services/run/runDeferredTaskQueueService.js": 1,
+        "src/services/runOfflineStorageService.js": 1,
+        "src/services/runTracking/activeRunTrackingService.js": 1,
+        "src/services/territory/territoryMigrationService.js": 1,
+        "src/services/territory/territoryStorageService.js": 1,
+        "src/utils/fileSystemLegacy.js": 1,
+        "src/utils/sync.js": 1
+      },
+      "exceptions": []
+    }
+  }
+}

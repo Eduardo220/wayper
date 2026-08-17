@@ -667,3 +667,21 @@ não se atualiza automaticamente, tamanho isolado não classifica god object e
 `MapScreen`/runtime crítico não são refatorados para satisfazer métrica. Política,
 thresholds e ranking estão em `docs/ai/code-budgets.md`; boundaries ficam para
 unidade própria.
+
+### Adendo — Architecture Boundaries + Domain Enforcement
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** a arquitetura observada é formalizada com duas ferramentas já
+disponíveis: `no-restricted-imports` core, por file pattern, bloqueia violações
+de zero dívida; um script Node usa o AST do ESLint para ratchetear dívida e o
+conjunto atual de owners Firestore/storage. Não há plugin, custom rule, DSL nem
+baseline auto-update. Import direto no critical run owner é bloqueado; sync
+remoto posterior ao save local permanece permitido.
+
+**Consequências:** UI Firestore/storage legado pode permanecer sem crescer;
+domain/data não depende de UI; UI não acessa task/native/runtime internals nem
+duplica Turf; módulos `runService`, zones/xp legacy não ganham consumers. Exceção
+é exact-path, limitada e revisável. Inventários, ownership, cycle signal e
+anti-gaming estão em `docs/ai/architecture-boundaries.md`. Nenhum source
+funcional foi refatorado.

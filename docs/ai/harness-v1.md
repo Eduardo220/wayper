@@ -3,7 +3,7 @@
 > **Status:** vigente<br>
 > **Escopo:** repositório mobile<br>
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
-> Analysis + Code Budgets V1, 2026-08-17<br>
+> Analysis + Code Budgets + Architecture Boundaries V1, 2026-08-17<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -42,6 +42,8 @@ evidência datada.
   canônico `npm run lint`; detalhes são carregados somente em `TEST_BUILD`.
 - `docs/ai/code-budgets.md`: targets graduais, ratchet de tamanho, exceções e
   ranking estrutural; `npm run quality:size` é o gate de regressão.
+- `docs/ai/architecture-boundaries.md`: owners reais, inventários e boundaries
+  sob demanda; `npm run quality:architecture` impede novos consumers inválidos.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
@@ -99,7 +101,9 @@ pelas flags.
 
 Não existe wave planner executável, custom orchestrator, adjudicator, agent
 genérico novo, benchmark automático de concorrência ou worktree permanente.
-Knowledge graph novo, memory system, token proxy e boundaries permanecem fora.
+Knowledge graph novo, memory system, token proxy e framework/DSL de boundaries
+permanecem fora. Boundaries simples de import e o ratchet owner-specific estão
+implementados sem nova dependência.
 As quatro skills possuem workflows de domínio; processos genéricos permanecem
 nativos e usam os contratos de
 [`docs/ai/process-workflows.md`](process-workflows.md). A delegação segue

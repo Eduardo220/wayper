@@ -32,8 +32,8 @@ sequência acrescentar disciplina além do classifier/domain skill.
 | Sinal | Processo | Composição mínima |
 | --- | --- | --- |
 | bug verificável | `BUG_INVESTIGATION` | classe + domínio; domain skill/reviewer só por escopo/flags |
-| refactor explicitamente behavior-preserving e não trivial | `SAFE_REFACTOR` | classe + owners/consumers; Graphify apenas se mapa amplo |
-| mudança de owner/boundary/migration | `ARCHITECTURAL_CHANGE` | classe + domínios + decisão/migração |
+| refactor explicitamente behavior-preserving e não trivial | `SAFE_REFACTOR` | classe + owners/consumers + boundaries se cruzar camada; Graphify apenas se mapa amplo |
+| mudança de owner/boundary/migration | `ARCHITECTURAL_CHANGE` | classe + domínios + `architecture-boundaries` + decisão/migração |
 | falha de teste | `TEST_FAILURE_INVESTIGATION` | `TEST_BUILD` + domínio do contrato afetado |
 | feature bounded | workflow nativo | classe + domínio; não criar feature skill genérica |
 | code review | contrato nativo de review | specialists somente por risk flag |
@@ -98,6 +98,7 @@ branch atual sempre confirmam ownership.
   `activeRunState` e a task headless; `MapScreen` é integração, não owner.
 - **Docs:** `docs/04-arquitetura.md`, `docs/wayper/09-arquitetura-tecnica.md`,
   `docs/22-teste-real-corrida-background.md`, `docs/13-bugs-conhecidos.md`.
+  Carregue `docs/ai/architecture-boundaries.md` somente se cruzar camada/owner.
 - **Tests:** `src/services/runTracking/__tests__/` e testes relacionados em
   `src/services/run/__tests__/`.
 - **Skills:** `wayper-active-run`.
@@ -125,6 +126,7 @@ branch atual sempre confirmam ownership.
   e permissions services.
 - **Docs:** `docs/06-fluxos-de-usuario.md`,
   `docs/23-onboarding-permissoes-estados-vazios.md`, `docs/04-arquitetura.md`.
+  Carregue `docs/ai/architecture-boundaries.md` somente se cruzar shell/domain.
 - **Tests:** permission/onboarding tests e consumers de navegação/autenticação.
 - **Skills:** `wayper-mobile-shell`.
 - **Specialists:** lifecycle somente para AppState, permission ou native entry;
@@ -151,6 +153,7 @@ branch atual sempre confirmam ownership.
   persistentes; Firestore nunca é requisito do caminho crítico.
 - **Docs:** `docs/04-arquitetura.md`, `docs/05-modelo-de-dados.md`, ADR-012/026/028
   em `docs/08-decisoes-tecnicas.md`.
+  Carregue `docs/ai/architecture-boundaries.md` se mudar owner/storage/sync.
 - **Tests:** testes de run, offline storage, storage migration e repositories de
   run/sync.
 - **Skills:** `wayper-persistence-sync`.
@@ -180,6 +183,7 @@ branch atual sempre confirmam ownership.
 - **Docs:** `docs/15-corrida-por-zonas.md`,
   `docs/wayper/03-mecanica-territorios.md`,
   `docs/wayper/05-gps-e-validacao.md`, `docs/05-modelo-de-dados.md`.
+  Carregue `docs/ai/architecture-boundaries.md` se UI/geo/storage cruzarem.
 - **Tests:** testes de territory, tracking path e territory repository.
 - **Skills:** `wayper-territory-map` para território; `wayper-active-run` também
   quando GPS ao vivo/lifecycle for afetado.
@@ -321,14 +325,16 @@ branch atual sempre confirmam ownership.
   `eas.json`, `app.json`, `scripts/` e `android/`.
 - **Primary owners:** scripts/config atuais e a suíte relacionada.
 - **Docs:** `docs/12-guia-de-testes.md`, `docs/11-plano-de-deploy.md`,
-  `docs/13-bugs-conhecidos.md`, `docs/ai/static-analysis.md` para lint e
-  `docs/ai/code-budgets.md` para mudança estrutural.
+  `docs/13-bugs-conhecidos.md`, `docs/ai/static-analysis.md` para lint,
+  `docs/ai/code-budgets.md` para tamanho e `docs/ai/architecture-boundaries.md`
+  para gate arquitetural.
 - **Tests:** suíte direcionada e `npm test -- --runInBand` quando o gate pedir.
 - **Skills:** nenhuma por padrão; skill de domínio apenas se o teste cobre esse
   domínio.
 - **Specialists:** nenhum por padrão; papéis de tester/debugger são nativos.
-- **Tools:** comandos canônicos do `package.json`; `npm run lint` e
-  `npm run quality:size` são vigentes e não existe typecheck canônico.
+- **Tools:** comandos canônicos do `package.json`; `npm run lint`,
+  `npm run quality:size` e `npm run quality:architecture` são vigentes e não
+  existe typecheck canônico.
 - **Validation:** exit code, contagem, baseline, config syntax e diff check.
 - **Risk flags:** `BUILD_TOOLING`, `PERFORMANCE`, `NATIVE_ANDROID`.
 - **Escalation:** dependency/config pública, pipeline ou vários ambientes pode

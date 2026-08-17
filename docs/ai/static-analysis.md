@@ -11,8 +11,8 @@ O comando canônico é `npm run lint`. Ele executa `eslint .` com Flat Config e 
 base oficial `eslint-config-expo`. O CLI direto foi escolhido porque `expo lint`
 limitou a execução observada a `src/`, omitindo entrypoints e scripts; a
 documentação oficial permite ESLint direto quando há customização. A fundação
-mede correção estática e budgets estruturais graduais; formatting e boundaries
-arquiteturais continuam fora do config.
+mede correção estática, budgets estruturais graduais e boundaries de import com
+alto sinal. O ratchet arquitetural complementar tem comando próprio.
 
 Stack observada:
 
@@ -54,8 +54,12 @@ correção isolada justificar `--fix`, revise o diff e rode validação direcion
 - **WARN:** dívida real ou heurística que ainda precisa de burn-down, incluindo
   unused, imports, hooks, condição constante, duplicate export e budgets
   estruturais graduais.
-- **OFF/não adicionado:** formatting, `no-console`, `max-statements` e
-  architecture boundaries. Eles não são falsamente chamados de gate.
+- **OFF/não adicionado:** formatting, `no-console`, `max-statements`, cycle gate
+  global e boundaries sem owner confiável. Eles não são falsamente chamados de
+  gate.
+- **ARCHITECTURE ERROR:** imports inválidos sem dívida — domain/data para UI,
+  critical run para Firebase, UI para runtime/native internals ou Turf e novos
+  consumers de módulos legados — usam `no-restricted-imports` por file pattern.
 
 `react-hooks/rules-of-hooks` e `import/export` seriam sinais de error em código
 novo, mas existem 6 e 4 ocorrências legadas respectivamente. Nesta fundação elas
@@ -103,8 +107,9 @@ Os maiores concentradores são:
 
 Warnings não bloqueiam ainda e o comando não usa `--max-warnings`. Esta contagem
 de 206 é a baseline pré-budget para burn-down, não autorização para ignorar
-warning novo. Com as regras estruturais, o lint lê 267 arquivos e termina com
-`0 errors / 336 warnings`: 206 preexistentes e 130 de budget, separados em
+warning novo. Com as regras estruturais e arquiteturais, o lint termina com
+`0 errors / 336 warnings`: 206 preexistentes, 130 de budget e zero findings de
+architecture. As categorias estruturais estão separadas em
 [`docs/ai/code-budgets.md`](code-budgets.md).
 
 ## Budgets estruturais
@@ -118,15 +123,27 @@ somente regras core: `max-lines`, `max-lines-per-function`, `complexity`,
 significativas ou crescimento de arquivo legado registrado. Testes, scripts e
 configs permanecem fora desse ratchet; `max-statements` continua measure-only.
 
-## Sinais medidos, ainda sem enforcement
+## Boundaries arquiteturais
+
+Owners, inventários Firestore/storage, regras, exceções e anti-gaming pertencem
+a [`docs/ai/architecture-boundaries.md`](architecture-boundaries.md).
+`npm run quality:architecture` usa o AST do ESLint já instalado e uma baseline
+pequena para impedir N+1 sem promover dívida existente a error. Nenhum plugin ou
+custom rule foi necessário.
+
+O output de lint deve ser lido em quatro grupos: `BUG_SIGNAL` 10 (6 hooks + 4
+exports), `GENERAL_LEGACY` 196, `STRUCTURAL_BUDGET` 130 e `ARCHITECTURE` zero. A
+dívida arquitetural aparece separadamente no comando próprio.
+
+## Sinais apenas medidos
 
 - `import/no-cycle` encontrou 31 arestas em ciclos; diagnostics, repositories,
   sync e runtime concentram os caminhos. Não foi ativado sem mapa de ownership.
 - Existem 161 usos de `console.*`: 99 em produção e 62 em scripts. Scripts têm
   uso legítimo; produção precisa primeiro confirmar o logger owner.
 - Existem 11 imports relativos com três níveis; a maioria é asset/test fixture.
-- Há acesso Firestore direto em telas/componentes sociais. Boundaries serão
-  tratados numa unidade própria, não por disable/allowlist improvisada.
+- O acesso Firestore e storage direto está inventariado e ratcheted; remediation
+  continua fora deste gate.
 - Nenhum plugin de boundaries ou ferramenta de ciclo adicional foi instalado.
 
 ## Typecheck e baseline machine-readable
@@ -148,7 +165,7 @@ Nenhum `npm audit fix` ou upgrade forçado foi executado.
 
 ## Próximos gates
 
-CI futuro deve executar `npm run lint` e `npm run quality:size`; CI não foi
-alterado aqui. Próximos passos são burn-down dos bug signals e
-boundaries/domain rules baseadas em owners reais. Prettier, TypeScript,
+CI futuro deve executar `npm run lint`, `npm run quality:size` e
+`npm run quality:architecture`; CI não foi alterado aqui. Próximos passos são
+burn-down explícito e síntese de quality gates. Prettier, TypeScript,
 `--max-warnings 0` e plugins arquiteturais não pertencem a esta fundação.

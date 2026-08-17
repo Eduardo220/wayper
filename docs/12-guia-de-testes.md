@@ -21,11 +21,16 @@ Análise estática canônica:
 ```bash
 npm run lint
 npm run quality:size
+npm run quality:architecture
+node --test scripts/quality/check-code-size.test.mjs scripts/quality/check-architecture.test.mjs
 ```
 
 O baseline de warnings pertence a
 [`docs/ai/static-analysis.md`](ai/static-analysis.md), e o ratchet de tamanho a
-[`docs/ai/code-budgets.md`](ai/code-budgets.md). Não existe typecheck canônico.
+[`docs/ai/code-budgets.md`](ai/code-budgets.md). Owners, exceções e evals do gate
+arquitetural pertencem a
+[`docs/ai/architecture-boundaries.md`](ai/architecture-boundaries.md). Não
+existe typecheck canônico.
 
 ## Validacao consolidada da rodada local-first
 
