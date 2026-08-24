@@ -113,9 +113,10 @@ Site skills e o revisor WebGL pertencem ao site e não ao mobile.
 
 ## Graphify, RTK, Caveman e hooks
 
-Graphify é um índice auxiliar ativo. Sua configuração e ciclo de geração não
-mudam nesta fundação; `graphify-out`, maps e caches nunca entram no contexto
-permanente nem substituem source. Toda pista material é confirmada diretamente.
+Graphify é um índice auxiliar opcional. Quando o mapa amplo justificar o custo,
+o agente gera AST app-only sob demanda; `graphify-out`, maps e caches nunca
+entram no contexto permanente nem substituem source. Não há refresh automático
+por Git, e toda pista material é confirmada diretamente.
 
 RTK é ferramenta global opcional. O projeto não inclui adapter, proxy ou segundo
 sistema de compressão e deve continuar operável com shell comum.
@@ -124,9 +125,10 @@ Caveman também permanece global e opcional. Compressão de model output não
 altera source, evidence ou prosa persistida. Seleção segura e medições pertencem
 a [`token-economy.md`](token-economy.md).
 
-Os hooks Git `post-commit` e `post-checkout` instalados pelo Graphify são runtime
-local, assíncrono e fail-open. O hook Codex/RTK e hooks de plugins são configuração
-do usuário. O único hook do projeto é o completion backstop descrito em
+Os hooks Git `post-commit` e `post-checkout` do Graphify foram removidos após o
+ROI da Unidade 17; refresh é explícito quando uma task realmente seleciona o
+grafo. O hook Codex/RTK e hooks de plugins são configuração do usuário. O único
+hook do projeto é o completion backstop descrito em
 [`hooks-and-gates.md`](hooks-and-gates.md); nenhum hook é fonte de regras do
 mobile ou substitui Q/R.
 

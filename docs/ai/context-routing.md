@@ -502,10 +502,21 @@ reviewer genérico. Workers nativos só escrevem em paralelo segundo
 
 ## Graphify, RTK e modos de output
 
-Use Graphify quando ownership é incerto, o dependency map é amplo, consumers
-cruzam módulos, a tarefa é architectural, o refactor é grande ou o import graph
-reduz incerteza. Não use quando o alvo é conhecido, a mudança é trivial/doc/local
-ou busca direta resolve mais barato. Graphify descobre; source confirma.
+Graphify é opcional e sob demanda. Use somente quando ownership é incerto, o
+dependency map é amplo, consumers cruzam módulos ou `path`/`explain`/`affected`
+reduzirem materialmente a leitura. Comece por busca direta; alvo conhecido,
+mudança trivial/doc/local, enforcement arquitetural e wiring dinâmico não
+justificam grafo. Em corrida crítica ele apenas sugere working set: source,
+callers e testes continuam obrigatórios.
+
+Uma sessão Graphify do mobile começa por refresh AST app-only explícito
+(`graphify extract . --code-only --no-cluster --out .`). Sem refresh, trate o
+cache como stale; stage não é uma versão distinta, pois o extractor lê o
+filesystem. O grafo compartilhado do workspace, hooks Git automáticos,
+extração semântica remota e `save-result` não fazem parte do fluxo default.
+`graphify-out/` é gerado/ignorado e pode ser apagado sem perda de verdade.
+Graphify descobre; source confirma. Evidência e decisão:
+[`2026-08-24-graphify-roi.md`](../audits/2026-08-24-graphify-roi.md).
 
 RTK permanece `USER_GLOBAL` e opcional. Prefira output comprimido quando ele
 preservar evidência; use raw quando debugging exigir e nunca esconda erro

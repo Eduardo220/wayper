@@ -49,7 +49,7 @@ confirmadas contra o CLI instalado e o smoke local.
 | `SHARED_WORKSPACE` | `<workspace>/.codex/` | agents compartilhados e adapter RTK referenciado pelo global; preservados |
 | `WAYPER_PROJECT` | `.codex/hooks.json` | `Stop` backstop versionado nesta unidade |
 | `PLUGIN` | manifests/cache dos plugins habilitados | lifecycle do Ponytail; preservado |
-| `GIT_LOCAL` | `.git/hooks/` | Graphify `post-commit`/`post-checkout`; preservados |
+| `GIT_LOCAL` | `.git/hooks/` | sem hooks Graphify; refresh do índice é explícito e sob demanda |
 | `SYSTEM/MANAGED` | `/etc/codex/config.toml`, `/etc/codex/requirements.toml` | ambos ausentes no host auditado |
 
 Precedência de config observada/documentada, da maior para a menor: flags
@@ -70,11 +70,12 @@ política do projeto nem substitui review.
 | RTK command adapter | `~/.codex/hooks.json` → `<workspace>/.codex/hooks/rtk-codex.js`; `USER_GLOBAL`/`SHARED_WORKSPACE` | user; `PreToolUse:Bash` | adaptação RTK; timeout 5 s | best-effort/fail-open | `KEEP` |
 | Ponytail lifecycle 4.9.0 | plugin manifest/cache; `PLUGIN` | plugin; `SessionStart`, `UserPromptSubmit`, `SubagentStart` | regras/mode tracking; timeout 5 s por handler | best-effort/fail-open | `KEEP` |
 | Wayper completion backstop | `.codex/hooks.json`; `WAYPER_PROJECT` | Harness; `Stop` | gate por scope; 48 ms–9,22 s medidos | blocker em `FAIL`/`TOOLING_ERROR` do script; runtime pode fail-open | `ADD` |
-| Graphify post-commit | `.git/hooks/post-commit`; `GIT_LOCAL`/`GENERATED_RUNTIME` | Graphify; Git `post-commit` | update assíncrono; só custo de launch no Git foreground | detached/fail-open | `KEEP` |
-| Graphify post-checkout | `.git/hooks/post-checkout`; `GIT_LOCAL`/`GENERATED_RUNTIME` | Graphify; Git `post-checkout` | refresh assíncrono em troca de branch; só launch foreground | detached/fail-open | `KEEP` |
+| Graphify post-commit | removido de `.git/hooks/post-commit`; `GIT_LOCAL`/`GENERATED_RUNTIME` | Graphify; Git `post-commit` | launch medido 0,05 s; rebuild de 6 arquivos, 10,46 s/176 MB em background | stale até refresh explícito | `REMOVE` |
+| Graphify post-checkout | removido de `.git/hooks/post-checkout`; `GIT_LOCAL`/`GENERATED_RUNTIME` | Graphify; Git `post-checkout` | launch medido 0,06 s; full rebuild 16,82 s/364 MB em background | stale até refresh explícito | `REMOVE` |
 
-Não há `pre-commit`, `pre-push` ou hooks do plugin Superpowers. Nenhum hook
-existente foi sobrescrito ou removido.
+Não há `pre-commit`, `pre-push` ou hooks do plugin Superpowers. Os dois hooks
+Graphify foram removidos após o ROI da Unidade 17; hooks RTK, Ponytail e o
+completion backstop não foram sobrescritos.
 
 ## Capability matrix
 
@@ -246,8 +247,9 @@ O backstop nunca:
 
 ## Git hooks e ownership
 
-Os hooks locais Graphify `post-commit` e `post-checkout` foram preservados. Não
-há `pre-commit`, `pre-push` nem hook manager do projeto. A decisão é
+Os hooks locais Graphify `post-commit` e `post-checkout` foram removidos. O
+índice auxiliar passa a ser app-only, manual e sob demanda. Não há `pre-commit`,
+`pre-push` nem hook manager do projeto. A decisão é
 `NO_PRECOMMIT`/`NO_PREPUSH`: o completion backstop e a validação adaptativa já
 cobrem o FAST local; adicionar outro FAST gate duplicaria custo e ainda não
 substituiria CI/deep validation.

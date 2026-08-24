@@ -289,6 +289,20 @@ redução de bytes, arredondados a uma casa.
 (`0%`). `SUBAGENT_BRIEF_BYTES` desta execução foi `0`, pois permaneceu `S0`.
 `FINAL_OUTPUT_BYTES` é medido na conclusão, sem estimar billed tokens.
 
+### Graphify ROI
+
+Unidade 17 manteve `AGENTS.md` e metadata de skills/agents intactos:
+`PERMANENT_CONTEXT_BYTES` ficou 7.311 B before/after (`0 B`, `0%`). Policy,
+evals e auditoria são on-demand. O índice shared medido ocupava 66.898.904 B;
+o cold code-only levou 15,08 s/329 MB. O candidato app-only ocupou 5.502.553 B,
+levou 7,34 s/262 MB no cold e reduziu a query warm mediana de 0,64 s/74 MB
+para 0,41 s/61 MB. Esses bytes/tempos são custo local, não billed tokens.
+
+A decisão `RECONFIGURE` removeu dois hooks Git e reteve apenas uso app-only
+explícito. Launch foreground era 0,05–0,06 s, mas os rebuilds observados
+custaram 10,46–16,82 s e 176–364 MB em background. O benchmark e limitações
+estão em [`2026-08-24-graphify-roi.md`](../audits/2026-08-24-graphify-roi.md).
+
 Auditoria real das ferramentas:
 
 | Tool/capability | Evidência observada | Interpretação |

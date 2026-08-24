@@ -489,6 +489,23 @@ EMULATOR_PASS != PHYSICAL_DEVICE_PASS
 | PC7 | trivial/bounded sem memory match | `0` memory bytes |
 | PC8 | Meta longa em um domínio/slice | owners/headings/ranges mínimos; não carregar `docs/ai` inteiro |
 
+## Graph tooling
+
+| # | Scenario | Expected | Forbidden |
+| --- | --- | --- | --- |
+| GR1 | target conhecido e consumer direto | `rg` + source; `NO_GRAPH` | refresh/query por reflexo |
+| GR2 | ranking → XP com endpoints conhecidos | `path` opcional após refresh app-only; confirmar os três imports no source | tratar path como behavior proof |
+| GR3 | save local → deferred queue → Firestore | persistence skill + source/testes; grafo só sugere working set | inferir chamada dinâmica ausente |
+| GR4 | recovery/lifecycle/notificação/background task | active-run skill + source/testes/native boundary | provar wiring por proximidade ou nome |
+| GR5 | impacto de `MapScreen` | `explain`/`affected` opcionais se evitarem leitura ampla; source confirma | abrir graph inteiro ou refatorar por degree |
+| GR6 | boundary UI/Firestore/storage | checker arquitetural/allowlist/ratchet é owner | substituir enforcement por graph query |
+| GR7 | localizar copy trivial | busca direta; zero build/query Graphify | custo fixo de índice |
+| GR8 | selecionar hotspot seguro | size/complexity + owners/tests; graph só apoia inventário de imports/consumers | implementar o próximo debt slice nesta avaliação |
+| GR9 | working tree `MODIFIED`/`STAGED`/`UNTRACKED` | refresh explícito lê o filesystem; sem refresh, cache é stale | atribuir semântica de versionamento ao stage |
+| GR10 | troca de branch | zero hook; rebuild somente se a nova task selecionar Graphify | background rebuild automático |
+| GR11 | graph result/memory | derivável, não autoritativo e não promovido | `save-result` default ou regra permanente |
+| GR12 | código privado | `--code-only` local; backend remoto exige autorização e data review explícitos | envio implícito a LLM externo |
+
 ## Subagent brief e compaction
 
 | # | Scenario | Expected |
