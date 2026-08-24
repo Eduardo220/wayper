@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "baseRun": {
     "scope": "PRODUCT_SOURCE",
     "originalCriteriaCount": 1,
@@ -29,6 +29,31 @@
     "budget": { "exhausted": false, "remaining": true },
     "workExecuted": true,
     "execution": { "candidates": 1, "slices": 1, "specialists": 0 }
+  },
+  "baseBudgetRun": {
+    "requestedTokenBudget": 1000,
+    "requestedDurationSeconds": 3600,
+    "runtime": {
+      "tokenBudgetPropagation": "UNSUPPORTED",
+      "effectiveTokenBudget": "UNKNOWN",
+      "nativeTokenEnforcement": "UNSUPPORTED",
+      "durationBudgetPropagation": "UNSUPPORTED",
+      "effectiveDurationSeconds": "UNKNOWN",
+      "nativeDurationEnforcement": "UNSUPPORTED"
+    },
+    "accounting": {
+      "tokensUsed": 100,
+      "previousTokensUsed": 90,
+      "elapsedSeconds": 300,
+      "previousElapsedSeconds": 250,
+      "tokenSource": "get_goal.tokensUsed",
+      "durationSource": "get_goal.timeUsedSeconds"
+    },
+    "checkpoint": "AFTER_MAJOR_EXECUTION_PHASE",
+    "scope": "HARNESS_INFRASTRUCTURE",
+    "workClass": "MANDATORY",
+    "completionEligible": false,
+    "externalBlocker": false
   },
   "cases": [
     {
@@ -384,6 +409,189 @@
       "expectedAssessment": "NO_REGRESSION",
       "override": { "workExecuted": false },
       "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    }
+  ],
+  "budgetCases": [
+    {
+      "id": "BUD01",
+      "scenario": "accounting without an applicable ceiling is not enforcement",
+      "override": { "requestedTokenBudget": "UNKNOWN" },
+      "expected": {
+        "tokenAccountingReady": true,
+        "tokenEnforcementMode": "OBSERVATIONAL_ONLY",
+        "tokenBudgetEnforcementReady": false
+      }
+    },
+    {
+      "id": "BUD02",
+      "scenario": "requested textual budget differs from effective runtime budget",
+      "expected": {
+        "requestedTokenBudget": 1000,
+        "effectiveTokenBudget": "UNKNOWN",
+        "tokenPropagationStatus": "UNSUPPORTED",
+        "tokenEnforcementMode": "HARNESS"
+      }
+    },
+    {
+      "id": "BUD03",
+      "scenario": "normal execution below the soft limit",
+      "override": { "accounting": { "tokensUsed": 500 }, "workClass": "OPTIONAL" },
+      "expected": { "budgetState": "NORMAL", "allowRequestedWork": true }
+    },
+    {
+      "id": "BUD04",
+      "scenario": "soft limit rejects new optional expansion",
+      "override": { "accounting": { "tokensUsed": 850 }, "workClass": "OPTIONAL" },
+      "expected": {
+        "budgetState": "SOFT_LIMIT",
+        "allowOptionalWork": false,
+        "allowRequestedWork": false
+      }
+    },
+    {
+      "id": "BUD05",
+      "scenario": "hard token limit terminalizes immediately",
+      "override": { "accounting": { "tokensUsed": 1000 } },
+      "expected": {
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "stopReason": "TOKEN_BUDGET_EXCEEDED",
+        "allowNewSubstantiveWork": false
+      }
+    },
+    {
+      "id": "BUD06",
+      "scenario": "hard token limit needs no three-turn confirmation",
+      "override": { "accounting": { "tokensUsed": 1001 } },
+      "expected": { "repeatConfirmation": 0, "goalResult": "GOAL_BUDGET_EXHAUSTED" }
+    },
+    {
+      "id": "BUD07",
+      "scenario": "monotonic overrun remains terminal",
+      "override": {
+        "previousGoalResult": "GOAL_BUDGET_EXHAUSTED",
+        "previousStopReason": "TOKEN_BUDGET_EXCEEDED",
+        "accounting": { "previousTokensUsed": 1001, "tokensUsed": 1100 }
+      },
+      "expected": {
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "terminalImmutable": true,
+        "repeatConfirmation": 0
+      }
+    },
+    {
+      "id": "BUD08",
+      "scenario": "budget terminal result cannot become blocked",
+      "override": {
+        "previousGoalResult": "GOAL_BUDGET_EXHAUSTED",
+        "previousStopReason": "TOKEN_BUDGET_EXCEEDED",
+        "externalBlocker": "DEVICE_UNAVAILABLE"
+      },
+      "expected": {
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "stopReason": "TOKEN_BUDGET_EXCEEDED",
+        "terminalImmutable": true
+      }
+    },
+    {
+      "id": "BUD09",
+      "scenario": "external blocker is not budget exhaustion",
+      "override": { "externalBlocker": "DEVICE_UNAVAILABLE" },
+      "expected": { "goalResult": "GOAL_BLOCKED", "stopReason": "DEVICE_UNAVAILABLE" }
+    },
+    {
+      "id": "BUD10",
+      "scenario": "evidence-backed success stops at twenty percent",
+      "override": { "accounting": { "tokensUsed": 200 }, "completionEligible": true },
+      "expected": {
+        "goalResult": "GOAL_SATISFIED",
+        "stopReason": "EVIDENCE_GATED_COMPLETION",
+        "allowNewSubstantiveWork": false
+      }
+    },
+    {
+      "id": "BUD11",
+      "scenario": "soft limit permits cheap mandatory validation",
+      "override": { "accounting": { "tokensUsed": 850 }, "workClass": "MANDATORY" },
+      "expected": { "budgetState": "SOFT_LIMIT", "allowRequestedWork": true }
+    },
+    {
+      "id": "BUD12",
+      "scenario": "soft limit rejects expensive optional work",
+      "override": { "accounting": { "tokensUsed": 900 }, "workClass": "OPTIONAL" },
+      "expected": { "allowOptionalWork": false, "allowRequestedWork": false }
+    },
+    {
+      "id": "BUD13",
+      "scenario": "phase-granularity overshoot terminalizes without new work",
+      "override": {
+        "requestedTokenBudget": 1500,
+        "accounting": { "previousTokensUsed": 1450, "tokensUsed": 1530 }
+      },
+      "expected": {
+        "previousTokensUsed": 1450,
+        "overshoot": 30,
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "allowNewSubstantiveWork": false
+      }
+    },
+    {
+      "id": "BUD14",
+      "scenario": "duration limit terminalizes first",
+      "override": { "requestedDurationSeconds": 300, "accounting": { "elapsedSeconds": 300 } },
+      "expected": {
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "stopReason": "DURATION_BUDGET_EXCEEDED"
+      }
+    },
+    {
+      "id": "BUD15",
+      "scenario": "first observed hard limit wins",
+      "override": {
+        "requestedDurationSeconds": 300,
+        "accounting": { "tokensUsed": 1000, "elapsedSeconds": 301 },
+        "firstHardLimit": "DURATION"
+      },
+      "expected": { "stopReason": "DURATION_BUDGET_EXCEEDED", "goalResult": "GOAL_BUDGET_EXHAUSTED" }
+    },
+    {
+      "id": "BUD16",
+      "scenario": "unknown accounting never fabricates enforcement",
+      "override": {
+        "accounting": { "tokensUsed": "UNKNOWN", "tokenSource": "UNAVAILABLE" }
+      },
+      "expected": {
+        "tokenAccountingReady": false,
+        "tokenEnforcementMode": "UNAVAILABLE",
+        "tokenBudgetEnforcementReady": false
+      }
+    },
+    {
+      "id": "BUD17",
+      "scenario": "budget control adds no tool hook",
+      "expected": { "newHookRequired": false, "checkpointRecognized": true }
+    },
+    {
+      "id": "BUD18",
+      "scenario": "no-change remains a cheap path",
+      "override": { "scope": "NO_CHANGE" },
+      "expected": { "cheapPathPreserved": true, "budgetState": "NORMAL" }
+    },
+    {
+      "id": "BUD19",
+      "scenario": "the previous completion suite remains compatible",
+      "expected": { "completionGatePreserved": true }
+    },
+    {
+      "id": "BUD20",
+      "scenario": "budget control cannot replace completion proof",
+      "override": { "completionEligible": false, "accounting": { "tokensUsed": 200 } },
+      "expected": {
+        "goalResult": "GOAL_RUNNING",
+        "completionGatePreserved": true,
+        "softBudgetControlReady": true,
+        "irreversibleBudgetStopReady": true,
+        "terminalStatePrecedenceReady": true
+      }
     }
   ]
 }

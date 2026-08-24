@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  evaluateBudgetControl,
   evaluateCompletion,
+  GOAL_BUDGET_POLICY,
   loadEvalSuite,
   runEvalSuite,
 } from './check-meta-goal-completion.mjs';
 
 test('MGC1 all completion and shadow evals pass', () => {
   const results = runEvalSuite();
-  assert.equal(results.length, 32);
+  assert.equal(results.length, 52);
   assert.equal(results.filter((item) => item.kind === 'COMPLETION').length, 20);
   assert.equal(results.filter((item) => item.kind === 'SHADOW').length, 12);
+  assert.equal(results.filter((item) => item.kind === 'BUDGET').length, 20);
 });
 
 test('MGC2 FAST pass cannot hide a mandatory targeted test not run', () => {
@@ -65,4 +68,27 @@ test('MGC7 changed scope derives mandatory validation', () => {
   assert.equal(result.eligible, false);
   assert.match(result.gaps.join('\n'), /VALIDATION_MISSING:CONCURRENCY/);
   assert.match(result.gaps.join('\n'), /VALIDATION_MISSING:STATE_TRANSITIONS/);
+});
+
+test('MGC8 hard budget is immediate and immutable', () => {
+  const result = runEvalSuite().find((item) => item.id === 'BUD08');
+  assert.equal(result.goalResult, 'GOAL_BUDGET_EXHAUSTED');
+  assert.equal(result.repeatConfirmation, 0);
+  assert.equal(result.allowNewSubstantiveWork, false);
+});
+
+test('MGC9 one central soft-limit policy preserves mandatory work', () => {
+  assert.equal(GOAL_BUDGET_POLICY.softLimitRatio, 0.85);
+  const results = runEvalSuite();
+  assert.equal(results.find((item) => item.id === 'BUD04').allowRequestedWork, false);
+  assert.equal(results.find((item) => item.id === 'BUD11').allowRequestedWork, true);
+});
+
+test('MGC10 every semantic checkpoint is recognized without a hook', () => {
+  const { baseBudgetRun } = loadEvalSuite();
+  for (const checkpoint of GOAL_BUDGET_POLICY.checkpoints) {
+    const result = evaluateBudgetControl({ ...baseBudgetRun, checkpoint });
+    assert.equal(result.checkpointRecognized, true);
+    assert.equal(result.newHookRequired, false);
+  }
 });

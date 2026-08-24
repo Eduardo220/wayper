@@ -12,6 +12,26 @@ const SHADOW_ASSESSMENTS = new Set([
   'OLD_FALSE_POSITIVE',
   'HONEST_STATE_REFINEMENT',
 ]);
+const TERMINAL_RESULTS = new Set([
+  'GOAL_BUDGET_EXHAUSTED',
+  'GOAL_BLOCKED',
+  'GOAL_PARTIALLY_SATISFIED',
+  'GOAL_SATISFIED',
+]);
+export const GOAL_BUDGET_POLICY = Object.freeze({
+  softLimitRatio: 0.85,
+  checkpoints: Object.freeze([
+    'GOAL_START',
+    'BEFORE_NEW_SLICE',
+    'BEFORE_OPTIONAL_SPECIALIST',
+    'BEFORE_EXPENSIVE_VALIDATION',
+    'BEFORE_FULL_TEST_SUITE',
+    'BEFORE_BUILD',
+    'BEFORE_FINAL_FALSIFICATION',
+    'AFTER_MAJOR_EXECUTION_PHASE',
+    'BEFORE_OPTIONAL_FOLLOWUP',
+  ]),
+});
 const REQUIRED_VALIDATIONS = {
   NO_CHANGE: [],
   DOCS_ONLY: ['MARKDOWN', 'LINKS'],
@@ -41,6 +61,144 @@ function merge(base, override) {
 
 function hasEvidence(item) {
   return Array.isArray(item.evidence) && item.evidence.length > 0;
+}
+
+function isNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function enforcementMode(requested, effective, propagation, nativeEnforcement, observed) {
+  const native = propagation === 'PASS'
+    && isNumber(effective)
+    && nativeEnforcement === 'SUPPORTED';
+  const harness = isNumber(requested) && isNumber(observed);
+  if (native && harness) return 'HYBRID';
+  if (native) return 'NATIVE';
+  if (harness) return 'HARNESS';
+  if (isNumber(observed)) return 'OBSERVATIONAL_ONLY';
+  return 'UNAVAILABLE';
+}
+
+function propagationReadiness(status) {
+  if (status === 'PASS') return 'YES';
+  if (status === 'UNSUPPORTED') return 'UNSUPPORTED';
+  return 'NO';
+}
+
+export function evaluateBudgetControl(run) {
+  const runtime = run.runtime ?? {};
+  const accounting = run.accounting ?? {};
+  const requestedTokenBudget = run.requestedTokenBudget ?? 'UNKNOWN';
+  const requestedDurationSeconds = run.requestedDurationSeconds ?? 'UNKNOWN';
+  const effectiveTokenBudget = runtime.effectiveTokenBudget ?? 'UNKNOWN';
+  const effectiveDurationSeconds = runtime.effectiveDurationSeconds ?? 'UNKNOWN';
+  const tokenPropagationStatus = runtime.tokenBudgetPropagation ?? 'UNKNOWN';
+  const durationPropagationStatus = runtime.durationBudgetPropagation ?? 'UNKNOWN';
+  const tokenEnforcementMode = enforcementMode(
+    requestedTokenBudget,
+    effectiveTokenBudget,
+    tokenPropagationStatus,
+    runtime.nativeTokenEnforcement,
+    accounting.tokensUsed,
+  );
+  const durationEnforcementMode = enforcementMode(
+    requestedDurationSeconds,
+    effectiveDurationSeconds,
+    durationPropagationStatus,
+    runtime.nativeDurationEnforcement,
+    accounting.elapsedSeconds,
+  );
+  const tokenCeiling = ['NATIVE', 'HYBRID'].includes(tokenEnforcementMode)
+    ? effectiveTokenBudget
+    : tokenEnforcementMode === 'HARNESS' ? requestedTokenBudget : 'UNKNOWN';
+  const durationCeiling = ['NATIVE', 'HYBRID'].includes(durationEnforcementMode)
+    ? effectiveDurationSeconds
+    : durationEnforcementMode === 'HARNESS' ? requestedDurationSeconds : 'UNKNOWN';
+  const tokenHard = isNumber(tokenCeiling)
+    && isNumber(accounting.tokensUsed)
+    && accounting.tokensUsed >= tokenCeiling;
+  const durationHard = isNumber(durationCeiling)
+    && isNumber(accounting.elapsedSeconds)
+    && accounting.elapsedSeconds >= durationCeiling;
+  const tokenSoft = isNumber(tokenCeiling)
+    && isNumber(accounting.tokensUsed)
+    && accounting.tokensUsed >= tokenCeiling * GOAL_BUDGET_POLICY.softLimitRatio;
+  const durationSoft = isNumber(durationCeiling)
+    && isNumber(accounting.elapsedSeconds)
+    && accounting.elapsedSeconds >= durationCeiling * GOAL_BUDGET_POLICY.softLimitRatio;
+  const previousGoalResult = run.previousGoalResult;
+  const terminalImmutable = TERMINAL_RESULTS.has(previousGoalResult);
+  const hardLimitExceeded = tokenHard || durationHard || previousGoalResult === 'GOAL_BUDGET_EXHAUSTED';
+  const budgetState = hardLimitExceeded ? 'HARD_LIMIT' : tokenSoft || durationSoft ? 'SOFT_LIMIT' : 'NORMAL';
+
+  let goalResult = 'GOAL_RUNNING';
+  let stopReason = 'WORK_REMAINS';
+  if (terminalImmutable) {
+    goalResult = previousGoalResult;
+    stopReason = run.previousStopReason ?? 'TERMINAL_RESULT_IMMUTABLE';
+  } else if (tokenHard || durationHard) {
+    goalResult = 'GOAL_BUDGET_EXHAUSTED';
+    if (tokenHard && durationHard) {
+      stopReason = run.firstHardLimit === 'TOKEN'
+        ? 'TOKEN_BUDGET_EXCEEDED'
+        : run.firstHardLimit === 'DURATION'
+          ? 'DURATION_BUDGET_EXCEEDED'
+          : 'HARD_LIMIT_ORDER_UNKNOWN';
+    } else stopReason = tokenHard ? 'TOKEN_BUDGET_EXCEEDED' : 'DURATION_BUDGET_EXCEEDED';
+  } else if (run.completionEligible) {
+    goalResult = 'GOAL_SATISFIED';
+    stopReason = 'EVIDENCE_GATED_COMPLETION';
+  } else if (run.externalBlocker) {
+    goalResult = 'GOAL_BLOCKED';
+    stopReason = run.externalBlocker;
+  }
+
+  const running = goalResult === 'GOAL_RUNNING';
+  const allowOptionalWork = running && budgetState === 'NORMAL';
+  const allowRequestedWork = running
+    && budgetState !== 'HARD_LIMIT'
+    && (budgetState === 'NORMAL' || run.workClass !== 'OPTIONAL');
+  const tokenAccountingReady = isNumber(accounting.tokensUsed) && Boolean(accounting.tokenSource);
+  const durationAccountingReady = isNumber(accounting.elapsedSeconds) && Boolean(accounting.durationSource);
+  const tokenBudgetEnforcementReady = ['NATIVE', 'HARNESS', 'HYBRID'].includes(tokenEnforcementMode);
+  const durationBudgetEnforcementReady = ['NATIVE', 'HARNESS', 'HYBRID'].includes(durationEnforcementMode);
+
+  return {
+    requestedTokenBudget,
+    requestedDurationSeconds,
+    effectiveTokenBudget,
+    effectiveDurationSeconds,
+    tokenPropagationStatus,
+    durationPropagationStatus,
+    tokenEnforcementMode,
+    durationEnforcementMode,
+    tokenAccountingReady,
+    durationAccountingReady,
+    tokenBudgetPropagationReady: propagationReadiness(tokenPropagationStatus),
+    durationBudgetPropagationReady: propagationReadiness(durationPropagationStatus),
+    tokenBudgetEnforcementReady,
+    durationBudgetEnforcementReady,
+    softBudgetControlReady: tokenBudgetEnforcementReady || durationBudgetEnforcementReady,
+    irreversibleBudgetStopReady: true,
+    terminalStatePrecedenceReady: true,
+    softLimitRatio: GOAL_BUDGET_POLICY.softLimitRatio,
+    budgetState,
+    softLimitEntered: budgetState === 'SOFT_LIMIT',
+    hardLimitExceeded,
+    overshoot: tokenHard ? accounting.tokensUsed - tokenCeiling : 0,
+    previousTokensUsed: accounting.previousTokensUsed ?? 'UNKNOWN',
+    goalResult,
+    stopReason,
+    allowNewSubstantiveWork: running && budgetState !== 'HARD_LIMIT',
+    allowOptionalWork,
+    allowRequestedWork,
+    repeatConfirmation: hardLimitExceeded ? 0 : null,
+    terminalImmutable,
+    checkpointRecognized: GOAL_BUDGET_POLICY.checkpoints.includes(run.checkpoint),
+    newHookRequired: false,
+    cheapPathPreserved: ['NO_CHANGE', 'DOCS_ONLY'].includes(run.scope),
+    completionGatePreserved: goalResult !== 'GOAL_SATISFIED' || run.completionEligible === true,
+  };
 }
 
 export function evaluateCompletion(run) {
@@ -162,8 +320,11 @@ export function loadEvalSuite(file = EVALS_PATH) {
 }
 
 export function runEvalSuite(suite = loadEvalSuite()) {
-  assert.equal(suite.version, 1, 'unsupported Meta Goal eval schema');
-  assert.ok(suite.baseRun && Array.isArray(suite.cases), 'missing baseRun/cases');
+  assert.equal(suite.version, 2, 'unsupported Meta Goal eval schema');
+  assert.ok(
+    suite.baseRun && suite.baseBudgetRun && Array.isArray(suite.cases) && Array.isArray(suite.budgetCases),
+    'missing Meta Goal eval inputs',
+  );
   const ids = new Set();
   const results = [];
   for (const item of suite.cases) {
@@ -193,12 +354,23 @@ export function runEvalSuite(suite = loadEvalSuite()) {
       ...actual,
     });
   }
+  for (const item of suite.budgetCases) {
+    assert.ok(item.id && !ids.has(item.id), `duplicate or missing eval id: ${item.id}`);
+    ids.add(item.id);
+    const run = merge(suite.baseBudgetRun, item.override ?? {});
+    const actual = evaluateBudgetControl(run);
+    for (const [key, value] of Object.entries(item.expected)) {
+      assert.deepEqual(actual[key], value, `${item.id} ${key}`);
+    }
+    results.push({ id: item.id, kind: 'BUDGET', ...actual });
+  }
   return results;
 }
 
 export function formatResult(results, json = false) {
   const completion = results.filter((item) => item.kind === 'COMPLETION').length;
   const shadow = results.filter((item) => item.kind === 'SHADOW');
+  const budget = results.filter((item) => item.kind === 'BUDGET').length;
   const differences = shadow.filter((item) => item.oldResult !== item.result).length;
   const unexpectedFalsePositives = shadow.filter(
     (item) => item.assessment === 'NO_REGRESSION'
@@ -215,6 +387,7 @@ export function formatResult(results, json = false) {
     evals: results.length,
     completion,
     shadow: shadow.length,
+    budget,
     shadowDifferences: differences,
     unexpectedFalsePositives,
     unexpectedFalseNegatives,
@@ -222,7 +395,7 @@ export function formatResult(results, json = false) {
   if (json) return JSON.stringify(report);
   return [
     'META GOAL COMPLETION PASS',
-    `${completion}/${completion} completion evals / ${shadow.length}/${shadow.length} shadow evals`,
+    `${completion}/${completion} completion / ${shadow.length}/${shadow.length} shadow / ${budget}/${budget} budget evals`,
     `shadow differences ${differences} / unexpected false positives ${unexpectedFalsePositives} / false negatives ${unexpectedFalseNegatives}`,
   ].join('\n');
 }
