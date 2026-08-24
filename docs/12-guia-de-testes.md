@@ -16,6 +16,25 @@ Para validacao completa local antes de fechar uma mudanca grande:
 npm test -- --runInBand
 ```
 
+Análise estática canônica:
+
+```bash
+npm run lint
+npm run quality:size
+npm run quality:architecture
+npm run quality:gate
+node --test scripts/quality/*.test.mjs
+```
+
+O baseline de warnings pertence a
+[`docs/ai/static-analysis.md`](ai/static-analysis.md), e o ratchet de tamanho a
+[`docs/ai/code-budgets.md`](ai/code-budgets.md). Owners, exceções e evals do gate
+arquitetural pertencem a
+[`docs/ai/architecture-boundaries.md`](ai/architecture-boundaries.md). Não
+existe typecheck canônico. `quality:gate` é o agregado FAST; full Jest e Expo
+Doctor só entram quando a matriz de
+[`docs/ai/quality-gates.md`](ai/quality-gates.md) selecionar DEEP.
+
 ## Validacao consolidada da rodada local-first
 
 Ultima rodada reportada em 2026-06-19:
@@ -32,7 +51,8 @@ Resultados reportados:
 - `git diff --check`: aprovado, com warnings LF/CRLF conhecidos quando aplicavel.
 - `compileDevDebugKotlin`: aprovado.
 - Checagem estatica simples de imports relativos: 234 arquivos verificados.
-- `lint`, `typecheck`, `test:ci` e `validate` nao existem no `package.json`; nao cite esses scripts como executados enquanto nao forem adicionados.
+- Naquela rodada, `lint`, `typecheck`, `test:ci` e `validate` ainda nao existiam
+  no `package.json`.
 
 Mesmo com os testes passando, GPS/background/notificacao/recovery/share precisam de validacao fisica Android dev/release.
 

@@ -6,6 +6,12 @@
 > estado posterior. O inventário externo do Harness permanece evidência útil para
 > a futura Unidade 2, sem autorizar sua cópia ou consolidação nesta etapa.
 
+> **Sucessor canônico:** a Unidade 2 foi consolidada em
+> [`docs/ai/harness-v1.md`](../ai/harness-v1.md). O inventário e as decisões atuais
+> estão em
+> [`2026-08-16-ai-harness-v1-foundation.md`](2026-08-16-ai-harness-v1-foundation.md);
+> o restante deste arquivo continua sendo somente a fotografia pré-cleanup.
+
 > **Data da fotografia:** 2026-08-16<br>
 > **Escopo observado:** filesystem atual de `/home/eduardo/Wayper` e repositório mobile `/home/eduardo/Wayper/wayper`<br>
 > **Tipo:** auditoria factual, sem implementação do Harness<br>

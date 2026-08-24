@@ -5,6 +5,15 @@
   "main": "index.js",
   "scripts": {
     "start": "node scripts/with-env.cjs .env.development -- expo start --dev-client",
+    "lint": "eslint .",
+    "quality:size": "node scripts/quality/check-code-size.mjs",
+    "quality:architecture": "node scripts/quality/check-architecture.mjs",
+    "quality:capabilities": "node scripts/quality/check-capability-routing.mjs && node scripts/quality/check-external-skill-acquisition.mjs",
+    "quality:external-skills": "node scripts/quality/check-external-skill-acquisition.mjs",
+    "quality:design": "node scripts/quality/check-design-routing.mjs",
+    "quality:meta-goal": "node scripts/quality/check-meta-goal-completion.mjs",
+    "quality:gate": "node scripts/quality/check-quality-gate.mjs",
+    "quality:backstop": "node scripts/quality/check-completion-backstop.mjs",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand",
     "start:clean": "node scripts/with-env.cjs .env.development -- expo start --dev-client -c",
     "dev": "node scripts/with-env.cjs .env.development -- npm run dev:emulator",
@@ -137,7 +146,10 @@
   },
   "devDependencies": {
     "concurrently": "^10.0.3",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~10.0.0",
     "firebase-admin": "^13.10.0",
+    "globals": "^16.5.0",
     "jest": "^29.7.0",
     "wait-on": "^8.0.3"
   },

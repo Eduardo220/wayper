@@ -83,6 +83,7 @@ scripts/serviceAccountKey.json
 /dist/
 /web-build/
 /build/
+/graphify-out/
 *.tsbuildinfo
 *.apk
 *.aab

@@ -1,0 +1,661 @@
+{
+  "version": 2,
+  "baseRun": {
+    "scope": "PRODUCT_SOURCE",
+    "originalCriteriaCount": 1,
+    "originalCriteriaIds": ["SC1"],
+    "successCriteria": [
+      { "id": "SC1", "status": "SATISFIED", "evidence": ["owner source + targeted proof"] }
+    ],
+    "uncertainties": [],
+    "validation": [
+      { "id": "FAST", "required": true, "status": "PASS", "evidence": ["quality gate PASS"] },
+      { "id": "SEMANTIC", "required": true, "status": "PASS", "evidence": ["semantic review PASS"] },
+      { "id": "TARGETED", "required": true, "status": "PASS", "evidence": ["targeted test PASS"] }
+    ],
+    "claims": [
+      { "id": "C1", "material": true, "evidence": ["source and test provenance"] }
+    ],
+    "accounting": { "tokensUsed": "UNKNOWN", "source": "UNAVAILABLE" },
+    "stop": {
+      "deterministic": true,
+      "lightweight": true,
+      "semanticJudge": false,
+      "goalSatisfiedJudge": false,
+      "sliceController": false,
+      "specialistRouter": false
+    },
+    "falsification": { "performed": true, "result": "PASS", "findings": [] },
+    "budget": { "exhausted": false, "remaining": true },
+    "workExecuted": true,
+    "execution": { "candidates": 1, "slices": 1, "specialists": 0 }
+  },
+  "baseBudgetRun": {
+    "requestedTokenBudget": 1000,
+    "requestedDurationSeconds": 3600,
+    "runtime": {
+      "tokenBudgetPropagation": "UNSUPPORTED",
+      "effectiveTokenBudget": "UNKNOWN",
+      "nativeTokenEnforcement": "UNKNOWN",
+      "durationBudgetPropagation": "UNSUPPORTED",
+      "effectiveDurationSeconds": "UNKNOWN",
+      "nativeDurationEnforcement": "UNSUPPORTED"
+    },
+    "accounting": {
+      "tokensUsed": 100,
+      "previousTokensUsed": 90,
+      "elapsedSeconds": 300,
+      "previousElapsedSeconds": 250,
+      "tokenSource": "get_goal.tokensUsed",
+      "durationSource": "get_goal.timeUsedSeconds"
+    },
+    "checkpoint": "AFTER_MAJOR_EXECUTION_PHASE",
+    "scope": "HARNESS_INFRASTRUCTURE",
+    "workClass": "MANDATORY",
+    "completionEligible": false,
+    "externalBlocker": false
+  },
+  "cases": [
+    {
+      "id": "EGC01",
+      "kind": "COMPLETION",
+      "scenario": "simple early completion",
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC02",
+      "kind": "COMPLETION",
+      "scenario": "FAST pass with mandatory targeted test not run",
+      "override": {
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "SEMANTIC", "required": true, "status": "PASS", "evidence": ["review PASS"] },
+          { "id": "TARGETED", "required": true, "status": "NOT_RUN", "evidence": [] }
+        ]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC03",
+      "kind": "COMPLETION",
+      "scenario": "open blocking uncertainty",
+      "override": {
+        "uncertainties": [
+          { "id": "U1", "severity": "BLOCKING", "status": "OPEN" }
+        ]
+      },
+      "expected": { "result": "GOAL_BLOCKED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC04",
+      "kind": "COMPLETION",
+      "scenario": "open material uncertainty without treatment",
+      "override": {
+        "uncertainties": [
+          { "id": "U1", "severity": "MATERIAL", "status": "OPEN" }
+        ]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC05",
+      "kind": "COMPLETION",
+      "scenario": "physical validation required but not run",
+      "override": {
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "TARGETED", "required": true, "status": "PASS", "evidence": ["Jest PASS"] },
+          { "id": "PHYSICAL_ANDROID", "required": true, "status": "NOT_RUN", "evidence": [] }
+        ]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC06",
+      "kind": "COMPLETION",
+      "scenario": "large remaining budget does not create work",
+      "override": { "budget": { "remaining": true, "tokenBudget": 150000, "durationBudgetMinutes": 60 } },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC07",
+      "kind": "COMPLETION",
+      "scenario": "falsification finds an unvalidated owner",
+      "override": {
+        "falsification": {
+          "performed": true,
+          "result": "FAIL",
+          "findings": [{ "severity": "MATERIAL", "finding": "owner not validated" }]
+        }
+      },
+      "expected": { "result": "GOAL_RUNNING", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC08",
+      "kind": "COMPLETION",
+      "scenario": "clean final falsification",
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC09",
+      "kind": "COMPLETION",
+      "scenario": "valid not applicable criterion",
+      "override": {
+        "successCriteria": [
+          {
+            "id": "SC1",
+            "status": "NOT_APPLICABLE",
+            "reason": "changed scope excludes Android",
+            "scopeEvidence": "changed files contain no android/ path"
+          }
+        ]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC10",
+      "kind": "COMPLETION",
+      "scenario": "not applicable used without a scope reason",
+      "override": {
+        "successCriteria": [{ "id": "SC1", "status": "NOT_APPLICABLE" }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC11",
+      "kind": "COMPLETION",
+      "scenario": "token usage unavailable is reported as unknown",
+      "override": { "accounting": { "tokensUsed": "UNKNOWN", "source": "UNAVAILABLE" } },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC12",
+      "kind": "COMPLETION",
+      "scenario": "simple task invokes no artificial specialist",
+      "override": { "execution": { "candidates": 1, "slices": 1, "specialists": 0 } },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC13",
+      "kind": "COMPLETION",
+      "scenario": "simple task uses one natural slice",
+      "override": { "execution": { "candidates": 1, "slices": 1, "specialists": 0 } },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC14",
+      "kind": "COMPLETION",
+      "scenario": "Stop remains deterministic backstop",
+      "override": {
+        "scope": "HARNESS_INFRASTRUCTURE",
+        "validation": [
+          { "id": "OLD_EVALS", "required": true, "status": "PASS", "evidence": ["old evals PASS"] },
+          { "id": "NEW_EVALS", "required": true, "status": "PASS", "evidence": ["new evals PASS"] },
+          { "id": "BACKSTOP_TESTS", "required": true, "status": "PASS", "evidence": ["backstop tests PASS"] },
+          { "id": "SEMANTIC", "required": true, "status": "PASS", "evidence": ["semantic review PASS"] },
+          { "id": "CONTEXT", "required": true, "status": "PASS", "evidence": ["context regression PASS"] },
+          { "id": "HOOKS", "required": true, "status": "PASS", "evidence": ["hook regression PASS"] },
+          { "id": "DIFF", "required": true, "status": "PASS", "evidence": ["git diff check PASS"] }
+        ],
+        "stop": {
+          "deterministic": true,
+          "lightweight": true,
+          "semanticJudge": false,
+          "goalSatisfiedJudge": false,
+          "sliceController": false,
+          "specialistRouter": false
+        }
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC15",
+      "kind": "COMPLETION",
+      "scenario": "docs-only path stays cheap",
+      "override": {
+        "scope": "DOCS_ONLY",
+        "validation": [
+          { "id": "MARKDOWN", "required": true, "status": "PASS", "evidence": ["Markdown PASS"] },
+          { "id": "LINKS", "required": true, "status": "PASS", "evidence": ["links PASS"] }
+        ]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC16",
+      "kind": "COMPLETION",
+      "scenario": "no-change path stays cheap",
+      "override": { "scope": "NO_CHANGE", "validation": [], "workExecuted": false },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC17",
+      "kind": "COMPLETION",
+      "scenario": "run tracking critical requires risk-shaped validation",
+      "override": {
+        "scope": "RUN_TRACKING_CRITICAL",
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "SEMANTIC", "required": true, "status": "PASS", "evidence": ["review PASS"] },
+          { "id": "TARGETED", "required": true, "status": "PASS", "evidence": ["Jest PASS"] },
+          { "id": "CONCURRENCY", "required": true, "status": "PASS", "evidence": ["concurrency review PASS"] },
+          { "id": "STATE_TRANSITIONS", "required": true, "status": "PASS", "evidence": ["transition review PASS"] }
+        ]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC18",
+      "kind": "COMPLETION",
+      "scenario": "budget exhausts before mandatory validation",
+      "override": {
+        "budget": { "exhausted": true, "remaining": false },
+        "validation": [{ "id": "TARGETED", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_BUDGET_EXHAUSTED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC19",
+      "kind": "COMPLETION",
+      "scenario": "material claim has no provenance",
+      "override": { "claims": [{ "id": "C1", "material": true, "evidence": [] }] },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC20",
+      "kind": "COMPLETION",
+      "scenario": "scope shrinking drops original criteria",
+      "override": {
+        "originalCriteriaCount": 3,
+        "originalCriteriaIds": ["SC1", "SC2", "SC3"]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+
+    {
+      "id": "SH01",
+      "kind": "SHADOW",
+      "scenario": "trivial task",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH02",
+      "kind": "SHADOW",
+      "scenario": "docs-only task",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "override": {
+        "scope": "DOCS_ONLY",
+        "validation": [
+          { "id": "MARKDOWN", "required": true, "status": "PASS", "evidence": ["Markdown PASS"] },
+          { "id": "LINKS", "required": true, "status": "PASS", "evidence": ["links PASS"] }
+        ]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH03",
+      "kind": "SHADOW",
+      "scenario": "localized bug with complete proof",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH04",
+      "kind": "SHADOW",
+      "scenario": "small refactor missing architecture review",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "ARCHITECTURE_REVIEW", "required": true, "status": "NOT_RUN", "evidence": [] }
+        ]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH05",
+      "kind": "SHADOW",
+      "scenario": "multi-owner change missing adjacent-owner validation",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "scope": ["PRODUCT_SOURCE", "CORE_PRODUCT_OWNER"],
+        "validation": [{ "id": "ADJACENT_OWNER", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH06",
+      "kind": "SHADOW",
+      "scenario": "core product owner with complete validation",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "override": {
+        "scope": "CORE_PRODUCT_OWNER",
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "SEMANTIC", "required": true, "status": "PASS", "evidence": ["semantic review PASS"] },
+          { "id": "TARGETED", "required": true, "status": "PASS", "evidence": ["targeted PASS"] },
+          { "id": "ADJACENT_OWNER", "required": true, "status": "PASS", "evidence": ["adjacent review PASS"] }
+        ]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH07",
+      "kind": "SHADOW",
+      "scenario": "run tracking change missing concurrency review",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "scope": "RUN_TRACKING_CRITICAL",
+        "validation": [{ "id": "CONCURRENCY", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH08",
+      "kind": "SHADOW",
+      "scenario": "native Android build surface without compile validation",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "scope": "NATIVE_ANDROID",
+        "validation": [{ "id": "NATIVE_COMPILE", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH09",
+      "kind": "SHADOW",
+      "scenario": "complex Meta Goal where falsification finds a gap",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "falsification": { "performed": true, "result": "FAIL", "findings": [{ "severity": "MATERIAL" }] }
+      },
+      "expected": { "result": "GOAL_RUNNING", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH10",
+      "kind": "SHADOW",
+      "scenario": "physical validation required but unavailable",
+      "oldResult": "GOAL_RUNNING",
+      "expectedAssessment": "HONEST_STATE_REFINEMENT",
+      "override": {
+        "validation": [{ "id": "PHYSICAL_ANDROID", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH11",
+      "kind": "SHADOW",
+      "scenario": "no-change task",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "override": { "scope": "NO_CHANGE", "validation": [], "workExecuted": false },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH12",
+      "kind": "SHADOW",
+      "scenario": "task already correctly implemented",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "override": { "workExecuted": false },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    }
+  ],
+  "budgetCases": [
+    {
+      "id": "BUD01",
+      "scenario": "accounting without an applicable ceiling is not enforcement",
+      "override": { "requestedTokenBudget": "UNKNOWN" },
+      "expected": {
+        "tokenAccountingReady": true,
+        "tokenEnforcementMode": "OBSERVATIONAL_ONLY",
+        "harnessTokenBudgetControlReady": false,
+        "nativeTokenBudgetEnforcementReady": "UNKNOWN",
+        "endToEndTokenBudgetEnforcementReady": false
+      }
+    },
+    {
+      "id": "BUD02",
+      "scenario": "requested textual budget differs from effective runtime budget",
+      "expected": {
+        "requestedTokenBudget": 1000,
+        "effectiveTokenBudget": "UNKNOWN",
+        "harnessTokenCeiling": 1000,
+        "nativeEffectiveTokenBudget": "UNKNOWN",
+        "harnessTokenCeilingEqualsNativeBudget": false,
+        "tokenPropagationStatus": "UNSUPPORTED",
+        "tokenEnforcementMode": "HARNESS",
+        "harnessTokenBudgetControlReady": true,
+        "nativeTokenBudgetPropagationReady": "UNSUPPORTED_CURRENT_MODEL_TOOL",
+        "nativeTokenBudgetEnforcementReady": "UNKNOWN",
+        "endToEndTokenBudgetEnforcementReady": false
+      }
+    },
+    {
+      "id": "BUD03",
+      "scenario": "normal execution below the soft limit",
+      "override": { "accounting": { "tokensUsed": 500 }, "workClass": "OPTIONAL" },
+      "expected": { "budgetState": "NORMAL", "allowRequestedWork": true }
+    },
+    {
+      "id": "BUD04",
+      "scenario": "soft limit rejects new optional expansion",
+      "override": { "accounting": { "tokensUsed": 850 }, "workClass": "OPTIONAL" },
+      "expected": {
+        "budgetState": "SOFT_LIMIT",
+        "allowOptionalWork": false,
+        "allowRequestedWork": false
+      }
+    },
+    {
+      "id": "BUD05",
+      "scenario": "hard token limit terminalizes immediately",
+      "override": { "accounting": { "tokensUsed": 1000 } },
+      "expected": {
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "stopReason": "TOKEN_BUDGET_EXCEEDED",
+        "allowNewSubstantiveWork": false,
+        "goalResumeAllowed": false
+      }
+    },
+    {
+      "id": "BUD06",
+      "scenario": "hard token limit needs no three-turn confirmation",
+      "override": { "accounting": { "tokensUsed": 1001 } },
+      "expected": { "repeatConfirmation": 0, "goalResult": "GOAL_BUDGET_EXHAUSTED" }
+    },
+    {
+      "id": "BUD07",
+      "scenario": "monotonic overrun remains terminal",
+      "override": {
+        "previousGoalResult": "GOAL_BUDGET_EXHAUSTED",
+        "previousStopReason": "TOKEN_BUDGET_EXCEEDED",
+        "accounting": { "previousTokensUsed": 1001, "tokensUsed": 1100 }
+      },
+      "expected": {
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "terminalImmutable": true,
+        "repeatConfirmation": 0
+      }
+    },
+    {
+      "id": "BUD08",
+      "scenario": "budget terminal result cannot become blocked",
+      "override": {
+        "previousGoalResult": "GOAL_BUDGET_EXHAUSTED",
+        "previousStopReason": "TOKEN_BUDGET_EXCEEDED",
+        "nativeGoalStatus": "blocked"
+      },
+      "expected": {
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "stopReason": "TOKEN_BUDGET_EXCEEDED",
+        "terminalImmutable": true,
+        "nativeGoalStatus": "blocked",
+        "nativeBlockedIsApiAdaptation": true,
+        "nativeLifecycleTerminationAction": "BLOCK_ONCE",
+        "goalResumeAllowed": false
+      }
+    },
+    {
+      "id": "BUD09",
+      "scenario": "external blocker is not budget exhaustion",
+      "override": { "externalBlocker": "DEVICE_UNAVAILABLE" },
+      "expected": { "goalResult": "GOAL_BLOCKED", "stopReason": "DEVICE_UNAVAILABLE" }
+    },
+    {
+      "id": "BUD10",
+      "scenario": "evidence-backed success stops at twenty percent",
+      "override": { "accounting": { "tokensUsed": 200 }, "completionEligible": true },
+      "expected": {
+        "goalResult": "GOAL_SATISFIED",
+        "stopReason": "EVIDENCE_GATED_COMPLETION",
+        "allowNewSubstantiveWork": false
+      }
+    },
+    {
+      "id": "BUD11",
+      "scenario": "soft limit permits cheap mandatory validation",
+      "override": { "accounting": { "tokensUsed": 850 }, "workClass": "MANDATORY" },
+      "expected": { "budgetState": "SOFT_LIMIT", "allowRequestedWork": true }
+    },
+    {
+      "id": "BUD12",
+      "scenario": "soft limit rejects expensive optional work",
+      "override": { "accounting": { "tokensUsed": 900 }, "workClass": "OPTIONAL" },
+      "expected": { "allowOptionalWork": false, "allowRequestedWork": false }
+    },
+    {
+      "id": "BUD13",
+      "scenario": "phase-granularity overshoot terminalizes without new work",
+      "override": {
+        "requestedTokenBudget": 1500,
+        "accounting": {
+          "previousTokensUsed": 1450,
+          "tokensUsed": 1530,
+          "tokensAtCanonicalTerminal": 1500,
+          "tokensAtNativeTerminal": 1530
+        },
+        "substantivePostTerminalWork": false
+      },
+      "expected": {
+        "previousTokensUsed": 1450,
+        "overshoot": 30,
+        "tokensAtCanonicalTerminal": 1500,
+        "tokensAtNativeTerminal": 1530,
+        "postTerminalTokenDelta": 30,
+        "postTerminalTokenAccountingReady": true,
+        "substantivePostTerminalWork": false,
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "allowNewSubstantiveWork": false
+      }
+    },
+    {
+      "id": "BUD14",
+      "scenario": "duration limit terminalizes first",
+      "override": { "requestedDurationSeconds": 300, "accounting": { "elapsedSeconds": 300 } },
+      "expected": {
+        "goalResult": "GOAL_BUDGET_EXHAUSTED",
+        "stopReason": "DURATION_BUDGET_EXCEEDED"
+      }
+    },
+    {
+      "id": "BUD15",
+      "scenario": "first observed hard limit wins",
+      "override": {
+        "requestedDurationSeconds": 300,
+        "accounting": { "tokensUsed": 1000, "elapsedSeconds": 301 },
+        "firstHardLimit": "DURATION"
+      },
+      "expected": { "stopReason": "DURATION_BUDGET_EXCEEDED", "goalResult": "GOAL_BUDGET_EXHAUSTED" }
+    },
+    {
+      "id": "BUD16",
+      "scenario": "unknown accounting never fabricates enforcement",
+      "override": {
+        "accounting": { "tokensUsed": "UNKNOWN", "tokenSource": "UNAVAILABLE" }
+      },
+      "expected": {
+        "tokenAccountingReady": false,
+        "tokenEnforcementMode": "UNAVAILABLE",
+        "harnessTokenBudgetControlReady": false,
+        "nativeTokenBudgetEnforcementReady": "UNKNOWN",
+        "endToEndTokenBudgetEnforcementReady": false
+      }
+    },
+    {
+      "id": "BUD17",
+      "scenario": "budget control adds no tool hook",
+      "expected": { "newHookRequired": false, "checkpointRecognized": true }
+    },
+    {
+      "id": "BUD18",
+      "scenario": "no-change remains a cheap path",
+      "override": { "scope": "NO_CHANGE" },
+      "expected": { "cheapPathPreserved": true, "budgetState": "NORMAL" }
+    },
+    {
+      "id": "BUD19",
+      "scenario": "the previous completion suite remains compatible",
+      "expected": { "completionGatePreserved": true }
+    },
+    {
+      "id": "BUD20",
+      "scenario": "budget control cannot replace completion proof",
+      "override": { "completionEligible": false, "accounting": { "tokensUsed": 200 } },
+      "expected": {
+        "goalResult": "GOAL_RUNNING",
+        "completionGatePreserved": true,
+        "harnessTokenBudgetControlReady": true,
+        "nativeTokenBudgetPropagationReady": "UNSUPPORTED_CURRENT_MODEL_TOOL",
+        "nativeTokenBudgetEnforcementReady": "UNKNOWN",
+        "endToEndTokenBudgetEnforcementReady": false,
+        "softBudgetControlReady": true,
+        "irreversibleBudgetStopReady": true,
+        "terminalStatePrecedenceReady": true
+      }
+    },
+    {
+      "id": "BUD21",
+      "scenario": "evidence-backed reserve stops substantive work before the hard ceiling",
+      "override": {
+        "finalizationReserveTokens": 50,
+        "finalizationReserveSource": "recent comparable Goal receipt",
+        "accounting": { "tokensUsed": 950 },
+        "workClass": "MANDATORY"
+      },
+      "expected": {
+        "budgetState": "FINALIZATION_ONLY",
+        "finalizationReserveReady": true,
+        "substantiveTokenCeiling": 950,
+        "finalizationReserveEntered": true,
+        "allowNewSubstantiveWork": false,
+        "allowRequestedWork": false
+      }
+    },
+    {
+      "id": "BUD22",
+      "scenario": "reserved capacity remains available to required finalization",
+      "override": {
+        "finalizationReserveTokens": 50,
+        "finalizationReserveSource": "recent comparable Goal receipt",
+        "accounting": { "tokensUsed": 950 },
+        "workClass": "FINALIZATION"
+      },
+      "expected": {
+        "budgetState": "FINALIZATION_ONLY",
+        "allowNewSubstantiveWork": false,
+        "allowRequestedWork": true
+      }
+    }
+  ]
+}

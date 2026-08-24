@@ -573,3 +573,255 @@ retry visível se o save não for confirmado.
 - recuperação e edição convergem no serviço oficial em vez de criar caminhos
   paralelos;
 - o gate continua dependente de reteste físico Android.
+
+## Decisão técnica: Wayper AI Harness V1 Foundation
+
+**Status:** aceita em 2026-08-16
+
+**Contexto:** o Harness estava distribuído entre o repositório mobile, um
+workspace pai sem Git, configuração global, nove skills, quinze custom agents,
+hooks locais e outputs gerados. O mobile carregava regras extensas e a
+orquestração histórica repetia docs, papéis nativos e políticas de ferramenta.
+
+**Decisão:** `AGENTS.md` do mobile é a única entrada operacional do app.
+Detalhes pertencem a docs; quatro skills project-scoped fornecem contexto de
+domínio sob demanda; quatro especialistas project-scoped são read-only e não
+fixam modelo. Papéis genéricos usam recursos nativos do Codex. Preferências,
+RTK e plugins permanecem globais. Graphify é índice auxiliar e seus outputs são
+generated, nunca fonte de verdade. O repositório não ganha config ou hook sem
+necessidade comprovada.
+
+**Consequências:** contexto permanente diminui, ownership fica versionado e
+skills/agents deixam de depender do workspace pai. Task Classifier, Context
+Router, review multi-agent completo, novo graph/memory e nova compressão ficam
+explicitamente fora desta decisão. Arquitetura e inventário estão em
+`docs/ai/harness-v1.md` e
+`docs/audits/2026-08-16-ai-harness-v1-foundation.md`.
+
+### Adendo — Task Classifier + Context Router
+
+**Status:** aceito em 2026-08-16
+
+**Decisão:** o Harness classifica tarefas por objetivo, combina risk flags e
+seleciona contexto em cinco níveis. O router é política Markdown sob demanda,
+não software nem novo agent central. Doze domínios apontam para owners, docs,
+testes, skills e specialists existentes; `CRITICAL_RUNTIME` sobrepõe a classe
+quando há risco real para a corrida. Evals positivas e negativas fixam o
+contrato sem heurística de palavras ou API externa.
+
+**Consequências:** `AGENTS.md` recebe apenas um Context Gate curto. O mapa grande
+não entra no contexto permanente, skills/agents continuam seletivos, Graphify e
+RTK continuam globais/opcionais e o `wayper-brain` permanece depreciado. A
+política canônica está em `docs/ai/task-classification.md`,
+`docs/ai/context-routing.md` e `docs/ai/routing-evals.md`.
+
+### Adendo — Skill Quality + Process Workflows
+
+**Status:** aceito em 2026-08-16
+
+**Decisão:** as quatro skills mobile permanecem únicas e passam a conter
+preconditions, contexto mínimo, workflow, invariantes, validação, escalada,
+specialists seletivos e output contract. Processos transversais de bug, refactor
+seguro, mudança arquitetural e falha de teste são contratos declarativos sob
+demanda; feature, review, sanitation e documentation sync continuam nativos.
+`CRITICAL_RUNTIME_CHANGE` pertence a `wayper-active-run`.
+
+**Consequências:** nenhuma skill/process agent genérico é criado e o contexto
+permanente muda apenas pela metadata discriminativa das quatro skills. O owner
+processual é `docs/ai/process-workflows.md`; o router somente referencia o
+processo, e domain knowledge permanece nas skills/docs existentes.
+
+### Adendo — Multi-Agent Orchestration + Parallel Waves
+
+**Status:** aceito em 2026-08-16
+
+**Decisão:** single-agent é default. Delegação só ocorre por isolamento de
+contexto, especialização real, paralelismo independente ou review read-only que
+reduza risco. O agente principal permanece o único orquestrador. Quatro modos
+declarativos cobrem execução single, specialist assist, parallel read e parallel
+work; escrita paralela exige DAG, files conhecidos/disjuntos, ausência de shared
+resource/contrato e integração definida. `CRITICAL_RUNTIME` mantém
+implementação serial por padrão.
+
+**Consequências:** os quatro specialists continuam read-only e nenhum Brain,
+custom orchestrator, generic worker/reviewer, wave planner, limite de
+concorrência project-scoped ou worktree permanente é criado. Subagents não
+fazem commit/push; synthesis, replanning e validação pertencem ao agente
+principal. O protocolo canônico está em `docs/ai/orchestration.md` e os casos de
+safety em `docs/ai/routing-evals.md`.
+
+### Adendo — Code Size + Complexity Budgets
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** 350 linhas significativas é target de arquitetura para source novo,
+não limite absoluto nem autorização de refactor. Regras core ESLint expõem como
+warning a cauda atual de tamanho, função, complexidade, profundidade e parâmetros.
+Um ratchet Node sem dependência registra somente arquivos de produção legados
+acima do target, bloqueia crescimento e novos oversized, aceita redução e exige
+exceção específica/revisável para crescimento legítimo. Testes são measure-only.
+
+**Consequências:** `npm run lint` preserva zero errors e separa dívida estrutural
+dos bug signals existentes; `npm run quality:size` é o gate bloqueante. Baseline
+não se atualiza automaticamente, tamanho isolado não classifica god object e
+`MapScreen`/runtime crítico não são refatorados para satisfazer métrica. Política,
+thresholds e ranking estão em `docs/ai/code-budgets.md`; boundaries ficam para
+unidade própria.
+
+### Adendo — Architecture Boundaries + Domain Enforcement
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** a arquitetura observada é formalizada com duas ferramentas já
+disponíveis: `no-restricted-imports` core, por file pattern, bloqueia violações
+de zero dívida; um script Node usa o AST do ESLint para ratchetear dívida e o
+conjunto atual de owners Firestore/storage. Não há plugin, custom rule, DSL nem
+baseline auto-update. Import direto no critical run owner é bloqueado; sync
+remoto posterior ao save local permanece permitido.
+
+**Consequências:** UI Firestore/storage legado pode permanecer sem crescer;
+domain/data não depende de UI; UI não acessa task/native/runtime internals nem
+duplica Turf; módulos `runService`, zones/xp legacy não ganham consumers. Exceção
+é exact-path, limitada e revisável. Inventários, ownership, cycle signal e
+anti-gaming estão em `docs/ai/architecture-boundaries.md`. Nenhum source
+funcional foi refatorado.
+
+### Adendo — Adaptive Multi-Agent Review + Quality Gate Synthesis
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** classe, risk flags, domínios e diff real selecionam gates `Q0-Q3` e
+review `R0-R3`. Um agregador Node sem dependência executa somente lint JSON,
+size, architecture e diff-check FAST, compara warnings por `file + rule` e
+destaca bug signals novos/tocados. Jest completo, Expo Doctor, Graphify,
+specialists e validação física continuam DEEP e seletivos. Findings exigem
+failure scenario, evidence, safeguard e confidence; síntese deduplica e resolve
+discordância por evidência, nunca por maioria.
+
+**Consequências:** dívida legada intacta não é regression; erro, bug signal,
+size ou architecture regression novos bloqueiam. O Harness distingue `PASS`,
+`PASS_WITH_DEBT`, `FAIL` e `INCONCLUSIVE`, preserva physical validation pendente
+e mantém os quatro specialists read-only. Nenhum generic/security reviewer,
+Brain, adjudicator, hook, dependência ou código funcional foi criado. A política
+canônica está em `docs/ai/quality-gates.md`.
+
+### Adendo — Meta Goal Runtime + Autonomy Contract
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** intenção distingue `TASK_MODE` de `META_GOAL_MODE`. Metas amplas
+declaram outcome, success criteria, constraints e non-goals e avançam em safe
+slices reclassificados e validados individualmente. Decisões técnicas deriváveis
+do repositório são autônomas; ambiguidades técnicas reversíveis usam a alternativa
+conservadora; somente decisões essencialmente humanas atravessam um Decision
+Packet. Goal mode nativo é preferido quando exposto pelo runtime, mas não é
+dependência do Harness.
+
+**Consequências:** o agente principal continua orquestrador; não existem Brain,
+planner, daemon, loop JS, meta specialist, YOLO project-scoped ou memória nova.
+Candidate ranking combina impacto, confiança, validação, risco, coupling e custo;
+Goal Budget evita perfeccionismo; quality/review controlam cada slice; follow-ups,
+Learning Delta e stop conditions impedem expansão silenciosa e falsa conclusão.
+A política canônica está em `docs/ai/meta-goal-runtime.md`.
+
+### Adendo — High-Signal Memory + Hard-Earned Learning
+
+**Status:** aceito em 2026-08-17
+
+**Decisão:** memória técnica do Wayper é repo-scoped, versionada e on-demand,
+mas nunca source of truth. Learning Delta só pode ser promovido depois de
+synthesis/validation quando for non-derivable, future-useful, stable e também
+hard-earned, failure-preventing ou caro de redescobrir. Um índice ativo pequeno
+roteia no máximo 1–3 topics por domínio/risco; tarefa trivial ou não relacionada
+carrega zero. Source, testes e docs/ADRs canônicas sempre precedem memory.
+
+**Consequências:** não há store executável, embeddings, vector DB, dependency,
+hook ou integração obrigatória com memória nativa do Codex. A capability nativa
+está desativada no runtime auditado e seus detalhes não observáveis permanecem
+`UNKNOWN`. O seed inicial fica vazio porque os candidatos reais já eram
+deriváveis, temporários ou corretamente registrados em ADR/source/testes. A
+política, budgets, staleness e promotion estão em
+`docs/ai/memory-policy.md`; AGENTS, skills e specialists não cresceram.
+
+### Adendo — Token Economy + Context Compression
+
+**Status:** aceito em 2026-08-23
+
+**Decisão:** otimizar desperdício de contexto e output sem reduzir reasoning,
+evidence, safety ou quality gates. O Harness passa a distinguir `COMPACT` para
+discovery/sucesso/síntese, `CLEAR` para decisão/risco/ordem e `EXACT` para
+machine-readable, diff, erro e diagnóstico. Source grande começa por
+outline/symbol/callers e ranges suficientes; arquivo inteiro é carregado apenas
+quando a semântica exigir. Briefs de subagents recebem o menor history útil e
+somente Learning Delta relevante.
+
+**Consequências:** `AGENTS.md`, metadata de skills/agents, repo memory, hooks e
+código funcional não crescem. RTK e Caveman permanecem globais/opcionais;
+compaction nativa do Codex é aceita como runtime opaco, sem fallback ou hook do
+projeto. Benchmarks separam bytes de contexto, tool output e model output de
+billed tokens, que permanecem desconhecidos sem receipt. Política e evals estão
+em `docs/ai/token-economy.md` e `docs/ai/routing-evals.md`.
+
+### Adendo — Capability Architecture + Context Closure
+
+**Status:** aceito em 2026-08-23
+
+**Decisão:** um registry JSON on-demand cataloga as 43 capabilities reais do
+Harness em 12 domains e aponta para 4 skills e referências já existentes. O
+router opera em duas passagens: escolhe domain/capability/asset de entrada e,
+após caminhar pelos imports, callers, consumers e testes relevantes, compõe a
+menor Context Closure suficiente. Relação declarada apenas sugere investigação;
+somente o source confirma dependência e sua classe `INTERFACE_ONLY`,
+`BEHAVIOR_RELEVANT` ou `OWNER_CRITICAL`.
+
+**Consequências:** não há nova skill, specialist, hook, runtime, dependência,
+embedding, vector DB ou mudança no app. Um validator Node sem dependências mede
+discovery permanente, bodies on-demand, assets compostos, precision/recall,
+loads irrelevantes e capabilities perdidas em 12 fixtures, inclusive catálogo
+simulado de 70 entradas e `CAPABILITY_GAP`. Política, registry e evals ficam em
+`docs/ai/capability-architecture.md`, `docs/ai/capability-registry.json` e
+`docs/ai/capability-routing-evals.json`.
+
+### Adendo — Wayper Design Intelligence
+
+**Status:** aceito em 2026-08-23
+
+**Decisão:** `DESIGN.md` passa a ser o contrato visual canônico, enquanto
+`src/theme/wayperTheme.js` continua owner dos valores executáveis e
+componentes/telas continuam owners da implementação. Produto e decisões
+aprovadas definem o que a experiência comunica; Android define semântica de
+sistema. OPERATE é o modo padrão e EXPERIENCE é uma janela curta reservada a
+resultado/recompensa significativa.
+
+Onze capabilities de design são acrescentadas ao registry e compartilham a
+reference `DESIGN.md`. Nenhuma nova skill é promovida: não há observed reuse e a
+reference já cobre o workflow com zero metadata permanente. A auditoria do
+Impeccable 4.1.1 é somente fonte de inteligência; detector web, sidecar,
+instalação e hooks são rejeitados para esta baseline React Native.
+
+**Consequências:** não há alteração funcional, dependency, fonte, plugin,
+Graphify dependency ou novo Stop hook. `npm run quality:design` valida 12 casos
+de Context Closure, incluindo zero design context em copy-only, runtime bug e
+refactor genérico. O inventário datado fica em
+`docs/audits/2026-08-23-design-intelligence.md`; `docs/09-design-e-wireframes.md`
+permanece histórico/funcional.
+
+### Adendo — External Skill Acquisition + Provenance
+
+**Status:** aceito em 2026-08-24
+
+**Decisão:** external discovery só ocorre depois de `CAPABILITY_GAP` provado por
+task, source, owners, capabilities, skills, references e tooling, com contexto,
+workflow, validação e reuse explícitos. A estratégia Wayper para Find Skills é
+`CLI_ONLY`: query explícita e pinada depois do Router, candidate set pequeno,
+vetting proporcional ao poder, `skills use` antes de qualquer promoção e cleanup
+comprovado. Popularidade, stars, publisher, badges e scanners são sinais, não
+trust.
+
+**Consequências:** uma policy on-demand, ledger JSON vazio e 13 evals cobrem
+risco, trial, provenance, update/re-vetting e revogação. Nenhuma skill externa,
+dependency, config ou hook foi adicionada ao projeto; a instalação global já
+existente continua `USER_GLOBAL`, fora da autoridade Wayper. Promotion futura
+exige ref/hash ou lock confiável, eval e link explícito no Capability Registry.
+`npm run quality:capabilities` valida o contrato; a auditoria datada fica em
+`docs/audits/2026-08-24-external-skill-ecosystem.md`.

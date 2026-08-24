@@ -1,111 +1,60 @@
-# Regras permanentes para agentes
+# Wayper mobile
 
-Este arquivo é a entrada canônica de instruções para todo o repositório Wayper.
-Arquivos de agentes em subdiretórios podem apenas acrescentar regras do próprio
-escopo; nunca podem contradizer este documento.
+Entrada operacional canônica do app. Regras em subdiretórios apenas especializam
+o próprio escopo.
 
-## Contexto do projeto
+## Fontes
 
-- Wayper é um aplicativo mobile de exercício físico gamificado, construído com
-  React Native e Expo.
-- `develop` é a branch de desenvolvimento ativo; `main` é a referência estável.
-- A prioridade atual é a estabilidade da corrida: tracking, background,
-  offline, recuperação, persistência e finalização segura.
+- App gamificado de exercício em Expo/React Native. `develop` é ativa; `main`,
+  referência estável. Prioridade: estabilidade da corrida.
+- Leia este arquivo e `docs/00-fontes-do-projeto.md`; use a matriz por domínio.
+  Não carregue `docs/` inteiro.
+- Estado atual vem de código, testes, manifests, configuração e comportamento da
+  branch de trabalho. Direção vem da estratégia, decisões e ADRs quando o domínio
+  ou dúvida de produto/arquitetura exigir.
+- README é visão rápida; roadmap, backlog, hipótese e ideia não autorizam código.
+  Conflito entre decisões aprovadas exige revisão humana.
 
-## Núcleo obrigatório em toda tarefa
+## Antes de alterar
 
-Leia, nesta ordem, antes de alterar código ou documentação:
+- Confirme branch e `git status --short`; preserve WIP.
+- Use Graphify para localização estrutural ampla quando útil, mas confirme no
+  source, callers e testes atuais. Procure implementação semelhante e bugs.
+- Defina escopo, validação e rollback. Consolide o caminho existente; não crie
+  service, hook, repository, store, contexto ou componente paralelo.
 
-1. `AGENTS.md`;
-2. [`docs/00-fontes-do-projeto.md`](docs/00-fontes-do-projeto.md);
-3. [`docs/product/direcao-estrategica-completa.md`](docs/product/direcao-estrategica-completa.md);
-4. [`README.md`](README.md).
-
-Depois, identifique o domínio da tarefa e use a matriz de leitura em
-`docs/00-fontes-do-projeto.md`. Não carregue `docs/` inteiro sem necessidade.
-O processo detalhado para agentes está em
-[`docs/14-instrucoes-para-ia.md`](docs/14-instrucoes-para-ia.md).
-
-## Dois tipos de verdade
-
-- **Estado atual:** código e testes de `develop`, configuração e comportamento
-  observável mostram o que existe hoje; `main` serve apenas como referência
-  estável.
-- **Direção e decisões:** a direção estratégica, decisões aprovadas e ADRs
-  aceitas definem como o projeto deve evoluir e quais limites são permanentes.
-
-O código não valida automaticamente uma decisão estratégica legada ou incorreta.
-Roadmap e backlog ordenam trabalho; hipóteses não autorizam implementação.
-
-## Checklist inicial obrigatório
-
-Antes de alterar qualquer coisa:
-
-- confirme a branch e execute `git status --short`;
-- identifique e preserve alterações locais existentes;
-- leia o núcleo obrigatório e as fontes específicas do domínio;
-- localize a implementação atual, caminhos legados e trabalho semelhante;
-- identifique testes existentes e bugs conhecidos relacionados;
-- confronte estado atual com direção aprovada e registre divergências;
-- defina o escopo e a fase autorizada, com validação e rollback;
-- evite duplicar serviço, hook, repository, store, contexto, componente,
-  utilitário, storage ou pipeline.
-
-## Princípios permanentes
+## Invariantes da corrida
 
 - **A corrida é a ação; o pós-corrida é o jogo.**
-- Durante corrida ativa, estabilidade possui prioridade absoluta.
-- O usuário deve poder correr sem olhar para o celular.
-- O tracking deve funcionar offline, em background e com a tela apagada, dentro
-  dos limites reais e documentados da plataforma.
-- A interface não é a fonte canônica do estado da corrida.
-- Firestore não pode ser obrigatório para iniciar, acompanhar, finalizar,
-  salvar ou recuperar uma atividade.
-- O save mínimo local ocorre antes de qualquer processamento derivado.
-- Territórios, XP, ranking, recompensas, replay, exportação, compartilhamento e
-  sync remoto não podem bloquear o salvamento.
-- Não execute processamento pesado no caminho crítico do GPS.
-- Não acople lógica crítica a componente montado.
-- Pesquise e consolide o caminho existente antes de criar implementação nova.
-- Não implemente hipótese como decisão aprovada.
-- Não declare teste, lint, deploy ou validação física que não ocorreu.
-- Toda alteração relevante atualiza documentação e testes correspondentes.
-- Trabalhe em fases pequenas, verificáveis, reversíveis e com commits separados;
-  não faça commit sem autorização da tarefa.
+- Corrida ativa prioriza estabilidade; o usuário deve correr sem olhar o celular.
+- Tracking suporta offline, background e tela apagada dentro dos limites reais.
+  UI montada nunca é estado canônico.
+- Firestore não é necessário para iniciar, acompanhar, finalizar, salvar ou
+  recuperar atividade.
+- Save mínimo local precede derivados. Territórios, XP, ranking, recompensas,
+  replay, exportação, compartilhamento e sync remoto não bloqueiam o save.
+- Nada pesado entra no caminho crítico do GPS; lógica crítica independe de tela.
 
-## Protocolo de divergência
+## Progressive disclosure
 
-Quando código e documentação divergirem:
+- Antes de aprofundar, classifique tarefa/flags e use
+  `docs/ai/context-routing.md`; carregue o mínimo e escale por risco.
+- Skill/especialista só por gatilho/risco; nativos cobrem o genérico.
+- Multi-agent é opt-in; prefira leitura paralela. Escrita paralela exige escopo
+  disjunto conhecido. Protocolo: `docs/ai/orchestration.md`.
+- Workflow: `docs/14-instrucoes-para-ia.md`. Arquitetura do Harness:
+  `docs/ai/harness-v1.md`.
+- META Goals usam evidence-gated completion; budgets são tetos, não quotas.
+- Graphs, maps e caches nunca são verdade. RTK é ferramenta global opcional.
 
-1. registre a divergência sem escolher silenciosamente;
-2. verifique o comportamento real no código, testes, configuração e, quando
-   aplicável, em execução observável;
-3. identifique a fonte que descreve o estado atual;
-4. identifique a fonte que representa a direção ou decisão aprovada;
-5. não transforme comportamento legado em regra estratégica;
-6. corrija ou marque claramente a fonte desatualizada;
-7. registre decisão relevante em ADR ou documento equivalente;
-8. apresente risco, impacto, migração e rollback.
+## Implementação e entrega
 
-Se duas decisões estratégicas continuarem incompatíveis, registre o bloqueio e
-solicite decisão humana. Não altere uma regra estratégica por inferência.
-
-## Limite de escopo
-
-Não aproveite uma tarefa pequena para reescrever o projeto, criar arquitetura
-paralela, trocar fornecedor, alterar domínio não relacionado, remover
-compatibilidade ou executar limpeza ampla não solicitada. Remoções exigem
-inventário de usos, substituição, impacto, migração e rollback.
-
-## Entrega por fase
-
-Ao final de cada fase, registre:
-
-- diagnóstico e fontes consultadas;
-- arquivos analisados e alterados;
-- justificativas e decisões;
-- testes e validações realmente executados, com resultados;
-- riscos e validações físicas pendentes;
-- divergências e pendências;
-- rollback e próximo passo;
-- commit sugerido.
+- Aplique Ponytail FULL: menor código correto, preservando validação, segurança,
+  compatibilidade, acessibilidade, erros e proteção de dados.
+- Novo source busca ~350 linhas; legado não cresce sem justificativa.
+- Não amplie escopo nem remova consumidores sem evidência. Atualize testes e a
+  documentação dona da decisão.
+- Trabalhe em fases verificáveis e reversíveis. Commit só quando autorizado;
+  nunca alegue validação não executada.
+- Divergência separa estado de direção e registra evidência, risco, migração e
+  rollback. A entrega informa mudanças, testes, riscos, commits e próximo passo.

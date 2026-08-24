@@ -7,10 +7,11 @@
 > **Fonte principal relacionada:** [`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md)
 
 Este é um workflow complementar para usar Markdown e Obsidian como memória
-operacional. As regras canônicas estão em `AGENTS.md`,
-`docs/00-fontes-do-projeto.md`,
-`docs/product/direcao-estrategica-completa.md` e
-`docs/14-instrucoes-para-ia.md`; este arquivo não mantém outra versão delas.
+operacional. As regras permanentes estão em `AGENTS.md`; seleção de fontes e
+workflow ficam em `docs/00-fontes-do-projeto.md` e
+`docs/14-instrucoes-para-ia.md`. A direção estratégica é carregada quando a
+matriz ou uma decisão de produto/arquitetura exigir. Este arquivo não mantém
+outra versão dessas regras.
 
 ## Ciclo de trabalho
 

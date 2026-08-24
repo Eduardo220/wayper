@@ -15,9 +15,9 @@ Use uma referência curta, sem copiar outra versão das regras:
 
 ```txt
 Siga AGENTS.md e o Context Gate de docs/14-instrucoes-para-ia.md.
-Leia o nucleo permanente e use a matriz de docs/00-fontes-do-projeto.md para
-selecionar as fontes adicionais deste dominio. Confronte a tarefa com
-docs/product/direcao-estrategica-completa.md antes de alterar qualquer arquivo.
+Use a matriz de docs/00-fontes-do-projeto.md para selecionar somente as fontes
+deste dominio. Consulte a direcao estrategica quando houver decisao de produto,
+arquitetura ou conflito de direcao.
 ```
 
 `docs/24-resumo-rodada-local-first.md` é um snapshot datado e só deve ser lido
@@ -26,10 +26,9 @@ quando a matriz ou o domínio da tarefa o exigir.
 ## Como usar
 
 Use estes prompts com Codex, Claude ou GPT quando precisar evoluir a Wayper. Antes
-de executar qualquer prompt, carregue `AGENTS.md`,
-`docs/00-fontes-do-projeto.md`,
-`docs/product/direcao-estrategica-completa.md` e `README.md`. As fontes citadas
-em cada exemplo são adicionais. O código de `develop` é a primeira fonte do
+de executar qualquer prompt, carregue `AGENTS.md` e
+`docs/00-fontes-do-projeto.md`. As fontes citadas em cada exemplo são adicionais.
+O código de `develop` é a primeira fonte do
 comportamento implementado, não da direção estratégica.
 
 ## Revisar arquitetura

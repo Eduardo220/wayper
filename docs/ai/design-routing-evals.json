@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "DR1_COPY_ONLY",
+      "task": "troque o texto do botao iniciar",
+      "mode": "NONE",
+      "entryCapabilities": [],
+      "expected": {
+        "capabilities": [],
+        "skills": [],
+        "excluded": ["design-system", "layout", "active-run-lifecycle"]
+      }
+    },
+    {
+      "id": "DR2_SPACING_REFINEMENT",
+      "task": "ajuste o spacing desta tela sem mudar o fluxo",
+      "mode": "OPERATE",
+      "entryCapabilities": ["layout"],
+      "expected": {
+        "capabilities": ["layout"],
+        "skills": [],
+        "excluded": ["motion", "gamification-ui", "post-run-design"]
+      }
+    },
+    {
+      "id": "DR3_RANKING_REDESIGN",
+      "task": "reformule o ranking semanal preservando regras e dados",
+      "mode": "OPERATE",
+      "entryCapabilities": ["design-system", "layout", "gamification-ui"],
+      "expected": {
+        "capabilities": ["design-system", "layout", "gamification-ui"],
+        "skills": [],
+        "excluded": ["post-run-design", "map-ui", "active-run-lifecycle"]
+      }
+    },
+    {
+      "id": "DR4_POST_RUN_REDESIGN",
+      "task": "refaca a experiencia pos-corrida como relatorio modular",
+      "mode": "EXPERIENCE",
+      "entryCapabilities": [
+        "design-system",
+        "layout",
+        "motion",
+        "gamification-ui",
+        "post-run-design"
+      ],
+      "expected": {
+        "capabilities": [
+          "design-system",
+          "layout",
+          "motion",
+          "gamification-ui",
+          "post-run-design"
+        ],
+        "skills": [],
+        "excluded": ["map-ui", "active-run-lifecycle"]
+      }
+    },
+    {
+      "id": "DR5_MAP_OVERLAY",
+      "task": "reorganize overlays do mapa sem alterar geometria ou tracking",
+      "mode": "OPERATE",
+      "entryCapabilities": ["layout", "accessibility", "native-ui", "map-ui"],
+      "expected": {
+        "capabilities": ["layout", "accessibility", "native-ui", "map-ui"],
+        "skills": [],
+        "excluded": ["territory-capture", "live-gps-ingestion", "post-run-design"]
+      }
+    },
+    {
+      "id": "DR6_ACCESSIBILITY",
+      "task": "corrija TalkBack, font scaling e touch targets desta tela",
+      "mode": "OPERATE",
+      "entryCapabilities": ["accessibility", "native-ui"],
+      "expected": {
+        "capabilities": ["accessibility", "native-ui"],
+        "skills": [],
+        "excluded": ["motion", "gamification-ui", "android-run-boundary"]
+      }
+    },
+    {
+      "id": "DR7_ACTIVE_RUN_RUNTIME_BUG",
+      "task": "corrija perda de distancia ao voltar do background",
+      "mode": "NONE",
+      "entryCapabilities": [],
+      "expected": {
+        "capabilities": [],
+        "skills": [],
+        "excluded": ["design-system", "layout", "map-ui", "post-run-design"]
+      }
+    },
+    {
+      "id": "DR8_GENERIC_CODE_REFACTOR",
+      "task": "extraia este helper sem mudar comportamento",
+      "mode": "NONE",
+      "entryCapabilities": [],
+      "expected": {
+        "capabilities": [],
+        "skills": [],
+        "excluded": ["design-system", "design-audit", "native-ui"]
+      }
+    },
+    {
+      "id": "DR9_SIGNIFICANT_CELEBRATION",
+      "task": "crie a celebracao de medalha desbloqueada",
+      "mode": "EXPERIENCE",
+      "entryCapabilities": ["motion", "gamification-ui", "accessibility"],
+      "expected": {
+        "capabilities": ["motion", "gamification-ui", "accessibility"],
+        "skills": [],
+        "excluded": ["map-ui", "post-run-design", "active-run-lifecycle"]
+      }
+    },
+    {
+      "id": "DR10_SETTINGS_PROFILE",
+      "task": "melhore a hierarquia visual de configuracoes e perfil",
+      "mode": "OPERATE",
+      "entryCapabilities": ["design-system", "layout", "accessibility", "native-ui"],
+      "expected": {
+        "capabilities": ["design-system", "layout", "accessibility", "native-ui"],
+        "skills": [],
+        "excluded": ["motion", "gamification-ui", "post-run-design"]
+      }
+    },
+    {
+      "id": "DR11_TYPOGRAPHY_REFINEMENT",
+      "task": "corrija hierarquia tipografica e font scaling do historico",
+      "mode": "OPERATE",
+      "entryCapabilities": ["typography", "accessibility"],
+      "expected": {
+        "capabilities": ["typography", "accessibility"],
+        "skills": [],
+        "excluded": ["color", "motion", "gamification-ui"]
+      }
+    },
+    {
+      "id": "DR12_DESIGN_AUDIT",
+      "task": "audite a coerencia visual da home sem implementar mudancas",
+      "mode": "OPERATE",
+      "entryCapabilities": ["design-audit"],
+      "expected": {
+        "capabilities": ["design-audit"],
+        "skills": [],
+        "excluded": ["active-run-lifecycle", "territory-capture", "quality-gates"]
+      }
+    }
+  ]
+}

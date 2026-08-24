@@ -1,5 +1,14 @@
 # Design e Wireframes
 
+> **Status:** histórico/funcional<br>
+> **Contrato visual vigente:** [`../DESIGN.md`](../DESIGN.md)<br>
+> **Uso:** inventário de telas e fluxos; screenshots abaixo não são spec atual
+
+Este documento antecede o theme NeoPulse e preserva intenção de telas. Paleta,
+tipografia, componentes, motion, mapa, gamificação e regras nativas pertencem ao
+contrato canônico. Em conflito, confirme runtime em `src/theme/wayperTheme.js` e
+use `DESIGN.md` para direção visual.
+
 ## Objetivo visual
 
 O Wayper deve parecer uma plataforma esportiva, competitiva e moderna. Durante a
@@ -122,11 +131,11 @@ assets/screens/amigos.png
 assets/screens/group.png
 ```
 
-## Pendencias
+## Estado desta referência
 
-- Definir paleta oficial.
-- Definir tipografia.
-- Definir componentes base.
-- Definir estados visuais das zonas.
-- Criar wireframes atualizados para telas futuras.
-- Criar wireframes do modo foco e do Relatório da Expedição antes da implementação.
+- Paleta, tipografia, componentes base e linguagem de zonas já possuem baseline
+  em runtime e contrato em `DESIGN.md`.
+- Os screenshots em `assets/screens/` são históricos e divergem parcialmente do
+  runtime atual.
+- Wireframes futuros de modo foco e Relatório da Expedição continuam sujeitos à
+  direção de produto e ao contrato visual; este arquivo não os autoriza.

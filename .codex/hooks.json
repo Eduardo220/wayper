@@ -1,0 +1,13 @@
+{
+  "description": "Wayper completion backstop; adaptive DEEP validation remains agent-owned",
+  "hooks": {
+    "Stop": [{
+      "hooks": [{
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/quality/check-completion-backstop.mjs\" --hook",
+            "timeout": 120,
+        "statusMessage": "Checking deterministic completion gates"
+      }]
+    }]
+  }
+}
