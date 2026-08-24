@@ -36,7 +36,7 @@
     "runtime": {
       "tokenBudgetPropagation": "UNSUPPORTED",
       "effectiveTokenBudget": "UNKNOWN",
-      "nativeTokenEnforcement": "UNSUPPORTED",
+      "nativeTokenEnforcement": "UNKNOWN",
       "durationBudgetPropagation": "UNSUPPORTED",
       "effectiveDurationSeconds": "UNKNOWN",
       "nativeDurationEnforcement": "UNSUPPORTED"
@@ -419,7 +419,9 @@
       "expected": {
         "tokenAccountingReady": true,
         "tokenEnforcementMode": "OBSERVATIONAL_ONLY",
-        "tokenBudgetEnforcementReady": false
+        "harnessTokenBudgetControlReady": false,
+        "nativeTokenBudgetEnforcementReady": "UNKNOWN",
+        "endToEndTokenBudgetEnforcementReady": false
       }
     },
     {
@@ -428,8 +430,15 @@
       "expected": {
         "requestedTokenBudget": 1000,
         "effectiveTokenBudget": "UNKNOWN",
+        "harnessTokenCeiling": 1000,
+        "nativeEffectiveTokenBudget": "UNKNOWN",
+        "harnessTokenCeilingEqualsNativeBudget": false,
         "tokenPropagationStatus": "UNSUPPORTED",
-        "tokenEnforcementMode": "HARNESS"
+        "tokenEnforcementMode": "HARNESS",
+        "harnessTokenBudgetControlReady": true,
+        "nativeTokenBudgetPropagationReady": "UNSUPPORTED_CURRENT_MODEL_TOOL",
+        "nativeTokenBudgetEnforcementReady": "UNKNOWN",
+        "endToEndTokenBudgetEnforcementReady": false
       }
     },
     {
@@ -455,7 +464,8 @@
       "expected": {
         "goalResult": "GOAL_BUDGET_EXHAUSTED",
         "stopReason": "TOKEN_BUDGET_EXCEEDED",
-        "allowNewSubstantiveWork": false
+        "allowNewSubstantiveWork": false,
+        "goalResumeAllowed": false
       }
     },
     {
@@ -484,12 +494,16 @@
       "override": {
         "previousGoalResult": "GOAL_BUDGET_EXHAUSTED",
         "previousStopReason": "TOKEN_BUDGET_EXCEEDED",
-        "externalBlocker": "DEVICE_UNAVAILABLE"
+        "nativeGoalStatus": "blocked"
       },
       "expected": {
         "goalResult": "GOAL_BUDGET_EXHAUSTED",
         "stopReason": "TOKEN_BUDGET_EXCEEDED",
-        "terminalImmutable": true
+        "terminalImmutable": true,
+        "nativeGoalStatus": "blocked",
+        "nativeBlockedIsApiAdaptation": true,
+        "nativeLifecycleTerminationAction": "BLOCK_ONCE",
+        "goalResumeAllowed": false
       }
     },
     {
@@ -525,11 +539,22 @@
       "scenario": "phase-granularity overshoot terminalizes without new work",
       "override": {
         "requestedTokenBudget": 1500,
-        "accounting": { "previousTokensUsed": 1450, "tokensUsed": 1530 }
+        "accounting": {
+          "previousTokensUsed": 1450,
+          "tokensUsed": 1530,
+          "tokensAtCanonicalTerminal": 1500,
+          "tokensAtNativeTerminal": 1530
+        },
+        "substantivePostTerminalWork": false
       },
       "expected": {
         "previousTokensUsed": 1450,
         "overshoot": 30,
+        "tokensAtCanonicalTerminal": 1500,
+        "tokensAtNativeTerminal": 1530,
+        "postTerminalTokenDelta": 30,
+        "postTerminalTokenAccountingReady": true,
+        "substantivePostTerminalWork": false,
         "goalResult": "GOAL_BUDGET_EXHAUSTED",
         "allowNewSubstantiveWork": false
       }
@@ -562,7 +587,9 @@
       "expected": {
         "tokenAccountingReady": false,
         "tokenEnforcementMode": "UNAVAILABLE",
-        "tokenBudgetEnforcementReady": false
+        "harnessTokenBudgetControlReady": false,
+        "nativeTokenBudgetEnforcementReady": "UNKNOWN",
+        "endToEndTokenBudgetEnforcementReady": false
       }
     },
     {
@@ -588,6 +615,10 @@
       "expected": {
         "goalResult": "GOAL_RUNNING",
         "completionGatePreserved": true,
+        "harnessTokenBudgetControlReady": true,
+        "nativeTokenBudgetPropagationReady": "UNSUPPORTED_CURRENT_MODEL_TOOL",
+        "nativeTokenBudgetEnforcementReady": "UNKNOWN",
+        "endToEndTokenBudgetEnforcementReady": false,
         "softBudgetControlReady": true,
         "irreversibleBudgetStopReady": true,
         "terminalStatePrecedenceReady": true

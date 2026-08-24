@@ -268,8 +268,10 @@ Budget `BUD01`–`BUD20` prova accounting sem enforcement, requested diferente d
 effective, normal/soft/hard, stop irreversível sem três turns, terminal
 imutável, blocker distinto, early success, validação obrigatória no soft limit,
 rejeição de trabalho opcional, overshoot, duration, primeiro hard limit,
-accounting desconhecido, hooks inalterados, cheap paths, regressão dos 20 evals
-anteriores e preservação do evidence gate.
+accounting desconhecido, Harness distinto de native/end-to-end, native blocked
+como adaptação sem reclassificar o canônico, `/goal resume` proibido após
+exhaustion, post-terminal delta, hooks inalterados, cheap paths, regressão dos
+20 evals anteriores e preservação do evidence gate.
 
 As fixtures provam formalmente:
 

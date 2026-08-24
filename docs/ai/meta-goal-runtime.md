@@ -41,10 +41,13 @@ goal:
   id | mode | objective | started_at
 budget:
   requested_token_budget | requested_duration_budget
-  effective_token_budget | effective_duration_budget | propagation_status
+  harness_token_ceiling | harness_duration_ceiling
+  native_effective_token_budget | native_effective_duration_budget | propagation_status
   token_enforcement_mode | duration_enforcement_mode
   tokens_used | token_accounting_source | elapsed
   soft_limit_entered | hard_limit_exceeded | overshoot
+  tokens_at_canonical_terminal | tokens_at_native_terminal
+  post_terminal_token_delta | substantive_post_terminal_work
 success_criteria: []
 candidates: []
 slices: []
@@ -69,6 +72,9 @@ NOT_RUN != PASS
 EMULATOR_PASS != PHYSICAL_DEVICE_PASS
 TOKEN_ACCOUNTING != TOKEN_BUDGET_ENFORCEMENT
 REQUESTED_BUDGET != EFFECTIVE_BUDGET
+HARNESS_TOKEN_CEILING != NATIVE_GOAL_TOKEN_BUDGET
+HARNESS_TOKEN_BUDGET_CONTROL != NATIVE_TOKEN_BUDGET_ENFORCEMENT
+HARNESS_TOKEN_BUDGET_CONTROL_READY != END_TO_END_TOKEN_BUDGET_ENFORCEMENT_READY
 BUDGET_CONTROL != COMPLETION_PROOF
 ```
 
@@ -94,7 +100,7 @@ reasoning. Chain of thought não é coletado, persistido nem exigido.
 
 ## Integração com Goal mode
 
-Na baseline local de 2026-08-17, Codex CLI `0.147.0` reporta a feature `goals`
+Na baseline local de 2026-08-24, Codex CLI `0.149.0` reporta a feature `goals`
 como `stable` e a sessão expõe operações nativas de criação, consulta e
 conclusão/bloqueio de Goal. O CLI não expõe subcomando `goal`; portanto o projeto
 não documenta nem simula sintaxe de terminal.
@@ -103,15 +109,17 @@ Capability audit observável de 2026-08-24 para esta integração:
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| token accounting | `SUPPORTED` | `get_goal.tokensUsed`: `0 -> 59351 -> 89075` |
-| elapsed accounting | `SUPPORTED` | `get_goal.timeUsedSeconds`: `0 -> 134 -> 374` |
+| token accounting | `SUPPORTED` | `get_goal.tokensUsed` é monotônico nos snapshots observados |
+| elapsed accounting | `SUPPORTED` | `get_goal.timeUsedSeconds` é observável |
 | campo de criação `token_budget` | `SUPPORTED` | schema integrado aceita inteiro positivo opcional |
-| propagação de `GOAL_TOKENS` textual | `FAIL` | Goal ativo sem budget; `remainingTokens=null` |
+| propagação nativa pela model tool atual | `UNSUPPORTED_CURRENT_MODEL_TOOL` | `/goal` cria antes da leitura do texto; `remainingTokens=null` |
+| `GOAL_TOKENS` textual | `HARNESS_ONLY` | define request/ceiling do Harness; não configura native Goal |
 | native token hard cap | `UNKNOWN` | accounting não prova enforcement |
 | native remaining tokens | `UNKNOWN` | retorno `null`; não derivar nem mascarar |
 | native duration budget | `UNSUPPORTED` | criação integrada não expõe duração |
-| budget update | `UNSUPPORTED` | `update_goal` aceita somente `complete` ou `blocked` |
-| budget terminal update | `UNSUPPORTED` | não aceita `GOAL_BUDGET_EXHAUSTED` |
+| budget update pela model tool | `UNSUPPORTED` | `update_goal` aceita somente `complete` ou `blocked` |
+| budget terminal pela model tool | `UNSUPPORTED` | não aceita `GOAL_BUDGET_EXHAUSTED` |
+| post-terminal accounting | `SUPPORTED` | `122278 -> 142234`; delta observável `19956` |
 | usage monotonicity | `SUPPORTED` observado | snapshots cresceram; granularidade intra-fase é `UNKNOWN` |
 
 Status descreve esta superfície integrada, não capability genérica externa.
@@ -330,12 +338,37 @@ No `GOAL_START`, resolva antes de trabalho pesado:
 Budget Request -> Runtime Capabilities -> Effective Budget -> Enforcement Mode
 ```
 
-Registre `requested_*`, `effective_*` e propagação `PASS | FAIL | UNSUPPORTED |
-UNKNOWN` separadamente. Budget textual nunca vira effective sem evidence.
+Registre `requested_*`, `harness_*`, `native_effective_*` e propagação
+separadamente. `GOAL_TOKENS`/`GOAL_DURATION` no prompt são request; quando a
+model tool não os propaga, tornam-se `HARNESS_TOKEN_CEILING` e
+`HARNESS_DURATION_CEILING`. Nunca viram native/effective budget sem read-back.
 Enforcement usa `NATIVE | HARNESS | HYBRID | OBSERVATIONAL_ONLY | UNAVAILABLE`.
-`HARNESS` aplica o requested ceiling em checkpoints quando usage confiável
-existe, mesmo com effective budget nativo `UNKNOWN`; não promete hard cap entre
-checkpoints.
+`HARNESS` controla checkpoints quando usage confiável existe; não promete hard
+cap entre checkpoints nem controla toda continuação do lifecycle nativo.
+
+Readiness normativa:
+
+```text
+TOKEN_ACCOUNTING_READY
+HARNESS_TOKEN_BUDGET_CONTROL_READY
+NATIVE_TOKEN_BUDGET_PROPAGATION_READY
+NATIVE_TOKEN_BUDGET_ENFORCEMENT_READY
+END_TO_END_TOKEN_BUDGET_ENFORCEMENT_READY
+SOFT_BUDGET_CONTROL_READY
+POST_TERMINAL_TOKEN_ACCOUNTING_READY
+```
+
+Para a model tool observada:
+
+```text
+NATIVE_TOKEN_BUDGET_PROPAGATION_READY=UNSUPPORTED_CURRENT_MODEL_TOOL
+NATIVE_TOKEN_BUDGET_ENFORCEMENT_READY=UNKNOWN
+END_TO_END_TOKEN_BUDGET_ENFORCEMENT_READY=NO
+```
+
+`END_TO_END...` permanece `NO` enquanto tokens puderem crescer após o terminal
+canônico fora do controle do Harness. Accounting e checkpoint stop não mudam
+essa conclusão.
 
 A política central em `check-meta-goal-completion.mjs` usa soft limit de `85%`.
 A reserva de 15% protege validação obrigatória, evidence, relatório terminal e
@@ -358,6 +391,19 @@ Métrica monotônica com `current >= hard_limit` torna a violação irreversíve
 usage salta entre checkpoints, registre previous/current, overshoot e a
 granularidade. Overshoot pode ocorrer, mas nenhum trabalho novo começa depois da
 detecção.
+
+Quando observável, registre:
+
+```text
+tokens_at_canonical_terminal
+tokens_at_native_terminal
+post_terminal_token_delta = native - canonical
+SUBSTANTIVE_POST_TERMINAL_WORK
+NATIVE_LIFECYCLE_TERMINATION_OVERHEAD
+```
+
+O alvo é `SUBSTANTIVE_POST_TERMINAL_WORK=0`. Overhead nativo não é trabalho e
+também não prova end-to-end enforcement.
 
 Duration segue a mesma resolução. Com dois budgets, o primeiro hard limit
 observado terminaliza. Se ambos surgem excedidos no mesmo snapshot e a ordem não
@@ -543,6 +589,19 @@ absoluta de risco.
 Budget exhausted nunca vira blocked por observações repetidas. Progresso técnico
 parcial pode ser descrito à parte, sem segundo resultado terminal.
 
+Quando a model tool não possui o terminal canônico, esta adaptação é válida:
+
+```text
+canonical_goal_result=GOAL_BUDGET_EXHAUSTED
+native_goal_status=blocked
+native_blocker=BUDGET_TERMINAL_STATE_UNSUPPORTED
+```
+
+`native blocked` encerra o lifecycle uma única vez; não reclassifica o canônico
+como `GOAL_BLOCKED`. Não use `/goal resume` para continuar trabalho substantivo
+da mesma execução. Também não faça novas auditorias, testes, falsification,
+slices, specialists ou três confirmações do excesso monotônico.
+
 O stop reason detalha por que o estado foi atingido:
 
 | Estado | Quando parar |
@@ -618,10 +677,14 @@ Relatório final compacto de Meta Goal relevante:
 META GOAL EXECUTION REPORT
 Goal: mode | result | stop_reason
 Budget Request: requested_token_budget | requested_duration_budget
-Effective Budget: effective_token_budget | effective_duration_budget | propagation_status
+Harness Ceiling: harness_token_ceiling | harness_duration_ceiling
+Native Budget: native_effective_token_budget | native_effective_duration_budget | propagation_status
 Consumption: tokens_used | elapsed | accounting_source
 Enforcement: token_enforcement_mode | duration_enforcement_mode
              soft_limit_entered | hard_limit_exceeded | overshoot
+Terminal Accounting: tokens_at_canonical_terminal | tokens_at_native_terminal
+                     post_terminal_token_delta | substantive_post_terminal_work
+Lifecycle: canonical_goal_result | native_goal_status | native_blocker
 Execution: candidates_considered | slices_planned | slices_executed
            slices_dropped | specialists_invoked
 Scope: files_inspected | files_changed | owners_changed

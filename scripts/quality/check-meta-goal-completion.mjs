@@ -79,10 +79,16 @@ function enforcementMode(requested, effective, propagation, nativeEnforcement, o
   return 'UNAVAILABLE';
 }
 
-function propagationReadiness(status) {
+function propagationReadiness(status, unsupported = 'UNSUPPORTED') {
   if (status === 'PASS') return 'YES';
-  if (status === 'UNSUPPORTED') return 'UNSUPPORTED';
+  if (status === 'UNSUPPORTED') return unsupported;
   return 'NO';
+}
+
+function nativeEnforcementReadiness(status) {
+  if (status === 'SUPPORTED') return 'YES';
+  if (status === 'UNSUPPORTED') return 'NO';
+  return 'UNKNOWN';
 }
 
 export function evaluateBudgetControl(run) {
@@ -114,6 +120,12 @@ export function evaluateBudgetControl(run) {
   const durationCeiling = ['NATIVE', 'HYBRID'].includes(durationEnforcementMode)
     ? effectiveDurationSeconds
     : durationEnforcementMode === 'HARNESS' ? requestedDurationSeconds : 'UNKNOWN';
+  const harnessTokenCeiling = ['HARNESS', 'HYBRID'].includes(tokenEnforcementMode)
+    ? requestedTokenBudget
+    : 'UNKNOWN';
+  const harnessDurationCeiling = ['HARNESS', 'HYBRID'].includes(durationEnforcementMode)
+    ? requestedDurationSeconds
+    : 'UNKNOWN';
   const tokenHard = isNumber(tokenCeiling)
     && isNumber(accounting.tokensUsed)
     && accounting.tokensUsed >= tokenCeiling;
@@ -160,25 +172,52 @@ export function evaluateBudgetControl(run) {
     && (budgetState === 'NORMAL' || run.workClass !== 'OPTIONAL');
   const tokenAccountingReady = isNumber(accounting.tokensUsed) && Boolean(accounting.tokenSource);
   const durationAccountingReady = isNumber(accounting.elapsedSeconds) && Boolean(accounting.durationSource);
-  const tokenBudgetEnforcementReady = ['NATIVE', 'HARNESS', 'HYBRID'].includes(tokenEnforcementMode);
+  const harnessTokenBudgetControlReady = ['HARNESS', 'HYBRID'].includes(tokenEnforcementMode);
   const durationBudgetEnforcementReady = ['NATIVE', 'HARNESS', 'HYBRID'].includes(durationEnforcementMode);
+  const nativeTokenBudgetEnforcementReady = nativeEnforcementReadiness(runtime.nativeTokenEnforcement);
+  const tokensAtCanonicalTerminal = accounting.tokensAtCanonicalTerminal ?? 'UNKNOWN';
+  const tokensAtNativeTerminal = accounting.tokensAtNativeTerminal ?? 'UNKNOWN';
+  const postTerminalTokenDelta = isNumber(tokensAtCanonicalTerminal)
+    && isNumber(tokensAtNativeTerminal)
+    && tokensAtNativeTerminal >= tokensAtCanonicalTerminal
+    ? tokensAtNativeTerminal - tokensAtCanonicalTerminal
+    : 'UNKNOWN';
+  const nativeGoalStatus = run.nativeGoalStatus ?? 'UNKNOWN';
+  const nativeBlockedIsApiAdaptation = goalResult === 'GOAL_BUDGET_EXHAUSTED'
+    && nativeGoalStatus === 'blocked';
 
   return {
     requestedTokenBudget,
     requestedDurationSeconds,
     effectiveTokenBudget,
     effectiveDurationSeconds,
+    nativeEffectiveTokenBudget: effectiveTokenBudget,
+    harnessTokenCeiling,
+    harnessDurationCeiling,
+    harnessTokenCeilingEqualsNativeBudget: tokenPropagationStatus === 'PASS'
+      && isNumber(harnessTokenCeiling)
+      && isNumber(effectiveTokenBudget)
+      && harnessTokenCeiling === effectiveTokenBudget,
     tokenPropagationStatus,
     durationPropagationStatus,
     tokenEnforcementMode,
     durationEnforcementMode,
     tokenAccountingReady,
     durationAccountingReady,
-    tokenBudgetPropagationReady: propagationReadiness(tokenPropagationStatus),
+    nativeTokenBudgetPropagationReady: propagationReadiness(
+      tokenPropagationStatus,
+      'UNSUPPORTED_CURRENT_MODEL_TOOL',
+    ),
     durationBudgetPropagationReady: propagationReadiness(durationPropagationStatus),
-    tokenBudgetEnforcementReady,
+    harnessTokenBudgetControlReady,
+    nativeTokenBudgetEnforcementReady,
+    endToEndTokenBudgetEnforcementReady: runtime.endToEndTokenEnforcement === 'SUPPORTED'
+      && postTerminalTokenDelta === 0,
     durationBudgetEnforcementReady,
-    softBudgetControlReady: tokenBudgetEnforcementReady || durationBudgetEnforcementReady,
+    softBudgetControlReady: harnessTokenBudgetControlReady
+      || ['HARNESS', 'HYBRID'].includes(durationEnforcementMode),
+    postTerminalTokenAccountingReady: postTerminalTokenDelta !== 'UNKNOWN',
+    canonicalNativeTerminalSeparationReady: true,
     irreversibleBudgetStopReady: true,
     terminalStatePrecedenceReady: true,
     softLimitRatio: GOAL_BUDGET_POLICY.softLimitRatio,
@@ -187,12 +226,20 @@ export function evaluateBudgetControl(run) {
     hardLimitExceeded,
     overshoot: tokenHard ? accounting.tokensUsed - tokenCeiling : 0,
     previousTokensUsed: accounting.previousTokensUsed ?? 'UNKNOWN',
+    tokensAtCanonicalTerminal,
+    tokensAtNativeTerminal,
+    postTerminalTokenDelta,
+    substantivePostTerminalWork: run.substantivePostTerminalWork ?? 'UNKNOWN',
+    nativeGoalStatus,
+    nativeBlockedIsApiAdaptation,
+    nativeLifecycleTerminationAction: nativeBlockedIsApiAdaptation ? 'BLOCK_ONCE' : 'NONE',
     goalResult,
     stopReason,
     allowNewSubstantiveWork: running && budgetState !== 'HARD_LIMIT',
     allowOptionalWork,
     allowRequestedWork,
     repeatConfirmation: hardLimitExceeded ? 0 : null,
+    goalResumeAllowed: goalResult !== 'GOAL_BUDGET_EXHAUSTED',
     terminalImmutable,
     checkpointRecognized: GOAL_BUDGET_POLICY.checkpoints.includes(run.checkpoint),
     newHookRequired: false,

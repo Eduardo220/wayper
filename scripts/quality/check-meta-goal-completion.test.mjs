@@ -75,6 +75,10 @@ test('MGC8 hard budget is immediate and immutable', () => {
   assert.equal(result.goalResult, 'GOAL_BUDGET_EXHAUSTED');
   assert.equal(result.repeatConfirmation, 0);
   assert.equal(result.allowNewSubstantiveWork, false);
+  assert.equal(result.nativeGoalStatus, 'blocked');
+  assert.equal(result.nativeBlockedIsApiAdaptation, true);
+  assert.equal(result.nativeLifecycleTerminationAction, 'BLOCK_ONCE');
+  assert.equal(result.goalResumeAllowed, false);
 });
 
 test('MGC9 one central soft-limit policy preserves mandatory work', () => {
@@ -91,4 +95,12 @@ test('MGC10 every semantic checkpoint is recognized without a hook', () => {
     assert.equal(result.checkpointRecognized, true);
     assert.equal(result.newHookRequired, false);
   }
+});
+
+test('MGC11 post-terminal usage stays separate from substantive work', () => {
+  const result = runEvalSuite().find((item) => item.id === 'BUD13');
+  assert.equal(result.postTerminalTokenDelta, 30);
+  assert.equal(result.postTerminalTokenAccountingReady, true);
+  assert.equal(result.substantivePostTerminalWork, false);
+  assert.equal(result.endToEndTokenBudgetEnforcementReady, false);
 });
