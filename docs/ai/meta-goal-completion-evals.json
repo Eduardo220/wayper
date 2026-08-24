@@ -623,6 +623,39 @@
         "irreversibleBudgetStopReady": true,
         "terminalStatePrecedenceReady": true
       }
+    },
+    {
+      "id": "BUD21",
+      "scenario": "evidence-backed reserve stops substantive work before the hard ceiling",
+      "override": {
+        "finalizationReserveTokens": 50,
+        "finalizationReserveSource": "recent comparable Goal receipt",
+        "accounting": { "tokensUsed": 950 },
+        "workClass": "MANDATORY"
+      },
+      "expected": {
+        "budgetState": "FINALIZATION_ONLY",
+        "finalizationReserveReady": true,
+        "substantiveTokenCeiling": 950,
+        "finalizationReserveEntered": true,
+        "allowNewSubstantiveWork": false,
+        "allowRequestedWork": false
+      }
+    },
+    {
+      "id": "BUD22",
+      "scenario": "reserved capacity remains available to required finalization",
+      "override": {
+        "finalizationReserveTokens": 50,
+        "finalizationReserveSource": "recent comparable Goal receipt",
+        "accounting": { "tokensUsed": 950 },
+        "workClass": "FINALIZATION"
+      },
+      "expected": {
+        "budgetState": "FINALIZATION_ONLY",
+        "allowNewSubstantiveWork": false,
+        "allowRequestedWork": true
+      }
     }
   ]
 }

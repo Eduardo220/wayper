@@ -27,6 +27,7 @@ export const GOAL_BUDGET_POLICY = Object.freeze({
     'BEFORE_EXPENSIVE_VALIDATION',
     'BEFORE_FULL_TEST_SUITE',
     'BEFORE_BUILD',
+    'BEFORE_FINALIZATION',
     'BEFORE_FINAL_FALSIFICATION',
     'AFTER_MAJOR_EXECUTION_PHASE',
     'BEFORE_OPTIONAL_FOLLOWUP',
@@ -126,6 +127,14 @@ export function evaluateBudgetControl(run) {
   const harnessDurationCeiling = ['HARNESS', 'HYBRID'].includes(durationEnforcementMode)
     ? requestedDurationSeconds
     : 'UNKNOWN';
+  const finalizationReserveTokens = run.finalizationReserveTokens ?? 'UNKNOWN';
+  const finalizationReserveValid = isNumber(finalizationReserveTokens)
+    && finalizationReserveTokens > 0
+    && isNumber(tokenCeiling)
+    && finalizationReserveTokens < tokenCeiling;
+  const substantiveTokenCeiling = finalizationReserveValid
+    ? tokenCeiling - finalizationReserveTokens
+    : 'UNKNOWN';
   const tokenHard = isNumber(tokenCeiling)
     && isNumber(accounting.tokensUsed)
     && accounting.tokensUsed >= tokenCeiling;
@@ -138,10 +147,19 @@ export function evaluateBudgetControl(run) {
   const durationSoft = isNumber(durationCeiling)
     && isNumber(accounting.elapsedSeconds)
     && accounting.elapsedSeconds >= durationCeiling * GOAL_BUDGET_POLICY.softLimitRatio;
+  const finalizationReserveEntered = isNumber(substantiveTokenCeiling)
+    && isNumber(accounting.tokensUsed)
+    && accounting.tokensUsed >= substantiveTokenCeiling;
   const previousGoalResult = run.previousGoalResult;
   const terminalImmutable = TERMINAL_RESULTS.has(previousGoalResult);
   const hardLimitExceeded = tokenHard || durationHard || previousGoalResult === 'GOAL_BUDGET_EXHAUSTED';
-  const budgetState = hardLimitExceeded ? 'HARD_LIMIT' : tokenSoft || durationSoft ? 'SOFT_LIMIT' : 'NORMAL';
+  const budgetState = hardLimitExceeded
+    ? 'HARD_LIMIT'
+    : finalizationReserveEntered
+      ? 'FINALIZATION_ONLY'
+      : tokenSoft || durationSoft
+        ? 'SOFT_LIMIT'
+        : 'NORMAL';
 
   let goalResult = 'GOAL_RUNNING';
   let stopReason = 'WORK_REMAINS';
@@ -169,7 +187,11 @@ export function evaluateBudgetControl(run) {
   const allowOptionalWork = running && budgetState === 'NORMAL';
   const allowRequestedWork = running
     && budgetState !== 'HARD_LIMIT'
-    && (budgetState === 'NORMAL' || run.workClass !== 'OPTIONAL');
+    && (
+      budgetState === 'NORMAL'
+      || (budgetState === 'SOFT_LIMIT' && run.workClass !== 'OPTIONAL')
+      || (budgetState === 'FINALIZATION_ONLY' && run.workClass === 'FINALIZATION')
+    );
   const tokenAccountingReady = isNumber(accounting.tokensUsed) && Boolean(accounting.tokenSource);
   const durationAccountingReady = isNumber(accounting.elapsedSeconds) && Boolean(accounting.durationSource);
   const harnessTokenBudgetControlReady = ['HARNESS', 'HYBRID'].includes(tokenEnforcementMode);
@@ -221,8 +243,13 @@ export function evaluateBudgetControl(run) {
     irreversibleBudgetStopReady: true,
     terminalStatePrecedenceReady: true,
     softLimitRatio: GOAL_BUDGET_POLICY.softLimitRatio,
+    finalizationReserveTokens,
+    finalizationReserveSource: run.finalizationReserveSource ?? 'UNKNOWN',
+    finalizationReserveReady: finalizationReserveValid && Boolean(run.finalizationReserveSource),
+    substantiveTokenCeiling,
+    finalizationReserveEntered,
     budgetState,
-    softLimitEntered: budgetState === 'SOFT_LIMIT',
+    softLimitEntered: !hardLimitExceeded && (tokenSoft || durationSoft),
     hardLimitExceeded,
     overshoot: tokenHard ? accounting.tokensUsed - tokenCeiling : 0,
     previousTokensUsed: accounting.previousTokensUsed ?? 'UNKNOWN',
@@ -235,7 +262,8 @@ export function evaluateBudgetControl(run) {
     nativeLifecycleTerminationAction: nativeBlockedIsApiAdaptation ? 'BLOCK_ONCE' : 'NONE',
     goalResult,
     stopReason,
-    allowNewSubstantiveWork: running && budgetState !== 'HARD_LIMIT',
+    allowNewSubstantiveWork: running
+      && !['FINALIZATION_ONLY', 'HARD_LIMIT'].includes(budgetState),
     allowOptionalWork,
     allowRequestedWork,
     repeatConfirmation: hardLimitExceeded ? 0 : null,

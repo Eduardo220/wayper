@@ -10,10 +10,10 @@ import {
 
 test('MGC1 all completion and shadow evals pass', () => {
   const results = runEvalSuite();
-  assert.equal(results.length, 52);
+  assert.equal(results.length, 54);
   assert.equal(results.filter((item) => item.kind === 'COMPLETION').length, 20);
   assert.equal(results.filter((item) => item.kind === 'SHADOW').length, 12);
-  assert.equal(results.filter((item) => item.kind === 'BUDGET').length, 20);
+  assert.equal(results.filter((item) => item.kind === 'BUDGET').length, 22);
 });
 
 test('MGC2 FAST pass cannot hide a mandatory targeted test not run', () => {
@@ -103,4 +103,14 @@ test('MGC11 post-terminal usage stays separate from substantive work', () => {
   assert.equal(result.postTerminalTokenAccountingReady, true);
   assert.equal(result.substantivePostTerminalWork, false);
   assert.equal(result.endToEndTokenBudgetEnforcementReady, false);
+});
+
+test('MGC12 evidence-backed reserve admits only finalization work', () => {
+  const results = runEvalSuite();
+  const substantive = results.find((item) => item.id === 'BUD21');
+  const finalization = results.find((item) => item.id === 'BUD22');
+  assert.equal(substantive.budgetState, 'FINALIZATION_ONLY');
+  assert.equal(substantive.allowNewSubstantiveWork, false);
+  assert.equal(substantive.allowRequestedWork, false);
+  assert.equal(finalization.allowRequestedWork, true);
 });

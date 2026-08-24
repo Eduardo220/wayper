@@ -6,8 +6,8 @@
 > Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
 > Memory + Automated Gates + Token Economy + Capability Architecture + Design
 > Intelligence + External Skill Acquisition + Evidence-Gated Completion + Goal
-> Budget Control (`HARNESS`, não end-to-end)
-> (`ACTIVE`),
+> Budget Control (`HARNESS`, não end-to-end) + Evidence-backed Finalization
+> Reserve (`ACTIVE`),
 > 2026-08-24<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**

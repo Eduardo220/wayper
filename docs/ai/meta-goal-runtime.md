@@ -371,19 +371,25 @@ canônico fora do controle do Harness. Accounting e checkpoint stop não mudam
 essa conclusão.
 
 A política central em `check-meta-goal-completion.mjs` usa soft limit de `85%`.
-A reserva de 15% protege validação obrigatória, evidence, relatório terminal e
-overshoot por granularidade; não é quota.
+Cada Meta longa também estima `finalization_reserve_tokens` a partir de Goals
+recentes comparáveis, separando validação, review, cleanup, commit e síntese.
+Registre a fonte e uma margem explícita; não use percentual fixo como evidência.
+O `substantive_token_ceiling = token_ceiling - finalization_reserve_tokens`
+protege esse custo final e não é quota.
 
 - `NORMAL`: execução orientada ao Goal, sem trabalho artificial;
 - `SOFT_LIMIT`: não iniciar expansão, slice, specialist, follow-up ou validação
   cara opcionais; priorizar criteria, blockers, validação obrigatória,
   falsification necessária e relatório;
+- `FINALIZATION_ONLY`: não iniciar trabalho substantivo, mesmo obrigatório;
+  permitir somente validação final, review, cleanup, commit autorizado,
+  completion bookkeeping e síntese terminal;
 - `HARD_LIMIT`: `GOAL_RESULT=GOAL_BUDGET_EXHAUSTED`; nenhum trabalho substantivo
   novo, somente relatório terminal mínimo.
 
 Checkpoints: `GOAL_START`, `BEFORE_NEW_SLICE`, `BEFORE_OPTIONAL_SPECIALIST`,
 `BEFORE_EXPENSIVE_VALIDATION`, `BEFORE_FULL_TEST_SUITE`, `BEFORE_BUILD`,
-`BEFORE_FINAL_FALSIFICATION`, `AFTER_MAJOR_EXECUTION_PHASE` e
+`BEFORE_FINALIZATION`, `BEFORE_FINAL_FALSIFICATION`, `AFTER_MAJOR_EXECUTION_PHASE` e
 `BEFORE_OPTIONAL_FOLLOWUP`. Não existe polling por tool call, daemon ou hook novo.
 
 Métrica monotônica com `current >= hard_limit` torna a violação irreversível e
@@ -682,6 +688,8 @@ Native Budget: native_effective_token_budget | native_effective_duration_budget 
 Consumption: tokens_used | elapsed | accounting_source
 Enforcement: token_enforcement_mode | duration_enforcement_mode
              soft_limit_entered | hard_limit_exceeded | overshoot
+Reserve: finalization_reserve_tokens | finalization_reserve_source
+         substantive_token_ceiling | finalization_reserve_entered
 Terminal Accounting: tokens_at_canonical_terminal | tokens_at_native_terminal
                      post_terminal_token_delta | substantive_post_terminal_work
 Lifecycle: canonical_goal_result | native_goal_status | native_blocker
