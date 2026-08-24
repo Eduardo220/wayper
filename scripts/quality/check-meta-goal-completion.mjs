@@ -12,6 +12,23 @@ const SHADOW_ASSESSMENTS = new Set([
   'OLD_FALSE_POSITIVE',
   'HONEST_STATE_REFINEMENT',
 ]);
+const REQUIRED_VALIDATIONS = {
+  NO_CHANGE: [],
+  DOCS_ONLY: ['MARKDOWN', 'LINKS'],
+  PRODUCT_SOURCE: ['FAST', 'SEMANTIC'],
+  CORE_PRODUCT_OWNER: ['FAST', 'SEMANTIC', 'TARGETED', 'ADJACENT_OWNER'],
+  RUN_TRACKING_CRITICAL: ['FAST', 'SEMANTIC', 'TARGETED', 'CONCURRENCY', 'STATE_TRANSITIONS'],
+  NATIVE_ANDROID: ['FAST', 'SEMANTIC', 'NATIVE_CONFIG'],
+  HARNESS_INFRASTRUCTURE: [
+    'OLD_EVALS',
+    'NEW_EVALS',
+    'BACKSTOP_TESTS',
+    'SEMANTIC',
+    'CONTEXT',
+    'HOOKS',
+    'DIFF',
+  ],
+};
 
 function merge(base, override) {
   if (Array.isArray(override) || override === null || typeof override !== 'object') {
@@ -35,10 +52,17 @@ export function evaluateCompletion(run) {
   if (run.originalCriteriaCount !== undefined && run.originalCriteriaCount !== criteria.length) {
     gaps.push('SCOPE_SHRINKING');
   }
+  const currentCriterionIds = new Set(criteria.map((item) => item.id));
+  if ((run.originalCriteriaIds ?? []).some((id) => !currentCriterionIds.has(id))) {
+    gaps.push('SCOPE_SHRINKING');
+  }
   for (const criterion of criteria) {
     if (criterion.status === 'SATISFIED' && !hasEvidence(criterion)) {
       gaps.push(`CRITERION_WITHOUT_EVIDENCE:${criterion.id}`);
-    } else if (criterion.status === 'NOT_APPLICABLE' && !criterion.reason) {
+    } else if (
+      criterion.status === 'NOT_APPLICABLE'
+      && !(criterion.reason && criterion.scopeEvidence)
+    ) {
       gaps.push(`NOT_APPLICABLE_WITHOUT_REASON:${criterion.id}`);
     } else if (!['SATISFIED', 'NOT_APPLICABLE'].includes(criterion.status)) {
       gaps.push(`CRITERION_${criterion.status}:${criterion.id}`);
@@ -54,8 +78,22 @@ export function evaluateCompletion(run) {
     ) gaps.push(`UNTREATED_MATERIAL_UNCERTAINTY:${uncertainty.id}`);
   }
 
-  for (const validation of run.validation ?? []) {
-    if (!validation.required) continue;
+  const validations = new Map((run.validation ?? []).map((item) => [item.id, item]));
+  const scopes = Array.isArray(run.scope) ? run.scope : [run.scope];
+  const requiredValidations = new Set();
+  for (const scope of scopes) {
+    if (!Object.hasOwn(REQUIRED_VALIDATIONS, scope)) gaps.push(`CHANGED_SCOPE_UNKNOWN:${scope}`);
+    for (const id of REQUIRED_VALIDATIONS[scope] ?? []) requiredValidations.add(id);
+  }
+  for (const validation of validations.values()) {
+    if (validation.required) requiredValidations.add(validation.id);
+  }
+  for (const id of requiredValidations) {
+    const validation = validations.get(id);
+    if (!validation) {
+      gaps.push(`VALIDATION_MISSING:${id}`);
+      continue;
+    }
     if (validation.status === 'BLOCKED') blockers.push(`VALIDATION_BLOCKED:${validation.id}`);
     else if (validation.status !== 'PASS') gaps.push(`VALIDATION_${validation.status}:${validation.id}`);
     else if (!hasEvidence(validation)) gaps.push(`VALIDATION_WITHOUT_EVIDENCE:${validation.id}`);
@@ -84,7 +122,9 @@ export function evaluateCompletion(run) {
   const falsification = run.falsification ?? {};
   if (!falsification.performed) gaps.push('FALSIFICATION_NOT_RUN');
   else if (falsification.result !== 'PASS') gaps.push('FALSIFICATION_FAILED');
-  if ((falsification.findings ?? []).some((finding) => finding.severity === 'MATERIAL')) {
+  if ((falsification.findings ?? []).some(
+    (finding) => finding.material || ['BLOCKING', 'MATERIAL'].includes(finding.severity)
+  )) {
     gaps.push('MATERIAL_FALSIFICATION_FINDING');
   }
 

@@ -54,3 +54,15 @@ test('MGC6 shadow produces no unexpected false negative', () => {
   const results = runEvalSuite().filter((item) => item.kind === 'SHADOW');
   assert.equal(results.filter((item) => item.oldResult === 'GOAL_SATISFIED' && item.result === 'GOAL_BLOCKED').length, 0);
 });
+
+test('MGC7 changed scope derives mandatory validation', () => {
+  const { baseRun } = loadEvalSuite();
+  const result = evaluateCompletion({
+    ...baseRun,
+    scope: 'RUN_TRACKING_CRITICAL',
+    validation: baseRun.validation,
+  });
+  assert.equal(result.eligible, false);
+  assert.match(result.gaps.join('\n'), /VALIDATION_MISSING:CONCURRENCY/);
+  assert.match(result.gaps.join('\n'), /VALIDATION_MISSING:STATE_TRANSITIONS/);
+});

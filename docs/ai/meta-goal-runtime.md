@@ -70,7 +70,7 @@ EMULATOR_PASS != PHYSICAL_DEVICE_PASS
 
 - **Success Criteria Ledger:** cada critério tem `PENDING`, `SATISFIED`,
   `BLOCKED` ou `NOT_APPLICABLE`. `SATISFIED` referencia evidence concreta;
-  `NOT_APPLICABLE` registra a relação verificável com changed scope.
+  `NOT_APPLICABLE` registra motivo e evidence verificável do changed scope.
 - **Evidence Ledger:** cada claim material aponta para `file`, `line/range`,
   `test`, `command`, `validator`, `runtime output`, `config`, `commit` ou
   comportamento observado. “Parece correto” não é provenance.
