@@ -206,6 +206,30 @@ capabilities `UI_DESIGN`; não é o tamanho do registry completo.
 quando uma task seleciona várias capabilities. Nos casos copy-only, runtime bug
 e refactor genérico o working set visual é `0 B`. Bytes não são billed tokens.
 
+### External Skill Acquisition
+
+Baseline da Unidade 16, reproduzida por `npm run quality:capabilities` e pelo
+trial datado em
+[`2026-08-24-external-skill-ecosystem.md`](../audits/2026-08-24-external-skill-ecosystem.md):
+
+| Métrica | Before U16 | After U16 |
+| --- | ---: | ---: |
+| `TOTAL_CAPABILITIES` canônicas | 54 | 55 |
+| `ACTIVE_SKILLS` project-scoped | 4 | 4 |
+| `REGISTRY_BYTES` on-demand | 11.750 B | 12.111 B |
+| `PERMANENT_CONTEXT_BYTES` Wayper | 7.311 B | 7.311 B |
+| `EXTERNAL_DISCOVERY_PERMANENT_BYTES` | 0 B | 0 B |
+| `FIND_SKILLS_METADATA_BYTES` user-global observado | 363 B | 363 B |
+| `ACQUISITION_POLICY_BYTES` on-demand | 0 B | 8.936 B |
+| `TRIAL_CONTEXT_BYTES` | 0 B | 5.615 B |
+| `PROVENANCE_BYTES` on-demand | 0 B | 95 B |
+
+Find Skills já existia em `USER_GLOBAL`; seus 363 B não pertencem ao contexto
+permanente project-scoped e não são delta desta unidade. Policy, evals e ledger
+ficam on-demand; nenhum `SKILL.md`, agent metadata, hook ou linha de `AGENTS.md`
+foi acrescentado. `TRIAL_CONTEXT_BYTES` mede o prompt exato emitido pelo CLI,
+não billed tokens. O ledger vazio evita inventar promoção para provar o pipeline.
+
 ## Contabilidade
 
 | Métrica | Definição | Claim permitido |

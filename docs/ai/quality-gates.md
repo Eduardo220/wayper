@@ -89,7 +89,7 @@ basta.
 | runtime/task/native Android | testes de owner, lifecycle/failure mode e possível validação física |
 | repository/storage/migration/Firebase | testes de persistência/rollback/idempotência; specialist pelas flags |
 | geometry/Turf/coordinates/MapLibre data | testes geo e geospatial reviewer |
-| capability registry/closure/evals | `npm run quality:capabilities`; source evidence e custo permanente |
+| capability registry/closure/external acquisition evals | `npm run quality:capabilities`; source evidence, provenance e custo permanente |
 | design contract/registry/routing evals | `npm run quality:design`; ownership visual, links e zero load irrelevante |
 | docs only | link/consistência; não exigir Expo Doctor |
 

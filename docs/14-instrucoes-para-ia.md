@@ -41,6 +41,10 @@ staleness de hard-earned learning pertencem a
 testes ou decisão canônica. Modos de output, leitura progressiva e contabilidade
 de contexto pertencem a
 [`docs/ai/token-economy.md`](ai/token-economy.md).
+Aquisição externa após `CAPABILITY_GAP`, vetting, trial, provenance, update e
+revogação pertencem a
+[`docs/ai/external-skill-acquisition.md`](ai/external-skill-acquisition.md);
+external discovery nunca precede o Router Wayper.
 
 ## Context Gate
 

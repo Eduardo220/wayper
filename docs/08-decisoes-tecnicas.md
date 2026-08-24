@@ -805,3 +805,23 @@ de Context Closure, incluindo zero design context em copy-only, runtime bug e
 refactor genérico. O inventário datado fica em
 `docs/audits/2026-08-23-design-intelligence.md`; `docs/09-design-e-wireframes.md`
 permanece histórico/funcional.
+
+### Adendo — External Skill Acquisition + Provenance
+
+**Status:** aceito em 2026-08-24
+
+**Decisão:** external discovery só ocorre depois de `CAPABILITY_GAP` provado por
+task, source, owners, capabilities, skills, references e tooling, com contexto,
+workflow, validação e reuse explícitos. A estratégia Wayper para Find Skills é
+`CLI_ONLY`: query explícita e pinada depois do Router, candidate set pequeno,
+vetting proporcional ao poder, `skills use` antes de qualquer promoção e cleanup
+comprovado. Popularidade, stars, publisher, badges e scanners são sinais, não
+trust.
+
+**Consequências:** uma policy on-demand, ledger JSON vazio e 13 evals cobrem
+risco, trial, provenance, update/re-vetting e revogação. Nenhuma skill externa,
+dependency, config ou hook foi adicionada ao projeto; a instalação global já
+existente continua `USER_GLOBAL`, fora da autoridade Wayper. Promotion futura
+exige ref/hash ou lock confiável, eval e link explícito no Capability Registry.
+`npm run quality:capabilities` valida o contrato; a auditoria datada fica em
+`docs/audits/2026-08-24-external-skill-ecosystem.md`.

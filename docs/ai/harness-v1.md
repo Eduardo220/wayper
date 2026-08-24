@@ -5,8 +5,8 @@
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
 > Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
 > Memory + Automated Gates + Token Economy + Capability Architecture + Design
-> Intelligence,
-> 2026-08-23<br>
+> Intelligence + External Skill Acquisition,
+> 2026-08-24<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -69,6 +69,9 @@ evidência datada.
   inventário compacto, routing em duas passagens e Context Closure on-demand.
 - `scripts/quality/check-capability-routing.mjs`: validator/evals determinísticos
   do registry; não é intent classifier, runtime ou dependency walker automático.
+- `docs/ai/external-skill-acquisition.md`, provenance/evals relacionados e
+  `scripts/quality/check-external-skill-acquisition.mjs`: gate `CAPABILITY_GAP`,
+  vetting, trial, update/revocation e provenance on-demand; não instalam skills.
 - `DESIGN.md`, `docs/ai/design-routing-evals.json` e
   `scripts/quality/check-design-routing.mjs`: contrato visual, Context Closure de
   design e métricas on-demand; não alteram tokens/runtime nem criam skill.
@@ -84,6 +87,9 @@ evidência datada.
 Papéis genéricos de descoberta, implementação, segurança e revisão usam
 capacidades nativas do Codex. Agents project-scoped existem somente para
 concorrência, lifecycle mobile, persistência e geoespacial.
+Find Skills não é project-scoped: a estratégia Wayper é `CLI_ONLY`, acionada
+explicitamente somente depois de gap provado. Instalação global preexistente
+continua configuração do usuário e subordinada ao Router Wayper.
 
 ## Fronteiras
 
@@ -149,6 +155,9 @@ Capability Architecture também permanece declarativa: não cria embeddings,
 vector DB, banco, intent classifier, full-graph loader ou segundo execution
 runtime. Registry e evals são abertos somente quando o Pass 1 precisa resolver
 capability/asset além do mapa rápido.
+External Skill Acquisition também permanece policy + ledger + evals on-demand:
+não cria marketplace, package manager, scanner, hook, config, dependency ou
+runtime paralelo; nenhum candidato externo foi promovido nesta baseline.
 Design Intelligence também permanece declarativa: não instala Impeccable,
 detector web, hook, sidecar, fonte, dependency ou runtime visual. `DESIGN.md`
 possui o contrato; `WayperTheme` continua owner dos valores executáveis.

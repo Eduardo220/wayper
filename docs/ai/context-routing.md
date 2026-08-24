@@ -68,7 +68,10 @@ qualquer expansão.
 Em Meta longa, o working set é recalculado por safe slice. Preserve somente
 Learning Delta relevante; uma skill carregada antes não permanece ativa por
 inércia. `CAPABILITY_GAP` só é declarado após task + source + registry não
-cobrirem o conhecimento/workflow necessário.
+cobrirem o conhecimento/workflow necessário. Discovery externa ainda exige os
+seis campos e o pipeline de
+[`external-skill-acquisition.md`](external-skill-acquisition.md); sem gap provado,
+o router não chama Find Skills nem `skills find`.
 
 ## Memory lookup gate
 
@@ -449,13 +452,14 @@ branch atual sempre confirmam ownership.
   hard-earned learning on-demand; `hooks-and-gates.md` somente para runtime de
   hooks/automação determinística; `capability-architecture.md` e seu registry
   para capabilities/closure; `token-economy.md` para leitura, output, briefs e
-  compaction.
+  compaction; `external-skill-acquisition.md` somente após `CAPABILITY_GAP` ou
+  quando aquisição externa for o objeto explícito da tarefa.
 - **Docs:** `harness-v1.md` e somente o owner do aspecto tocado; não pré-carregue a
   suíte `docs/ai`. `token-economy.md` entra para contexto/output/RTK/Caveman,
   compaction ou brief, não em toda mudança de Harness.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
   produto para garantir ausência de regressão;
-  `npm run quality:capabilities` quando registry/closure mudar.
+  `npm run quality:capabilities` quando registry/closure/aquisição mudar.
 - **Skills:** nenhuma skill de domínio por padrão.
 - **Specialists:** nenhum dos quatro reviewers mobile por padrão; papéis de
   architecture/review genérico são nativos.

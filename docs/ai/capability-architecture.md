@@ -243,15 +243,18 @@ não cria documento, skill ou cleanup para demonstrar atividade.
 registry, nenhuma capability cobre adequadamente o knowledge/workflow necessário.
 Não significa “não encontrei skill com esse nome”.
 
-Registre:
+Registre o gap com:
 
 ```text
-REQUIREMENT | TASK_SEARCH | SOURCE_SEARCH | REGISTRY_SEARCH | WHY_UNCOVERED
+NEEDED_CAPABILITY | WHY_EXISTING_CAPABILITIES_ARE_INSUFFICIENT
+REQUIRED_CONTEXT | REQUIRED_WORKFLOW | REQUIRED_VALIDATION | EXPECTED_REUSE
+TASK_SEARCH | SOURCE_SEARCH | OWNER_SEARCH | REGISTRY_SEARCH | TOOLING_SEARCH
 ```
 
-Gap não autoriza instalar skill, adquirir capability externa ou criar plugin.
-Ele vira candidate/follow-up sujeito a ROI e Human Decision Boundary. Find
-Skills/external acquisition permanecem fora desta unidade.
+Gap não autoriza instalação. Ele libera somente external discovery pelo contrato
+de [`external-skill-acquisition.md`](external-skill-acquisition.md), ainda sujeito
+a candidate vetting, trial, eval, ROI e Human Decision Boundary. Sem os campos e
+searches acima, o router permanece interno. Find Skills nunca precede este gate.
 
 ## Custos e escala
 
@@ -283,3 +286,8 @@ spacing, ranking, pós-corrida, mapa, accessibility, runtime bug, refactor,
 celebração, settings/profile, typography e audit. Casos `NONE` precisam manter
 capabilities e assets de design vazios; capabilities compartilhando o contrato
 deduplicam a mesma reference e carregam zero skill bodies.
+
+[`external-skill-acquisition-evals.json`](external-skill-acquisition-evals.json)
+cobre o gate de gap, risco, trigger overlap, trial, conflito, adaptação, mudança
+upstream e catálogo interno grande. O validator continua fixture runner, não
+discovery runtime ou autorização de instalação.

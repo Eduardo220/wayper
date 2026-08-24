@@ -109,6 +109,11 @@
       "id": "reference:capability-architecture",
       "kind": "REFERENCE",
       "path": "docs/ai/capability-architecture.md"
+    },
+    {
+      "id": "reference:external-skill-acquisition",
+      "kind": "REFERENCE",
+      "path": "docs/ai/external-skill-acquisition.md"
     }
   ],
   "capabilities": [
@@ -435,6 +440,12 @@
       "domain": "HARNESS_AI",
       "asset": "reference:capability-architecture",
       "suggests": ["harness-routing", "token-economy"]
+    },
+    {
+      "id": "external-skill-acquisition",
+      "domain": "HARNESS_AI",
+      "asset": "reference:external-skill-acquisition",
+      "suggests": ["skill-architecture", "token-economy", "quality-gates"]
     }
   ]
 }

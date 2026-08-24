@@ -488,6 +488,29 @@ paths, metadata das skills, evidência literal no source, closure, exclusões,
 deduplicação, precision/recall e métricas de contexto. Ele não é classificador de
 linguagem natural nem runtime paralelo.
 
+## External skill acquisition
+
+| # | Scenario | Expected |
+| --- | --- | --- |
+| ESA-A | capability interna suficiente | external discovery não ocorre |
+| ESA-B | gap completo após internal search | external discovery permitida |
+| ESA-C | popularidade + trigger overlap | somente temporary use; sem promoção cega |
+| ESA-D | pure instruction compatível | `BASELINE` vetting + temporary trial |
+| ESA-E | executable code | `STRONG` vetting antes de trial |
+| ESA-F | instala hook sem isolamento | `REJECT` + `STRONG` vetting |
+| ESA-G | muta config sem isolamento | `REJECT` + `STRONG` vetting |
+| ESA-H | contradiz arquitetura Wayper | `REJECT` |
+| ESA-I | útil com pequena adaptação | `ADAPT_TO_WAYPER` |
+| ESA-J | nenhum candidato adequado | `BUILD_OUR_OWN` |
+| ESA-K | mudança upstream material | re-vetting obrigatório; sem decisão automática |
+| ESA-L | Find Skills broad trigger | `USE_TEMPORARILY`; Router Wayper permanece owner |
+| ESA-M | catálogo interno simulado com 70 entries, sem gap | external discovery não ocorre |
+
+[`external-skill-acquisition-evals.json`](external-skill-acquisition-evals.json)
+é a fonte machine-readable. O validator confirma precondition, classes de risco,
+decisões, provenance/registry links e métricas de bytes. Não pesquisa rede,
+instala skill nem classifica linguagem natural.
+
 ## Validation protocol
 
 1. conferir cada linha contra classes, flags, domínios, skills e specialists
@@ -507,8 +530,10 @@ linguagem natural nem runtime paralelo.
    `docs/ai/hooks-and-gates.md` e os casos H/HF/HE/HS/HG;
 9. conferir modes/context/brief/compaction/accounting contra
    [`token-economy.md`](token-economy.md) e os casos TE/PC/SC/AB;
-10. executar `npm run quality:capabilities` e conferir CR1–CR12 contra source,
-    registry e [`capability-architecture.md`](capability-architecture.md);
+10. executar `npm run quality:capabilities`, conferir CR1–CR12 contra source,
+    registry e [`capability-architecture.md`](capability-architecture.md), e
+    ESA-A–M contra
+    [`external-skill-acquisition.md`](external-skill-acquisition.md);
 11. validar links/paths do Harness;
 12. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
