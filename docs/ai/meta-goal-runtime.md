@@ -154,23 +154,28 @@ duplicá-los:
 5. `AMBIGUITY` — somente após investigação proporcional.
 6. `DECISION_BOUNDARY` — auto, conservador ou humano.
 7. `LOAD_MINIMUM_CONTEXT` — [`context-routing.md`](context-routing.md).
-8. `BUILD_CANDIDATES / PLAN` — top candidates, sem backlog exaustivo.
-9. `SELECT_SAFE_SLICE` — menor melhoria observável e reversível.
-10. `BASELINE` — prova before proporcional.
-11. `IMPLEMENT` — owner atual, reuse-first, menor delta.
-12. `TARGETED_PROOF` — teste/evidência diretamente causal.
-13. `QUALITY_GATE` — Q0-Q3 de [`quality-gates.md`](quality-gates.md).
-14. `REVIEW` — R0-R3 pelas flags do slice.
-15. `SYNTHESIZE` — evidência, safeguards, dedupe e blockers.
-16. `RE-MEASURE` — before, after, delta e quality status.
-17. `COMMIT WHEN APPROPRIATE` — slice integrado e coerente, se autorizado.
-18. `LEARNING_DELTA` — apenas novidades relevantes.
-19. `FOLLOW_UPS` — classificar e deduplicar descobertas.
-20. `CONTINUE_OR_STOP` — re-rankear ou aplicar stop condition.
+8. `ENTRY_CAPABILITY` — Pass 1 do
+   [`capability-architecture.md`](capability-architecture.md).
+9. `SOURCE_DEPENDENCY_WALK` — consumers, owner, contract e producer aplicáveis.
+10. `DEPENDENCY_EXPANSION / CONTEXT_CLOSURE` — Pass 2 somente por evidence.
+11. `BUILD_CANDIDATES / PLAN` — top candidates, sem backlog exaustivo.
+12. `SELECT_SAFE_SLICE` — menor melhoria observável e reversível.
+13. `BASELINE` — prova before proporcional.
+14. `IMPLEMENT` — owner atual, reuse-first, menor delta.
+15. `TARGETED_PROOF` — teste/evidência diretamente causal.
+16. `QUALITY_GATE` — Q0-Q3 de [`quality-gates.md`](quality-gates.md).
+17. `REVIEW` — R0-R3 pelas flags do slice.
+18. `SYNTHESIZE` — evidência, safeguards, dedupe e blockers.
+19. `RE-MEASURE` — before, after, delta e quality status.
+20. `COMMIT WHEN APPROPRIATE` — slice integrado e coerente, se autorizado.
+21. `LEARNING_DELTA` — apenas novidades relevantes.
+22. `FOLLOW_UPS` — classificar e deduplicar descobertas.
+23. `CONTINUE_OR_STOP` — re-rankear ou aplicar stop condition.
 
-Em `TASK_MODE`, o passo 20 termina após o objetivo pontual. Em
+Em `TASK_MODE`, o passo 23 termina após o objetivo pontual. Em
 `META_GOAL_MODE`, ele retorna ao passo 1 com o estado atual, nunca com um plano
-antigo presumido correto.
+antigo presumido correto. O working set de capability também volta ao Pass 1:
+não acumule skills entre slices; preserve somente Learning Delta relevante.
 
 ## Candidates e ranking
 

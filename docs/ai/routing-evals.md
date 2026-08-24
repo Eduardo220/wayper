@@ -2,14 +2,17 @@
 
 > **Status:** vigente<br>
 > **Tipo:** suíte declarativa, sem API externa<br>
-> **Contagem:** 250 evals anteriores + 32 de token economy = 282<br>
+> **Contagem:** 250 evals anteriores + 32 de token economy + 12 de capability
+> closure = 294<br>
 > **Owners:** [`task-classification.md`](task-classification.md) e
 > [`context-routing.md`](context-routing.md), com safety de waves em
 > [`orchestration.md`](orchestration.md) e gates/review em
 > [`quality-gates.md`](quality-gates.md), com memory em
 > [`memory-policy.md`](memory-policy.md) e automated backstop em
 > [`hooks-and-gates.md`](hooks-and-gates.md), com economia/evidence em
-> [`token-economy.md`](token-economy.md)
+> [`token-economy.md`](token-economy.md), com capabilities e Context Closure em
+> [`capability-architecture.md`](capability-architecture.md) e fixtures
+> executáveis em [`capability-routing-evals.json`](capability-routing-evals.json)
 
 Cada caso passa quando a classificação respeita todos os campos e não ativa os
 recursos proibidos. `POTENTIAL` significa selecionar o recurso somente depois
@@ -439,6 +442,28 @@ que a inspeção confirmar a flag; não é ativação default.
 | AB7 | RTK/Caveman publicam percentuais próprios | registrar origem/overhead; não promover a receipt desta sessão |
 | AB8 | T1–T4 | medir BEFORE/AFTER quando possível e manter quality/evidence gates verdes |
 
+## Capability routing e Context Closure
+
+| # | Entrada / relação confirmada | Closure esperada | Não pode ocorrer |
+| --- | --- | --- | --- |
+| CR1 | ranking semanal → XP | `weekly-ranking + xp-progression`; 0 skills | carregar social/território |
+| CR2 | ranking → friends `INTERFACE_ONLY` | capability friends sem body adicional | promover interface a owner crítico |
+| CR3 | ranking → membership de grupo | ranking + referência social | assumir implementação de ranking de grupo |
+| CR4 | XP offline → deferred/sync/ranking | persistence skill + owners confirmados | fazer Firestore bloquear save local |
+| CR5 | recovery → lifecycle/notificação | active-run skill | abrir território/ranking |
+| CR6 | copy trivial | somente UI reference | expansão por palavra solta |
+| CR7 | ranking local → profile stats | dependência inesperada entra após source walk | limitar-se ao mapa sugerido |
+| CR8 | relação apenas `SUGGESTS` | somente entry capability | auto-load sem confirmação |
+| CR9 | sugestão transitiva | closure não recursiva | carregar grafo inteiro |
+| CR10 | catálogo simulado com 70 capabilities | duas capabilities, 0 skill bodies | persistir capability/skill falsa |
+| CR11 | recovery → durable save `OWNER_CRITICAL` | active-run + persistence skills | omitir owner de persistência |
+| CR12 | requisito sem owner/capability | `CAPABILITY_GAP` explícito | inventar skill ou capability |
+
+O JSON é a fonte machine-readable desses 12 casos. O validator confirma schema,
+paths, metadata das skills, evidência literal no source, closure, exclusões,
+deduplicação, precision/recall e métricas de contexto. Ele não é classificador de
+linguagem natural nem runtime paralelo.
+
 ## Validation protocol
 
 1. conferir cada linha contra classes, flags, domínios, skills e specialists
@@ -458,10 +483,12 @@ que a inspeção confirmar a flag; não é ativação default.
    `docs/ai/hooks-and-gates.md` e os casos H/HF/HE/HS/HG;
 9. conferir modes/context/brief/compaction/accounting contra
    [`token-economy.md`](token-economy.md) e os casos TE/PC/SC/AB;
-10. validar links/paths do Harness;
-11. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
+10. executar `npm run quality:capabilities` e conferir CR1–CR12 contra source,
+    registry e [`capability-architecture.md`](capability-architecture.md);
+11. validar links/paths do Harness;
+12. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
 
-Como o router é uma política interpretada e não um programa, estes evals não
-simulam heurísticas de palavras. Eles testam o contrato semântico e, em
-especial, os falsos positivos proibidos.
+O router primário continua uma política interpretada, não heurística de palavras.
+Somente CR1–CR12 têm composição determinística executável; eles testam o contrato
+de closure a partir de capabilities já classificadas, não intenção autônoma.

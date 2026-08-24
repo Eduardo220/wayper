@@ -761,3 +761,23 @@ compaction nativa do Codex é aceita como runtime opaco, sem fallback ou hook do
 projeto. Benchmarks separam bytes de contexto, tool output e model output de
 billed tokens, que permanecem desconhecidos sem receipt. Política e evals estão
 em `docs/ai/token-economy.md` e `docs/ai/routing-evals.md`.
+
+### Adendo — Capability Architecture + Context Closure
+
+**Status:** aceito em 2026-08-23
+
+**Decisão:** um registry JSON on-demand cataloga as 43 capabilities reais do
+Harness em 12 domains e aponta para 4 skills e referências já existentes. O
+router opera em duas passagens: escolhe domain/capability/asset de entrada e,
+após caminhar pelos imports, callers, consumers e testes relevantes, compõe a
+menor Context Closure suficiente. Relação declarada apenas sugere investigação;
+somente o source confirma dependência e sua classe `INTERFACE_ONLY`,
+`BEHAVIOR_RELEVANT` ou `OWNER_CRITICAL`.
+
+**Consequências:** não há nova skill, specialist, hook, runtime, dependência,
+embedding, vector DB ou mudança no app. Um validator Node sem dependências mede
+discovery permanente, bodies on-demand, assets compostos, precision/recall,
+loads irrelevantes e capabilities perdidas em 12 fixtures, inclusive catálogo
+simulado de 70 entradas e `CAPABILITY_GAP`. Política, registry e evals ficam em
+`docs/ai/capability-architecture.md`, `docs/ai/capability-registry.json` e
+`docs/ai/capability-routing-evals.json`.

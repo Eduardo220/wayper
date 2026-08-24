@@ -1,0 +1,374 @@
+{
+  "schemaVersion": 1,
+  "domains": [
+    "RUN_RUNTIME",
+    "MOBILE_SHELL",
+    "PERSISTENCE_SYNC",
+    "TERRITORY_GEO",
+    "FIREBASE_AUTH",
+    "SOCIAL",
+    "UI_DESIGN",
+    "DIAGNOSTICS_SENTRY",
+    "ANDROID_NATIVE",
+    "TEST_BUILD",
+    "PRODUCT_RULES",
+    "HARNESS_AI"
+  ],
+  "assets": [
+    {
+      "id": "skill:wayper-active-run",
+      "kind": "SKILL",
+      "path": ".agents/skills/wayper-active-run/SKILL.md"
+    },
+    {
+      "id": "skill:wayper-mobile-shell",
+      "kind": "SKILL",
+      "path": ".agents/skills/wayper-mobile-shell/SKILL.md"
+    },
+    {
+      "id": "skill:wayper-persistence-sync",
+      "kind": "SKILL",
+      "path": ".agents/skills/wayper-persistence-sync/SKILL.md"
+    },
+    {
+      "id": "skill:wayper-territory-map",
+      "kind": "SKILL",
+      "path": ".agents/skills/wayper-territory-map/SKILL.md"
+    },
+    {
+      "id": "reference:firebase",
+      "kind": "REFERENCE",
+      "path": "docs/wayper/08-firebase-firestore.md"
+    },
+    {
+      "id": "reference:social-flows",
+      "kind": "REFERENCE",
+      "path": "docs/06-fluxos-de-usuario.md"
+    },
+    {
+      "id": "reference:ranking-xp",
+      "kind": "REFERENCE",
+      "path": "docs/wayper/06-xp-nivel-ranking.md"
+    },
+    {
+      "id": "reference:ui-design",
+      "kind": "REFERENCE",
+      "path": "docs/09-design-e-wireframes.md"
+    },
+    {
+      "id": "reference:diagnostics",
+      "kind": "REFERENCE",
+      "path": "docs/diagnostics.md"
+    },
+    {
+      "id": "reference:android-runtime",
+      "kind": "REFERENCE",
+      "path": "docs/22-teste-real-corrida-background.md"
+    },
+    {
+      "id": "reference:test-build",
+      "kind": "REFERENCE",
+      "path": "docs/12-guia-de-testes.md"
+    },
+    {
+      "id": "reference:product-rules",
+      "kind": "REFERENCE",
+      "path": "docs/10-regras-de-negocio.md"
+    },
+    {
+      "id": "reference:harness-routing",
+      "kind": "REFERENCE",
+      "path": "docs/ai/context-routing.md"
+    },
+    {
+      "id": "reference:harness-quality",
+      "kind": "REFERENCE",
+      "path": "docs/ai/quality-gates.md"
+    },
+    {
+      "id": "reference:harness-goals",
+      "kind": "REFERENCE",
+      "path": "docs/ai/meta-goal-runtime.md"
+    },
+    {
+      "id": "reference:harness-memory",
+      "kind": "REFERENCE",
+      "path": "docs/ai/memory-policy.md"
+    },
+    {
+      "id": "reference:harness-hooks",
+      "kind": "REFERENCE",
+      "path": "docs/ai/hooks-and-gates.md"
+    },
+    {
+      "id": "reference:harness-tokens",
+      "kind": "REFERENCE",
+      "path": "docs/ai/token-economy.md"
+    },
+    {
+      "id": "reference:capability-architecture",
+      "kind": "REFERENCE",
+      "path": "docs/ai/capability-architecture.md"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "active-run-lifecycle",
+      "domain": "RUN_RUNTIME",
+      "asset": "skill:wayper-active-run",
+      "suggests": ["active-run-recovery", "active-run-notification", "live-gps-ingestion"]
+    },
+    {
+      "id": "active-run-recovery",
+      "domain": "RUN_RUNTIME",
+      "asset": "skill:wayper-active-run",
+      "suggests": ["active-run-lifecycle", "durable-run-save"]
+    },
+    {
+      "id": "active-run-notification",
+      "domain": "RUN_RUNTIME",
+      "asset": "skill:wayper-active-run",
+      "suggests": ["active-run-lifecycle", "android-run-boundary"]
+    },
+    {
+      "id": "live-gps-ingestion",
+      "domain": "RUN_RUNTIME",
+      "asset": "skill:wayper-active-run",
+      "suggests": ["route-geometry"]
+    },
+    {
+      "id": "run-finish-handoff",
+      "domain": "RUN_RUNTIME",
+      "asset": "skill:wayper-active-run",
+      "suggests": ["run-finalization", "deferred-post-run-processing"]
+    },
+    {
+      "id": "app-bootstrap",
+      "domain": "MOBILE_SHELL",
+      "asset": "skill:wayper-mobile-shell",
+      "suggests": ["auth-session-gate", "root-navigation"]
+    },
+    {
+      "id": "auth-session-gate",
+      "domain": "MOBILE_SHELL",
+      "asset": "skill:wayper-mobile-shell",
+      "suggests": ["firebase-auth"]
+    },
+    {
+      "id": "root-navigation",
+      "domain": "MOBILE_SHELL",
+      "asset": "skill:wayper-mobile-shell",
+      "suggests": []
+    },
+    {
+      "id": "onboarding-permissions",
+      "domain": "MOBILE_SHELL",
+      "asset": "skill:wayper-mobile-shell",
+      "suggests": ["android-run-boundary"]
+    },
+    {
+      "id": "durable-run-save",
+      "domain": "PERSISTENCE_SYNC",
+      "asset": "skill:wayper-persistence-sync",
+      "suggests": ["run-finalization"]
+    },
+    {
+      "id": "run-finalization",
+      "domain": "PERSISTENCE_SYNC",
+      "asset": "skill:wayper-persistence-sync",
+      "suggests": ["deferred-post-run-processing", "run-sync-replay"]
+    },
+    {
+      "id": "deferred-post-run-processing",
+      "domain": "PERSISTENCE_SYNC",
+      "asset": "skill:wayper-persistence-sync",
+      "suggests": ["xp-progression", "run-sync-replay", "weekly-ranking", "social-feed"]
+    },
+    {
+      "id": "run-sync-replay",
+      "domain": "PERSISTENCE_SYNC",
+      "asset": "skill:wayper-persistence-sync",
+      "suggests": ["firestore-access"]
+    },
+    {
+      "id": "storage-migration",
+      "domain": "PERSISTENCE_SYNC",
+      "asset": "skill:wayper-persistence-sync",
+      "suggests": []
+    },
+    {
+      "id": "route-geometry",
+      "domain": "TERRITORY_GEO",
+      "asset": "skill:wayper-territory-map",
+      "suggests": ["live-gps-ingestion", "map-data-adaptation"]
+    },
+    {
+      "id": "territory-capture",
+      "domain": "TERRITORY_GEO",
+      "asset": "skill:wayper-territory-map",
+      "suggests": ["territory-storage", "xp-progression"]
+    },
+    {
+      "id": "territory-storage",
+      "domain": "TERRITORY_GEO",
+      "asset": "skill:wayper-territory-map",
+      "suggests": ["run-sync-replay"]
+    },
+    {
+      "id": "map-data-adaptation",
+      "domain": "TERRITORY_GEO",
+      "asset": "skill:wayper-territory-map",
+      "suggests": ["screen-ui-accessibility"]
+    },
+    {
+      "id": "firebase-auth",
+      "domain": "FIREBASE_AUTH",
+      "asset": "reference:firebase",
+      "suggests": ["auth-session-gate"]
+    },
+    {
+      "id": "firestore-access",
+      "domain": "FIREBASE_AUTH",
+      "asset": "reference:firebase",
+      "suggests": ["run-sync-replay"]
+    },
+    {
+      "id": "social-feed",
+      "domain": "SOCIAL",
+      "asset": "reference:social-flows",
+      "suggests": ["friends", "user-profile"]
+    },
+    {
+      "id": "friends",
+      "domain": "SOCIAL",
+      "asset": "reference:social-flows",
+      "suggests": ["weekly-ranking", "user-profile"]
+    },
+    {
+      "id": "group-membership",
+      "domain": "SOCIAL",
+      "asset": "reference:social-flows",
+      "suggests": ["weekly-ranking", "user-profile"]
+    },
+    {
+      "id": "user-profile",
+      "domain": "SOCIAL",
+      "asset": "reference:social-flows",
+      "suggests": ["local-profile-stats"]
+    },
+    {
+      "id": "weekly-ranking",
+      "domain": "SOCIAL",
+      "asset": "reference:ranking-xp",
+      "suggests": ["xp-progression", "friends", "group-membership", "user-profile"]
+    },
+    {
+      "id": "monthly-ranking",
+      "domain": "SOCIAL",
+      "asset": "reference:ranking-xp",
+      "suggests": ["user-profile", "local-profile-stats"]
+    },
+    {
+      "id": "local-leader-ranking",
+      "domain": "SOCIAL",
+      "asset": "reference:ranking-xp",
+      "suggests": ["territory-storage"]
+    },
+    {
+      "id": "xp-progression",
+      "domain": "PRODUCT_RULES",
+      "asset": "reference:ranking-xp",
+      "suggests": ["deferred-post-run-processing", "local-profile-stats", "weekly-ranking"]
+    },
+    {
+      "id": "local-profile-stats",
+      "domain": "PERSISTENCE_SYNC",
+      "asset": "reference:ranking-xp",
+      "suggests": ["xp-progression", "weekly-ranking"]
+    },
+    {
+      "id": "achievements-rewards",
+      "domain": "PRODUCT_RULES",
+      "asset": "reference:product-rules",
+      "suggests": ["xp-progression"]
+    },
+    {
+      "id": "screen-ui-accessibility",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": []
+    },
+    {
+      "id": "local-diagnostics",
+      "domain": "DIAGNOSTICS_SENTRY",
+      "asset": "reference:diagnostics",
+      "suggests": ["sentry-monitoring"]
+    },
+    {
+      "id": "sentry-monitoring",
+      "domain": "DIAGNOSTICS_SENTRY",
+      "asset": "reference:diagnostics",
+      "suggests": []
+    },
+    {
+      "id": "android-run-boundary",
+      "domain": "ANDROID_NATIVE",
+      "asset": "reference:android-runtime",
+      "suggests": ["active-run-lifecycle", "active-run-notification"]
+    },
+    {
+      "id": "test-build",
+      "domain": "TEST_BUILD",
+      "asset": "reference:test-build",
+      "suggests": ["quality-gates"]
+    },
+    {
+      "id": "product-rules",
+      "domain": "PRODUCT_RULES",
+      "asset": "reference:product-rules",
+      "suggests": []
+    },
+    {
+      "id": "harness-routing",
+      "domain": "HARNESS_AI",
+      "asset": "reference:harness-routing",
+      "suggests": ["skill-architecture", "quality-gates"]
+    },
+    {
+      "id": "quality-gates",
+      "domain": "HARNESS_AI",
+      "asset": "reference:harness-quality",
+      "suggests": []
+    },
+    {
+      "id": "goal-runtime",
+      "domain": "HARNESS_AI",
+      "asset": "reference:harness-goals",
+      "suggests": ["harness-routing", "quality-gates"]
+    },
+    {
+      "id": "high-signal-memory",
+      "domain": "HARNESS_AI",
+      "asset": "reference:harness-memory",
+      "suggests": ["harness-routing"]
+    },
+    {
+      "id": "completion-backstop",
+      "domain": "HARNESS_AI",
+      "asset": "reference:harness-hooks",
+      "suggests": ["quality-gates"]
+    },
+    {
+      "id": "token-economy",
+      "domain": "HARNESS_AI",
+      "asset": "reference:harness-tokens",
+      "suggests": ["harness-routing"]
+    },
+    {
+      "id": "skill-architecture",
+      "domain": "HARNESS_AI",
+      "asset": "reference:capability-architecture",
+      "suggests": ["harness-routing", "token-economy"]
+    }
+  ]
+}

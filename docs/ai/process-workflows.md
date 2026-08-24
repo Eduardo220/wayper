@@ -23,6 +23,12 @@ Não crie skill para repetir “investigue, implemente e teste”. Metadata nova
 gatilho discriminativo, frequência/risco comprovado e economia maior que o custo
 permanente.
 
+Os critérios completos de `PROMOTE_TO_SKILL`, `KEEP_AS_REFERENCE`, `MERGE` e
+`DEPRECATE` pertencem a
+[`capability-architecture.md`](capability-architecture.md). O registry pode
+catalogar uma capability coberta por reference; ausência de skill homônima não é
+gap nem motivo de promoção.
+
 ## Decisões de workflow
 
 | Candidato | Decisão | Motivo |

@@ -140,12 +140,64 @@ fallback project-scoped. Após milestone/compaction, revalidar estado material
 contra Git/source/testes, preservar constraints e continuar pelo resumo compacto
 de Meta Goal. Nunca baixar reasoning effort só para economizar tokens.
 
+## Discovery de skills e Capability Closure
+
+A [documentação oficial do Codex](https://learn.chatgpt.com/docs/build-skills)
+confirma progressive disclosure: o runtime inicia com `name`, `description` e
+path de cada skill, carrega o `SKILL.md` completo somente ao selecionar a skill e
+limita a lista inicial a 2% da context window ou 8.000 caracteres quando a janela
+é desconhecida. Em listas grandes, descriptions podem ser reduzidas e skills
+podem ser omitidas com warning. Portanto bodies são on-demand, mas metadata não
+é gratuita.
+
+[`capability-registry.json`](capability-registry.json) fica on-demand e permite
+discovery hierárquico quando o catálogo crescer: domain/capability primeiro,
+asset depois. Ele não adiciona skill bootstrap, metadata ou linha ao
+`AGENTS.md`. A seleção e Context Closure pertencem a
+[`capability-architecture.md`](capability-architecture.md).
+
+Baseline local desta unidade, reproduzida por `npm run quality:capabilities`:
+
+| Métrica | Before | After |
+| --- | ---: | ---: |
+| `TOTAL_CAPABILITIES` canônicas | 0 | 43 |
+| `ACTIVE_SKILLS` | 4 | 4 |
+| `REGISTRY_BYTES` on-demand | 0 B | 9.994 B |
+| `PERMANENT_DISCOVERY_BYTES` das quatro skills | 1.074 B | 1.074 B |
+| `ON_DEMAND_SKILL_BODY_BYTES` disponíveis | 12.872 B | 12.872 B |
+| `PERMANENT_CONTEXT_BYTES` Wayper | 7.311 B | 7.311 B |
+| routing evals declarativas | 282 | 294 |
+
+`PERMANENT_DISCOVERY_BYTES` conta UTF-8 de name + description + path absoluto
+observado das skills do projeto, sem estimar formatação/overhead do runtime; é
+subconjunto do contexto permanente, não valor somável a 7.311 B. O path torna o
+número dependente do checkout, por isso o validator remede em cada ambiente.
+
+Nas 12 fixtures de closure: `SKILLS_LOADED_PER_TASK` foi 0–2 (média 0,33),
+`COMPOSED_CONTEXT_BYTES` foi 4.223–15.065 B (média 7.180 B),
+`IRRELEVANT_SKILL_LOADS=0` e `MISSED_CAPABILITIES=0`. Precision/recall do working
+set foram 100% contra expectations declarativas; isso prova composição do
+resolver por evidence, não classificação semântica autônoma de linguagem.
+
+A simulação em memória usa catálogo de 70 capabilities, seleciona
+`weekly-ranking + xp-progression` e carrega somente essas duas capabilities,
+zero skill bodies e 5.887 B de reference deduplicada. Nenhuma capability ou skill
+falsa é persistida.
+
 ## Contabilidade
 
 | Métrica | Definição | Claim permitido |
 | --- | --- | --- |
 | `PERMANENT_CONTEXT_BYTES` | bytes model-visible/project-scoped carregados antes da task | crescimento byte a byte; não billed tokens |
+| `TOTAL_CAPABILITIES` | entries canônicas no registry on-demand | tamanho da biblioteca, não tamanho do working set |
+| `ACTIVE_SKILLS` | assets `SKILL` ativos no registry | inventário, não ativações por task |
+| `REGISTRY_BYTES` | tamanho UTF-8 do registry on-demand | custo do catálogo quando aberto |
+| `PERMANENT_DISCOVERY_BYTES` | payload observado de name + description + path das skills | proxy local; não inclui overhead do runtime |
 | `ON_DEMAND_CONTEXT_BYTES` | bytes dos arquivos/ranges realmente selecionados | proxy de prompt/context savings |
+| `SKILLS_LOADED_PER_TASK` | bodies de skill distintos na Context Closure | escala do working set |
+| `COMPOSED_CONTEXT_BYTES` | bytes deduplicados dos assets selecionados pela fixture | não inclui source ranges/runtime overhead |
+| `IRRELEVANT_SKILL_LOADS` | skill body carregado fora do expected working set | waste do router |
+| `MISSED_CAPABILITIES` | capability esperada ausente da closure | recall failure do router |
 | `TOOL_OUTPUT_RAW` | stdout/stderr raw produzido pelo mesmo comando | bytes/linhas observados |
 | `TOOL_OUTPUT_OPTIMIZED` | output após filtro, com mesmo cenário/exit | bytes/linhas observados e delta |
 | `SUBAGENT_BRIEF_BYTES` | briefing explicitamente enviado; `0` em `S0` | não inclui overhead oculto/runtime |

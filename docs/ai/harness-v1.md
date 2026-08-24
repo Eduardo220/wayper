@@ -4,7 +4,7 @@
 > **Escopo:** repositório mobile<br>
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
 > Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
-> Memory + Automated Gates + Token Economy V1,
+> Memory + Automated Gates + Token Economy + Capability Architecture,
 > 2026-08-23<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
@@ -23,9 +23,11 @@ AGENTS.md
      -> task class + risk flags
         -> diff real + Q0-Q3 gate + R0-R3 review
         -> process contract quando necessário + context map mínimo
+           -> Pass 1: entry domain/capability/skill-or-reference
            -> decisão S0 single ou delegação com valor comprovado
-           -> docs/00-fontes-do-projeto.md + memory match/skill sob demanda
-           -> source, callers e testes atuais
+           -> docs/00-fontes-do-projeto.md + memory match/asset sob demanda
+           -> source dependency walk + Pass 2 por evidence
+           -> minimum sufficient context closure
               -> waves/read-only specialists quando necessário
                  -> synthesis + validation pelo agente principal
                     -> outputs generated, nunca autoridade
@@ -61,6 +63,11 @@ evidência datada.
   project-scoped; automatiza somente gates determinísticos por changed-scope.
 - `docs/ai/token-economy.md`: modos `COMPACT/CLEAR/EXACT`, leitura progressiva,
   briefs mínimos, compaction nativa e medição sem confundir bytes com billing.
+- `docs/ai/capability-architecture.md` e
+  `docs/ai/capability-registry.json`: vocabulário, policy skill-vs-reference,
+  inventário compacto, routing em duas passagens e Context Closure on-demand.
+- `scripts/quality/check-capability-routing.mjs`: validator/evals determinísticos
+  do registry; não é intent classifier, runtime ou dependency walker automático.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
@@ -111,12 +118,13 @@ mobile ou substitui Q/R.
 1. carregar `AGENTS.md` e metadata de descoberta;
 2. distinguir task pontual de meta contínua; carregar Goal contract só na meta;
 3. classificar tarefa/flags e selecionar gate/review pelo diff real;
-4. selecionar processo, domínios, catálogo/docs e skills mínimas;
+4. executar Pass 1 e selecionar processo, entry domain/capability e asset mínimo;
 5. consultar o memory index somente quando domínio/risco justificar e abrir no
    máximo os topics relevantes;
 6. permanecer single-agent ou decompor somente por valor e independência;
 7. localizar symbols/headings e preferir ranges suficientes a arquivos grandes;
-8. confirmar código, callers e testes; memory nunca substitui essa confirmação;
+8. confirmar código, callers e testes, expandir dependencies por classificação e
+   fechar Context Closure; memory nunca substitui essa confirmação;
 9. sintetizar e subir contexto, Graphify ou especialista só por evidência.
 
 Não existe ciclo `AGENTS -> docs -> skill -> AGENTS`: skills referenciam owners,
@@ -133,6 +141,10 @@ e topics on-demand. Boundaries simples de import e o ratchet owner-specific
 estão implementados sem nova dependência.
 Token Economy também permanece declarativa: não cria compressor, hook de
 compaction, session logger, tokenizer ou billing estimator do projeto.
+Capability Architecture também permanece declarativa: não cria embeddings,
+vector DB, banco, intent classifier, full-graph loader ou segundo execution
+runtime. Registry e evals são abertos somente quando o Pass 1 precisa resolver
+capability/asset além do mapa rápido.
 As quatro skills possuem workflows de domínio; processos genéricos permanecem
 nativos e usam os contratos de
 [`docs/ai/process-workflows.md`](process-workflows.md). A delegação segue

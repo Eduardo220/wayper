@@ -19,6 +19,7 @@ conteúdos em prompts, skills, agents ou hooks.
 | `docs/` | estado, direção, decisões e explicações detalhadas |
 | `docs/ai/memory/` | índice/topics técnicos hard-earned, somente sob demanda |
 | `.agents/skills/` | workflow de domínio carregado sob demanda |
+| `docs/ai/capability-registry.json` | inventário on-demand de capability → skill/reference |
 | `.codex/agents/` | especialização read-only com gatilho concreto |
 | hooks | enforcement determinístico; não substituem documentação |
 | `docs/ai/token-economy.md` | leitura/output/contexto sob demanda; não reduz reasoning ou evidence |
@@ -27,7 +28,9 @@ A arquitetura e as fronteiras project/global/generated estão em
 [`docs/ai/harness-v1.md`](ai/harness-v1.md).
 Classificação, flags e seleção mínima pertencem a
 [`docs/ai/task-classification.md`](ai/task-classification.md) e
-[`docs/ai/context-routing.md`](ai/context-routing.md). Delegação, waves e síntese
+[`docs/ai/context-routing.md`](ai/context-routing.md); capability composition e
+Context Closure pertencem a
+[`docs/ai/capability-architecture.md`](ai/capability-architecture.md). Delegação, waves e síntese
 pertencem a [`docs/ai/orchestration.md`](ai/orchestration.md). Gates/review
 adaptativos pertencem a [`docs/ai/quality-gates.md`](ai/quality-gates.md). Metas
 contínuas, autonomia e Human Decision Boundary pertencem a

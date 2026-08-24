@@ -18,10 +18,13 @@ subconjunto a abrir para a tarefa atual.
 3. inspecionar o diff real e selecionar `GATE_LEVEL`/`REVIEW_MODE` por
    [`quality-gates.md`](quality-gates.md);
 4. selecionar processo somente quando ele acrescentar disciplina;
-5. escolher somente os domínios realmente afetados;
-6. iniciar no menor context level suficiente;
-7. consultar memory somente quando task, domínio e risco justificarem;
-8. carregar as skills e fontes indicadas, depois confirmar source/callers/testes;
+5. executar Pass 1: escolher `ENTRY_DOMAIN`, `ENTRY_CAPABILITY` e o menor
+   skill/reference do [`capability-registry.json`](capability-registry.json);
+6. iniciar no menor context level suficiente e consultar memory somente quando
+   task, domínio e risco justificarem;
+7. investigar source/callers/testes pelo dependency walk aplicável;
+8. executar Pass 2: expandir apenas dependencies confirmadas, classificá-las e
+   fechar o minimum sufficient context;
 9. usar Graphify ou specialist apenas quando incerteza/risco justificar;
 10. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
 
@@ -40,6 +43,32 @@ ativa `META_GOAL_MODE` sem intenção de outcome contínuo.
 
 Meta Goal compõe classifier, processos e domains por slice. Não cria classe,
 skill, specialist ou gate de qualidade próprio.
+
+## Capability routing e Context Closure
+
+O contrato, a taxonomia e a política skill-vs-reference pertencem a
+[`capability-architecture.md`](capability-architecture.md). O registry é aberto
+sob demanda depois que o domínio de entrada foi selecionado; não entra em
+`LEVEL 0`.
+
+```text
+PASS 1 — INTENT ROUTING
+ENTRY_DOMAIN -> ENTRY_CAPABILITY -> ENTRY_SKILL_OR_REFERENCE
+
+PASS 2 — DEPENDENCY EXPANSION
+SOURCE DEPENDENCY WALK -> CONFIRMED DEPENDENCIES -> CONTEXT CLOSURE
+```
+
+O domínio citado pelo usuário é entrypoint, não veredito de causa. Relações
+`suggests`, Graphify e proximidade semântica ajudam discovery, mas não são
+percorridas nem carregadas automaticamente. Cada dependency confirmada recebe
+`INTERFACE_ONLY`, `BEHAVIOR_RELEVANT` ou `OWNER_CRITICAL`; source atual confirma
+qualquer expansão.
+
+Em Meta longa, o working set é recalculado por safe slice. Preserve somente
+Learning Delta relevante; uma skill carregada antes não permanece ativa por
+inércia. `CAPABILITY_GAP` só é declarado após task + source + registry não
+cobrirem o conhecimento/workflow necessário.
 
 ## Memory lookup gate
 
@@ -410,13 +439,15 @@ branch atual sempre confirmam ownership.
   skill/agent para workflow especializado; `quality-gates.md` para gates/review;
   `meta-goal-runtime.md` para metas contínuas/autonomia e `memory-policy.md` para
   hard-earned learning on-demand; `hooks-and-gates.md` somente para runtime de
-  hooks/automação determinística; `token-economy.md` para leitura, output,
-  briefs e compaction.
+  hooks/automação determinística; `capability-architecture.md` e seu registry
+  para capabilities/closure; `token-economy.md` para leitura, output, briefs e
+  compaction.
 - **Docs:** `harness-v1.md` e somente o owner do aspecto tocado; não pré-carregue a
   suíte `docs/ai`. `token-economy.md` entra para contexto/output/RTK/Caveman,
   compaction ou brief, não em toda mudança de Harness.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
-  produto para garantir ausência de regressão.
+  produto para garantir ausência de regressão;
+  `npm run quality:capabilities` quando registry/closure mudar.
 - **Skills:** nenhuma skill de domínio por padrão.
 - **Specialists:** nenhum dos quatro reviewers mobile por padrão; papéis de
   architecture/review genérico são nativos.

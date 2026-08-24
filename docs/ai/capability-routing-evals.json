@@ -1,0 +1,265 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "CR1_RANKING_XP",
+      "task": "ranking semanal mostra XP errado",
+      "entryDomain": "SOCIAL",
+      "entryCapabilities": ["weekly-ranking"],
+      "dependencies": [
+        {
+          "capability": "xp-progression",
+          "classification": "BEHAVIOR_RELEVANT",
+          "sourceConfirmed": true,
+          "evidence": "src/services/ranking/ranking.weekly.js",
+          "evidencePattern": "xp: 0.6"
+        }
+      ],
+      "expected": {
+        "capabilities": ["weekly-ranking", "xp-progression"],
+        "skills": [],
+        "excluded": ["friends", "group-membership", "user-profile", "territory-capture"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR2_RANKING_FRIENDS_INTERFACE",
+      "task": "ranking de amigos usa a lista errada",
+      "entryDomain": "SOCIAL",
+      "entryCapabilities": ["weekly-ranking"],
+      "dependencies": [
+        {
+          "capability": "friends",
+          "classification": "INTERFACE_ONLY",
+          "sourceConfirmed": true,
+          "evidence": "src/services/ranking/fetchFirestore.js",
+          "evidencePattern": "scope === \"friends\""
+        }
+      ],
+      "expected": {
+        "capabilities": ["weekly-ranking", "friends"],
+        "skills": [],
+        "interfaceOnly": ["friends"],
+        "excluded": ["group-membership", "xp-progression"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR3_RANKING_GROUP_MEMBERSHIP",
+      "task": "ranking do grupo inclui quem nao e membro",
+      "entryDomain": "SOCIAL",
+      "entryCapabilities": ["weekly-ranking"],
+      "dependencies": [
+        {
+          "capability": "group-membership",
+          "classification": "BEHAVIOR_RELEVANT",
+          "sourceConfirmed": true,
+          "evidence": "src/screens/Group/GroupDetailScreen.js",
+          "evidencePattern": "collection(db, \"groups\", groupId, \"members\")"
+        }
+      ],
+      "expected": {
+        "capabilities": ["weekly-ranking", "group-membership"],
+        "skills": [],
+        "excluded": ["friends", "xp-progression", "territory-capture"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR4_OFFLINE_XP_SYNC_RANKING",
+      "task": "XP ganho offline nao chega corretamente ao ranking depois do sync",
+      "entryDomain": "PRODUCT_RULES",
+      "entryCapabilities": ["xp-progression"],
+      "dependencies": [
+        {
+          "capability": "deferred-post-run-processing",
+          "classification": "OWNER_CRITICAL",
+          "sourceConfirmed": true,
+          "evidence": "src/services/run/runDeferredTaskQueueService.js",
+          "evidencePattern": "RUN_XP_UPDATE"
+        },
+        {
+          "capability": "run-sync-replay",
+          "classification": "BEHAVIOR_RELEVANT",
+          "sourceConfirmed": true,
+          "evidence": "src/services/run/runSyncQueueService.js",
+          "evidencePattern": "syncRunsToFirestore"
+        },
+        {
+          "capability": "weekly-ranking",
+          "classification": "BEHAVIOR_RELEVANT",
+          "sourceConfirmed": true,
+          "evidence": "src/repositories/rankingRepository.js",
+          "evidencePattern": "getLocalProfileStats"
+        }
+      ],
+      "expected": {
+        "capabilities": [
+          "xp-progression",
+          "deferred-post-run-processing",
+          "run-sync-replay",
+          "weekly-ranking"
+        ],
+        "skills": ["wayper-persistence-sync"],
+        "ownerCritical": ["deferred-post-run-processing"],
+        "excluded": ["friends", "group-membership", "territory-capture"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR5_ACTIVE_RUN_RECOVERY_LIFECYCLE_NOTIFICATION",
+      "task": "recovery da corrida perde a notificacao ao voltar do background",
+      "entryDomain": "RUN_RUNTIME",
+      "entryCapabilities": ["active-run-recovery"],
+      "dependencies": [
+        {
+          "capability": "active-run-lifecycle",
+          "classification": "OWNER_CRITICAL",
+          "sourceConfirmed": true,
+          "evidence": "src/services/runTracking/activeRunRuntimeService.js",
+          "evidencePattern": "reconcileActiveRunState"
+        },
+        {
+          "capability": "active-run-notification",
+          "classification": "BEHAVIOR_RELEVANT",
+          "sourceConfirmed": true,
+          "evidence": "src/services/run/runNotificationService.js",
+          "evidencePattern": "updateRunNotification"
+        }
+      ],
+      "expected": {
+        "capabilities": ["active-run-recovery", "active-run-lifecycle", "active-run-notification"],
+        "skills": ["wayper-active-run"],
+        "ownerCritical": ["active-run-lifecycle"],
+        "excluded": ["territory-capture", "weekly-ranking"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR6_TRIVIAL_NO_EXPANSION",
+      "task": "troque a copy de um botao",
+      "entryDomain": "UI_DESIGN",
+      "entryCapabilities": ["screen-ui-accessibility"],
+      "dependencies": [],
+      "expected": {
+        "capabilities": ["screen-ui-accessibility"],
+        "skills": [],
+        "excluded": ["active-run-lifecycle", "territory-capture", "harness-routing"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR7_UNEXPECTED_SOURCE_DEPENDENCY",
+      "task": "ranking local por XP diverge mesmo com cache vazio",
+      "entryDomain": "SOCIAL",
+      "entryCapabilities": ["weekly-ranking"],
+      "dependencies": [
+        {
+          "capability": "local-profile-stats",
+          "classification": "BEHAVIOR_RELEVANT",
+          "sourceConfirmed": true,
+          "evidence": "src/repositories/rankingRepository.js",
+          "evidencePattern": "getLocalProfileStats"
+        }
+      ],
+      "expected": {
+        "capabilities": ["weekly-ranking", "local-profile-stats"],
+        "skills": [],
+        "excluded": ["friends", "group-membership"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR8_SUGGESTED_RELATION_DENIED",
+      "task": "ordene o ranking semanal por desempate",
+      "entryDomain": "SOCIAL",
+      "entryCapabilities": ["weekly-ranking"],
+      "dependencies": [],
+      "expected": {
+        "capabilities": ["weekly-ranking"],
+        "skills": [],
+        "excluded": ["friends", "group-membership", "user-profile", "territory-capture"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR9_NO_RECURSIVE_GRAPH_LOAD",
+      "task": "investigue a contribuicao de XP no ranking semanal",
+      "entryDomain": "SOCIAL",
+      "entryCapabilities": ["weekly-ranking"],
+      "dependencies": [
+        {
+          "capability": "xp-progression",
+          "classification": "BEHAVIOR_RELEVANT",
+          "sourceConfirmed": true,
+          "evidence": "src/services/ranking/compute.js",
+          "evidencePattern": "xp: 0.8"
+        }
+      ],
+      "expected": {
+        "capabilities": ["weekly-ranking", "xp-progression"],
+        "skills": [],
+        "excluded": ["deferred-post-run-processing", "run-sync-replay", "friends", "group-membership"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR10_LARGE_CATALOG",
+      "task": "catalogo amplo, ranking semanal depende de XP",
+      "entryDomain": "SOCIAL",
+      "entryCapabilities": ["weekly-ranking"],
+      "simulatedCatalogSize": 70,
+      "dependencies": [
+        {
+          "capability": "xp-progression",
+          "classification": "BEHAVIOR_RELEVANT",
+          "sourceConfirmed": true,
+          "evidence": "src/services/ranking/ranking.weekly.js",
+          "evidencePattern": "xp: 0.6"
+        }
+      ],
+      "expected": {
+        "capabilities": ["weekly-ranking", "xp-progression"],
+        "skills": [],
+        "excluded": ["friends", "group-membership", "deferred-post-run-processing"],
+        "catalogSize": 70,
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR11_MULTI_SKILL_OWNER_CRITICAL",
+      "task": "recovery precisa confirmar o save duravel antes do handoff",
+      "entryDomain": "RUN_RUNTIME",
+      "entryCapabilities": ["active-run-recovery"],
+      "dependencies": [
+        {
+          "capability": "durable-run-save",
+          "classification": "OWNER_CRITICAL",
+          "sourceConfirmed": true,
+          "evidence": "src/services/run/runFinalizationService.js",
+          "evidencePattern": "persistMinimumFinishedRun"
+        }
+      ],
+      "expected": {
+        "capabilities": ["active-run-recovery", "durable-run-save"],
+        "skills": ["wayper-active-run", "wayper-persistence-sync"],
+        "ownerCritical": ["durable-run-save"],
+        "excluded": ["territory-capture", "weekly-ranking"],
+        "capabilityGap": false
+      }
+    },
+    {
+      "id": "CR12_CAPABILITY_GAP",
+      "task": "roteie um bracket eliminatorio entre grupos",
+      "entryDomain": "SOCIAL",
+      "entryCapabilities": ["group-membership"],
+      "dependencies": [],
+      "uncoveredRequirements": ["group-tournament-bracket"],
+      "expected": {
+        "capabilities": ["group-membership"],
+        "skills": [],
+        "capabilityGap": true
+      }
+    }
+  ]
+}
