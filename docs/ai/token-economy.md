@@ -230,6 +230,24 @@ ficam on-demand; nenhum `SKILL.md`, agent metadata, hook ou linha de `AGENTS.md`
 foi acrescentado. `TRIAL_CONTEXT_BYTES` mede o prompt exato emitido pelo CLI,
 não billed tokens. O ledger vazio evita inventar promoção para provar o pipeline.
 
+### Evidence-Gated Completion
+
+Na ativação de 2026-08-24, o recorte comparável da foundation — `AGENTS.md` +
+`name/description` das quatro skills + `name/description` dos quatro agents —
+foi medido byte a byte:
+
+| Métrica | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `AGENTS.md` | 59 linhas / 2.968 B | 60 linhas / 3.046 B | +1 linha / +78 B |
+| skill metadata | 4 / 787 B | 4 / 787 B | 0 B |
+| agent metadata | 4 / 569 B | 4 / 569 B | 0 B |
+| permanent context total deste recorte | 4.324 B | 4.402 B | +78 B / +1,8% |
+
+A única linha permanente acrescentada seleciona completion baseado em evidence e
+declara budgets como tetos. Contrato, matriz, evals e report permanecem on-demand.
+`PERMANENT_DISCOVERY_BYTES`, que também inclui paths absolutos das skills, ficou
+1.074 B before/after e não é somado novamente ao recorte acima.
+
 ## Contabilidade
 
 | Métrica | Definição | Claim permitido |

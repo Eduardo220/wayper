@@ -6,7 +6,7 @@
 > Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
 > Memory + Automated Gates + Token Economy + Capability Architecture + Design
 > Intelligence + External Skill Acquisition + Evidence-Gated Completion
-> (`CONTRACT_ONLY`),
+> (`ACTIVE`),
 > 2026-08-24<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**

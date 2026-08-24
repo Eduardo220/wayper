@@ -458,7 +458,8 @@ branch atual sempre confirmam ownership.
   suíte `docs/ai`. `token-economy.md` entra para contexto/output/RTK/Caveman,
   compaction ou brief, não em toda mudança de Harness.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
-  produto para garantir ausência de regressão;
+  produto para garantir ausência de regressão; `npm run quality:meta-goal`
+  quando Goal Execution Contract, completion ou falsification mudar;
   `npm run quality:capabilities` quando registry/closure/aquisição mudar.
 - **Skills:** nenhuma skill de domínio por padrão.
 - **Specialists:** nenhum dos quatro reviewers mobile por padrão; papéis de

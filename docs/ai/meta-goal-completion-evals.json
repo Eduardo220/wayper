@@ -15,7 +15,14 @@
       { "id": "C1", "material": true, "evidence": ["source and test provenance"] }
     ],
     "accounting": { "tokensUsed": "UNKNOWN", "source": "UNAVAILABLE" },
-    "stop": { "semanticJudge": false, "goalSatisfiedJudge": false, "sliceController": false },
+    "stop": {
+      "deterministic": true,
+      "lightweight": true,
+      "semanticJudge": false,
+      "goalSatisfiedJudge": false,
+      "sliceController": false,
+      "specialistRouter": false
+    },
     "falsification": { "performed": true, "result": "PASS", "findings": [] },
     "budget": { "exhausted": false, "remaining": true },
     "workExecuted": true,
@@ -147,7 +154,16 @@
       "id": "EGC14",
       "kind": "COMPLETION",
       "scenario": "Stop remains deterministic backstop",
-      "override": { "stop": { "semanticJudge": false, "goalSatisfiedJudge": false, "sliceController": false } },
+      "override": {
+        "stop": {
+          "deterministic": true,
+          "lightweight": true,
+          "semanticJudge": false,
+          "goalSatisfiedJudge": false,
+          "sliceController": false,
+          "specialistRouter": false
+        }
+      },
       "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
     },
     {

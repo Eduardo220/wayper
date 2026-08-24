@@ -7,7 +7,11 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ROOT = path.resolve(path.dirname(SCRIPT_PATH), '../..');
 const EVALS_PATH = path.join(ROOT, 'docs/ai/meta-goal-completion-evals.json');
-const TERMINAL = new Set(['GOAL_SATISFIED', 'GOAL_BLOCKED', 'GOAL_BUDGET_EXHAUSTED']);
+const SHADOW_ASSESSMENTS = new Set([
+  'NO_REGRESSION',
+  'OLD_FALSE_POSITIVE',
+  'HONEST_STATE_REFINEMENT',
+]);
 
 function merge(base, override) {
   if (Array.isArray(override) || override === null || typeof override !== 'object') {
@@ -61,10 +65,19 @@ export function evaluateCompletion(run) {
     if (claim.material && !hasEvidence(claim)) gaps.push(`CLAIM_WITHOUT_EVIDENCE:${claim.id}`);
   }
 
-  if ((run.accounting?.tokensUsed === 'UNKNOWN') !== (run.accounting?.source === 'UNAVAILABLE')) {
+  if (run.accounting?.tokensUsed === undefined || !run.accounting?.source) {
+    gaps.push('TOKEN_ACCOUNTING_MISSING');
+  } else if ((run.accounting.tokensUsed === 'UNKNOWN') !== (run.accounting.source === 'UNAVAILABLE')) {
     gaps.push('TOKEN_ACCOUNTING_PROVENANCE_INVALID');
   }
-  if (run.stop?.semanticJudge || run.stop?.goalSatisfiedJudge || run.stop?.sliceController) {
+  if (
+    run.stop?.deterministic !== true
+    || run.stop?.lightweight !== true
+    || run.stop?.semanticJudge
+    || run.stop?.goalSatisfiedJudge
+    || run.stop?.sliceController
+    || run.stop?.specialistRouter
+  ) {
     gaps.push('STOP_OWNS_SEMANTIC_COMPLETION');
   }
 
@@ -122,12 +135,23 @@ export function runEvalSuite(suite = loadEvalSuite()) {
     assert.equal(actual.eligible, item.expected.eligible, `${item.id} eligibility`);
     assert.equal(actual.earlyCompletion, item.expected.earlyCompletion, `${item.id} early completion`);
     if (item.kind === 'SHADOW') {
-      assert.ok(item.oldResult && item.expectedAssessment, `${item.id} shadow metadata`);
-      if (item.expectedAssessment === 'NO_REGRESSION' && TERMINAL.has(item.oldResult)) {
-        assert.ok(TERMINAL.has(actual.result), `${item.id} unexpected false negative`);
+      assert.ok(item.oldResult && SHADOW_ASSESSMENTS.has(item.expectedAssessment), `${item.id} shadow metadata`);
+      if (item.expectedAssessment === 'NO_REGRESSION') {
+        assert.equal(actual.result, item.oldResult, `${item.id} unexpected regression`);
+      } else if (item.expectedAssessment === 'OLD_FALSE_POSITIVE') {
+        assert.equal(item.oldResult, 'GOAL_SATISFIED', `${item.id} invalid old false positive`);
+        assert.notEqual(actual.result, 'GOAL_SATISFIED', `${item.id} false positive preserved`);
+      } else {
+        assert.notEqual(actual.result, item.oldResult, `${item.id} expected state refinement missing`);
       }
     }
-    results.push({ id: item.id, kind: item.kind, oldResult: item.oldResult, ...actual });
+    results.push({
+      id: item.id,
+      kind: item.kind,
+      oldResult: item.oldResult,
+      assessment: item.expectedAssessment,
+      ...actual,
+    });
   }
   return results;
 }
@@ -136,20 +160,30 @@ export function formatResult(results, json = false) {
   const completion = results.filter((item) => item.kind === 'COMPLETION').length;
   const shadow = results.filter((item) => item.kind === 'SHADOW');
   const differences = shadow.filter((item) => item.oldResult !== item.result).length;
+  const unexpectedFalsePositives = shadow.filter(
+    (item) => item.assessment === 'NO_REGRESSION'
+      && item.oldResult !== 'GOAL_SATISFIED'
+      && item.result === 'GOAL_SATISFIED'
+  ).length;
+  const unexpectedFalseNegatives = shadow.filter(
+    (item) => item.assessment === 'NO_REGRESSION'
+      && item.oldResult === 'GOAL_SATISFIED'
+      && item.result !== 'GOAL_SATISFIED'
+  ).length;
   const report = {
     status: 'PASS',
     evals: results.length,
     completion,
     shadow: shadow.length,
     shadowDifferences: differences,
-    unexpectedFalsePositives: 0,
-    unexpectedFalseNegatives: 0,
+    unexpectedFalsePositives,
+    unexpectedFalseNegatives,
   };
   if (json) return JSON.stringify(report);
   return [
     'META GOAL COMPLETION PASS',
     `${completion}/${completion} completion evals / ${shadow.length}/${shadow.length} shadow evals`,
-    `shadow differences ${differences} / unexpected false positives 0 / false negatives 0`,
+    `shadow differences ${differences} / unexpected false positives ${unexpectedFalsePositives} / false negatives ${unexpectedFalseNegatives}`,
   ].join('\n');
 }
 

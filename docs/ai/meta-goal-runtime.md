@@ -5,8 +5,8 @@
 > **Owner:** [`harness-v1.md`](harness-v1.md)  
 > **Router:** [`context-routing.md`](context-routing.md)  
 > **Quality:** [`quality-gates.md`](quality-gates.md)  
-> **Rollout:** `CONTRACT_ONLY`; ativação depende dos evals e do shadow definidos
-> neste documento
+> **Rollout:** `ACTIVE`; baseline, contract evals e shadow aprovados em
+> 2026-08-24
 
 Este contrato ensina o agente principal a transformar um resultado de alto nível
 em slices técnicos seguros. É política declarativa, não planner, Brain, daemon,

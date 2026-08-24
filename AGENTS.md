@@ -44,6 +44,7 @@ o próprio escopo.
   disjunto conhecido. Protocolo: `docs/ai/orchestration.md`.
 - Workflow: `docs/14-instrucoes-para-ia.md`. Arquitetura do Harness:
   `docs/ai/harness-v1.md`.
+- META Goals usam evidence-gated completion; budgets são tetos, não quotas.
 - Graphs, maps e caches nunca são verdade. RTK é ferramenta global opcional.
 
 ## Implementação e entrega
