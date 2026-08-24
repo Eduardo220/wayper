@@ -781,3 +781,27 @@ loads irrelevantes e capabilities perdidas em 12 fixtures, inclusive catálogo
 simulado de 70 entradas e `CAPABILITY_GAP`. Política, registry e evals ficam em
 `docs/ai/capability-architecture.md`, `docs/ai/capability-registry.json` e
 `docs/ai/capability-routing-evals.json`.
+
+### Adendo — Wayper Design Intelligence
+
+**Status:** aceito em 2026-08-23
+
+**Decisão:** `DESIGN.md` passa a ser o contrato visual canônico, enquanto
+`src/theme/wayperTheme.js` continua owner dos valores executáveis e
+componentes/telas continuam owners da implementação. Produto e decisões
+aprovadas definem o que a experiência comunica; Android define semântica de
+sistema. OPERATE é o modo padrão e EXPERIENCE é uma janela curta reservada a
+resultado/recompensa significativa.
+
+Onze capabilities de design são acrescentadas ao registry e compartilham a
+reference `DESIGN.md`. Nenhuma nova skill é promovida: não há observed reuse e a
+reference já cobre o workflow com zero metadata permanente. A auditoria do
+Impeccable 4.1.1 é somente fonte de inteligência; detector web, sidecar,
+instalação e hooks são rejeitados para esta baseline React Native.
+
+**Consequências:** não há alteração funcional, dependency, fonte, plugin,
+Graphify dependency ou novo Stop hook. `npm run quality:design` valida 12 casos
+de Context Closure, incluindo zero design context em copy-only, runtime bug e
+refactor genérico. O inventário datado fica em
+`docs/audits/2026-08-23-design-intelligence.md`; `docs/09-design-e-wireframes.md`
+permanece histórico/funcional.

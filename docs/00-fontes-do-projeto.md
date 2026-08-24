@@ -3,7 +3,7 @@
 > **Status:** vigente<br>
 > **Tipo:** fonte operacional e índice canônico<br>
 > **Escopo:** todo o repositório<br>
-> **Última revisão:** 2026-08-16<br>
+> **Última revisão:** 2026-08-23<br>
 > **Fonte normativa relacionada:** [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md)
 
 ## Finalidade
@@ -83,6 +83,17 @@ não autorizam código de produção.
 - Decisões aprovadas e ADRs vinculam evolução técnica e de produto dentro do
   próprio escopo.
 
+### Identidade e contrato visual
+
+- [`DESIGN.md`](../DESIGN.md) é a fonte normativa da linguagem visual, modos,
+  motion, mapa, gamificação, accessibility e guardrails nativos.
+- `src/theme/wayperTheme.js` é owner dos valores executáveis; componentes/telas
+  são implementação e evidência do estado atual.
+- Produto e decisões aprovadas continuam owners do que a experiência comunica.
+  `DESIGN.md` não cria regra funcional.
+- [`docs/09-design-e-wireframes.md`](09-design-e-wireframes.md), screenshots e
+  auditorias são referência histórica/funcional quando divergem do contrato.
+
 ### Planejamento
 
 - [`docs/02-roadmap.md`](02-roadmap.md) define ordem e gates de evolução.
@@ -130,6 +141,7 @@ próprio documento.
 | --- | --- | --- | --- | --- |
 | Produto | [`docs/01-visao-do-produto.md`](01-visao-do-produto.md) | [`docs/product/00-visao-oficial.md`](product/00-visao-oficial.md), [`docs/product/01-principios-do-produto.md`](product/01-principios-do-produto.md) | Fonte normativa sintética | Vigente |
 | Direção estratégica | [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md) | [`docs/product/README.md`](product/README.md), [`docs/product/10-decisoes-aprovadas.md`](product/10-decisoes-aprovadas.md) | Fonte normativa | Aprovado |
+| Design visual | [`DESIGN.md`](../DESIGN.md) | runtime em `src/theme/wayperTheme.js`, inventário histórico em [`docs/09-design-e-wireframes.md`](09-design-e-wireframes.md), evidência em [`docs/audits/2026-08-23-design-intelligence.md`](audits/2026-08-23-design-intelligence.md) | Contrato normativo + runtime owner separado | Vigente |
 | Arquitetura | [`docs/04-arquitetura.md`](04-arquitetura.md) | [`docs/wayper/09-arquitetura-tecnica.md`](wayper/09-arquitetura-tecnica.md), [`docs/05-modelo-de-dados.md`](05-modelo-de-dados.md), [`docs/08-decisoes-tecnicas.md`](08-decisoes-tecnicas.md), [`docs/architecture/adrs-direcao-oficial.md`](architecture/adrs-direcao-oficial.md), enforcement em [`docs/ai/architecture-boundaries.md`](ai/architecture-boundaries.md) | Fonte técnica de estado e direção | Vigente |
 | Tracking | [`docs/wayper/09-arquitetura-tecnica.md`](wayper/09-arquitetura-tecnica.md) | [`docs/wayper/04-regras-corrida.md`](wayper/04-regras-corrida.md), [`docs/08-decisoes-tecnicas.md`](08-decisoes-tecnicas.md) | Fonte técnica complementar | Vigente |
 | Background | [`docs/wayper/09-arquitetura-tecnica.md`](wayper/09-arquitetura-tecnica.md) | [`docs/22-teste-real-corrida-background.md`](22-teste-real-corrida-background.md), [`docs/wayper/15-checklist-validacao-corrida-ativa.md`](wayper/15-checklist-validacao-corrida-ativa.md), [`docs/13-bugs-conhecidos.md`](13-bugs-conhecidos.md) | Técnica e validação | Em revisão |
@@ -171,8 +183,8 @@ As fontes abaixo são adicionais ao núcleo permanente.
 | Background ou tela apagada | [`docs/product/07-experiencia-durante-a-corrida.md`](product/07-experiencia-durante-a-corrida.md), [`docs/wayper/09-arquitetura-tecnica.md`](wayper/09-arquitetura-tecnica.md), [`docs/22-teste-real-corrida-background.md`](22-teste-real-corrida-background.md), [`docs/wayper/15-checklist-validacao-corrida-ativa.md`](wayper/15-checklist-validacao-corrida-ativa.md) e [`docs/13-bugs-conhecidos.md`](13-bugs-conhecidos.md) |
 | Finalização | [`docs/04-arquitetura.md`](04-arquitetura.md), [`docs/06-fluxos-de-usuario.md`](06-fluxos-de-usuario.md), ADR-030 em [`docs/architecture/adrs-direcao-oficial.md`](architecture/adrs-direcao-oficial.md), ADR-026/028 em [`docs/08-decisoes-tecnicas.md`](08-decisoes-tecnicas.md), [`docs/product/08-relatorio-da-expedicao.md`](product/08-relatorio-da-expedicao.md), [`docs/05-modelo-de-dados.md`](05-modelo-de-dados.md), [`docs/12-guia-de-testes.md`](12-guia-de-testes.md) e [`docs/13-bugs-conhecidos.md`](13-bugs-conhecidos.md) |
 | Territórios | [`docs/15-corrida-por-zonas.md`](15-corrida-por-zonas.md), [`docs/wayper/03-mecanica-territorios.md`](wayper/03-mecanica-territorios.md), [`docs/05-modelo-de-dados.md`](05-modelo-de-dados.md), [`docs/wayper/06-xp-nivel-ranking.md`](wayper/06-xp-nivel-ranking.md), [`docs/10-regras-de-negocio.md`](10-regras-de-negocio.md) e [`docs/04-arquitetura.md`](04-arquitetura.md) |
-| UI durante corrida | [`docs/product/01-principios-do-produto.md`](product/01-principios-do-produto.md), [`docs/product/07-experiencia-durante-a-corrida.md`](product/07-experiencia-durante-a-corrida.md), [`docs/wayper/04-regras-corrida.md`](wayper/04-regras-corrida.md), [`docs/wayper/09-arquitetura-tecnica.md`](wayper/09-arquitetura-tecnica.md), [`docs/09-design-e-wireframes.md`](09-design-e-wireframes.md) e [`docs/wayper/15-checklist-validacao-corrida-ativa.md`](wayper/15-checklist-validacao-corrida-ativa.md) |
-| Pós-corrida | [`docs/product/08-relatorio-da-expedicao.md`](product/08-relatorio-da-expedicao.md), [`docs/06-fluxos-de-usuario.md`](06-fluxos-de-usuario.md), [`docs/05-modelo-de-dados.md`](05-modelo-de-dados.md), [`docs/wayper/05-gps-e-validacao.md`](wayper/05-gps-e-validacao.md), [`docs/product/09-economia-e-recompensas.md`](product/09-economia-e-recompensas.md), [`docs/15-corrida-por-zonas.md`](15-corrida-por-zonas.md) e [`docs/wayper/07-telas-e-fluxos.md`](wayper/07-telas-e-fluxos.md) |
+| UI durante corrida | [`DESIGN.md`](../DESIGN.md), [`docs/product/01-principios-do-produto.md`](product/01-principios-do-produto.md), [`docs/product/07-experiencia-durante-a-corrida.md`](product/07-experiencia-durante-a-corrida.md), [`docs/wayper/04-regras-corrida.md`](wayper/04-regras-corrida.md), [`docs/wayper/09-arquitetura-tecnica.md`](wayper/09-arquitetura-tecnica.md), referência histórica em [`docs/09-design-e-wireframes.md`](09-design-e-wireframes.md) e [`docs/wayper/15-checklist-validacao-corrida-ativa.md`](wayper/15-checklist-validacao-corrida-ativa.md) |
+| Pós-corrida | [`DESIGN.md`](../DESIGN.md), [`docs/product/08-relatorio-da-expedicao.md`](product/08-relatorio-da-expedicao.md), [`docs/06-fluxos-de-usuario.md`](06-fluxos-de-usuario.md), [`docs/05-modelo-de-dados.md`](05-modelo-de-dados.md), [`docs/wayper/05-gps-e-validacao.md`](wayper/05-gps-e-validacao.md), [`docs/product/09-economia-e-recompensas.md`](product/09-economia-e-recompensas.md), [`docs/15-corrida-por-zonas.md`](15-corrida-por-zonas.md) e [`docs/wayper/07-telas-e-fluxos.md`](wayper/07-telas-e-fluxos.md) |
 | Plus ou Pro | [`docs/product/03-planos-e-entitlements.md`](product/03-planos-e-entitlements.md), [`docs/product/02-modelo-de-negocio.md`](product/02-modelo-de-negocio.md), [`docs/product/11-hipoteses-em-avaliacao.md`](product/11-hipoteses-em-avaliacao.md), [`docs/architecture/feature-flags.md`](architecture/feature-flags.md) e ADR-033 em [`docs/architecture/adrs-direcao-oficial.md`](architecture/adrs-direcao-oficial.md) |
 | Parceiros | [`docs/product/04-parcerias-e-patrocinios.md`](product/04-parcerias-e-patrocinios.md), [`docs/product/02-modelo-de-negocio.md`](product/02-modelo-de-negocio.md), [`docs/product/09-economia-e-recompensas.md`](product/09-economia-e-recompensas.md), [`docs/product/12-criterios-para-novas-features.md`](product/12-criterios-para-novas-features.md) e ADR-034 em [`docs/architecture/adrs-direcao-oficial.md`](architecture/adrs-direcao-oficial.md) |
 | Pagamentos | [`docs/product/direcao-estrategica-completa.md`](product/direcao-estrategica-completa.md), [`docs/product/02-modelo-de-negocio.md`](product/02-modelo-de-negocio.md), ADR-035 em [`docs/architecture/adrs-direcao-oficial.md`](architecture/adrs-direcao-oficial.md), [`docs/product/11-hipoteses-em-avaliacao.md`](product/11-hipoteses-em-avaliacao.md), [`docs/product/03-planos-e-entitlements.md`](product/03-planos-e-entitlements.md) e [`docs/architecture/feature-flags.md`](architecture/feature-flags.md); confirme a ausência atual de contrato implementado |
