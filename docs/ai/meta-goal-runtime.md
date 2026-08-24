@@ -40,8 +40,11 @@ GOAL_EXECUTION
 goal:
   id | mode | objective | started_at
 budget:
-  token_budget | duration_budget | tokens_used
-  token_accounting_source | elapsed
+  requested_token_budget | requested_duration_budget
+  effective_token_budget | effective_duration_budget | propagation_status
+  token_enforcement_mode | duration_enforcement_mode
+  tokens_used | token_accounting_source | elapsed
+  soft_limit_entered | hard_limit_exceeded | overshoot
 success_criteria: []
 candidates: []
 slices: []
@@ -64,6 +67,9 @@ TEST_PASS != AUTOMATIC_SEMANTIC_CORRECTNESS
 FAST_HOOK_PASS != GOAL_SATISFIED
 NOT_RUN != PASS
 EMULATOR_PASS != PHYSICAL_DEVICE_PASS
+TOKEN_ACCOUNTING != TOKEN_BUDGET_ENFORCEMENT
+REQUESTED_BUDGET != EFFECTIVE_BUDGET
+BUDGET_CONTROL != COMPLETION_PROOF
 ```
 
 ### Ledgers
@@ -92,6 +98,23 @@ Na baseline local de 2026-08-17, Codex CLI `0.147.0` reporta a feature `goals`
 como `stable` e a sessão expõe operações nativas de criação, consulta e
 conclusão/bloqueio de Goal. O CLI não expõe subcomando `goal`; portanto o projeto
 não documenta nem simula sintaxe de terminal.
+
+Capability audit observável de 2026-08-24 para esta integração:
+
+| Capability | Status | Evidence |
+| --- | --- | --- |
+| token accounting | `SUPPORTED` | `get_goal.tokensUsed`: `0 -> 59351 -> 89075` |
+| elapsed accounting | `SUPPORTED` | `get_goal.timeUsedSeconds`: `0 -> 134 -> 374` |
+| campo de criação `token_budget` | `SUPPORTED` | schema integrado aceita inteiro positivo opcional |
+| propagação de `GOAL_TOKENS` textual | `FAIL` | Goal ativo sem budget; `remainingTokens=null` |
+| native token hard cap | `UNKNOWN` | accounting não prova enforcement |
+| native remaining tokens | `UNKNOWN` | retorno `null`; não derivar nem mascarar |
+| native duration budget | `UNSUPPORTED` | criação integrada não expõe duração |
+| budget update | `UNSUPPORTED` | `update_goal` aceita somente `complete` ou `blocked` |
+| budget terminal update | `UNSUPPORTED` | não aceita `GOAL_BUDGET_EXHAUSTED` |
+| usage monotonicity | `SUPPORTED` observado | snapshots cresceram; granularidade intra-fase é `UNKNOWN` |
+
+Status descreve esta superfície integrada, não capability genérica externa.
 
 - `GOAL_NATIVE_AVAILABLE`: prefira o lifecycle nativo para outcome, success
   criteria e execução longa; este documento fornece a política Wayper interna.
@@ -301,6 +324,45 @@ tool calls ou testes não recebem mínimos artificiais. Formalmente:
 BUDGET_REMAINING != WORK_REMAINING
 ```
 
+No `GOAL_START`, resolva antes de trabalho pesado:
+
+```text
+Budget Request -> Runtime Capabilities -> Effective Budget -> Enforcement Mode
+```
+
+Registre `requested_*`, `effective_*` e propagação `PASS | FAIL | UNSUPPORTED |
+UNKNOWN` separadamente. Budget textual nunca vira effective sem evidence.
+Enforcement usa `NATIVE | HARNESS | HYBRID | OBSERVATIONAL_ONLY | UNAVAILABLE`.
+`HARNESS` aplica o requested ceiling em checkpoints quando usage confiável
+existe, mesmo com effective budget nativo `UNKNOWN`; não promete hard cap entre
+checkpoints.
+
+A política central em `check-meta-goal-completion.mjs` usa soft limit de `85%`.
+A reserva de 15% protege validação obrigatória, evidence, relatório terminal e
+overshoot por granularidade; não é quota.
+
+- `NORMAL`: execução orientada ao Goal, sem trabalho artificial;
+- `SOFT_LIMIT`: não iniciar expansão, slice, specialist, follow-up ou validação
+  cara opcionais; priorizar criteria, blockers, validação obrigatória,
+  falsification necessária e relatório;
+- `HARD_LIMIT`: `GOAL_RESULT=GOAL_BUDGET_EXHAUSTED`; nenhum trabalho substantivo
+  novo, somente relatório terminal mínimo.
+
+Checkpoints: `GOAL_START`, `BEFORE_NEW_SLICE`, `BEFORE_OPTIONAL_SPECIALIST`,
+`BEFORE_EXPENSIVE_VALIDATION`, `BEFORE_FULL_TEST_SUITE`, `BEFORE_BUILD`,
+`BEFORE_FINAL_FALSIFICATION`, `AFTER_MAJOR_EXECUTION_PHASE` e
+`BEFORE_OPTIONAL_FOLLOWUP`. Não existe polling por tool call, daemon ou hook novo.
+
+Métrica monotônica com `current >= hard_limit` torna a violação irreversível e
+`repeat_confirmation=0`; o protocolo de três recorrências não se aplica. Se
+usage salta entre checkpoints, registre previous/current, overshoot e a
+granularidade. Overshoot pode ocorrer, mas nenhum trabalho novo começa depois da
+detecção.
+
+Duration segue a mesma resolução. Com dois budgets, o primeiro hard limit
+observado terminaliza. Se ambos surgem excedidos no mesmo snapshot e a ordem não
+é observável, use `HARD_LIMIT_ORDER_UNKNOWN`; não invente precedência.
+
 `tokens_used` usa apenas receipt programático do runtime Goal, metadata oficial
 da resposta ou outra fonte observável que cubra a execução declarada. Registre a
 provenance e o alcance conhecido: input, output, cached, reasoning, subagents e
@@ -470,6 +532,17 @@ absoluta de risco.
 | `GOAL_PARTIALLY_SATISFIED` | parte comprovada, mas critério/material validation permanece incompleto |
 | `GOAL_SATISFIED` | eligibility verdadeira e Final Falsification `PASS` |
 
+`GOAL_RESULT` é o único resultado terminal canônico e fica imutável. Precedência:
+
+1. preserve resultado terminal já emitido;
+2. primeiro hard limit comprovado -> `GOAL_BUDGET_EXHAUSTED`;
+3. Completion Eligibility + falsification `PASS` -> `GOAL_SATISFIED`;
+4. blocker externo -> `GOAL_BLOCKED`;
+5. caso contrário, progresso parcial ou `GOAL_RUNNING`.
+
+Budget exhausted nunca vira blocked por observações repetidas. Progresso técnico
+parcial pode ser descrito à parte, sem segundo resultado terminal.
+
 O stop reason detalha por que o estado foi atingido:
 
 | Estado | Quando parar |
@@ -544,8 +617,11 @@ Relatório final compacto de Meta Goal relevante:
 ```text
 META GOAL EXECUTION REPORT
 Goal: mode | result | stop_reason
-Budget: token_budget | tokens_used | token_accounting_source
-        duration_budget | elapsed
+Budget Request: requested_token_budget | requested_duration_budget
+Effective Budget: effective_token_budget | effective_duration_budget | propagation_status
+Consumption: tokens_used | elapsed | accounting_source
+Enforcement: token_enforcement_mode | duration_enforcement_mode
+             soft_limit_entered | hard_limit_exceeded | overshoot
 Execution: candidates_considered | slices_planned | slices_executed
            slices_dropped | specialists_invoked
 Scope: files_inspected | files_changed | owners_changed

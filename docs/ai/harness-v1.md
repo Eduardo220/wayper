@@ -5,7 +5,8 @@
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
 > Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
 > Memory + Automated Gates + Token Economy + Capability Architecture + Design
-> Intelligence + External Skill Acquisition + Evidence-Gated Completion
+> Intelligence + External Skill Acquisition + Evidence-Gated Completion + Goal
+> Budget Control
 > (`ACTIVE`),
 > 2026-08-24<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
@@ -57,12 +58,12 @@ evidência datada.
   sob demanda; `npm run quality:architecture` impede novos consumers inválidos.
 - `docs/ai/quality-gates.md`: Q0-Q3, R0-R3, delta, finding contract e síntese;
   `npm run quality:gate` agrega somente os gates FAST de repositório.
-- `docs/ai/meta-goal-runtime.md`: Goal Execution Contract, autonomia, Execution
-  Kernel, accounting, ledgers, completion eligibility, final falsification,
-  report e stop conditions; carregado somente para intenção contínua.
+- `docs/ai/meta-goal-runtime.md`: Goal Execution Contract, budget resolution e
+  checkpoints, autonomia, accounting, ledgers, completion eligibility, final
+  falsification, report e stop conditions; carregado somente para intenção contínua.
 - `docs/ai/meta-goal-completion-evals.json` e
   `scripts/quality/check-meta-goal-completion.mjs`: evals machine-readable e
-  shadow `OLD_DECISION`/`NEW_DECISION`; não são runtime de produção.
+  shadow `OLD_DECISION`/`NEW_DECISION`, incluindo budget; não são runtime de produção.
 - `docs/ai/memory-policy.md` e `docs/ai/memory/index.json`: promotion de
   hard-earned learning e discovery por domínio/risco; index/topics nunca são
   contexto permanente nem source of truth.

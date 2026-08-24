@@ -3,7 +3,8 @@
 > **Status:** vigente<br>
 > **Tipo:** suíte declarativa, sem API externa<br>
 > **Contagem:** 250 evals anteriores + 32 de token economy + 12 de capability
-> closure + 12 de design routing + 32 de evidence-gated completion = 338<br>
+> closure + 12 de design routing + 32 de evidence-gated completion + 20 de
+> budget control = 358<br>
 > **Owners:** [`task-classification.md`](task-classification.md) e
 > [`context-routing.md`](context-routing.md), com safety de waves em
 > [`orchestration.md`](orchestration.md) e gates/review em
@@ -262,6 +263,13 @@ docs-only, bug localizado, refactor pequeno, multi-owner, core owner, run
 tracking, Android nativo, Meta complexa, physical validation indisponível,
 no-change e tarefa já implementada. Divergência esperada remove falso positivo
 antigo ou refina estado; conclusão legítima não pode virar falso negativo.
+
+Budget `BUD01`–`BUD20` prova accounting sem enforcement, requested diferente de
+effective, normal/soft/hard, stop irreversível sem três turns, terminal
+imutável, blocker distinto, early success, validação obrigatória no soft limit,
+rejeição de trabalho opcional, overshoot, duration, primeiro hard limit,
+accounting desconhecido, hooks inalterados, cheap paths, regressão dos 20 evals
+anteriores e preservação do evidence gate.
 
 As fixtures provam formalmente:
 
