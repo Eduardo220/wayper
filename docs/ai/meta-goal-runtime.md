@@ -4,7 +4,9 @@
 > **Escopo:** metas amplas, autonomia técnica e continuidade incremental  
 > **Owner:** [`harness-v1.md`](harness-v1.md)  
 > **Router:** [`context-routing.md`](context-routing.md)  
-> **Quality:** [`quality-gates.md`](quality-gates.md)
+> **Quality:** [`quality-gates.md`](quality-gates.md)  
+> **Rollout:** `CONTRACT_ONLY`; ativação depende dos evals e do shadow definidos
+> neste documento
 
 Este contrato ensina o agente principal a transformar um resultado de alto nível
 em slices técnicos seguros. É política declarativa, não planner, Brain, daemon,
@@ -25,6 +27,64 @@ NON_GOALS: trabalho que não deve ser perseguido
 `SUCCESS_CRITERIA` precisa ser verificável por source, testes, quality gates,
 métrica ou evidência externa explícita. “Parece melhor” não encerra uma meta.
 Critérios contraditórios atravessam o Human Decision Boundary.
+
+## Goal Execution Contract
+
+Meta Goal mantém um contrato operacional durante a execução. Ele pode viver no
+estado nativo da sessão e no relatório; não precisa ser persistido como JSON nem
+autoriza um segundo runtime.
+
+```text
+GOAL_EXECUTION
+
+goal:
+  id | mode | objective | started_at
+budget:
+  token_budget | duration_budget | tokens_used
+  token_accounting_source | elapsed
+success_criteria: []
+candidates: []
+slices: []
+specialists: []
+evidence: []
+validation: []
+uncertainties: []
+falsification:
+  performed | result | findings
+completion:
+  state | eligible | stop_reason | early_completion
+```
+
+O contrato separa obrigatoriamente:
+
+```text
+WORK_EXECUTED != GOAL_PROVEN_SATISFIED
+IMPLEMENTATION_EXISTS != GOAL_PROVEN_SATISFIED
+TEST_PASS != AUTOMATIC_SEMANTIC_CORRECTNESS
+FAST_HOOK_PASS != GOAL_SATISFIED
+NOT_RUN != PASS
+EMULATOR_PASS != PHYSICAL_DEVICE_PASS
+```
+
+### Ledgers
+
+- **Success Criteria Ledger:** cada critério tem `PENDING`, `SATISFIED`,
+  `BLOCKED` ou `NOT_APPLICABLE`. `SATISFIED` referencia evidence concreta;
+  `NOT_APPLICABLE` registra a relação verificável com changed scope.
+- **Evidence Ledger:** cada claim material aponta para `file`, `line/range`,
+  `test`, `command`, `validator`, `runtime output`, `config`, `commit` ou
+  comportamento observado. “Parece correto” não é provenance.
+- **Validation Ledger:** cada validação derivada do changed scope usa `NOT_RUN`,
+  `PASS`, `FAIL`, `NOT_APPLICABLE` ou `BLOCKED`, com comando/evidence e owner.
+- **Uncertainty Ledger:** cada incerteza usa severidade `BLOCKING`, `MATERIAL` ou
+  `MINOR` e estado `OPEN` ou `RESOLVED`. Incerteza material aberta explicita
+  tratamento, mitigação ou justificativa e impacto no resultado.
+- **Slice Accounting:** candidate e slice registram decisão e status real, sem
+  mínimo artificial. Tarefa simples pode usar um candidate, um slice e zero
+  specialists.
+
+Evidence pode sustentar vários ledgers por referência; não duplique output ou
+reasoning. Chain of thought não é coletado, persistido nem exigido.
 
 ## Integração com Goal mode
 
@@ -234,6 +294,30 @@ abstração especulativa, baixo valor, validação fraca ou risco desproporciona
 Tempo pode ser constraint, mas não é o único budget. O objetivo é melhoria
 mensurável, não perfeição infinita.
 
+Budgets são tetos, nunca quotas. Token, duração, candidates, slices, specialists,
+tool calls ou testes não recebem mínimos artificiais. Formalmente:
+
+```text
+BUDGET_REMAINING != WORK_REMAINING
+```
+
+`tokens_used` usa apenas receipt programático do runtime Goal, metadata oficial
+da resposta ou outra fonte observável que cubra a execução declarada. Registre a
+provenance e o alcance conhecido: input, output, cached, reasoning, subagents e
+tool context podem ter cobertura diferente. Se a fonte não existir ou não cobrir
+o Goal, use:
+
+```text
+tokens_used: UNKNOWN
+token_accounting_source: UNAVAILABLE
+```
+
+Bytes, caracteres, duração, número de tool calls, tokenizer local e métricas do
+RTK/Caveman não são token receipt. `elapsed` também fica `UNKNOWN` sem wall-clock
+confiável. Se o budget acabar antes da prova completa, use
+`GOAL_BUDGET_EXHAUSTED` ou `GOAL_PARTIALLY_SATISFIED` e liste validação e
+critérios restantes; nunca force `GOAL_SATISFIED`.
+
 Metas longas usam FAST frequentemente e deep checkpoint quando uma área
 arquitetural termina, antes de commit importante, antes de
 `GOAL_SATISFIED` ou quando o risco agregado cresce. A meta ampla não promove
@@ -314,11 +398,83 @@ QUALITY_STATUS: INCONCLUSIVE
 Isso impede `GOAL_SATISFIED`. Review continua por slice: R0/R1/R2/R3, sem meta
 specialist, goal reviewer ou painel automático.
 
-## Stop conditions
+A Validation Matrix normativa por changed scope vive em
+[`quality-gates.md`](quality-gates.md). O Completion Judge deriva dali as
+validações obrigatórias e registra cada uma no Validation Ledger. Targeted
+validation segue `changed owner -> affected contract -> relevant test`; ausência
+de teste não vira `PASS`.
+
+## Completion Eligibility
+
+`GOAL_SATISFIED` só é elegível quando todas as condições aplicáveis abaixo têm
+evidence:
+
+1. todo success criterion está `SATISFIED` com evidence ou `NOT_APPLICABLE` com
+   justificativa verificável;
+2. nenhuma uncertainty `BLOCKING` permanece `OPEN`;
+3. nenhuma uncertainty `MATERIAL` permanece `OPEN` sem tratamento, mitigação ou
+   justificativa e impacto explícito;
+4. todas as validações obrigatórias derivadas do changed scope foram executadas;
+5. todo claim material possui provenance;
+6. semantic review aplicável foi executada;
+7. targeted tests aplicáveis foram executados;
+8. FAST nunca é usado sozinho como prova semântica;
+9. validação física ou de aparelho só é `PASS` com execução real; emulator não
+   prova aparelho;
+10. Final Falsification Pass foi executada;
+11. falsification terminou `PASS`, sem finding material restante dentro do Goal.
+
+`completion.eligible=true` é derivado dessas condições, não declarado por
+conveniência. Early completion é desejável quando eligibility é verdadeira e
+falsification passa, mesmo com muito budget restante. Não existe trabalho extra
+para consumir budget.
+
+## Final Falsification Pass
+
+Antes de `GOAL_SATISFIED`, tente provar que a meta ainda não foi satisfeita.
+Revise no mínimo:
+
+1. critério sustentado apenas por assumption;
+2. owner relevante não inspecionado;
+3. changed owner sem validação correspondente;
+4. edge case material sem cobertura;
+5. teste verde semanticamente insuficiente;
+6. DEEP validation aplicável ignorada;
+7. arquitetura paralela;
+8. owner duplicado;
+9. redução silenciosa de escopo;
+10. requisito original perdido;
+11. uncertainty `BLOCKING` aberta;
+12. uncertainty `MATERIAL` aberta sem tratamento suficiente;
+13. claim material sem evidence;
+14. comportamento runtime apenas inferido;
+15. validação marcada `PASS` pelo resultado de outro gate;
+16. teste relevante omitido por conveniência;
+17. slice adicional com ganho material de correctness;
+18. regressão plausível em owner adjacente;
+19. contrato público alterado sem validação;
+20. documentação afirmando comportamento não provado.
+
+`FALSIFICATION_RESULT=FAIL` registra findings materiais, critérios afetados e
+próximas ações; a execução continua quando environment e budget permitirem.
+`PASS` significa ausência de lacuna material após essa tentativa, não ausência
+absoluta de risco.
+
+## Estados de execução e conclusão
+
+| Estado | Semântica |
+| --- | --- |
+| `GOAL_RUNNING` | execução ou validação material ainda está em andamento |
+| `GOAL_BLOCKED` | blocker externo, humano, destrutivo ou de tooling impede avanço confiável |
+| `GOAL_BUDGET_EXHAUSTED` | budget terminou antes da completion eligibility |
+| `GOAL_PARTIALLY_SATISFIED` | parte comprovada, mas critério/material validation permanece incompleto |
+| `GOAL_SATISFIED` | eligibility verdadeira e Final Falsification `PASS` |
+
+O stop reason detalha por que o estado foi atingido:
 
 | Estado | Quando parar |
 | --- | --- |
-| `GOAL_SATISFIED` | todos os success criteria observáveis passam |
+| `GOAL_SATISFIED` | Completion Eligibility verdadeira e falsification `PASS` |
 | `ROI_EXHAUSTED` | nenhum candidate restante tem valor/confiança/validação suficientes |
 | `HUMAN_DECISION_REQUIRED` | decisão essencialmente humana bloqueia o próximo avanço |
 | `EXTERNAL_BLOCKER` | credencial, serviço ou recurso externo indispensável está indisponível |
@@ -331,8 +487,8 @@ specialist, goal reviewer ou painel automático.
 “Ficou difícil” não é stop condition. Falha transitória de tooling recebe retry
 racional; falha persistente vira blocker, não loop infinito.
 
-Se o limite da sessão chegar antes da meta, registre `GOAL_IN_PROGRESS`, nunca
-`GOAL_SATISFIED`:
+Se o limite da sessão chegar antes da meta, preserve `GOAL_RUNNING` ou use
+`GOAL_BUDGET_EXHAUSTED`/`GOAL_PARTIALLY_SATISFIED`, nunca `GOAL_SATISFIED`:
 
 ```text
 COMPLETED_SLICES | CURRENT_BASELINE | REMAINING_CANDIDATES
@@ -357,27 +513,53 @@ remova testes/validação ou reclassifique warning sem evidência. Uma meta ampl
 não autoriza framework, banco, state manager, test framework, agent, plugin ou
 dependência nova sem necessidade e ROI comprovados.
 
-## Estado e relatório compactos
+## Shadow evaluation e ativação
+
+Evidence-Gated Completion só vira normativa depois de baseline verde, evals do
+contrato verdes e comparação `OLD_DECISION` versus `NEW_DECISION` aceitável. O
+shadow cobre tarefa trivial, docs-only, bug localizado, refactor pequeno,
+multi-owner, core owner, run tracking, Android nativo, Meta complexa, physical
+validation indisponível, no-change e tarefa já implementada.
+
+O shadow rejeita tanto falso positivo (`NEW` conclui sem evidence) quanto falso
+negativo (`NEW` bloqueia conclusão legítima). A suíte machine-readable e o
+validator ficam em `meta-goal-completion-evals.json` e
+`scripts/quality/check-meta-goal-completion.mjs`; são eval infrastructure, não
+Completion Judge de produção.
+
+Ativação não altera `.codex/hooks.json`. O Stop continua backstop determinístico,
+leve e project-scoped; não julga semântica, Goal, slices ou specialists.
+
+## Estado e Goal Execution Report
 
 Estado interno, carregado somente durante a execução:
 
 ```text
-GOAL | SUCCESS | CONSTRAINTS | CURRENT_SLICE | CANDIDATES | DECISIONS
-QUALITY | FOLLOW_UPS | LEARNING_DELTA | STOP_STATE
+GOAL_EXECUTION | CURRENT_SLICE | CANDIDATES | DECISIONS
+QUALITY | FOLLOW_UPS | LEARNING_DELTA | COMPLETION
 ```
 
-Relatório final de meta:
+Relatório final compacto de Meta Goal relevante:
 
 ```text
-GOAL_STATUS: GOAL_SATISFIED | GOAL_IN_PROGRESS | BLOCKED
-SUCCESS_CRITERIA
-COMPLETED_SLICES
-METRICS_BEFORE | METRICS_AFTER
-QUALITY | COMMITS
-UNRESOLVED_DECISIONS | FOLLOW_UPS
-HARD_EARNED_LEARNING_CANDIDATES
+META GOAL EXECUTION REPORT
+Goal: mode | result | stop_reason
+Budget: token_budget | tokens_used | token_accounting_source
+        duration_budget | elapsed
+Execution: candidates_considered | slices_planned | slices_executed
+           slices_dropped | specialists_invoked
+Scope: files_inspected | files_changed | owners_changed
+Validation: semantic_review | targeted_tests | full_tests | quality_gate
+            native_validation | physical_validation
+Success Criteria: status + evidence por critério
+Uncertainties: blocking | material | minor
+Falsification: performed | result | findings
+Early Completion: used | reason
+Remaining Work
 ```
 
-O relatório é síntese, não log cronológico. `HARD_EARNED_LEARNING_CANDIDATES`
-é apenas entrada do promotion check. Candidato derivável, canônico, temporário,
-instável ou não validado é descartado, não persistido.
+O relatório é síntese, não log cronológico. Nunca afirma “fully validated”,
+“production ready”, physical pass ou cobertura total sem evidence correspondente.
+Use `NOT_RUN`, `UNKNOWN`, `BLOCKED` ou `GOAL_PARTIALLY_SATISFIED` quando for o
+estado real. `HARD_EARNED_LEARNING_CANDIDATES`, quando existirem, continuam mera
+entrada do promotion check; não são persistidos automaticamente.

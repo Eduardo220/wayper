@@ -1,0 +1,348 @@
+{
+  "version": 1,
+  "baseRun": {
+    "originalCriteriaCount": 1,
+    "successCriteria": [
+      { "id": "SC1", "status": "SATISFIED", "evidence": ["owner source + targeted proof"] }
+    ],
+    "uncertainties": [],
+    "validation": [
+      { "id": "FAST", "required": true, "status": "PASS", "evidence": ["quality gate PASS"] },
+      { "id": "SEMANTIC", "required": true, "status": "PASS", "evidence": ["semantic review PASS"] },
+      { "id": "TARGETED", "required": true, "status": "PASS", "evidence": ["targeted test PASS"] }
+    ],
+    "claims": [
+      { "id": "C1", "material": true, "evidence": ["source and test provenance"] }
+    ],
+    "accounting": { "tokensUsed": "UNKNOWN", "source": "UNAVAILABLE" },
+    "stop": { "semanticJudge": false, "goalSatisfiedJudge": false, "sliceController": false },
+    "falsification": { "performed": true, "result": "PASS", "findings": [] },
+    "budget": { "exhausted": false, "remaining": true },
+    "workExecuted": true,
+    "execution": { "candidates": 1, "slices": 1, "specialists": 0 }
+  },
+  "cases": [
+    {
+      "id": "EGC01",
+      "kind": "COMPLETION",
+      "scenario": "simple early completion",
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC02",
+      "kind": "COMPLETION",
+      "scenario": "FAST pass with mandatory targeted test not run",
+      "override": {
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "SEMANTIC", "required": true, "status": "PASS", "evidence": ["review PASS"] },
+          { "id": "TARGETED", "required": true, "status": "NOT_RUN", "evidence": [] }
+        ]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC03",
+      "kind": "COMPLETION",
+      "scenario": "open blocking uncertainty",
+      "override": {
+        "uncertainties": [
+          { "id": "U1", "severity": "BLOCKING", "status": "OPEN" }
+        ]
+      },
+      "expected": { "result": "GOAL_BLOCKED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC04",
+      "kind": "COMPLETION",
+      "scenario": "open material uncertainty without treatment",
+      "override": {
+        "uncertainties": [
+          { "id": "U1", "severity": "MATERIAL", "status": "OPEN" }
+        ]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC05",
+      "kind": "COMPLETION",
+      "scenario": "physical validation required but not run",
+      "override": {
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "TARGETED", "required": true, "status": "PASS", "evidence": ["Jest PASS"] },
+          { "id": "PHYSICAL_ANDROID", "required": true, "status": "NOT_RUN", "evidence": [] }
+        ]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC06",
+      "kind": "COMPLETION",
+      "scenario": "large remaining budget does not create work",
+      "override": { "budget": { "remaining": true, "tokenBudget": 150000, "durationBudgetMinutes": 60 } },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC07",
+      "kind": "COMPLETION",
+      "scenario": "falsification finds an unvalidated owner",
+      "override": {
+        "falsification": {
+          "performed": true,
+          "result": "FAIL",
+          "findings": [{ "severity": "MATERIAL", "finding": "owner not validated" }]
+        }
+      },
+      "expected": { "result": "GOAL_RUNNING", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC08",
+      "kind": "COMPLETION",
+      "scenario": "clean final falsification",
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC09",
+      "kind": "COMPLETION",
+      "scenario": "valid not applicable criterion",
+      "override": {
+        "successCriteria": [
+          { "id": "SC1", "status": "NOT_APPLICABLE", "reason": "changed scope excludes Android" }
+        ]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC10",
+      "kind": "COMPLETION",
+      "scenario": "not applicable used without a scope reason",
+      "override": {
+        "successCriteria": [{ "id": "SC1", "status": "NOT_APPLICABLE" }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC11",
+      "kind": "COMPLETION",
+      "scenario": "token usage unavailable is reported as unknown",
+      "override": { "accounting": { "tokensUsed": "UNKNOWN", "source": "UNAVAILABLE" } },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC12",
+      "kind": "COMPLETION",
+      "scenario": "simple task invokes no artificial specialist",
+      "override": { "execution": { "candidates": 1, "slices": 1, "specialists": 0 } },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC13",
+      "kind": "COMPLETION",
+      "scenario": "simple task uses one natural slice",
+      "override": { "execution": { "candidates": 1, "slices": 1, "specialists": 0 } },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC14",
+      "kind": "COMPLETION",
+      "scenario": "Stop remains deterministic backstop",
+      "override": { "stop": { "semanticJudge": false, "goalSatisfiedJudge": false, "sliceController": false } },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC15",
+      "kind": "COMPLETION",
+      "scenario": "docs-only path stays cheap",
+      "override": {
+        "scope": "DOCS_ONLY",
+        "validation": [
+          { "id": "MARKDOWN", "required": true, "status": "PASS", "evidence": ["Markdown PASS"] },
+          { "id": "LINKS", "required": true, "status": "PASS", "evidence": ["links PASS"] }
+        ]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC16",
+      "kind": "COMPLETION",
+      "scenario": "no-change path stays cheap",
+      "override": { "scope": "NO_CHANGE", "validation": [], "workExecuted": false },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC17",
+      "kind": "COMPLETION",
+      "scenario": "run tracking critical requires risk-shaped validation",
+      "override": {
+        "scope": "RUN_TRACKING_CRITICAL",
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "SEMANTIC", "required": true, "status": "PASS", "evidence": ["review PASS"] },
+          { "id": "TARGETED", "required": true, "status": "PASS", "evidence": ["Jest PASS"] },
+          { "id": "CONCURRENCY", "required": true, "status": "PASS", "evidence": ["concurrency review PASS"] },
+          { "id": "STATE_TRANSITIONS", "required": true, "status": "PASS", "evidence": ["transition review PASS"] }
+        ]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "EGC18",
+      "kind": "COMPLETION",
+      "scenario": "budget exhausts before mandatory validation",
+      "override": {
+        "budget": { "exhausted": true, "remaining": false },
+        "validation": [{ "id": "TARGETED", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_BUDGET_EXHAUSTED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC19",
+      "kind": "COMPLETION",
+      "scenario": "material claim has no provenance",
+      "override": { "claims": [{ "id": "C1", "material": true, "evidence": [] }] },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "EGC20",
+      "kind": "COMPLETION",
+      "scenario": "scope shrinking drops original criteria",
+      "override": { "originalCriteriaCount": 3 },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+
+    {
+      "id": "SH01",
+      "kind": "SHADOW",
+      "scenario": "trivial task",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH02",
+      "kind": "SHADOW",
+      "scenario": "docs-only task",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "override": {
+        "scope": "DOCS_ONLY",
+        "validation": [{ "id": "MARKDOWN_LINKS", "required": true, "status": "PASS", "evidence": ["docs checks PASS"] }]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH03",
+      "kind": "SHADOW",
+      "scenario": "localized bug with complete proof",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH04",
+      "kind": "SHADOW",
+      "scenario": "small refactor missing architecture review",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "ARCHITECTURE_REVIEW", "required": true, "status": "NOT_RUN", "evidence": [] }
+        ]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH05",
+      "kind": "SHADOW",
+      "scenario": "multi-owner change missing adjacent-owner validation",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "validation": [{ "id": "ADJACENT_OWNER", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH06",
+      "kind": "SHADOW",
+      "scenario": "core product owner with complete validation",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "override": {
+        "scope": "CORE_PRODUCT_OWNER",
+        "validation": [
+          { "id": "FAST", "required": true, "status": "PASS", "evidence": ["FAST PASS"] },
+          { "id": "TARGETED", "required": true, "status": "PASS", "evidence": ["targeted PASS"] },
+          { "id": "ADJACENT_OWNER", "required": true, "status": "PASS", "evidence": ["adjacent review PASS"] }
+        ]
+      },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH07",
+      "kind": "SHADOW",
+      "scenario": "run tracking change missing concurrency review",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "scope": "RUN_TRACKING_CRITICAL",
+        "validation": [{ "id": "CONCURRENCY", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH08",
+      "kind": "SHADOW",
+      "scenario": "native Android build surface without compile validation",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "scope": "NATIVE_ANDROID",
+        "validation": [{ "id": "NATIVE_COMPILE", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH09",
+      "kind": "SHADOW",
+      "scenario": "complex Meta Goal where falsification finds a gap",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "OLD_FALSE_POSITIVE",
+      "override": {
+        "falsification": { "performed": true, "result": "FAIL", "findings": [{ "severity": "MATERIAL" }] }
+      },
+      "expected": { "result": "GOAL_RUNNING", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH10",
+      "kind": "SHADOW",
+      "scenario": "physical validation required but unavailable",
+      "oldResult": "GOAL_RUNNING",
+      "expectedAssessment": "HONEST_STATE_REFINEMENT",
+      "override": {
+        "validation": [{ "id": "PHYSICAL_ANDROID", "required": true, "status": "NOT_RUN", "evidence": [] }]
+      },
+      "expected": { "result": "GOAL_PARTIALLY_SATISFIED", "eligible": false, "earlyCompletion": false }
+    },
+    {
+      "id": "SH11",
+      "kind": "SHADOW",
+      "scenario": "no-change task",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "override": { "scope": "NO_CHANGE", "validation": [], "workExecuted": false },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    },
+    {
+      "id": "SH12",
+      "kind": "SHADOW",
+      "scenario": "task already correctly implemented",
+      "oldResult": "GOAL_SATISFIED",
+      "expectedAssessment": "NO_REGRESSION",
+      "override": { "workExecuted": false },
+      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+    }
+  ]
+}

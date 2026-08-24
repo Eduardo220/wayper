@@ -97,6 +97,44 @@ Targeted tests vêm do teste diretamente associado, owner, skill ou módulos
 alterados. Não existe test-impact engine. Se a relação não for confiável, `Q2/Q3`
 usa a suíte completa.
 
+## Validation Matrix por changed scope
+
+Esta é a matriz normativa usada por Meta Goal Completion. O changed scope real
+seleciona todas as linhas aplicáveis; `MIXED` usa a união. O changed-scope
+determinístico do Stop permanece um subconjunto FAST e não substitui esta matriz.
+
+| Changed scope | FAST | Semantic/targeted | DEEP e claim boundary |
+| --- | --- | --- | --- |
+| `NO_CHANGE` | nenhum gate pesado | confirmar estado e critérios sem inventar mudança | cheap completion; nenhum Jest/native por reflexo |
+| `DOCS_ONLY` | Markdown/diff check | links e claims aplicáveis | product Jest e native `NOT_APPLICABLE` com motivo |
+| `PRODUCT_SOURCE` | `quality:gate` | semantic review; targeted test quando existe owner relevante | architecture review se boundary mudou; full Jest por risco |
+| `CORE_PRODUCT_OWNER` | `quality:gate` | semantic review, targeted tests e adjacent-owner review obrigatórios | full Jest quando blast radius é material |
+| `RUN_TRACKING_CRITICAL` | `quality:gate` | semantic, targeted Jest, concurrency e state-transition review | recovery/background/offline/notification conforme o delta; full Jest para core owner ou blast radius material; device só prova comportamento real |
+| `NATIVE_ANDROID` | `quality:gate` + native config | semantic review; targeted tests se disponíveis | compile/build se build surface mudou; lifecycle se mudou; physical Android só prova device runtime |
+| `HARNESS_INFRASTRUCTURE` | gate do owner alterado | evals antigos e novos, completion backstop self-tests, semantic review | context, hook, cheap-path e `git diff --check` regressions obrigatórios |
+
+Owner selection segue:
+
+```text
+changed owners -> affected contracts -> relevant validations
+```
+
+Cada item entra no Validation Ledger como `NOT_RUN`, `PASS`, `FAIL`,
+`NOT_APPLICABLE` ou `BLOCKED`. `NOT_APPLICABLE` exige motivo ligado ao scope;
+ausência de teste, FAST verde ou outro gate verde nunca convertem `NOT_RUN` em
+`PASS`.
+
+Para comportamento físico:
+
+```text
+FAST_HOOK_PASS != PHYSICAL_VALIDATION_PASS
+EMULATOR_PASS != PHYSICAL_DEVICE_PASS
+```
+
+Sem device real, use `NOT_RUN`/`BLOCKED`. Quando physical evidence é success
+criterion e permanece ausente, o máximo honesto é `GOAL_PARTIALLY_SATISFIED` ou
+`GOAL_BLOCKED`, conforme o blocker.
+
 ## FAST e DEEP
 
 FAST:

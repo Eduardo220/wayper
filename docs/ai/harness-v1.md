@@ -5,7 +5,8 @@
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
 > Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
 > Memory + Automated Gates + Token Economy + Capability Architecture + Design
-> Intelligence + External Skill Acquisition,
+> Intelligence + External Skill Acquisition + Evidence-Gated Completion
+> (`CONTRACT_ONLY`),
 > 2026-08-24<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
@@ -30,8 +31,10 @@ AGENTS.md
            -> source dependency walk + Pass 2 por evidence
            -> minimum sufficient context closure
               -> waves/read-only specialists quando necessário
-                 -> synthesis + validation pelo agente principal
-                    -> outputs generated, nunca autoridade
+                 -> execution + evidence + validation pelo agente principal
+                    -> completion eligibility + final falsification
+                       -> Goal Execution Report
+                          -> Stop backstop determinístico
 ```
 
 [`docs/14-instrucoes-para-ia.md`](../14-instrucoes-para-ia.md) é o workflow
@@ -54,9 +57,12 @@ evidência datada.
   sob demanda; `npm run quality:architecture` impede novos consumers inválidos.
 - `docs/ai/quality-gates.md`: Q0-Q3, R0-R3, delta, finding contract e síntese;
   `npm run quality:gate` agrega somente os gates FAST de repositório.
-- `docs/ai/meta-goal-runtime.md`: Goal contract, autonomia, Execution Kernel,
-  candidate ranking, budget, follow-ups, learning delta e stop conditions;
-  carregado somente para intenção contínua.
+- `docs/ai/meta-goal-runtime.md`: Goal Execution Contract, autonomia, Execution
+  Kernel, accounting, ledgers, completion eligibility, final falsification,
+  report e stop conditions; carregado somente para intenção contínua.
+- `docs/ai/meta-goal-completion-evals.json` e
+  `scripts/quality/check-meta-goal-completion.mjs`: evals machine-readable e
+  shadow `OLD_DECISION`/`NEW_DECISION`; não são runtime de produção.
 - `docs/ai/memory-policy.md` e `docs/ai/memory/index.json`: promotion de
   hard-earned learning e discovery por domínio/risco; index/topics nunca são
   contexto permanente nem source of truth.
@@ -166,8 +172,9 @@ nativos e usam os contratos de
 [`docs/ai/process-workflows.md`](process-workflows.md). A delegação segue
 [`docs/ai/orchestration.md`](orchestration.md).
 `wayper-brain` permanece somente no backup histórico, sem reativar código, agent
-ou configuração. Meta Goal é contrato declarativo em
-[`meta-goal-runtime.md`](meta-goal-runtime.md), não runtime custom. Promotion e
+ou configuração. Meta Goal e seu Completion Judge são contratos declarativos em
+[`meta-goal-runtime.md`](meta-goal-runtime.md), não runtime custom; o checker
+associado executa somente evals. Promotion e
 staleness de memória pertencem a
 [`memory-policy.md`](memory-policy.md); Learning Delta não é salvo
 automaticamente.

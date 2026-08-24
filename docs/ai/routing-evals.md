@@ -3,7 +3,7 @@
 > **Status:** vigente<br>
 > **Tipo:** suíte declarativa, sem API externa<br>
 > **Contagem:** 250 evals anteriores + 32 de token economy + 12 de capability
-> closure + 12 de design routing = 306<br>
+> closure + 12 de design routing + 32 de evidence-gated completion = 338<br>
 > **Owners:** [`task-classification.md`](task-classification.md) e
 > [`context-routing.md`](context-routing.md), com safety de waves em
 > [`orchestration.md`](orchestration.md) e gates/review em
@@ -13,7 +13,8 @@
 > [`token-economy.md`](token-economy.md), com capabilities e Context Closure em
 > [`capability-architecture.md`](capability-architecture.md) e fixtures
 > executáveis em [`capability-routing-evals.json`](capability-routing-evals.json)
-> e [`design-routing-evals.json`](design-routing-evals.json)
+> e [`design-routing-evals.json`](design-routing-evals.json), com completion e
+> shadow em [`meta-goal-completion-evals.json`](meta-goal-completion-evals.json)
 
 Cada caso passa quando a classificação respeita todos os campos e não ativa os
 recursos proibidos. `POTENTIAL` significa selecionar o recurso somente depois
@@ -234,6 +235,44 @@ byte de design; casos positivos deduplicam a única reference `DESIGN.md`.
 | MG12 | restam somente cleanups cosméticos/especulativos | `ROI_EXHAUSTED` | parar sem perfection loop |
 | MG13 | todos os success criteria observáveis passam | `GOAL_SATISFIED` | emitir evidence e síntese, não apenas impressão qualitativa |
 | MG14 | Q3 depende de validação física indisponível | `VALIDATION_INSUFFICIENT` ou `GOAL_IN_PROGRESS` | `PHYSICAL_VALIDATION_PENDING`; nunca `GOAL_SATISFIED` |
+
+## Evidence-gated completion
+
+Os casos abaixo são executáveis por `npm run quality:meta-goal`; o JSON é a
+fonte machine-readable e o checker é eval infrastructure, não runtime paralelo.
+
+| IDs | Cobertura | Resultado obrigatório |
+| --- | --- | --- |
+| EGC01, EGC06, EGC08 | early completion, budget grande e falsification clean | `GOAL_SATISFIED`, sem trabalho artificial |
+| EGC02, EGC19 | FAST sem targeted test; claim sem provenance | completion rejeitada |
+| EGC03, EGC04 | uncertainties blocking/material | estado explícito; material não desaparece |
+| EGC05 | physical validation requerida e `NOT_RUN` | nunca physical pass nem `GOAL_SATISFIED` |
+| EGC07 | falsification encontra gap | `GOAL_RUNNING`; continuar execução |
+| EGC09, EGC10 | `NOT_APPLICABLE` válido e abusivo | aceitar somente com justificativa de scope |
+| EGC11 | token usage indisponível | `UNKNOWN` + `UNAVAILABLE` |
+| EGC12, EGC13 | zero specialist e um slice legítimos | nenhum mínimo artificial |
+| EGC14 | Stop backstop | nenhum semantic/Goal/slice ownership |
+| EGC15, EGC16 | docs-only e no-change | cheap paths preservados |
+| EGC17 | run tracking critical | validation moldada pelo risco |
+| EGC18 | budget termina antes da prova | `GOAL_BUDGET_EXHAUSTED` |
+| EGC20 | scope shrinking | completion rejeitada |
+
+Shadow `SH01`–`SH12` compara `OLD_DECISION` e `NEW_DECISION` para tarefa trivial,
+docs-only, bug localizado, refactor pequeno, multi-owner, core owner, run
+tracking, Android nativo, Meta complexa, physical validation indisponível,
+no-change e tarefa já implementada. Divergência esperada remove falso positivo
+antigo ou refina estado; conclusão legítima não pode virar falso negativo.
+
+As fixtures provam formalmente:
+
+```text
+FAST_HOOK_PASS != GOAL_SATISFIED
+BUDGET_REMAINING != WORK_REMAINING
+TEST_PASS != AUTOMATIC_SEMANTIC_CORRECTNESS
+IMPLEMENTATION_EXISTS != GOAL_PROVEN
+NOT_RUN != PASS
+EMULATOR_PASS != PHYSICAL_DEVICE_PASS
+```
 
 ## Autonomy boundary
 
@@ -524,18 +563,20 @@ instala skill nem classifica linguagem natural.
    G/RV/C/QN;
 6. conferir Goal/autonomy/questions/follow-ups/learnings/stops contra
    `docs/ai/meta-goal-runtime.md` e os casos MG/A/QH/F/L/ST/LR;
-7. conferir promotion/routing/staleness/token/native memory contra
+7. executar `npm run quality:meta-goal` e conferir EGC01–EGC20 e SH01–SH12
+   contra Goal Execution Contract, Validation Matrix e shadow esperado;
+8. conferir promotion/routing/staleness/token/native memory contra
    `docs/ai/memory-policy.md` e os casos M/MR/MP/MS/MT/NM/ML;
-8. conferir event selection/failure/economy/safety/Goal contra
+9. conferir event selection/failure/economy/safety/Goal contra
    `docs/ai/hooks-and-gates.md` e os casos H/HF/HE/HS/HG;
-9. conferir modes/context/brief/compaction/accounting contra
+10. conferir modes/context/brief/compaction/accounting contra
    [`token-economy.md`](token-economy.md) e os casos TE/PC/SC/AB;
-10. executar `npm run quality:capabilities`, conferir CR1–CR12 contra source,
+11. executar `npm run quality:capabilities`, conferir CR1–CR12 contra source,
     registry e [`capability-architecture.md`](capability-architecture.md), e
     ESA-A–M contra
     [`external-skill-acquisition.md`](external-skill-acquisition.md);
-11. validar links/paths do Harness;
-12. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
+12. validar links/paths do Harness;
+13. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
 
 O router primário continua uma política interpretada, não heurística de palavras.
