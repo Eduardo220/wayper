@@ -36,7 +36,7 @@ function requireFile(root, relativePath) {
   return resolved;
 }
 
-function parseSkillMetadata(source, relativePath) {
+export function parseSkillMetadata(source, relativePath) {
   const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
   if (!frontmatter) throw new Error(`Missing skill frontmatter: ${relativePath}`);
   const name = frontmatter[1].match(/^name:\s*(.+)$/m)?.[1]?.trim();
@@ -122,6 +122,12 @@ export function validateEvals(evals, registryState, root = ROOT) {
     if (!Array.isArray(item.entryCapabilities) || !Array.isArray(item.dependencies)) {
       throw new Error(`Invalid capability eval inputs: ${item.id}`);
     }
+    if (
+      item.allowEmptyEntry !== undefined &&
+      (item.allowEmptyEntry !== true || item.entryCapabilities.length !== 0)
+    ) {
+      throw new Error(`Invalid empty-entry exception in ${item.id}`);
+    }
     let entryDomainMatched = false;
     for (const capability of item.entryCapabilities) {
       const entry = registryState.capabilities.get(capability);
@@ -130,7 +136,9 @@ export function validateEvals(evals, registryState, root = ROOT) {
       }
       if (entry.domain === item.entryDomain) entryDomainMatched = true;
     }
-    if (!entryDomainMatched) throw new Error(`Entry domain mismatch in ${item.id}`);
+    if (!entryDomainMatched && item.allowEmptyEntry !== true) {
+      throw new Error(`Entry domain mismatch in ${item.id}`);
+    }
     for (const dependency of item.dependencies) {
       if (
         !DEPENDENCY_CLASSES.has(dependency.classification) ||

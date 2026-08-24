@@ -5,7 +5,8 @@
 > **Owner:** [`harness-v1.md`](harness-v1.md)<br>
 > **Registry:** [`capability-registry.json`](capability-registry.json)<br>
 > **Router:** [`context-routing.md`](context-routing.md)<br>
-> **Evals:** [`capability-routing-evals.json`](capability-routing-evals.json)
+> **Evals:** [`capability-routing-evals.json`](capability-routing-evals.json) e
+> [`design-routing-evals.json`](design-routing-evals.json)
 
 ## Princípio
 
@@ -28,14 +29,16 @@ permanente, router executável, grafo autoritativo ou autorização de produto.
 | `CAPABILITY` | Unidade nomeada de conhecimento ou comportamento que pode ser necessária para explicar/alterar uma tarefa | registry; não implica uma skill própria |
 | `SKILL` | Workflow/knowledge de domínio reutilizável, com metadata permanente pequena e corpo on-demand | `.agents/skills/`; não é processo transversal, reviewer ou source of truth |
 | `REFERENCE` | Documento canônico suficiente para cobrir capability que não merece skill | docs/ADR owner; não repete workflow genérico |
+| `CAPABILITY_ONLY` | Decisão de não criar skill/reference quando source/owners já bastam | resultado válido de promotion; schema v1 persiste somente capabilities asset-backed |
 | `SPECIALIST` | Reviewer read-only independente selecionado por risco concreto | `.codex/agents/`; não implementa, orquestra ou aprova integração |
 | `PROCESS` | Sequência transversal como bug investigation ou safe refactor | `process-workflows.md`; não recebe metadata de skill por padrão |
 | `TOOL` | Mecanismo de busca, shell, gate ou apoio de discovery | runtime/global/project conforme owner; output nunca vira verdade por si só |
 | `MEMORY` | Lição hard-earned auxiliar, seletiva e invalidável | `memory-policy.md`; nunca precede source, teste ou decisão canônica |
 
-Uma capability pode ser coberta por `SKILL` ou `REFERENCE`. Source e testes
-continuam owners do comportamento implementado; o asset ensina como trabalhar no
-domínio sem copiar a implementação para o registry.
+Uma capability pode ser coberta por `SKILL` ou `REFERENCE`; uma candidate também
+pode terminar `CAPABILITY_ONLY` e não criar asset/entry artificial. Source e
+testes continuam owners do comportamento implementado; o asset ensina como
+trabalhar no domínio sem copiar a implementação para o registry.
 
 ## Registry canônico
 
@@ -59,6 +62,16 @@ npm run quality:capabilities
 Ele valida schema, IDs, domains, paths, metadata das quatro skills, referências,
 relações e evals. Não classifica linguagem natural, não usa embeddings/vector DB,
 não lê o grafo inteiro e não altera o Stop hook.
+
+As capabilities de design usam `DESIGN.md` como uma reference deduplicada. O
+contrato de seleção específico é validado por:
+
+```sh
+npm run quality:design
+```
+
+Nenhuma delas foi promovida a skill na baseline: não há observed reuse e a
+reference já cobre o workflow sem metadata permanente.
 
 ## Política skill vs reference
 
@@ -264,3 +277,9 @@ Precision/recall do validator mede igualdade do working set contra fixtures
 declarativas, não acurácia semântica do modelo sobre linguagem natural. Source
 e julgamento do agente continuam indispensáveis. O validator prova que evidence
 explícita compõe somente o conjunto esperado e que relações não auto-carregam.
+
+[`design-routing-evals.json`](design-routing-evals.json) acrescenta copy-only,
+spacing, ranking, pós-corrida, mapa, accessibility, runtime bug, refactor,
+celebração, settings/profile, typography e audit. Casos `NONE` precisam manter
+capabilities e assets de design vazios; capabilities compartilhando o contrato
+deduplicam a mesma reference e carregam zero skill bodies.

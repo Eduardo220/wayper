@@ -96,3 +96,10 @@ test('CR9 registry rejects a skill id that diverges from SKILL metadata', () => 
   invalid.assets.find((item) => item.kind === 'SKILL').id = 'skill:wrong-name';
   assert.throws(() => validateRegistry(invalid, ROOT), /Skill asset id mismatch/);
 });
+
+test('CR10 copy-only entry loads no design reference', () => {
+  const fixture = evals.cases.find((item) => item.id === 'CR6_TRIVIAL_NO_EXPANSION');
+  const result = composeContext(registry, fixture);
+  assert.deepEqual(result.capabilities, []);
+  assert.deepEqual(result.assets, []);
+});

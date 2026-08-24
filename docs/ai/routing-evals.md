@@ -3,7 +3,7 @@
 > **Status:** vigente<br>
 > **Tipo:** suíte declarativa, sem API externa<br>
 > **Contagem:** 250 evals anteriores + 32 de token economy + 12 de capability
-> closure = 294<br>
+> closure + 12 de design routing = 306<br>
 > **Owners:** [`task-classification.md`](task-classification.md) e
 > [`context-routing.md`](context-routing.md), com safety de waves em
 > [`orchestration.md`](orchestration.md) e gates/review em
@@ -13,10 +13,34 @@
 > [`token-economy.md`](token-economy.md), com capabilities e Context Closure em
 > [`capability-architecture.md`](capability-architecture.md) e fixtures
 > executáveis em [`capability-routing-evals.json`](capability-routing-evals.json)
+> e [`design-routing-evals.json`](design-routing-evals.json)
 
 Cada caso passa quando a classificação respeita todos os campos e não ativa os
 recursos proibidos. `POTENTIAL` significa selecionar o recurso somente depois
 que a inspeção confirmar a flag; não é ativação default.
+
+## Design routing
+
+Os casos abaixo são executáveis por `npm run quality:design`. A seleção é um
+contrato declarativo de Context Closure, não um classificador autônomo de texto.
+
+| # | Task | Design capabilities | Mode | Must stay out |
+| --- | --- | --- | --- | --- |
+| DR1 | copy-only | none | `NONE` | design reference/skill e active-run |
+| DR2 | spacing refinement | `layout` | `OPERATE` | motion/gamification/post-run |
+| DR3 | ranking redesign | design-system, layout, gamification-ui | `OPERATE` | post-run/map/runtime |
+| DR4 | post-run redesign | design-system, layout, motion, gamification-ui, post-run-design | `EXPERIENCE` | map/runtime |
+| DR5 | map overlay sem dado geo | layout, accessibility, native-ui, map-ui | `OPERATE` | territory/live GPS/post-run |
+| DR6 | TalkBack/font scale/touch | accessibility, native-ui | `OPERATE` | motion/gamification/run boundary |
+| DR7 | active-run runtime bug | none | `NONE` | todo contexto visual |
+| DR8 | generic refactor | none | `NONE` | todo contexto visual |
+| DR9 | medal celebration | motion, gamification-ui, accessibility | `EXPERIENCE` | map/post-run/runtime |
+| DR10 | settings/profile hierarchy | design-system, layout, accessibility, native-ui | `OPERATE` | motion/gamification/post-run |
+| DR11 | typography/font scaling | typography, accessibility | `OPERATE` | color/motion/gamification |
+| DR12 | source-only design audit | design-audit | `OPERATE` | runtime/territory/quality skill |
+
+Todas usam zero design skills. Casos `NONE` carregam zero capability, asset e
+byte de design; casos positivos deduplicam a única reference `DESIGN.md`.
 
 ## Positive routing
 

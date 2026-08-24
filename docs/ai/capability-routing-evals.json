@@ -139,12 +139,13 @@
       "id": "CR6_TRIVIAL_NO_EXPANSION",
       "task": "troque a copy de um botao",
       "entryDomain": "UI_DESIGN",
-      "entryCapabilities": ["screen-ui-accessibility"],
+      "allowEmptyEntry": true,
+      "entryCapabilities": [],
       "dependencies": [],
       "expected": {
-        "capabilities": ["screen-ui-accessibility"],
+        "capabilities": [],
         "skills": [],
-        "excluded": ["active-run-lifecycle", "territory-capture", "harness-routing"],
+        "excluded": ["screen-ui-accessibility", "design-system", "active-run-lifecycle", "territory-capture", "harness-routing"],
         "capabilityGap": false
       }
     },

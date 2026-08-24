@@ -20,6 +20,7 @@ conteúdos em prompts, skills, agents ou hooks.
 | `docs/ai/memory/` | índice/topics técnicos hard-earned, somente sob demanda |
 | `.agents/skills/` | workflow de domínio carregado sob demanda |
 | `docs/ai/capability-registry.json` | inventário on-demand de capability → skill/reference |
+| `DESIGN.md` | contrato visual; não duplica runtime tokens nem verdade de produto |
 | `.codex/agents/` | especialização read-only com gatilho concreto |
 | hooks | enforcement determinístico; não substituem documentação |
 | `docs/ai/token-economy.md` | leitura/output/contexto sob demanda; não reduz reasoning ou evidence |
@@ -123,6 +124,7 @@ Decisões aprovadas incompatíveis são bloqueio para decisão humana.
 | teste | `docs/12-guia-de-testes.md` e checklist físico aplicável |
 | roadmap/backlog | `docs/02-roadmap.md` / `docs/03-backlog.md` |
 | Harness | `docs/ai/harness-v1.md`; auditoria datada só como evidência |
+| identidade/linguagem visual | `DESIGN.md`; valores executáveis em `src/theme/wayperTheme.js` |
 
 Documento substituído mantém aviso e link para o sucessor. Caminhos persistidos
 em docs versionadas são relativos ao repositório.

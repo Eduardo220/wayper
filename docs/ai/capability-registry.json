@@ -53,7 +53,7 @@
     {
       "id": "reference:ui-design",
       "kind": "REFERENCE",
-      "path": "docs/09-design-e-wireframes.md"
+      "path": "DESIGN.md"
     },
     {
       "id": "reference:diagnostics",
@@ -296,7 +296,73 @@
       "id": "screen-ui-accessibility",
       "domain": "UI_DESIGN",
       "asset": "reference:ui-design",
-      "suggests": []
+      "suggests": ["accessibility"]
+    },
+    {
+      "id": "design-system",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["layout", "typography", "color", "accessibility"]
+    },
+    {
+      "id": "layout",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["design-system", "accessibility"]
+    },
+    {
+      "id": "typography",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["design-system", "accessibility"]
+    },
+    {
+      "id": "color",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["design-system", "accessibility"]
+    },
+    {
+      "id": "motion",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["accessibility", "native-ui"]
+    },
+    {
+      "id": "accessibility",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["native-ui"]
+    },
+    {
+      "id": "native-ui",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["accessibility"]
+    },
+    {
+      "id": "map-ui",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["layout", "color", "accessibility"]
+    },
+    {
+      "id": "gamification-ui",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["color", "motion", "accessibility"]
+    },
+    {
+      "id": "post-run-design",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["layout", "motion", "gamification-ui", "accessibility"]
+    },
+    {
+      "id": "design-audit",
+      "domain": "UI_DESIGN",
+      "asset": "reference:ui-design",
+      "suggests": ["design-system", "accessibility", "native-ui"]
     },
     {
       "id": "local-diagnostics",

@@ -135,7 +135,7 @@ Leia esta tabela para escolher domínio; abra abaixo somente as seções escolhi
 | `TERRITORY_GEO` | coordenadas, distância, rota, território, MapLibre data | styling de mapa |
 | `FIREBASE_AUTH` | Firebase/Auth/Firestore access/segurança | citação documental |
 | `SOCIAL` | feed, friends, groups, profile, ranking | corrida sem integração social |
-| `UI_DESIGN` | copy, layout, interaction, animation, accessibility | ownership técnico não visual |
+| `UI_DESIGN` | identidade, layout, type, color, interaction, motion, accessibility, map/gamification visual | copy-only e ownership técnico não visual |
 | `DIAGNOSTICS_SENTRY` | logs, diagnóstico, Sentry, performance monitoring | bug apenas investigado no source |
 | `ANDROID_NATIVE` | manifest, Kotlin, service, receiver, Gradle | React UI pura |
 | `TEST_BUILD` | Jest, build, dependency, Expo/EAS, tooling | mera solicitação de validar |
@@ -312,22 +312,30 @@ branch atual sempre confirmam ownership.
 
 ### `UI_DESIGN`
 
-- **Triggers:** layout, copy, style, tema, componente visual, interação,
-  animação, acessibilidade e estado de tela.
-- **Negative triggers:** mudança de source/owner de estado apenas porque aparece
-  numa tela; MapLibre data/geometry sem decisão visual.
+- **Triggers:** sistema visual, layout, tipografia, color, componente, interação,
+  motion, accessibility, native UI, styling do mapa, gamificação e pós-corrida.
+- **Negative triggers:** copy-only/local sem decisão visual; mudança de
+  source/owner de estado apenas porque aparece numa tela; runtime bug; refactor
+  genérico; MapLibre data/geometry sem decisão visual.
 - **Entry points:** `src/screens/`, `src/components/` e `src/theme/`.
-- **Primary owners:** componente/tela existente e tokens/tema atuais.
-- **Docs:** `docs/09-design-e-wireframes.md`, `docs/06-fluxos-de-usuario.md` e
-  recorte de produto da tela quando houver regra.
+- **Primary owners:** `DESIGN.md` para contrato; `src/theme/wayperTheme.js` para
+  valores runtime; componente/tela existente para implementação.
+- **Docs:** `DESIGN.md`, recorte de produto da tela e
+  `docs/09-design-e-wireframes.md` somente como inventário histórico.
 - **Tests:** teste adjacente quando existir e validação visual/acessibilidade
   direcionada.
-- **Skills:** `wayper-mobile-shell` só para shell/navigation; nenhuma skill
-  pesada para ajuste visual local.
+- **Capabilities:** `design-system`, `layout`, `typography`, `color`, `motion`,
+  `accessibility`, `native-ui`, `map-ui`, `gamification-ui`,
+  `post-run-design` e `design-audit`; selecione o menor conjunto.
+- **Modes:** `OPERATE` por default; `EXPERIENCE` somente para janela de resultado
+  ou recompensa significativa. Copy-only e task não visual não carregam o
+  contrato.
+- **Skills:** nenhuma de design nesta baseline; todas as capabilities usam a
+  reference on-demand. `wayper-mobile-shell` só para shell/navigation real.
 - **Specialists:** nenhum por padrão; geospatial não revisa styling do mapa.
 - **Tools:** source direto; Graphify não é necessário para ajuste local.
-- **Validation:** estados, interação, acessibilidade, regressão visual e teste
-  afetado.
+- **Validation:** `npm run quality:design`, estados, interação, accessibility,
+  screenshot nativo e teste afetado conforme o diff.
 - **Risk flags:** `UI_UX`, `PRODUCT_RULE`, `PERFORMANCE`.
 - **Escalation:** state ownership, navegação pública ou vários fluxos reais sobe
   para bounded/architectural e adiciona domínio correspondente.

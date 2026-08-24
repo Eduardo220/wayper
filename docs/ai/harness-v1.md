@@ -4,7 +4,8 @@
 > **Escopo:** repositório mobile<br>
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
 > Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
-> Memory + Automated Gates + Token Economy + Capability Architecture,
+> Memory + Automated Gates + Token Economy + Capability Architecture + Design
+> Intelligence,
 > 2026-08-23<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
@@ -68,6 +69,9 @@ evidência datada.
   inventário compacto, routing em duas passagens e Context Closure on-demand.
 - `scripts/quality/check-capability-routing.mjs`: validator/evals determinísticos
   do registry; não é intent classifier, runtime ou dependency walker automático.
+- `DESIGN.md`, `docs/ai/design-routing-evals.json` e
+  `scripts/quality/check-design-routing.mjs`: contrato visual, Context Closure de
+  design e métricas on-demand; não alteram tokens/runtime nem criam skill.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
@@ -145,6 +149,9 @@ Capability Architecture também permanece declarativa: não cria embeddings,
 vector DB, banco, intent classifier, full-graph loader ou segundo execution
 runtime. Registry e evals são abertos somente quando o Pass 1 precisa resolver
 capability/asset além do mapa rápido.
+Design Intelligence também permanece declarativa: não instala Impeccable,
+detector web, hook, sidecar, fonte, dependency ou runtime visual. `DESIGN.md`
+possui o contrato; `WayperTheme` continua owner dos valores executáveis.
 As quatro skills possuem workflows de domínio; processos genéricos permanecem
 nativos e usam os contratos de
 [`docs/ai/process-workflows.md`](process-workflows.md). A delegação segue

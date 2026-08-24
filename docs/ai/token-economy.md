@@ -156,17 +156,18 @@ asset depois. Ele não adiciona skill bootstrap, metadata ou linha ao
 `AGENTS.md`. A seleção e Context Closure pertencem a
 [`capability-architecture.md`](capability-architecture.md).
 
-Baseline local desta unidade, reproduzida por `npm run quality:capabilities`:
+Baseline da Unidade 15, reproduzida por `npm run quality:capabilities` e
+`npm run quality:design`:
 
-| Métrica | Before | After |
+| Métrica | Before U15 | After U15 |
 | --- | ---: | ---: |
-| `TOTAL_CAPABILITIES` canônicas | 0 | 43 |
+| `TOTAL_CAPABILITIES` canônicas | 43 | 54 |
 | `ACTIVE_SKILLS` | 4 | 4 |
-| `REGISTRY_BYTES` on-demand | 0 B | 9.994 B |
+| `REGISTRY_BYTES` on-demand | 9.994 B | 11.750 B |
 | `PERMANENT_DISCOVERY_BYTES` das quatro skills | 1.074 B | 1.074 B |
 | `ON_DEMAND_SKILL_BODY_BYTES` disponíveis | 12.872 B | 12.872 B |
 | `PERMANENT_CONTEXT_BYTES` Wayper | 7.311 B | 7.311 B |
-| routing evals declarativas | 282 | 294 |
+| routing evals declarativas | 294 | 306 |
 
 `PERMANENT_DISCOVERY_BYTES` conta UTF-8 de name + description + path absoluto
 observado das skills do projeto, sem estimar formatação/overhead do runtime; é
@@ -174,7 +175,7 @@ subconjunto do contexto permanente, não valor somável a 7.311 B. O path torna 
 número dependente do checkout, por isso o validator remede em cada ambiente.
 
 Nas 12 fixtures de closure: `SKILLS_LOADED_PER_TASK` foi 0–2 (média 0,33),
-`COMPOSED_CONTEXT_BYTES` foi 4.223–15.065 B (média 7.180 B),
+`COMPOSED_CONTEXT_BYTES` foi 0–15.065 B (média 6.680 B),
 `IRRELEVANT_SKILL_LOADS=0` e `MISSED_CAPABILITIES=0`. Precision/recall do working
 set foram 100% contra expectations declarativas; isso prova composição do
 resolver por evidence, não classificação semântica autônoma de linguagem.
@@ -183,6 +184,27 @@ A simulação em memória usa catálogo de 70 capabilities, seleciona
 `weekly-ranking + xp-progression` e carrega somente essas duas capabilities,
 zero skill bodies e 5.887 B de reference deduplicada. Nenhuma capability ou skill
 falsa é persistida.
+
+### Design Intelligence
+
+As 11 capabilities novas e a capability de UI anterior compartilham uma única
+reference on-demand. `DESIGN.md` é contrato; `WayperTheme` continua owner dos
+valores executáveis. Nenhuma skill, hook, plugin ou linha permanente foi criada.
+
+| Métrica | Before U15 | After U15 |
+| --- | ---: | ---: |
+| `DESIGN_REGISTRY_BYTES` | 0 B | 1.493 B |
+| `DESIGN_SKILL_METADATA_BYTES` | 0 B | 0 B |
+| `DESIGN_ON_DEMAND_BYTES` | 0 B | 19.372 B |
+| `PERMANENT_CONTEXT_DELTA` | 0 B | 0 B (0%) |
+| design routing evals | 0 | 12 |
+| irrelevant design skill loads | 0 | 0 |
+
+`DESIGN_REGISTRY_BYTES` serializa de forma compacta somente assets e
+capabilities `UI_DESIGN`; não é o tamanho do registry completo.
+`DESIGN_ON_DEMAND_BYTES` é o tamanho real de `DESIGN.md` e é deduplicado mesmo
+quando uma task seleciona várias capabilities. Nos casos copy-only, runtime bug
+e refactor genérico o working set visual é `0 B`. Bytes não são billed tokens.
 
 ## Contabilidade
 
