@@ -4,8 +4,8 @@
 > **Escopo:** repositório mobile<br>
 > **Versão:** Foundation + Routing + Skill Workflows + Orchestration + Static
 > Analysis + Budgets + Boundaries + Adaptive Quality + Meta Goal + High-Signal
-> Memory + Automated Gates V1,
-> 2026-08-17<br>
+> Memory + Automated Gates + Token Economy V1,
+> 2026-08-23<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -59,6 +59,8 @@ evidência datada.
   contexto permanente nem source of truth.
 - `docs/ai/hooks-and-gates.md`: capability audit e completion backstop
   project-scoped; automatiza somente gates determinísticos por changed-scope.
+- `docs/ai/token-economy.md`: modos `COMPACT/CLEAR/EXACT`, leitura progressiva,
+  briefs mínimos, compaction nativa e medição sem confundir bytes com billing.
 - `docs/ai/routing-evals.md`: contrato positivo e negativo sem API externa.
 - `.agents/skills/`: quatro workflows de domínio do mobile. Apenas `name` e
   `description` entram na descoberta; o corpo é carregado quando o domínio casar.
@@ -85,7 +87,7 @@ concorrência, lifecycle mobile, persistência e geoespacial.
 Secrets, tokens, preferências de modelo e paths pessoais não são versionados.
 Site skills e o revisor WebGL pertencem ao site e não ao mobile.
 
-## Graphify, RTK e hooks
+## Graphify, RTK, Caveman e hooks
 
 Graphify é um índice auxiliar ativo. Sua configuração e ciclo de geração não
 mudam nesta fundação; `graphify-out`, maps e caches nunca entram no contexto
@@ -93,6 +95,10 @@ permanente nem substituem source. Toda pista material é confirmada diretamente.
 
 RTK é ferramenta global opcional. O projeto não inclui adapter, proxy ou segundo
 sistema de compressão e deve continuar operável com shell comum.
+
+Caveman também permanece global e opcional. Compressão de model output não
+altera source, evidence ou prosa persistida. Seleção segura e medições pertencem
+a [`token-economy.md`](token-economy.md).
 
 Os hooks Git `post-commit` e `post-checkout` instalados pelo Graphify são runtime
 local, assíncrono e fail-open. O hook Codex/RTK e hooks de plugins são configuração
@@ -109,8 +115,9 @@ mobile ou substitui Q/R.
 5. consultar o memory index somente quando domínio/risco justificar e abrir no
    máximo os topics relevantes;
 6. permanecer single-agent ou decompor somente por valor e independência;
-7. confirmar código, callers e testes; memory nunca substitui essa confirmação;
-8. sintetizar e subir contexto, Graphify ou especialista só por evidência.
+7. localizar symbols/headings e preferir ranges suficientes a arquivos grandes;
+8. confirmar código, callers e testes; memory nunca substitui essa confirmação;
+9. sintetizar e subir contexto, Graphify ou especialista só por evidência.
 
 Não existe ciclo `AGENTS -> docs -> skill -> AGENTS`: skills referenciam owners,
 mas não redefinem política nem orquestram agents; apenas recomendam specialists
@@ -124,6 +131,8 @@ Knowledge graph novo, memory runtime/search engine, token proxy e framework/DSL
 de boundaries permanecem fora. A repo memory é somente política, índice pequeno
 e topics on-demand. Boundaries simples de import e o ratchet owner-specific
 estão implementados sem nova dependência.
+Token Economy também permanece declarativa: não cria compressor, hook de
+compaction, session logger, tokenizer ou billing estimator do projeto.
 As quatro skills possuem workflows de domínio; processos genéricos permanecem
 nativos e usam os contratos de
 [`docs/ai/process-workflows.md`](process-workflows.md). A delegação segue

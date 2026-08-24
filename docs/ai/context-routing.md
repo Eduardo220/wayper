@@ -410,8 +410,11 @@ branch atual sempre confirmam ownership.
   skill/agent para workflow especializado; `quality-gates.md` para gates/review;
   `meta-goal-runtime.md` para metas contínuas/autonomia e `memory-policy.md` para
   hard-earned learning on-demand; `hooks-and-gates.md` somente para runtime de
-  hooks/automação determinística.
-- **Docs:** estes arquivos e a linha de IA em `docs/00-fontes-do-projeto.md`.
+  hooks/automação determinística; `token-economy.md` para leitura, output,
+  briefs e compaction.
+- **Docs:** `harness-v1.md` e somente o owner do aspecto tocado; não pré-carregue a
+  suíte `docs/ai`. `token-economy.md` entra para contexto/output/RTK/Caveman,
+  compaction ou brief, não em toda mudança de Harness.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
   produto para garantir ausência de regressão.
 - **Skills:** nenhuma skill de domínio por padrão.
@@ -419,8 +422,8 @@ branch atual sempre confirmam ownership.
   architecture/review genérico são nativos.
 - **Tools:** busca direta; Graphify apenas para inventário/dependência ampla;
   Codex doctor para saúde/config suportada.
-- **Validation:** links/paths, nomes existentes, config TOML, custo permanente e
-  working tree.
+- **Validation:** links/paths, nomes existentes, config TOML, custo permanente,
+  bytes BEFORE/AFTER quando token economy mudar e working tree.
 - **Risk flags:** `DOCUMENTATION`, `BUILD_TOOLING`.
 - **Escalation:** config/hook global, novo mecanismo ou mudança de ownership exige
   evidência de suporte e boundary project/global.
@@ -453,7 +456,7 @@ genérico usam o agente principal ou subagentes nativos do Codex. Não recriar
 reviewer genérico. Workers nativos só escrevem em paralelo segundo
 [`docs/ai/orchestration.md`](orchestration.md).
 
-## Graphify e RTK
+## Graphify, RTK e modos de output
 
 Use Graphify quando ownership é incerto, o dependency map é amplo, consumers
 cruzam módulos, a tarefa é architectural, o refactor é grande ou o import graph
@@ -463,6 +466,11 @@ ou busca direta resolve mais barato. Graphify descobre; source confirma.
 RTK permanece `USER_GLOBAL` e opcional. Prefira output comprimido quando ele
 preservar evidência; use raw quando debugging exigir e nunca esconda erro
 material. O projeto funciona sem RTK e não possui adapter próprio.
+
+[`token-economy.md`](token-economy.md) seleciona `COMPACT`, `CLEAR` e `EXACT`.
+Comece arquivos grandes por outline/symbol/caller e ranges suficientes; leia o
+arquivo inteiro somente quando a semântica atravessar o arquivo. Caveman e
+compaction nativa continuam globais/runtime, nunca fonte de verdade.
 
 ## Seleção negativa de documentos
 

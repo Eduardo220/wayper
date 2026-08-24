@@ -153,13 +153,18 @@ files, shared resources e integração. Workers são agentes nativos, nunca cust
 implementers. O prompt delegado contém escopo fechado, arquivos previstos,
 dependências, validação e proibição de commit/push.
 
+Use o menor `fork_turns` que preserve a intenção. Não herde ou cole histórico
+completo por hábito: passe paths/symbols para leitura no owner e somente o
+Learning Delta relevante. O brief mínimo e os modos de evidence pertencem a
+[`token-economy.md`](token-economy.md).
+
 Sem isolamento, seja mais conservador. Não use `S3` quando houver file scope
 desconhecido, contrato central, mesmo index Git, estado persistente comum ou
 necessidade de decisão ainda aberta.
 
 ## Contrato de retorno
 
-Todo subagent recebe `TASK_ID` e retorna de forma compacta:
+Todo subagent recebe briefing bounded e retorna de forma compacta:
 
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | REPLAN_REQUIRED
@@ -247,7 +252,8 @@ custom do projeto.
 Entre waves, propague somente deltas factuais relevantes como `NEW_FACTS`,
 `NEW_PITFALLS`, `NEW_DEPENDENCIES`, `REJECTED_ASSUMPTIONS` ou `NEW_DECISIONS`;
 não replique o histórico completo para tasks seguintes. Em Meta Goal, seleção,
-relevância e não persistência seguem `meta-goal-runtime.md`.
+relevância e não persistência seguem `meta-goal-runtime.md`; budget e conteúdo
+do brief seguem `token-economy.md`.
 
 ## Git e worktrees
 

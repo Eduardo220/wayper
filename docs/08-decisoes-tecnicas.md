@@ -742,3 +742,22 @@ está desativada no runtime auditado e seus detalhes não observáveis permanece
 deriváveis, temporários ou corretamente registrados em ADR/source/testes. A
 política, budgets, staleness e promotion estão em
 `docs/ai/memory-policy.md`; AGENTS, skills e specialists não cresceram.
+
+### Adendo — Token Economy + Context Compression
+
+**Status:** aceito em 2026-08-23
+
+**Decisão:** otimizar desperdício de contexto e output sem reduzir reasoning,
+evidence, safety ou quality gates. O Harness passa a distinguir `COMPACT` para
+discovery/sucesso/síntese, `CLEAR` para decisão/risco/ordem e `EXACT` para
+machine-readable, diff, erro e diagnóstico. Source grande começa por
+outline/symbol/callers e ranges suficientes; arquivo inteiro é carregado apenas
+quando a semântica exigir. Briefs de subagents recebem o menor history útil e
+somente Learning Delta relevante.
+
+**Consequências:** `AGENTS.md`, metadata de skills/agents, repo memory, hooks e
+código funcional não crescem. RTK e Caveman permanecem globais/opcionais;
+compaction nativa do Codex é aceita como runtime opaco, sem fallback ou hook do
+projeto. Benchmarks separam bytes de contexto, tool output e model output de
+billed tokens, que permanecem desconhecidos sem receipt. Política e evals estão
+em `docs/ai/token-economy.md` e `docs/ai/routing-evals.md`.

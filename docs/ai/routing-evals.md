@@ -2,13 +2,14 @@
 
 > **Status:** vigente<br>
 > **Tipo:** suíte declarativa, sem API externa<br>
-> **Contagem:** 225 evals anteriores + 25 de hooks = 250<br>
+> **Contagem:** 250 evals anteriores + 32 de token economy = 282<br>
 > **Owners:** [`task-classification.md`](task-classification.md) e
 > [`context-routing.md`](context-routing.md), com safety de waves em
 > [`orchestration.md`](orchestration.md) e gates/review em
 > [`quality-gates.md`](quality-gates.md), com memory em
 > [`memory-policy.md`](memory-policy.md) e automated backstop em
-> [`hooks-and-gates.md`](hooks-and-gates.md)
+> [`hooks-and-gates.md`](hooks-and-gates.md), com economia/evidence em
+> [`token-economy.md`](token-economy.md)
 
 Cada caso passa quando a classificação respeita todos os campos e não ativa os
 recursos proibidos. `POTENTIAL` significa selecionar o recurso somente depois
@@ -386,6 +387,58 @@ que a inspeção confirmar a flag; não é ativação default.
 | HG2 | specialist confirma blocker HIGH | review bloqueia/replaneja; hook não seleciona próximo candidate |
 | HG3 | Goal depende de decisão humana de produto | Human Decision Boundary; hook não pergunta nem decide |
 
+## Token economy modes
+
+| # | Scenario | Expected | Forbidden |
+| --- | --- | --- | --- |
+| TE1 | localizar copy em arquivo grande | `COMPACT` no search; `EXACT` no range decisivo | abrir arquivo inteiro por reflexo |
+| TE2 | JSON/NDJSON alimenta parser/auditoria | `EXACT`; query estrutural explícita pode selecionar fields | filtro que trunca/reformata silenciosamente |
+| TE3 | warning de segurança ou ação irreversível | `CLEAR`, ordem e consequência explícitas | fragmentos ambíguos para poupar output |
+| TE4 | suíte/gate passa | `COMPACT`: exit, contagens e warning material | lista completa de casos PASS |
+| TE5 | suíte/gate falha | menor erro causal e expansão `EXACT` sob demanda | resumo que esconde stack, arquivo/linha ou partial failure |
+| TE6 | usuário pede raw/exato | `EXACT` | RTK/Caveman substituir a evidência pedida |
+| TE7 | doc, código, comentário, commit ou mensagem externa | prosa normal/persistida | gravar caveman como política ou source |
+| TE8 | tarefa difícil consome contexto | preservar reasoning e reduzir desperdício periférico | baixar reasoning effort para melhorar métrica |
+
+## Progressive context
+
+| # | Scenario | Expected |
+| --- | --- | --- |
+| PC1 | typo/copy em `MapScreen` | `rg` + range suficiente + validação local; sem full file |
+| PC2 | mudança bounded em formatter | owner symbol + caller/testes diretamente causais |
+| PC3 | bug sem causa confirmada | expandir de symbol para todos os callers/failure paths relevantes |
+| PC4 | arquivo pequeno e semanticamente coeso | leitura inteira permitida quando menor/mais segura |
+| PC5 | range corta branch, cleanup ou `catch` | expandir range antes da claim/edição |
+| PC6 | Graphify/search aponta relação material | confirmar no source/teste atual |
+| PC7 | trivial/bounded sem memory match | `0` memory bytes |
+| PC8 | Meta longa em um domínio/slice | owners/headings/ranges mínimos; não carregar `docs/ai` inteiro |
+
+## Subagent brief e compaction
+
+| # | Scenario | Expected |
+| --- | --- | --- |
+| SC1 | task permanece `S0` | `SUBAGENT_BRIEF_BYTES=0` |
+| SC2 | delegação autorizada e elegível | menor `fork_turns`; outcome/scope/paths/evidence/validation |
+| SC3 | wave seguinte precisa de descoberta anterior | somente Learning Delta relevante, sem histórico completo |
+| SC4 | constraint/risk/dependency é material | preservar no brief mesmo que aumente bytes |
+| SC5 | runtime compacta thread após milestone | revalidar Git/source/testes e continuar pelo estado compacto |
+| SC6 | compaction produz continuidade de conversa | não tratar como memory, doc, source ou promotion |
+| SC7 | CLI expõe compaction sem threshold/controle público confirmado | aceitar runtime; nenhum hook/fallback project-scoped |
+| SC8 | histórico completo é indispensável à intenção | herança maior permitida e justificada; não cortar correctness |
+
+## Accounting e benchmarks
+
+| # | Scenario | Expected |
+| --- | --- | --- |
+| AB1 | bytes raw/optimized diminuem | reportar byte saving; não chamar de billed-token saving |
+| AB2 | benchmark raw/optimized | mesmo cenário e exit code; divergência material invalida comparação |
+| AB3 | filtro pode esconder evidence | retry `EXACT`; ausência de texto não prova ausência de problema |
+| AB4 | nova política on-demand sem metadata | `PERMANENT_CONTEXT_BYTES` 0% growth |
+| AB5 | contexto, tool output e model output mudam | métricas separadas; não somar unidades/estimativas incompatíveis |
+| AB6 | provider receipt da sessão não existe | `TOTAL SESSION UNKNOWN/ESTIMATED` |
+| AB7 | RTK/Caveman publicam percentuais próprios | registrar origem/overhead; não promover a receipt desta sessão |
+| AB8 | T1–T4 | medir BEFORE/AFTER quando possível e manter quality/evidence gates verdes |
+
 ## Validation protocol
 
 1. conferir cada linha contra classes, flags, domínios, skills e specialists
@@ -403,8 +456,10 @@ que a inspeção confirmar a flag; não é ativação default.
    `docs/ai/memory-policy.md` e os casos M/MR/MP/MS/MT/NM/ML;
 8. conferir event selection/failure/economy/safety/Goal contra
    `docs/ai/hooks-and-gates.md` e os casos H/HF/HE/HS/HG;
-9. validar links/paths do Harness;
-10. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
+9. conferir modes/context/brief/compaction/accounting contra
+   [`token-economy.md`](token-economy.md) e os casos TE/PC/SC/AB;
+10. validar links/paths do Harness;
+11. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
 
 Como o router é uma política interpretada e não um programa, estes evals não

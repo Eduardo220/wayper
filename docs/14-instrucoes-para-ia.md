@@ -21,6 +21,7 @@ conteúdos em prompts, skills, agents ou hooks.
 | `.agents/skills/` | workflow de domínio carregado sob demanda |
 | `.codex/agents/` | especialização read-only com gatilho concreto |
 | hooks | enforcement determinístico; não substituem documentação |
+| `docs/ai/token-economy.md` | leitura/output/contexto sob demanda; não reduz reasoning ou evidence |
 
 A arquitetura e as fronteiras project/global/generated estão em
 [`docs/ai/harness-v1.md`](ai/harness-v1.md).
@@ -33,7 +34,9 @@ contínuas, autonomia e Human Decision Boundary pertencem a
 [`docs/ai/meta-goal-runtime.md`](ai/meta-goal-runtime.md). Promotion, routing e
 staleness de hard-earned learning pertencem a
 [`docs/ai/memory-policy.md`](ai/memory-policy.md); memory nunca precede source,
-testes ou decisão canônica.
+testes ou decisão canônica. Modos de output, leitura progressiva e contabilidade
+de contexto pertencem a
+[`docs/ai/token-economy.md`](ai/token-economy.md).
 
 ## Context Gate
 
@@ -58,9 +61,11 @@ motivo proporcional. Um campo que não se aplica pode ser omitido com motivo.
 1. Leia `AGENTS.md` e o catálogo.
 2. Classifique tarefa/flags, leia o diff e selecione gate/review proporcionais.
 3. Leia os documentos mínimos e acione skill apenas quando o gatilho casar.
-4. Use Graphify apenas para reduzir incerteza estrutural; confirme no source.
-5. Leia implementação, callers, testes, configuração e bugs relevantes.
-6. Acione especialista somente quando houver risco específico que justifique o
+4. Localize headings/símbolos/callers e leia ranges suficientes antes de abrir
+   arquivos grandes inteiros.
+5. Use Graphify apenas para reduzir incerteza estrutural; confirme no source.
+6. Leia implementação, callers, testes, configuração e bugs relevantes.
+7. Acione especialista somente quando houver risco específico que justifique o
    contexto adicional.
 
 Skills não decidem prioridade nem autorizam produto. Specialists não orquestram
