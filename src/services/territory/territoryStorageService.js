@@ -278,7 +278,7 @@ export function normalizeTerritoryEventForRemote(event = {}) {
   return payload;
 }
 
-export async function loadLocalTerritories() {
+export async function loadLocalTerritories(options = {}) {
   try {
     const raw = await AsyncStorage.getItem(TERRITORIES_STORAGE_KEY);
     const parsed = safeParse(raw, []);
@@ -292,9 +292,7 @@ export async function loadLocalTerritories() {
         })
       )
     );
-  } catch {
-    return [];
-  }
+  } catch (error) { if (options.throwOnError) throw error; return []; }
 }
 
 export async function saveLocalTerritories(territories = [], options = {}) {
@@ -311,9 +309,7 @@ export async function saveLocalTerritories(territories = [], options = {}) {
     const next = dedupeById([...existing, ...normalized]);
     await AsyncStorage.setItem(TERRITORIES_STORAGE_KEY, safeStringify(next));
     return next;
-  } catch {
-    return [];
-  }
+  } catch (error) { if (options.throwOnError) throw error; return []; }
 }
 
 export async function saveLocalTerritory(territory = {}, options = {}) {
@@ -389,9 +385,7 @@ export async function saveLocalTerritoryEvents(events = [], options = {}) {
     const next = dedupeById([...existing, ...normalized]);
     await AsyncStorage.setItem(TERRITORY_EVENTS_STORAGE_KEY, safeStringify(next));
     return next;
-  } catch {
-    return [];
-  }
+  } catch (error) { if (options.throwOnError) throw error; return []; }
 }
 
 export async function saveLocalTerritoryEvent(event = {}, options = {}) {

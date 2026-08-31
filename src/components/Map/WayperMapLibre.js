@@ -386,33 +386,6 @@ export function buildLineStringFeature(path = [], properties = {}) {
   };
 }
 
-function buildMultiLineStringFeature(segments = [], properties = {}) {
-  const coordinates = (Array.isArray(segments) ? segments : [])
-    .map((segment) => (Array.isArray(segment) ? segment : []).map(toLngLat).filter(Boolean))
-    .filter((segment) => segment.length >= 2);
-
-  if (coordinates.length === 0) return null;
-  if (coordinates.length === 1) {
-    return {
-      type: "Feature",
-      properties,
-      geometry: {
-        type: "LineString",
-        coordinates: coordinates[0],
-      },
-    };
-  }
-
-  return {
-    type: "Feature",
-    properties,
-    geometry: {
-      type: "MultiLineString",
-      coordinates,
-    },
-  };
-}
-
 export function buildPointFeature(coord, properties = {}) {
   const coordinates = toLngLat(coord);
   if (!coordinates) return null;

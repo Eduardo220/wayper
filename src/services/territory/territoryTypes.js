@@ -25,6 +25,7 @@ export const TERRITORY_CAPTURE_FAILURE = {
   impossible_speed: "impossible_speed",
   not_enough_points: "not_enough_points",
   suspicious_activity: "suspicious_activity",
+  storage_error: "storage_error",
   turf_error: "turf_error",
 };
 

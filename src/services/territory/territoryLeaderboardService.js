@@ -43,10 +43,10 @@ function getTerritoryCellIds(territory = {}) {
 
 function getTerritoryAreaForCell(territory = {}, cellId) {
   const cellPolygon = getCellPolygon(cellId);
-  const intersection = cellPolygon && territory.geometry
-    ? intersectGeometries(territory.geometry, cellPolygon)
-    : null;
-  if (intersection?.ok && intersection.areaM2 > 0) return intersection.areaM2;
+  if (cellPolygon && territory.geometry) {
+    const intersection = intersectGeometries(territory.geometry, cellPolygon);
+    return intersection?.ok ? Math.max(0, intersection.areaM2) : 0;
+  }
 
   return toFiniteNumber(territory.areaM2 ?? territory.area, calculateGeometryAreaM2(territory.geometry));
 }

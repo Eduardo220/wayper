@@ -68,6 +68,12 @@ parcial.
 - Teste necessario: repetir em aparelho fisico Android dev e preview/release com `EXPO_PUBLIC_SENTRY_DSN` e `SENTRY_AUTH_TOKEN` configurados; confirmar evento `RUN_UI_POSSIBLE_FREEZE_DETECTED` ou breadcrumbs de reentrada sem coordenadas cruas; executar a matriz `docs/12-guia-de-testes.md` (kill de processo, force-stop, tela bloqueada, offline, GPS perdido, zonas e corrida longa); validar que `RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED` ocorre antes de tarefas deferidas e que finalizar durante export registra `RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH`.
 - Evidencia da Fase C em 2026-07-24: 7 suites criticas/87 testes automatizados passaram. Um Android fisico foi inicialmente detectado por ADB como `unauthorized`; naquele momento nenhum teste foi executado no aparelho e o status do bug não mudou.
 - Evidencia da Fase D em 2026-07-24: 52 suites/468 testes passaram e o bundle Android com 2.334 módulos foi exportado. O Dev Client também abriu no Samsung SM-A546E com Android 16/API 36 e carregou o bundle atual, mas nenhuma corrida ativa, tela bloqueada, kill ou reentrada foi testada; o smoke básico não altera `EM_VALIDACAO`.
+- Evidencia automatizada de 2026-08-24: a refatoracao do `MapScreen` e o hardening
+  dos owners canonicos passaram em 61 suites/647 testes, lint sem erros,
+  arquitetura sem regressao e code-size ratcheted. Foram adicionadas regressoes
+  deterministicas para rota com 12 mil pontos e replay com 65.536 frames. Nao
+  havia aparelho Android conectado; esta evidencia nao muda `EM_VALIDACAO` nem
+  substitui tela apagada, kill/force-stop, notificacao e reentrada fisicos.
 - Evidencia física posterior em 2026-07-24: o mesmo aparelho manteve coleta/foreground service por 12 min 32 s com tela apagada e reabriu pela notificação sem crash/ANR. O gate continuou reprovado por falhas de ação da notificação, storage/finalização e recovery, registradas abaixo. O stall `RUN_UI_POSSIBLE_FREEZE_DETECTED` de 11,87 s deve ser medido novamente após reduzir o I/O.
 - Reteste físico parcial em 2026-07-24: uma corrida nova confirmou pausa/retomada
   no app e finalização local sem freeze, erro de bundle ou falsa perda da

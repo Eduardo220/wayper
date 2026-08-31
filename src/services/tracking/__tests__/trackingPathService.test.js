@@ -574,17 +574,14 @@ describe("tracking pipeline", () => {
 
   test("MapScreen nao renderiza rawPath como linha principal", () => {
     const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
-    expect(mapScreen).toContain("routePath={liveRoutePath}");
-    expect(mapScreen).toContain("routeSegments={liveRouteSegments}");
-    expect(mapScreen).toContain("const liveRoutePath = running || paused ? displayRouteState : routeState");
-    expect(mapScreen).not.toContain("routePath={rawPathRef.current}");
-  });
-
-  test("MapLibre usa MultiLineString quando ha pausa real", () => {
-    const mapLibre = fs.readFileSync(path.join(process.cwd(), "src/components/Map/WayperMapLibre.js"), "utf8");
-    expect(mapLibre).toContain("type: \"MultiLineString\"");
-    expect(mapLibre).toContain("buildRunLineGeoJson(");
-    expect(mapLibre).toContain("routeSegments");
+    const mapCanvas = fs.readFileSync(path.join(process.cwd(), "src/screens/map/MapCanvasLayer.js"), "utf8");
+    const mapModels = fs.readFileSync(path.join(process.cwd(), "src/screens/map/mapScreenModels.js"), "utf8");
+    expect(mapModels).toContain("routePath: liveRoutePath");
+    expect(mapModels).toContain("routeSegments: liveRouteSegments");
+    expect(mapCanvas).toContain("routePath={map.routePath}");
+    expect(mapCanvas).toContain("routeSegments={map.routeSegments}");
+    expect(mapScreen).toContain("const liveRoutePath = run.running || run.paused ? run.displayRouteState : run.routeState");
+    expect(`${mapScreen}\n${mapModels}`).not.toContain("routePath={rawPathRef.current}");
   });
 
   test("pontos ruins no inicio da corrida nao criam linha deslocada", () => {

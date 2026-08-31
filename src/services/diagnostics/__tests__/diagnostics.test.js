@@ -447,7 +447,13 @@ describe("diagnostics logging", () => {
   });
 
   test("MapScreen expoe diagnostico de emergencia sem navegar para Configuracoes", () => {
-    const source = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const source = [
+      "src/screens/MapScreen.js",
+      "src/screens/map/MapRunControls.js",
+      "src/hooks/useEmergencyRunDiagnostics.js",
+      "src/hooks/useRunUiDiagnostics.js",
+      "src/services/diagnostics/diagnosticExportService.js",
+    ].map((file) => fs.readFileSync(path.join(process.cwd(), file), "utf8")).join("\n");
 
     expect(source).toContain('testID="emergency-diagnostics-button"');
     expect(source).toContain("createActiveRunLightDiagnosticsArtifact");
@@ -456,8 +462,9 @@ describe("diagnostics logging", () => {
     expect(source).toContain("RUN_EMERGENCY_DIAGNOSTICS_EXPORT_STARTED");
     expect(source).toContain("RUN_DIAGNOSTIC_EXPORT_TIMEOUT");
     expect(source).toContain("RUN_DIAGNOSTIC_EXPORT_CANCELLED_FOR_FINISH");
-    expect(source).toContain('recordEmergencyDiagnosticsSnapshot("ui_heartbeat"');
-    expect(source).toContain("hitSlop={EMERGENCY_DIAGNOSTICS_HIT_SLOP}");
+    expect(source).toContain('recordSnapshot("ui_heartbeat"');
+    expect(source).toContain("hitSlop={HIT_SLOP}");
+    expect(source).toContain("const HIT_SLOP = { top: 12, right: 12, bottom: 12, left: 12 }");
     expect(source).not.toContain("createDiagnosticsArchive({");
     expect(source).not.toContain('navigation.navigate("Diagnostico"');
   });
@@ -479,29 +486,41 @@ describe("diagnostics logging", () => {
 
   test("finalizacao da corrida salva local antes de tarefas pesadas", () => {
     const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
+    const finalizationHook = fs.readFileSync(
+      path.join(process.cwd(), "src/hooks/useRunFinalization.js"),
+      "utf8"
+    );
+    const finalizationData = fs.readFileSync(
+      path.join(process.cwd(), "src/services/run/runFinalizationData.js"),
+      "utf8"
+    );
+    const mapRunControls = fs.readFileSync(
+      path.join(process.cwd(), "src/screens/map/MapRunControls.js"),
+      "utf8"
+    );
     const finalizationService = fs.readFileSync(
       path.join(process.cwd(), "src/services/run/runFinalizationService.js"),
       "utf8"
     );
-    const minimumSaveCall = mapScreen.indexOf("await persistMinimumFinishedRun(runData");
-    const uiReleased = mapScreen.indexOf("RUN_FINISH_UI_RELEASED");
-    const deferredEnqueue = mapScreen.indexOf("await enqueuePostRunProcessing(savedLocalRun", uiReleased);
-    const deferredQueueProcessing = mapScreen.indexOf(
-      "const processResult = await runDeferredTaskQueueRepository.process({",
-      uiReleased
+    const finishFlow = finalizationHook.slice(
+      finalizationHook.indexOf("async function finishActiveRun"),
+      finalizationHook.indexOf("async function executeStopRun")
     );
+    const minimumSaveCall = finishFlow.indexOf("await persistMinimumFinishedRun(runData");
+    const uiReleased = finishFlow.indexOf("await releaseFinishedRun(");
+    const deferredEnqueue = finishFlow.indexOf("enqueuePostRun(savedLocalRun", uiReleased);
 
     expect(finalizationService).toContain("RUN_FINISH_LOCAL_MIN_SAVE_STARTED");
     expect(finalizationService).toContain("RUN_FINISH_LOCAL_MIN_SAVE_COMPLETED");
     expect(finalizationService).toContain("RUN_FINISH_DEFERRED_TASKS_SCHEDULED");
-    expect(mapScreen).toContain("territoryCaptureStatus = \"PENDING\"");
-    expect(mapScreen).toContain('includeTerritory: activeMode === "zones"');
-    expect(mapScreen).toContain('trigger: "finish_ui_released"');
-    expect(mapScreen).toContain("isFinishingRun ? \"Finalizando...\"");
+    expect(finalizationData).toContain('territoryCaptureStatus: "PENDING"');
+    expect(finalizationHook).toContain('includeTerritory: activeMode === "zones"');
+    expect(finalizationHook).toContain('source: "finish_ui_released"');
+    expect(mapRunControls).toContain('isFinishingRun ? "Finalizando..."');
     expect(minimumSaveCall).toBeGreaterThan(-1);
     expect(uiReleased).toBeGreaterThan(minimumSaveCall);
     expect(deferredEnqueue).toBeGreaterThan(uiReleased);
-    expect(deferredQueueProcessing).toBeGreaterThan(uiReleased);
+    expect(mapScreen).not.toContain("runDeferredTaskQueueRepository.process(");
   });
 
   test("MainNavigator registra tentativa e timeout do drawer", () => {

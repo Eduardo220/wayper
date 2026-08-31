@@ -22,6 +22,7 @@ const {
   loadLocalTerritoryEvents,
   normalizeTerritoryForRemote,
   removeLocalTerritory,
+  saveLocalTerritories,
   saveLocalTerritory,
   saveLocalTerritoryEvent,
 } = await import("../territoryStorageService.js");
@@ -126,6 +127,15 @@ describe("territoryStorageService", () => {
   test("funcoes nao quebram com AsyncStorage vazio", async () => {
     await expect(loadLocalTerritories()).resolves.toEqual([]);
     await expect(loadLocalTerritoryEvents()).resolves.toEqual([]);
+  });
+
+  test("modo estrito propaga falha de escrita territorial", async () => {
+    AsyncStorageMock.setItem.mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(saveLocalTerritories([{
+      id: "territory-strict",
+      geometry: polygon,
+    }], { throwOnError: true })).rejects.toThrow("disk full");
   });
 
   test("payload remoto e normalizado antes de salvar", () => {

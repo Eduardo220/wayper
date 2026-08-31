@@ -25,6 +25,10 @@ const trackingService = {
     currentSnapshot = null;
     return true;
   }),
+  cancelActiveRun: jest.fn(async () => {
+    currentSnapshot = null;
+    return true;
+  }),
 };
 
 jest.unstable_mockModule("../../runTracking/activeRunTrackingService.js", () => ({
@@ -39,6 +43,7 @@ const {
   buildRecoverySummary,
   buildRunDataFromRecoveredRun,
   createRecoveryCandidate,
+  discardRecoveredRun,
   findRecoverableRunForUser,
   hydrateRecoverableRunCandidate,
   isLiveRecovery,
@@ -424,6 +429,51 @@ describe("runRecoveryService", () => {
       reason: "test",
     });
     expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(false);
+  });
+
+  test("discard tracking limpa snapshot canonico e checkpoint legado", async () => {
+    currentSnapshot = { ...BASE_RUN, activeRunId: "discard-me" };
+    storage.set(ACTIVE_RUN_STORAGE_KEY, JSON.stringify({
+      localRunId: "discard-me",
+      userId: "user-1",
+      mode: "free",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAt: BASE_RUN.startedAt,
+      points: BASE_RUN.trustedPath,
+      schemaVersion: 1,
+    }));
+
+    await expect(discardRecoveredRun({
+      id: "discard-me",
+      localRunId: "discard-me",
+      source: RUN_RECOVERY_SOURCE.TRACKING,
+    })).resolves.toEqual({ ok: true });
+
+    expect(trackingService.cancelActiveRun).toHaveBeenCalledWith({
+      expectedRunId: "discard-me",
+      reason: "discard_recovery",
+    });
+    expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(false);
+  });
+
+  test("discard reporta falha e preserva legado quando canonico nao confirma", async () => {
+    storage.set(ACTIVE_RUN_STORAGE_KEY, JSON.stringify({
+      localRunId: "discard-preserved",
+      userId: "user-1",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+      startedAt: BASE_RUN.startedAt,
+      points: BASE_RUN.trustedPath,
+      schemaVersion: 1,
+    }));
+    trackingService.cancelActiveRun.mockResolvedValueOnce(false);
+
+    const result = await discardRecoveredRun({
+      id: "discard-preserved",
+      source: RUN_RECOVERY_SOURCE.TRACKING,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(true);
   });
 
   test("dependencia canonica invalida preserva o checkpoint legado", async () => {

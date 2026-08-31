@@ -1687,15 +1687,6 @@ describe("activeRunTrackingService lifecycle", () => {
       startedAtMs: BASE_TIME,
     });
     service.__resetActiveRunRuntimeForTests();
-    await service.restoreActiveRun({ restartTracking: false });
-    await expect(service.startBackgroundLocationUpdates({
-      expectedRunId: "run-headless-recovery",
-      reason: "headless_process_recovery_claim",
-      ownerClaim: {
-        mode: "process_recovery",
-        reason: "canonical_snapshot_revalidated",
-      },
-    })).resolves.toBe(true);
 
     await expect(backgroundTaskHandler({
       data: {
@@ -1707,6 +1698,10 @@ describe("activeRunTrackingService lifecycle", () => {
     })).resolves.toMatchObject({
       activeRunId: "run-headless-recovery",
       source: "background",
+    });
+    expect(service.getTrackingRuntimeStatus().backgroundLifecycle).toMatchObject({
+      ownerRunId: "run-headless-recovery",
+      lastOperation: { outcome: "owner_claimed_explicitly" },
     });
 
     service.__resetActiveRunRuntimeForTests();

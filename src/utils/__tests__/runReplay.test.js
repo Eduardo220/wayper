@@ -66,4 +66,17 @@ describe("run replay helpers", () => {
     expect(isRunOwnedByCurrentUser({ name: "local" }, "me")).toBe(true);
     expect(isRunOwnedByCurrentUser({ name: "local" }, "me", { allowLegacyLocal: false })).toBe(false);
   });
+
+  test("finds replay frame logarithmically on a long route", () => {
+    let reads = 0;
+    const timeline = Array.from({ length: 65_536 }, (_, index) => ({
+      get cumulativeTime() {
+        reads += 1;
+        return index;
+      },
+    }));
+
+    expect(getReplayIndexForElapsed(timeline, 50_000.5)).toBe(50_000);
+    expect(reads).toBeLessThan(40);
+  });
 });

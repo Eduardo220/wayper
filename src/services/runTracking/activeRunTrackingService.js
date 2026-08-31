@@ -25,6 +25,7 @@ import {
   evaluateGpsShadowPoint,
   resetGpsShadowRun,
 } from "../diagnostics/gpsDebugShadowService.js";
+import { recoverHeadlessBackgroundOwner } from "./headlessBackgroundOwnerRecovery.js";
 
 export const ACTIVE_RUN_LOCATION_TASK = "WAYPER_ACTIVE_RUN_LOCATION";
 export const ACTIVE_RUN_BACKUP_STORAGE_KEY = `${ACTIVE_RUN_STORAGE_KEY}:backup`;
@@ -4672,13 +4673,12 @@ async function markActiveRunLocallySavedInternal(options = {}) {
   }
 }
 
-export function markActiveRunLocallySaved(options = {}) {
-  return enqueueLocationIngestion(() => markActiveRunLocallySavedInternal(options));
-}
+export const markActiveRunLocallySaved = (options = {}) => enqueueLocationIngestion(() => markActiveRunLocallySavedInternal(options));
 
 async function cancelActiveRunInternal(options = {}) {
   try {
     const activeRunId = activeSnapshot?.activeRunId || (await loadPersistedSnapshot())?.activeRunId || null;
+    if (!matchesExpectedActiveRunId(options, { activeRunId })) return false;
     await stopBackgroundLocationUpdates({ reason: options.reason || "cancel" });
     await enqueueStorageWrite(async () => {
       await removeRouteChunksForRun(activeRunId);
@@ -4718,9 +4718,7 @@ async function cancelActiveRunInternal(options = {}) {
   }
 }
 
-export function cancelActiveRun(options = {}) {
-  return enqueueLocationIngestion(() => cancelActiveRunInternal(options));
-}
+export const cancelActiveRun = (options = {}) => enqueueLocationIngestion(() => cancelActiveRunInternal(options));
 
 async function handleBackgroundLocations(data = {}) {
   const lifecycleFence = captureBackgroundCallbackFence(data);
@@ -4824,8 +4822,8 @@ async function handleBackgroundLocations(data = {}) {
 }
 
 export async function handleActiveRunLocationTask({ data, error } = {}) {
-  const lifecycleFence = captureBackgroundCallbackFence(data || {});
   if (error) {
+    const lifecycleFence = captureBackgroundCallbackFence(data || {});
     if (!isBackgroundCallbackFenceCurrent(lifecycleFence, activeSnapshot)) {
       recordBackgroundCallbackFenceMismatch(
         lifecycleFence,
@@ -4856,6 +4854,8 @@ export async function handleActiveRunLocationTask({ data, error } = {}) {
     });
     return null;
   }
+  await recoverHeadlessBackgroundOwner({ hasOwner: Boolean(backgroundNativeOwnerRunId), restoreActiveRun,
+    runningStatus: ACTIVE_RUN_STATUS.RUNNING, startBackgroundLocationUpdates });
   return handleBackgroundLocations(data || {});
 }
 

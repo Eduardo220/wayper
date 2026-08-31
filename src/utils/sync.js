@@ -40,6 +40,8 @@ import * as TaskManager from "expo-task-manager";
 import * as BackgroundFetch from "expo-background-fetch";
 import { AppState, Platform } from "react-native";
 import logger, { LOG_CATEGORIES } from "./logger.js";
+import createSerializedExecutor from "./createSerializedExecutor.js";
+import { getRunIdentityCandidates, hasSharedRunIdentity } from "./runIdentity.js";
 import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
 
 // ----------------- Keys / Constants -----------------
@@ -78,6 +80,7 @@ let isSyncingZones = false;
 let isSyncingMedals = false;
 let isSyncingTerritories = false;
 let isSyncingTerritoryEvents = false;
+const enqueueRunHistoryWrite = createSerializedExecutor();
 
 let debounceRunsTimer = null;
 let debounceZonesTimer = null;
@@ -199,26 +202,6 @@ function toIsoString(value, fallback = null) {
 function dateMs(value) {
   const date = toIsoString(value);
   return date ? new Date(date).getTime() : 0;
-}
-
-function getRunIdentityCandidates(run = {}) {
-  return [
-    run.id,
-    run.localRunId,
-    run.remoteRunId,
-    run.runId,
-    run.activeRunId,
-    run.legacyId,
-    run.clientRunId,
-  ]
-    .filter((value) => value !== undefined && value !== null && String(value).trim())
-    .map((value) => String(value));
-}
-
-function hasSharedRunIdentity(left = {}, right = {}) {
-  const leftIds = new Set(getRunIdentityCandidates(left));
-  if (leftIds.size === 0) return false;
-  return getRunIdentityCandidates(right).some((id) => leftIds.has(id));
 }
 
 function getStableRunId(run = {}) {
@@ -777,7 +760,7 @@ export async function findLocalRunById(lookup) {
   }
 }
 
-export async function saveLocalRun(run = {}) {
+async function saveLocalRunInternal(run = {}) {
   recordRunEvent("RUN_SAVE_STARTED", {
     runId: run.id || run.runId || null,
     localRunId: run.localRunId || null,
@@ -847,16 +830,20 @@ export async function saveLocalRun(run = {}) {
   }
 }
 
+export const saveLocalRun = (run = {}) => enqueueRunHistoryWrite(() => saveLocalRunInternal(run));
+
 export async function deleteLocalRun(runId, options = {}) {
   try {
     const id = String(runId || "");
     if (!id) return { deleted: false, remoteDeleted: false };
 
-    const existing = await loadLocalRuns();
-    const next = (Array.isArray(existing) ? existing : []).filter((run) =>
-      !getRunIdentityCandidates(run).includes(id)
-    );
-    await AsyncStorage.setItem(RUNS_KEY, safeStringify(compactLocalRunsForStorage(next)));
+    await enqueueRunHistoryWrite(async () => {
+      const existing = await loadLocalRuns();
+      const next = (Array.isArray(existing) ? existing : []).filter((run) =>
+        !getRunIdentityCandidates(run).includes(id)
+      );
+      await AsyncStorage.setItem(RUNS_KEY, safeStringify(compactLocalRunsForStorage(next)));
+    });
 
     let remoteDeleted = false;
     if (options.deleteRemote !== false) {

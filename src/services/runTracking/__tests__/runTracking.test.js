@@ -109,6 +109,23 @@ describe("runTracking central pipeline", () => {
     expect(geojson.features[0].geometry.coordinates).toHaveLength(2);
   });
 
+  test("GeoJSON reflete ponto intermediario e properties em chamadas sucessivas", () => {
+    const first = [
+      { latitude: -23.56, longitude: -46.64, timestamp: 1 },
+      { latitude: -23.561, longitude: -46.641, timestamp: 2 },
+      { latitude: -23.562, longitude: -46.642, timestamp: 3 },
+    ];
+    const second = [first[0], { ...first[1], longitude: -46.651 }, first[2]];
+
+    const before = buildRunLineGeoJson(first, "result", { revision: 1 });
+    const after = buildRunLineGeoJson(second, "result", { revision: 2 });
+
+    expect(after.features[0].geometry.coordinates[1]).not.toEqual(
+      before.features[0].geometry.coordinates[1]
+    );
+    expect(after.features[0].properties.revision).toBe(2);
+  });
+
   test("nao conecta segmentos apos gap de GPS", () => {
     const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
     const { first, second } = pauseAndResumeFarAway();

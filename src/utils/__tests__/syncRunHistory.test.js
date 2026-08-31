@@ -224,6 +224,36 @@ describe("local run history source", () => {
     expect(runs[0].segments).toHaveLength(1);
   });
 
+  test("serializa saves concorrentes sem perder corrida confirmada", async () => {
+    const firstWrite = createDeferred();
+    AsyncStorageMock.setItem.mockImplementationOnce(async (key, value) => {
+      await firstWrite.promise;
+      storage.set(key, value);
+    });
+
+    const first = saveLocalRun({
+      id: "concurrent-a",
+      localRunId: "concurrent-a",
+      status: "completed",
+      date: "2026-06-05T10:00:00Z",
+    });
+    while (AsyncStorageMock.setItem.mock.calls.length === 0) await Promise.resolve();
+    const second = saveLocalRun({
+      id: "concurrent-b",
+      localRunId: "concurrent-b",
+      status: "completed",
+      date: "2026-06-05T10:01:00Z",
+    });
+
+    firstWrite.resolve();
+    await Promise.all([first, second]);
+
+    expect((await loadLocalRuns()).map((run) => run.id)).toEqual([
+      "concurrent-b",
+      "concurrent-a",
+    ]);
+  });
+
   test("historico persiste formato canonico compacto e reidrata aliases na leitura", async () => {
     const trustedPath = Array.from({ length: 120 }, (_, index) => point(index + 1));
     const rawPath = [point(0), ...trustedPath];

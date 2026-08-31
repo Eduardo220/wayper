@@ -377,6 +377,31 @@ Desde a Fase D de 2026-07-24:
 - o startup reconcilia corridas mínimas pendentes que tenham sido interrompidas
   antes da criação das tarefas.
 
+Desde a refatoração estrutural de 2026-08-24:
+
+- `MapScreen` permanece somente como composição da projeção React e da
+  apresentação; corrida ativa, histórico, território e fila continuam com os
+  owners canônicos já existentes;
+- lifecycle/AppState/permissão, projeção de snapshot, watcher/timer, start,
+  pause/resume, finish/recovery, replay, diagnóstico, territórios e persistência
+  do resumo têm hooks/services focados; nenhum deles cria store, runtime,
+  repository ou queue paralelo;
+- componentes em `src/screens/map/` recebem view-models e não acessam storage,
+  Firestore, task headless ou transições canônicas;
+- a task headless pode revalidar o snapshot `RUNNING` e recuperar o owner nativo
+  após recriação do processo antes de ingerir o lote GPS;
+- save/delete de `runs` e mutações da deferred queue são serializados; discard
+  exige confirmação da identidade canônica e da limpeza legada;
+- captura territorial combina candidatos locais e remotos por versão/data,
+  confirma a persistência local e mantém remoto como melhor esforço;
+- o mapa limita apenas a projeção visual de rotas longas, sem truncar o
+  `trustedPath`, e o lookup de replay é binário;
+- `MapScreen` não processa a deferred queue: o auto-owner continua no shell;
+- a validação automatizada cobre lifecycle contracts, concorrência, recovery,
+  projeção, câmera, rota longa, replay e território. Background/tela apagada,
+  kill/force-stop e reentrada continuam exigindo a matriz física Android antes
+  de qualquer afirmação de estabilidade em aparelho real.
+
 ### Evolução segura
 
 1. preservar formatos e leitura atuais;

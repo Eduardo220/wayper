@@ -251,13 +251,14 @@ export function buildRunReplayTimeline(runOrPath, options = {}) {
 export function getReplayIndexForElapsed(timeline = [], elapsedSeconds = 0) {
   if (!Array.isArray(timeline) || timeline.length === 0) return -1;
   const elapsed = Math.max(0, Number(elapsedSeconds) || 0);
-  let index = 0;
-
-  while (index < timeline.length - 1 && Number(timeline[index + 1]?.cumulativeTime || 0) <= elapsed) {
-    index += 1;
+  let low = 0;
+  let high = timeline.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Number(timeline[middle]?.cumulativeTime || 0) <= elapsed) low = middle;
+    else high = middle - 1;
   }
-
-  return index;
+  return low;
 }
 
 export function getReplayRunStats(run = {}, timeline = []) {

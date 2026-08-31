@@ -104,6 +104,21 @@ describe("territoryAntiFraudService", () => {
     expect(result.reason).toBe("gps_jump");
   });
 
+  test("nao conecta artificialmente segmentos separados", () => {
+    const first = pathFromBbox([0, 0, 0.002, 0.002]);
+    const second = pathFromBbox([1, 1, 1.002, 1.002]);
+    const result = validateRunForTerritoryCapture([...first, ...second], {
+      distanceMeters: 1800,
+      durationSeconds: 180,
+      minPoints: 5,
+      minLoopPoints: 5,
+      segments: [first, second],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.details.maxJumpM).toBeLessThan(500);
+  });
+
   test("rejeita area acima do limite", () => {
     const result = validateRunForTerritoryCapture(pathFromBbox([0, 0, 0.002, 0.002]), {
       distanceMeters: 900,

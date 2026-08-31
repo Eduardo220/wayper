@@ -6,6 +6,8 @@ import {
   recordRunEvent,
   recordRunSnapshotEvent,
 } from "../diagnostics/runDiagnosticsService.js";
+import createSerializedExecutor from "../../utils/createSerializedExecutor.js";
+import { mergeDeferredQueueTask, retainDeferredQueueTasks } from "./deferredQueueRetention.js";
 
 export const RUN_DEFERRED_TASK_QUEUE_KEY = "wayper_run_deferred_tasks_v1";
 export const RUN_DEFERRED_TASK_SCHEMA_VERSION = 2;
@@ -108,6 +110,7 @@ let isProcessingQueue = false;
 let autoProcessTimer = null;
 let netInfoUnsubscribe = null;
 let appStateUnsubscribe = null;
+const enqueueQueueMutation = createSerializedExecutor();
 
 const nowIso = () => new Date().toISOString();
 
@@ -300,10 +303,14 @@ async function saveQueueRaw(tasks = []) {
     .sort((left, right) => (
       Number(left.priority || 0) - Number(right.priority || 0) ||
       String(left.createdAt || "").localeCompare(String(right.createdAt || ""))
-    ))
-    .slice(0, MAX_STORED_TASKS);
-  await AsyncStorage.setItem(RUN_DEFERRED_TASK_QUEUE_KEY, JSON.stringify(normalized));
-  return normalized;
+    ));
+  const retained = retainDeferredQueueTasks(normalized, {
+    isTerminal: (status) => TERMINAL_STATUSES.has(status),
+    maxTasks: MAX_STORED_TASKS,
+    toTimestamp,
+  });
+  await AsyncStorage.setItem(RUN_DEFERRED_TASK_QUEUE_KEY, JSON.stringify(retained));
+  return retained;
 }
 
 export async function loadRunDeferredTasks(options = {}) {
@@ -314,32 +321,7 @@ export async function loadRunDeferredTasks(options = {}) {
   return tasks;
 }
 
-function mergeQueuedTask(existing, incoming, options = {}) {
-  if (!existing) return incoming;
-  if (existing.status === RUN_DEFERRED_TASK_STATUS.SUCCEEDED && options.resetSucceeded !== true) {
-    return existing;
-  }
-  if (existing.status === RUN_DEFERRED_TASK_STATUS.FAILED_PERMANENT && options.resetPermanent !== true) {
-    return existing;
-  }
-  return normalizeTask({
-    ...existing,
-    payload: {
-      ...(existing.payload || {}),
-      ...(incoming.payload || {}),
-    },
-    metadata: {
-      ...(existing.metadata || {}),
-      ...(incoming.metadata || {}),
-    },
-    priority: Math.min(Number(existing.priority || incoming.priority), Number(incoming.priority || existing.priority)),
-    dependencies: incoming.dependencies?.length ? incoming.dependencies : existing.dependencies,
-    updatedAt: nowIso(),
-    status: existing.status === RUN_DEFERRED_TASK_STATUS.CANCELLED ? RUN_DEFERRED_TASK_STATUS.PENDING : existing.status,
-  });
-}
-
-export async function enqueueRunDeferredTasks(tasks = [], options = {}) {
+async function enqueueRunDeferredTasksInternal(tasks = [], options = {}) {
   const items = (Array.isArray(tasks) ? tasks : [tasks])
     .map(normalizeTask)
     .filter(Boolean);
@@ -361,12 +343,16 @@ export async function enqueueRunDeferredTasks(tasks = [], options = {}) {
       item.idempotencyKey === task.idempotencyKey ||
       (item.runId === task.runId && item.type === task.type)
     );
-    const merged = mergeQueuedTask(index >= 0 ? next[index] : null, task, options);
+    const merged = mergeDeferredQueueTask(
+      index >= 0 ? next[index] : null,
+      task,
+      options,
+      { normalizeTask, nowIso }
+    );
     if (index >= 0) next[index] = merged;
     else next.push(merged);
     queued.push(merged);
   });
-
   const saved = await saveQueueRaw(next);
   recordRunEvent("RUN_DEFERRED_TASKS_ENQUEUED", {
     runId: options.runId || queued[0]?.runId || null,
@@ -378,6 +364,9 @@ export async function enqueueRunDeferredTasks(tasks = [], options = {}) {
 
   return { queued, queue: saved };
 }
+
+export const enqueueRunDeferredTasks = (...args) =>
+  enqueueQueueMutation(() => enqueueRunDeferredTasksInternal(...args));
 
 function getRunMode(run = {}) {
   const raw = String(run.mode || run.type || run.runMode || "free").toLowerCase();
@@ -774,7 +763,7 @@ function makeQueueError(message, options = {}) {
   return error;
 }
 
-async function updateTask(taskId, producer) {
+async function updateTaskInternal(taskId, producer) {
   const queue = await loadQueueRaw();
   const index = queue.findIndex((task) => task.id === taskId);
   if (index < 0) return { queue, task: null };
@@ -784,8 +773,9 @@ async function updateTask(taskId, producer) {
   const saved = await saveQueueRaw(next);
   return { queue: saved, task: updated };
 }
+const updateTask = (...args) => enqueueQueueMutation(() => updateTaskInternal(...args));
 
-export async function recoverStaleRunDeferredTasks(options = {}) {
+async function recoverStaleRunDeferredTasksInternal(options = {}) {
   const now = options.nowMs || Date.now();
   const timeoutMs = Number(options.timeoutMs || RUNNING_RECOVERY_TIMEOUT_MS);
   const queue = await loadQueueRaw();
@@ -810,7 +800,6 @@ export async function recoverStaleRunDeferredTasks(options = {}) {
     recovered.push(updated);
     return updated;
   });
-
   const saved = changed ? await saveQueueRaw(next) : queue;
   if (recovered.length > 0) {
     recordRunEvent("RUN_DEFERRED_QUEUE_RECOVERED_ON_BOOT", {
@@ -821,6 +810,9 @@ export async function recoverStaleRunDeferredTasks(options = {}) {
   }
   return { recovered, queue: saved };
 }
+
+export const recoverStaleRunDeferredTasks = (options = {}) =>
+  enqueueQueueMutation(() => recoverStaleRunDeferredTasksInternal(options));
 
 async function getActiveRunInfo() {
   try {
@@ -1395,7 +1387,7 @@ export async function processRunDeferredTaskQueue(options = {}) {
   }
 }
 
-export async function retryRunDeferredTasks(options = {}) {
+async function retryRunDeferredTasksInternal(options = {}) {
   const queue = await loadQueueRaw();
   const now = nowIso();
   let resetCount = 0;
@@ -1425,6 +1417,9 @@ export async function retryRunDeferredTasks(options = {}) {
   });
   return { resetCount, queue: saved };
 }
+
+export const retryRunDeferredTasks = (options = {}) =>
+  enqueueQueueMutation(() => retryRunDeferredTasksInternal(options));
 
 export async function getRunDeferredTaskQueueSummary() {
   const queue = await loadQueueRaw();
@@ -1528,6 +1523,8 @@ export async function stopRunDeferredTaskAutoProcessing() {
 export async function __resetRunDeferredTaskQueueForTests() {
   await stopRunDeferredTaskAutoProcessing();
   isProcessingQueue = false;
+  await enqueueQueueMutation.drain();
+  enqueueQueueMutation.reset();
   await AsyncStorage.removeItem(RUN_DEFERRED_TASK_QUEUE_KEY);
 }
 

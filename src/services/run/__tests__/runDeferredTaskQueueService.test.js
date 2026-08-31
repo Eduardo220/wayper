@@ -169,6 +169,14 @@ function makeRun(overrides = {}) {
   };
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 async function replaceStoredTasks(producer) {
   const tasks = JSON.parse(storage.get(RUN_DEFERRED_TASK_QUEUE_KEY) || "[]");
   storage.set(RUN_DEFERRED_TASK_QUEUE_KEY, JSON.stringify(producer(tasks)));
@@ -217,6 +225,53 @@ describe("runDeferredTaskQueueService", () => {
     expect(raw).not.toContain("trustedPath");
     expect(raw).not.toContain("rawPath");
     expect(raw).not.toContain("routeSegments");
+  });
+
+  test("serializa enqueues concorrentes sem perder tarefa", async () => {
+    const firstWrite = deferred();
+    AsyncStorageMock.setItem.mockImplementationOnce(async (key, value) => {
+      await firstWrite.promise;
+      storage.set(key, value);
+    });
+
+    const first = enqueueRunDeferredTasks({
+      type: RUN_DEFERRED_TASK_TYPE.RUN_XP_UPDATE,
+      runId: "run-concurrent-a",
+    });
+    while (AsyncStorageMock.setItem.mock.calls.length === 0) await Promise.resolve();
+    const second = enqueueRunDeferredTasks({
+      type: RUN_DEFERRED_TASK_TYPE.RUN_XP_UPDATE,
+      runId: "run-concurrent-b",
+    });
+
+    firstWrite.resolve();
+    await Promise.all([first, second]);
+
+    expect((await loadRunDeferredTasks()).map((task) => task.runId)).toEqual([
+      "run-concurrent-a",
+      "run-concurrent-b",
+    ]);
+  });
+
+  test("cap poda terminais antigos sem truncar tarefa pendente nova", async () => {
+    await enqueueRunDeferredTasks(Array.from({ length: 250 }, (_, index) => ({
+      type: RUN_DEFERRED_TASK_TYPE.RUN_XP_UPDATE,
+      runId: `run-terminal-${index}`,
+      status: RUN_DEFERRED_TASK_STATUS.SUCCEEDED,
+      updatedAt: new Date(1_700_000_000_000 + index).toISOString(),
+    })));
+
+    await enqueueRunDeferredTasks({
+      type: RUN_DEFERRED_TASK_TYPE.RUN_XP_UPDATE,
+      runId: "run-new-pending",
+    });
+    const tasks = await loadRunDeferredTasks();
+
+    expect(tasks).toHaveLength(250);
+    expect(tasks).toContainEqual(expect.objectContaining({
+      runId: "run-new-pending",
+      status: RUN_DEFERRED_TASK_STATUS.PENDING,
+    }));
   });
 
   test("recupera tarefa que ficou running apos restart", async () => {

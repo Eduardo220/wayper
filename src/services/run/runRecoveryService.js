@@ -801,12 +801,12 @@ export function buildRunDataFromRecoveredRun(candidate = {}, overrides = {}) {
 
 export async function discardRecoveredRun(candidate = {}) {
   try {
-    if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) {
-      await activeRunTrackingService.cancelActiveRun?.({ reason: "discard_recovery" });
+    const expectedRunId = candidate.id || candidate.localRunId || candidate.raw?.activeRunId || candidate.raw?.localRunId || null; if (candidate.source === RUN_RECOVERY_SOURCE.TRACKING) {
+      const cleared = await activeRunTrackingService.cancelActiveRun?.({ expectedRunId, reason: "discard_recovery" });
+      if (cleared !== true) throw new Error("canonical active run discard was not confirmed");
     }
-    if (!candidate.source || candidate.source === RUN_RECOVERY_SOURCE.OFFLINE) {
-      await clearActiveRun();
-    }
+    const legacyCleared = await clearActiveRun({ expectedRunId, reason: "discard_recovery" });
+    if (legacyCleared !== true) throw new Error("legacy active run discard was not confirmed");
     return { ok: true };
   } catch (error) {
     return { ok: false, error };
