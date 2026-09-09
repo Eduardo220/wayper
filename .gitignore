@@ -84,6 +84,7 @@ scripts/serviceAccountKey.json
 /web-build/
 /build/
 /graphify-out/
+/.wayper-context/
 *.tsbuildinfo
 *.apk
 *.aab

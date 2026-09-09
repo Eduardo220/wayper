@@ -67,11 +67,14 @@ comprovado.
 | `BUG` | UI local, impacto delimitado | `Q1`; `Q2` se impacto/consumers amplos | `R1` |
 | `BUG` | `OFFLINE_STORAGE`, `SYNC`, `DATA_MIGRATION` | `Q2` | `R2` persistence |
 | `BUG` | `GPS_GEO` | `Q2`; `Q3` se perda de corrida/dado | `R2` geospatial |
+| qualquer | `ACCESSIBILITY` + capability assistiva explícita | mínimo `Q1`; `Q2` se cruza fluxo/nativo | `R2` accessibility |
+| qualquer | `PRIVACY` em diagnóstico/telemetria | mínimo `Q2` | `R2` diagnostics privacy |
+| qualquer | `PRODUCT_RULE` em XP/recompensa/ranking implementado | mínimo `Q2` | `R2` progression rules; decisão nova/conflito fica humano |
 | `ARCHITECTURAL` ou `SAFE_REFACTOR` | qualquer domínio | mínimo `Q2` | `R1` + specialists somente pelas flags |
 | qualquer | `CRITICAL_RUNTIME` + `LIFECYCLE` + `CONCURRENCY` | `Q3` | `R3` lifecycle + concurrency |
 | qualquer | `CRITICAL_RUNTIME` + `OFFLINE_STORAGE` + `CONCURRENCY` | `Q3` | `R3` persistence + concurrency |
 | qualquer | `GPS_GEO` + `LIFECYCLE` | `Q3` quando runtime crítico | `R3` geospatial + lifecycle |
-| qualquer | `AUTH_SECURITY`/`FIREBASE` material | mínimo `Q2` | lente nativa específica; persistence só se durabilidade/sync mudar |
+| qualquer | `AUTH_SECURITY`/`FIREBASE` material | mínimo `Q2` | `R2` auth security; persistence só se durabilidade/sync mudar |
 
 Não chame persistence só porque a mudança envolve corrida, nem geospatial só
 porque existe um mapa na UI.
@@ -90,6 +93,10 @@ basta.
 | repository/storage/migration/Firebase | testes de persistência/rollback/idempotência; specialist pelas flags |
 | geometry/Turf/coordinates/MapLibre data | testes geo e geospatial reviewer |
 | capability registry/closure/external acquisition evals | `npm run quality:capabilities`; source evidence, provenance e custo permanente |
+| capability/profile router, fingerprint, receipt ou evals | `npm run quality:router`; determinismo, refs, policy, coverage, fallback e zero spawn |
+| Working Context/efficiency skill/helper/evals | `npm run quality:context`; fingerprints, invalidation, budgets e preservação declarada de risk/invariants/validations/tests |
+| Context Packet schema/builder/evals | `npm run quality:packets` (também incluído em `quality:context`); determinism, stale/invalid refs, repository leakage, coverage, bloat e duplicate materialization |
+| Structured Handoff schema/validator/selected-specialist adapter | `npm run quality:handoffs`; identity/refs/hash, grounding, source expansion, read-only, selection boundary, fallback, budget, bloat, correction única e 20 evals |
 | design contract/registry/routing evals | `npm run quality:design`; ownership visual, links e zero load irrelevante |
 | docs only | link/consistência; não exigir Expo Doctor |
 
@@ -111,7 +118,7 @@ determinístico do Stop permanece um subconjunto FAST e não substitui esta matr
 | `CORE_PRODUCT_OWNER` | `quality:gate` | semantic review, targeted tests e adjacent-owner review obrigatórios | full Jest quando blast radius é material |
 | `RUN_TRACKING_CRITICAL` | `quality:gate` | semantic, targeted Jest, concurrency e state-transition review | recovery/background/offline/notification conforme o delta; full Jest para core owner ou blast radius material; device só prova comportamento real |
 | `NATIVE_ANDROID` | `quality:gate` + native config | semantic review; targeted tests se disponíveis | compile/build se build surface mudou; lifecycle se mudou; physical Android só prova device runtime |
-| `HARNESS_INFRASTRUCTURE` | gate do owner alterado | evals antigos e novos, completion backstop self-tests, semantic review | context, hook, cheap-path e `git diff --check` regressions obrigatórios |
+| `HARNESS_INFRASTRUCTURE` | gate do owner alterado | evals antigos e novos, completion backstop self-tests, semantic review | `quality:context` quando context efficiency muda; context, hook, cheap-path e `git diff --check` regressions obrigatórios |
 
 Owner selection segue:
 
@@ -142,8 +149,12 @@ FAST:
 - lint oficial em JSON com delta;
 - `quality:size`;
 - `quality:architecture`;
+- testes do capability/profile router seletivo;
 - targeted tests quando houver relação confiável;
-- `git diff --check`.
+- `git diff --check`;
+- `quality:context` somente quando a infraestrutura de Working Context muda.
+- `quality:packets` quando packet schema/builder/evals ou refs capability-scoped mudam.
+- `quality:handoffs` quando schema/validator/adapter/evals de handoff mudam.
 
 `npm run quality:gate` agrega os checks FAST de repositório em paralelo e tem
 output curto; targeted tests continuam separados porque dependem da tarefa. O
@@ -151,6 +162,9 @@ comando aceita `--details` ou `--json`. Ele não roda Jest completo, Expo Doctor
 ou review. O completion backstop de
 [`hooks-and-gates.md`](hooks-and-gates.md) pode invocar esse FAST gate por
 changed-scope em `Stop`; ele não escolhe Q-level nem transforma FAST em DEEP.
+Disagreement entre recomendação determinística e seleção comportamental não
+falha o gate; schema, nondeterminism, dangling reference e eval/policy regression
+falham.
 
 DEEP, somente quando selecionado:
 
@@ -289,10 +303,19 @@ Se a prova física for obrigatória em `Q3`, o resultado global continua
 | `LIFECYCLE`, `NATIVE_ANDROID` | `wayper_mobile_lifecycle_reviewer` |
 | `OFFLINE_STORAGE`, `SYNC`, `DATA_MIGRATION`, Firebase persistence-relevant | `wayper_persistence_reviewer` |
 | `GPS_GEO`, `TERRITORY_GEO` | `wayper_geospatial_reviewer` |
+| `AUTH_SECURITY`, `FIREBASE` com capability de auth/acesso | `wayper_auth_security_reviewer` |
+| `ACCESSIBILITY` com capability assistiva | `wayper_accessibility_reviewer` |
+| `PRIVACY` em diagnóstico/telemetria | `wayper_diagnostics_privacy_reviewer` |
+| `PRODUCT_RULE` em progressão/ranking já implementado | `wayper_progression_rules_reviewer` |
 
-`AUTH_SECURITY` usa lente nativa sobre auth boundary, permissions,
-fail-open/fail-closed, privacy, config/secrets, imports e local-first quando
-aplicável. Não existe custom security reviewer.
+Segurança genérica fora das capabilities do profile continua usando lente nativa
+sobre permissions, fail-open/fail-closed, config/secrets, imports e local-first.
+Decisão nova ou conflito de produto continua exigindo humano.
+
+O router determinístico pode selecionar esses mesmos perfis somente com receipt
+`ROUTER_SELECTED`, depois de `S1/S2` read-only e coverage inequívoca. A tabela e
+o gate comportamental continuam autoritativos para todo fallback; nenhuma saída
+do script equivale a wave ou spawn.
 
 ## Learning delta e conclusão
 

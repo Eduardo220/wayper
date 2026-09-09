@@ -1,0 +1,225 @@
+{
+  "schemaVersion": 1,
+  "tokenProxy": "ceil(UTF-8 bytes / 4); operational proxy, not provider receipt",
+  "cases": [
+    {
+      "id": "CE1_BOUNDED_GOAL_START",
+      "taskClass": "BOUNDED",
+      "before": {
+        "artifacts": [
+          "docs/00-fontes-do-projeto.md",
+          "docs/ai/context-routing.md",
+          "docs/ai/meta-goal-runtime.md"
+        ],
+        "riskFlags": ["DOCUMENTATION", "BUILD_TOOLING"],
+        "invariants": ["MASTER_ONLY", "MARKDOWN_SOURCE", "NO_OBSIDIAN_DEPENDENCY"],
+        "validations": ["CONTEXT_GATE", "CAPABILITY_GATE", "DIFF_CHECK"],
+        "tests": ["context-efficiency", "capability-routing"]
+      },
+      "after": {
+        "artifacts": [
+          ".agents/skills/wayper-context-efficiency/SKILL.md#L1-L70",
+          "docs/00-fontes-do-projeto.md#L1-L32",
+          "docs/ai/context-routing.md#L1-L45",
+          "docs/ai/working-context.md#L1-L55"
+        ],
+        "riskFlags": ["DOCUMENTATION", "BUILD_TOOLING"],
+        "invariants": ["MASTER_ONLY", "MARKDOWN_SOURCE", "NO_OBSIDIAN_DEPENDENCY"],
+        "validations": ["CONTEXT_GATE", "CAPABILITY_GATE", "DIFF_CHECK"],
+        "tests": ["context-efficiency", "capability-routing"]
+      }
+    },
+    {
+      "id": "CE2_ARCHITECTURAL_GOAL",
+      "taskClass": "ARCHITECTURAL",
+      "before": {
+        "artifacts": [
+          "docs/14-instrucoes-para-ia.md",
+          "docs/ai/harness-v1.md",
+          "docs/ai/context-routing.md",
+          "docs/ai/capability-architecture.md",
+          "docs/ai/meta-goal-runtime.md",
+          "docs/ai/orchestration.md",
+          "docs/ai/quality-gates.md"
+        ],
+        "riskFlags": ["DOCUMENTATION", "BUILD_TOOLING"],
+        "invariants": ["MASTER_ONLY", "ONE_WRITER", "MAX_DEPTH_1", "EVIDENCE_GATED_COMPLETION"],
+        "validations": ["OLD_EVALS", "NEW_EVALS", "SEMANTIC_REVIEW", "CONTEXT_GATE", "DIFF_CHECK"],
+        "tests": ["context-efficiency", "capability-routing", "meta-goal-completion", "completion-backstop"]
+      },
+      "after": {
+        "artifacts": [
+          ".agents/skills/wayper-context-efficiency/SKILL.md",
+          "docs/ai/working-context.md",
+          "docs/ai/harness-v1.md#L16-L42",
+          "docs/ai/harness-v1.md#L101-L151",
+          "docs/ai/meta-goal-runtime.md#L31-L147",
+          "docs/ai/meta-goal-runtime.md#L236-L270",
+          "docs/ai/meta-goal-runtime.md#L313-L439",
+          "docs/ai/meta-goal-runtime.md#L521-L638",
+          "docs/ai/quality-gates.md#L100-L167"
+        ],
+        "riskFlags": ["DOCUMENTATION", "BUILD_TOOLING"],
+        "invariants": ["MASTER_ONLY", "ONE_WRITER", "MAX_DEPTH_1", "EVIDENCE_GATED_COMPLETION"],
+        "validations": ["OLD_EVALS", "NEW_EVALS", "SEMANTIC_REVIEW", "CONTEXT_GATE", "DIFF_CHECK"],
+        "tests": ["context-efficiency", "capability-routing", "meta-goal-completion", "completion-backstop"]
+      }
+    },
+    {
+      "id": "CE3_CRITICAL_RUNTIME_CONTEXT_PACKAGE",
+      "taskClass": "CRITICAL_RUNTIME",
+      "before": {
+        "artifacts": [
+          "AGENTS.md",
+          ".agents/skills/wayper-active-run/SKILL.md",
+          ".agents/skills/wayper-context-efficiency/SKILL.md",
+          "docs/04-arquitetura.md",
+          "docs/12-guia-de-testes.md",
+          "docs/13-bugs-conhecidos.md",
+          "docs/22-teste-real-corrida-background.md",
+          "docs/ai/task-classification.md",
+          "docs/ai/quality-gates.md"
+        ],
+        "riskFlags": ["RUN_DATA_LOSS", "LIFECYCLE", "CONCURRENCY", "OFFLINE_STORAGE"],
+        "invariants": ["ONE_CANONICAL_RUN", "MINIMUM_LOCAL_SAVE_FIRST", "NO_HEAVY_GPS_WORK", "FIRESTORE_NON_BLOCKING"],
+        "validations": ["TARGETED_TESTS", "FULL_JEST", "FAILURE_MODE_REVIEW", "PHYSICAL_STATUS_EXPLICIT"],
+        "tests": ["runTracking", "runRecovery", "runFinalization"]
+      },
+      "after": {
+        "artifacts": [
+          "AGENTS.md",
+          ".agents/skills/wayper-active-run/SKILL.md",
+          ".agents/skills/wayper-context-efficiency/SKILL.md#L64-L150",
+          "docs/ai/task-classification.md#L39-L113",
+          "docs/ai/quality-gates.md#L33-L137"
+        ],
+        "riskFlags": ["RUN_DATA_LOSS", "LIFECYCLE", "CONCURRENCY", "OFFLINE_STORAGE"],
+        "invariants": ["ONE_CANONICAL_RUN", "MINIMUM_LOCAL_SAVE_FIRST", "NO_HEAVY_GPS_WORK", "FIRESTORE_NON_BLOCKING"],
+        "validations": ["TARGETED_TESTS", "FULL_JEST", "FAILURE_MODE_REVIEW", "PHYSICAL_STATUS_EXPLICIT"],
+        "tests": ["runTracking", "runRecovery", "runFinalization"]
+      }
+    }
+  ],
+  "contextMapCases": [
+    {
+      "id": "CM01_BOUNDED_SINGLE_FILE",
+      "taskClass": "BOUNDED",
+      "repositories": ["wayper"],
+      "features": ["EVIDENCE", "GRAPHIFY_NOT_NEEDED"],
+      "sourceArtifacts": ["scripts/wayper-context.mjs"],
+      "materializationCopies": 1
+    },
+    {
+      "id": "CM02_MULTI_FILE_BUG",
+      "taskClass": "BUG",
+      "repositories": ["wayper"],
+      "features": ["EVIDENCE", "DEPENDENCY"],
+      "sourceArtifacts": ["scripts/wayper-context.mjs", "scripts/quality/check-context-efficiency.test.mjs"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM03_ACTIVE_RUN_LIFECYCLE",
+      "taskClass": "CRITICAL_RUNTIME",
+      "repositories": ["wayper"],
+      "features": ["RISK_LIFECYCLE", "PROOF_GAP"],
+      "sourceArtifacts": [".agents/skills/wayper-active-run/SKILL.md", "docs/ai/quality-gates.md"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM04_PERSISTENCE",
+      "taskClass": "BUG",
+      "repositories": ["wayper"],
+      "features": ["PERSISTENCE", "DEPENDENCY"],
+      "sourceArtifacts": [".agents/skills/wayper-persistence-sync/SKILL.md", "docs/ai/task-classification.md"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM05_TERRITORY",
+      "taskClass": "BUG",
+      "repositories": ["wayper"],
+      "features": ["TERRITORY", "DEPENDENCY"],
+      "sourceArtifacts": [".agents/skills/wayper-territory-map/SKILL.md", "docs/ai/context-routing.md"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM06_CROSS_DOMAIN_MOBILE",
+      "taskClass": "ARCHITECTURAL",
+      "repositories": ["wayper"],
+      "features": ["MULTI_CAPABILITY", "DEPENDENCY"],
+      "sourceArtifacts": ["docs/ai/capability-registry.json", "docs/ai/capability-architecture.md"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM07_SITE_WEBGL",
+      "taskClass": "BOUNDED",
+      "repositories": ["wayper-site"],
+      "features": ["SITE_ONLY", "GRAPHIFY_TARGETED"],
+      "sourceArtifacts": ["wayper-site:src/components/three/WayperCanvas.tsx", "wayper-site:src/components/three/Experience.tsx"],
+      "materializationCopies": 1
+    },
+    {
+      "id": "CM08_CROSS_REPO",
+      "taskClass": "ARCHITECTURAL",
+      "repositories": ["wayper", "wayper-site"],
+      "features": ["CROSS_REPO", "GRAPHIFY_ISOLATED"],
+      "sourceArtifacts": ["wayper:scripts/wayper-agent-router.mjs", "wayper-site:src/components/three/scene-controller.ts"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM09_SOURCE_CHANGE_AFTER_EVIDENCE",
+      "taskClass": "BUG",
+      "repositories": ["wayper"],
+      "features": ["EVIDENCE_STALENESS"],
+      "sourceArtifacts": ["scripts/wayper-context.mjs"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM10_GRAPHIFY_NOT_NEEDED",
+      "taskClass": "BOUNDED",
+      "repositories": ["wayper"],
+      "features": ["GRAPHIFY_NOT_NEEDED"],
+      "sourceArtifacts": ["docs/ai/context-routing.md"],
+      "materializationCopies": 1
+    },
+    {
+      "id": "CM11_GRAPHIFY_TARGETED",
+      "taskClass": "INVESTIGATION",
+      "repositories": ["wayper"],
+      "features": ["GRAPHIFY_TARGETED"],
+      "sourceArtifacts": ["scripts/quality/check-graph-scopes.mjs", "docs/ai/context-routing.md"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM12_DUPLICATED_EVIDENCE",
+      "taskClass": "ARCHITECTURAL",
+      "repositories": ["wayper"],
+      "features": ["EVIDENCE_DEDUP"],
+      "sourceArtifacts": ["docs/ai/working-context.md"],
+      "materializationCopies": 3
+    },
+    {
+      "id": "CM13_PROOF_GAP",
+      "taskClass": "INVESTIGATION",
+      "repositories": ["wayper"],
+      "features": ["PROOF_GAP"],
+      "sourceArtifacts": ["docs/ai/meta-goal-runtime.md"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM14_KNOWN_GOOD_UNCHANGED",
+      "taskClass": "ARCHITECTURAL",
+      "repositories": ["wayper"],
+      "features": ["KNOWN_GOOD_UNCHANGED"],
+      "sourceArtifacts": ["docs/ai/working-context.md"],
+      "materializationCopies": 2
+    },
+    {
+      "id": "CM15_KNOWN_GOOD_QUESTIONED",
+      "taskClass": "ARCHITECTURAL",
+      "repositories": ["wayper"],
+      "features": ["KNOWN_GOOD_QUESTIONED"],
+      "sourceArtifacts": ["docs/ai/working-context.md", "scripts/wayper-agent-router.mjs"],
+      "materializationCopies": 2
+    }
+  ]
+}

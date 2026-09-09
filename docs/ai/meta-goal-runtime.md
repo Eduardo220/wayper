@@ -30,9 +30,10 @@ Critérios contraditórios atravessam o Human Decision Boundary.
 
 ## Goal Execution Contract
 
-Meta Goal mantém um contrato operacional durante a execução. Ele pode viver no
-estado nativo da sessão e no relatório; não precisa ser persistido como JSON nem
-autoriza um segundo runtime.
+Meta Goal mantém um contrato operacional durante a execução. O contrato completo
+pode viver no estado nativo da sessão e no relatório; o subconjunto necessário
+para continuidade/reuse é persistido como Markdown pelo Working Context, sem
+segundo runtime.
 
 ```text
 GOAL_EXECUTION
@@ -59,6 +60,10 @@ falsification:
   performed | result | findings
 completion:
   state | eligible | stop_reason | early_completion
+working_context:
+  markdown | artifacts | fingerprints | invalidated | known_good_unchanged
+  context_map_schema | context_map_fingerprint | proof_gaps | learning_delta
+  context_budget | budget_escalation_reason | context_decision
 ```
 
 O contrato separa obrigatoriamente:
@@ -131,9 +136,15 @@ Status descreve esta superfície integrada, não capability genérica externa.
 - Nunca crie scheduler, daemon, loop infinito ou arquivo `goal-loop` como
   fallback. O Harness permanece portátil e capability-based.
 
+Todo Goal nativo carrega automaticamente `wayper-context-efficiency` antes da
+releitura task-specific. O `threadId` seleciona
+`.wayper-context/<threadId>.md`; fingerprints preservam somente proof inalterado.
+Isso não transforma toda task pontual em `META_GOAL_MODE`.
+
 ```text
 CODEX GOAL MODE (quando exposto pelo runtime)
-  -> WAYPER GOAL CONTRACT
+  -> WAYPER CONTEXT EFFICIENCY + WORKING CONTEXT
+     -> WAYPER GOAL CONTRACT
      -> EXECUTION KERNEL
         -> CLASSIFIER / ROUTER / PROCESS
            -> DOMAIN SKILLS
@@ -239,31 +250,32 @@ Trabalho não trivial segue a sequência abaixo, referenciando os owners em vez 
 duplicá-los:
 
 1. `GROUND_TRUTH` — Git, estado, source e comandos reais.
-2. `RESOLVE_INTENT` — outcome, success, constraints e non-goals.
-3. `CLASSIFY` — [`task-classification.md`](task-classification.md).
-4. `RISK` — flags e override crítico.
-5. `AMBIGUITY` — somente após investigação proporcional.
-6. `DECISION_BOUNDARY` — auto, conservador ou humano.
-7. `LOAD_MINIMUM_CONTEXT` — [`context-routing.md`](context-routing.md).
-8. `ENTRY_CAPABILITY` — Pass 1 do
+2. `REFRESH_WORKING_CONTEXT` — reuse/fingerprint e diff-before-file pelo Goal.
+3. `RESOLVE_INTENT` — outcome, success, constraints e non-goals.
+4. `CLASSIFY` — [`task-classification.md`](task-classification.md).
+5. `RISK` — flags e override crítico.
+6. `AMBIGUITY` — somente após investigação proporcional.
+7. `DECISION_BOUNDARY` — auto, conservador ou humano.
+8. `LOAD_MINIMUM_CONTEXT` — [`context-routing.md`](context-routing.md).
+9. `ENTRY_CAPABILITY` — Pass 1 do
    [`capability-architecture.md`](capability-architecture.md).
-9. `SOURCE_DEPENDENCY_WALK` — consumers, owner, contract e producer aplicáveis.
-10. `DEPENDENCY_EXPANSION / CONTEXT_CLOSURE` — Pass 2 somente por evidence.
-11. `BUILD_CANDIDATES / PLAN` — top candidates, sem backlog exaustivo.
-12. `SELECT_SAFE_SLICE` — menor melhoria observável e reversível.
-13. `BASELINE` — prova before proporcional.
-14. `IMPLEMENT` — owner atual, reuse-first, menor delta.
-15. `TARGETED_PROOF` — teste/evidência diretamente causal.
-16. `QUALITY_GATE` — Q0-Q3 de [`quality-gates.md`](quality-gates.md).
-17. `REVIEW` — R0-R3 pelas flags do slice.
-18. `SYNTHESIZE` — evidência, safeguards, dedupe e blockers.
-19. `RE-MEASURE` — before, after, delta e quality status.
-20. `COMMIT WHEN APPROPRIATE` — slice integrado e coerente, se autorizado.
-21. `LEARNING_DELTA` — apenas novidades relevantes.
-22. `FOLLOW_UPS` — classificar e deduplicar descobertas.
-23. `CONTINUE_OR_STOP` — re-rankear ou aplicar stop condition.
+10. `SOURCE_DEPENDENCY_WALK` — consumers, owner, contract e producer aplicáveis.
+11. `DEPENDENCY_EXPANSION / CONTEXT_CLOSURE` — Pass 2 somente por evidence.
+12. `BUILD_CANDIDATES / PLAN` — top candidates, sem backlog exaustivo.
+13. `SELECT_SAFE_SLICE` — menor melhoria observável e reversível.
+14. `BASELINE` — prova before proporcional.
+15. `IMPLEMENT` — owner atual, reuse-first, menor delta.
+16. `TARGETED_PROOF` — teste/evidência diretamente causal.
+17. `QUALITY_GATE` — Q0-Q3 de [`quality-gates.md`](quality-gates.md).
+18. `REVIEW` — R0-R3 pelas flags do slice.
+19. `SYNTHESIZE` — evidência, safeguards, dedupe e blockers.
+20. `RE-MEASURE` — before, after, delta e quality status.
+21. `COMMIT WHEN APPROPRIATE` — slice integrado e coerente, se autorizado.
+22. `LEARNING_DELTA` — apenas novidades relevantes.
+23. `FOLLOW_UPS` — classificar e deduplicar descobertas.
+24. `CONTINUE_OR_STOP` — re-rankear ou aplicar stop condition.
 
-Em `TASK_MODE`, o passo 23 termina após o objetivo pontual. Em
+Em `TASK_MODE`, o passo 24 termina após o objetivo pontual. Em
 `META_GOAL_MODE`, ele retorna ao passo 1 com o estado atual, nunca com um plano
 antigo presumido correto. O working set de capability também volta ao Pass 1:
 não acumule skills entre slices; preserve somente Learning Delta relevante.
@@ -486,8 +498,9 @@ NEW_DECISIONS
 ```
 
 O agente principal filtra por task: um pitfall de lifecycle não entra em styling.
-Fato derivável sem relevância não é propagado. Learning Delta continua local à
-sessão/task por padrão. Somente depois de synthesis e validation,
+Fato derivável sem relevância não é propagado. Learning Delta continua local ao
+Goal e pode persistir em seu Working Context; não vira conhecimento compartilhado
+nem repo memory. Somente depois de synthesis e validation,
 `HARD_EARNED_LEARNING_CANDIDATES` passam pelo promotion check de
 [`memory-policy.md`](memory-policy.md); não há persistência automática.
 
@@ -670,11 +683,12 @@ leve e project-scoped; não julga semântica, Goal, slices ou specialists.
 
 ## Estado e Goal Execution Report
 
-Estado interno, carregado somente durante a execução:
+Estado operacional persistente no Markdown do Goal e carregado somente durante a
+execução:
 
 ```text
 GOAL_EXECUTION | CURRENT_SLICE | CANDIDATES | DECISIONS
-QUALITY | FOLLOW_UPS | LEARNING_DELTA | COMPLETION
+QUALITY | FOLLOW_UPS | LEARNING_DELTA | COMPLETION | WORKING_CONTEXT_DELTA
 ```
 
 Relatório final compacto de Meta Goal relevante:
@@ -696,6 +710,8 @@ Lifecycle: canonical_goal_result | native_goal_status | native_blocker
 Execution: candidates_considered | slices_planned | slices_executed
            slices_dropped | specialists_invoked
 Scope: files_inspected | files_changed | owners_changed
+Context: token_proxy_before | token_proxy_after | reused | invalidated
+         known_good_unchanged | budget_escalation_reason | graphify_update
 Validation: semantic_review | targeted_tests | full_tests | quality_gate
             native_validation | physical_validation
 Success Criteria: status + evidence por critério

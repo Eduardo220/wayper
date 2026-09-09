@@ -13,7 +13,8 @@ genéricos.
 ## Quality contract das skills
 
 Uma skill project-scoped só merece existir quando resolve um problema de domínio
-único e reduz redescoberta/erro. Sua metadata contém purpose, triggers e negative
+único ou um lifecycle transversal discriminativo e reduz redescoberta/erro. Sua
+metadata contém purpose, triggers e negative
 triggers; o corpo on-demand contém preconditions, minimum context, workflow,
 invariants, validation, escalation, specialist selection, output contract e
 referências reais. Detalhes históricos/arquiteturais ficam em docs; checklist de
@@ -42,8 +43,10 @@ gap nem motivo de promoção.
 | `CRITICAL_RUNTIME_CHANGE` | `MERGE_INTO_EXISTING_SKILL` | O workflow Wayper-específico pertence a `wayper-active-run`; outra skill duplicaria invariantes críticas |
 | `TEST_FAILURE_INVESTIGATION` | `KEEP_AS_ROUTER_WORKFLOW` | Variante curta de investigação impede editar teste cegamente sem criar custom tester |
 | `DOCUMENTATION_SYNC` | `KEEP_NATIVE` | Rename/link/doc update costuma ser trivial/bounded e não justifica workflow pesado |
+| `CONTEXT_EFFICIENCY` | `CREATE_SKILL` | Todo Goal nativo precisa do mesmo reuse/fingerprint/delta sem carregar o contrato em tasks comuns; metadata pequena evita releitura e não cria agente/router |
 
-Nenhum candidato obteve ROI para `CREATE_SKILL` nesta unidade.
+Somente `CONTEXT_EFFICIENCY` obteve ROI para `CREATE_SKILL`; processos genéricos
+continuam nativos/router workflows.
 
 ## Composição com Meta Goal
 

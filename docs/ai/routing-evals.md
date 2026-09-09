@@ -2,9 +2,10 @@
 
 > **Status:** vigente<br>
 > **Tipo:** suíte declarativa, sem API externa<br>
-> **Contagem:** 250 evals anteriores + 32 de token economy + 12 de capability
+> **Contagem:** 250 evals anteriores + 32 de token economy + 13 de capability
 > closure + 12 de design routing + 32 de evidence-gated completion + 20 de
-> budget control = 358<br>
+> budget control + 3 de context efficiency + 18 de capability router SHADOW =
+> 380<br>
 > **Owners:** [`task-classification.md`](task-classification.md) e
 > [`context-routing.md`](context-routing.md), com safety de waves em
 > [`orchestration.md`](orchestration.md) e gates/review em
@@ -16,10 +17,30 @@
 > executáveis em [`capability-routing-evals.json`](capability-routing-evals.json)
 > e [`design-routing-evals.json`](design-routing-evals.json), com completion e
 > shadow em [`meta-goal-completion-evals.json`](meta-goal-completion-evals.json)
+> e Working Context em
+> [`context-efficiency-evals.json`](context-efficiency-evals.json), com router
+> determinístico em
+> [`agent-router-shadow-evals.json`](agent-router-shadow-evals.json)
 
 Cada caso passa quando a classificação respeita todos os campos e não ativa os
 recursos proibidos. `POTENTIAL` significa selecionar o recurso somente depois
 que a inspeção confirmar a flag; não é ativação default.
+
+## Deterministic capability router — SHADOW
+
+As 18 fixtures executáveis cobrem: texto trivial, bug localizado, active-run,
+GPS, persistence/finalization, concurrency, território, boundary MapLibre,
+permissions/auth, Android native, performance mobile, WebGL site, SEO/public
+contract, mobile cross-domain, cross-repo, arquitetura, bug ambíguo e ausência
+de specialist. Cada caso declara repositories, required/forbidden capabilities,
+acceptable/forbidden profile sets, decisão Graphify e ambiguity esperada.
+
+`npm run quality:router` também cobre repetibilidade, input idêntico, registry
+inválido, capability/perfil ausente, path/repo scope, exclusions, conflicts,
+prerequisites, validators, known-good, overlap, set-cover, zero/muitos profiles,
+ausência de máximo artificial, Graphify e residual ambíguo. O gate pode bloquear
+policy/eval/tooling inválido; diferença contra seleção comportamental observada
+permanece métrica SHADOW não bloqueante.
 
 ## Design routing
 
@@ -532,6 +553,18 @@ EMULATOR_PASS != PHYSICAL_DEVICE_PASS
 | AB7 | RTK/Caveman publicam percentuais próprios | registrar origem/overhead; não promover a receipt desta sessão |
 | AB8 | T1–T4 | medir BEFORE/AFTER quando possível e manter quality/evidence gates verdes |
 
+## Context efficiency
+
+| # | Cenário | Resultado esperado |
+| --- | --- | --- |
+| CE1 | Goal bounded inicia com corpus amplo | reuse/ranges mínimos; risk, invariants, validations e tests preservados |
+| CE2 | mudança arquitetural de Harness | Working Context + owners selecionados; sem manager/agent novo |
+| CE3 | pacote `CRITICAL_RUNTIME` | invariantes/testes críticos intactos; implementação serial e context ceiling maior |
+
+`npm run quality:context` também testa round-trip Markdown, fingerprint por
+range, invalidação apenas do artifact alterado, `DIFF_BEFORE_FILE`,
+`KNOWN_GOOD_UNCHANGED`, path safety e `STOP_WHEN_PROVEN`.
+
 ## Capability routing e Context Closure
 
 | # | Entrada / relação confirmada | Closure esperada | Não pode ocorrer |
@@ -548,8 +581,9 @@ EMULATOR_PASS != PHYSICAL_DEVICE_PASS
 | CR10 | catálogo simulado com 70 capabilities | duas capabilities, 0 skill bodies | persistir capability/skill falsa |
 | CR11 | recovery → durable save `OWNER_CRITICAL` | active-run + persistence skills | omitir owner de persistência |
 | CR12 | requisito sem owner/capability | `CAPABILITY_GAP` explícito | inventar skill ou capability |
+| CR13 | Goal nativo inicia/retoma | `context-efficiency` + skill transversal | carregar skill mobile sem domínio/risco |
 
-O JSON é a fonte machine-readable desses 12 casos. O validator confirma schema,
+O JSON é a fonte machine-readable desses 13 casos. O validator confirma schema,
 paths, metadata das skills, evidência literal no source, closure, exclusões,
 deduplicação, precision/recall e métricas de contexto. Ele não é classificador de
 linguagem natural nem runtime paralelo.
@@ -598,14 +632,16 @@ instala skill nem classifica linguagem natural.
    `docs/ai/hooks-and-gates.md` e os casos H/HF/HE/HS/HG;
 10. conferir modes/context/brief/compaction/accounting contra
    [`token-economy.md`](token-economy.md) e os casos TE/PC/SC/AB;
-11. executar `npm run quality:capabilities`, conferir CR1–CR12 contra source,
+11. executar `npm run quality:capabilities`, conferir CR1–CR13 contra source,
     registry e [`capability-architecture.md`](capability-architecture.md), e
     ESA-A–M contra
     [`external-skill-acquisition.md`](external-skill-acquisition.md);
-12. validar links/paths do Harness;
-13. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
+12. executar `npm run quality:context` e conferir CE1–CE3 sem redução declarada
+    de tests, risk flags, invariants ou validations;
+13. validar links/paths do Harness;
+14. registrar quantidade, pass/fail e divergência na entrega, sem alterar os
    resultados esperados para esconder falha.
 
 O router primário continua uma política interpretada, não heurística de palavras.
-Somente CR1–CR12 têm composição determinística executável; eles testam o contrato
+Somente CR1–CR13 têm composição determinística executável; eles testam o contrato
 de closure a partir de capabilities já classificadas, não intenção autônoma.

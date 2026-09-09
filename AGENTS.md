@@ -42,9 +42,20 @@ o próprio escopo.
 - Skill/especialista só por gatilho/risco; nativos cobrem o genérico.
 - Multi-agent é opt-in; prefira leitura paralela. Escrita paralela exige escopo
   disjunto conhecido. Protocolo: `docs/ai/orchestration.md`.
+- `HARNESS_SPECIALIST_DISPATCH_V1`: depois que o Decision Gate definir `S1/S2`
+  read-only, o router pode escolher um specialist catalogado somente com receipt
+  `ROUTER_SELECTED` de coverage completa e sem ambiguidade; qualquer residual
+  retorna `BEHAVIORAL_FALLBACK`. Todo dispatch pertencente ao Harness usa
+  obrigatoriamente `Context Packet -> fork_turns=none -> Structured Handoff`
+  validado e o model/reasoning retornado pelo adapter. Packet/handoff inválido
+  ou indisponível usa somente o fallback bounded controlado. O router nunca
+  muda `S0-S3`, cria wave ou chama agent. Invocação manual externa é
+  `OUT_OF_BAND_UNENFORCEABLE` enquanto o runtime não expuser interceptação.
 - Workflow: `docs/14-instrucoes-para-ia.md`. Arquitetura do Harness:
   `docs/ai/harness-v1.md`.
 - META Goals usam evidence-gated completion; budgets são tetos, não quotas.
+- Goal nativo carrega `wayper-context-efficiency`; reuse/fingerprint nunca reduz
+  evidence, risco, invariantes ou validação.
 - Graphs, maps e caches nunca são verdade. RTK é ferramenta global opcional.
 
 ## Implementação e entrega

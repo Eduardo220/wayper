@@ -53,6 +53,7 @@ function result(lintResult = lint(), overrides = {}) {
     lint: lintResult,
     size: overrides.size ?? PASS,
     architecture: overrides.architecture ?? PASS,
+    router: overrides.router ?? PASS,
     diff: overrides.diff ?? PASS,
   });
 }
@@ -114,6 +115,12 @@ test('QG7 an architecture regression blocks', () => {
 test('QG8 malformed ESLint JSON is rejected', () => {
   assert.throws(() => analyzeLintJson('{', BASELINE, {}, ROOT), SyntaxError);
   assert.throws(() => analyzeLintJson('{}', BASELINE, {}, ROOT), /must be an array/);
+});
+
+test('QG7b an invalid deterministic router policy blocks', () => {
+  const quality = result(lint(), { router: { status: 'fail', detail: 'shadow eval failed' } });
+  assert.equal(quality.status, 'FAIL');
+  assert.deepEqual(quality.blocking, ['ROUTER_REGRESSION']);
 });
 
 test('QG9 tool failure is inconclusive when no confirmed blocker exists', () => {

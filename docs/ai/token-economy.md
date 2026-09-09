@@ -18,9 +18,10 @@ métrica operacional; não provam menos tokens faturados, mais cache hit ou mesm
 qualidade. Quando compressão cria ambiguidade, preserve clareza ou conteúdo
 exato.
 
-Esta política não cria proxy, hook, agent, skill, memória, daemon ou configuração
-project-scoped. RTK, Caveman e preferências do Codex continuam `USER_GLOBAL`; o
-projeto apenas decide quando a saída comprimida é segura.
+Esta política compõe com a skill project-scoped `wayper-context-efficiency` e o
+helper determinístico de fingerprints/benchmark. Eles não criam proxy, hook,
+agent, memória, daemon ou configuração global. RTK, Caveman e preferências do
+Codex continuam `USER_GLOBAL`.
 
 ## Modos
 
@@ -37,7 +38,9 @@ raw/exato seleciona `EXACT`; risco ou ambiguidade seleciona `CLEAR` mesmo quando
 
 ## Contexto progressivo
 
-Comece pelo menor artefato que pode responder e expanda somente por lacuna real:
+Em Goal nativo, consulte primeiro o Working Context/`CONTEXT_MAP`: reuse proof com fingerprint
+igual e abra o diff antes do arquivo quando ele mudou. Depois, comece pelo menor
+artefato que pode responder e expanda somente por lacuna real:
 
 1. localize arquivo, símbolo, caller, import ou heading com `rg`;
 2. leia o símbolo/heading e poucas linhas de contexto;
@@ -56,6 +59,32 @@ prova ficar suficiente.
 Para source e evidence, prefira leitura raw por range. Output comprimido de `rg`
 é discovery; qualquer claim material volta ao source exato. Graph, cache, search
 snippet e resumo nunca substituem o owner atual.
+
+## Working Context e budgets por classe
+
+[`working-context.md`](working-context.md) persiste fingerprints, requirements,
+evidence e Learning Delta em Markdown por Goal. Ele separa quatro decisões:
+
+```text
+KNOWN_GOOD_UNCHANGED -> reuse sem reread
+REUSE_BEFORE_READ -> discovery reutilizável, proof ainda necessário
+DIFF_BEFORE_FILE -> diff e fluxo afetado antes do arquivo inteiro
+READ_REQUIRED -> menor range suficiente
+```
+
+O ceiling inicial de contexto usa proxy explícito `ceil(UTF-8 bytes / 4)`:
+`TRIVIAL 1.500`, `BOUNDED 4.000`, `BUG 8.000`, `INVESTIGATION 10.000`,
+`ARCHITECTURAL 16.000`, `CRITICAL_RUNTIME 24.000`. Brief de subagent recebe
+respectivamente `0`, `0`, `800`, `800`, `1.200`, `1.600` unidades, somente se o
+gate de orchestration já autorizou delegação. O proxy não é receipt/billing.
+Evidence necessária excede o ceiling com motivo; nunca é removida para passar.
+
+Context Packets derivam ceilings por classe e tipo de target a partir desses
+ceilings (`agentProfile /4`, `nativeRole /3`, `capabilitySet /5`,
+`validationRole /3`, floor 256). São limites proxy iniciais, validados pelo
+corpus; contexto optional é removido deterministamente primeiro e registrado
+como ambiguidade. `OVER_BUDGET` de contexto necessário exige motivo explícito e
+nunca trunca evidence necessária.
 
 ## Tool output
 
@@ -248,6 +277,130 @@ declara budgets como tetos. Contrato, matriz, evals e report permanecem on-deman
 `PERMANENT_DISCOVERY_BYTES`, que também inclui paths absolutos das skills, ficou
 1.074 B before/after e não é somado novamente ao recorte acima.
 
+### Context Efficiency
+
+Ativação de 2026-08-24, reproduzida por `npm run quality:context` e
+`npm run quality:capabilities`:
+
+| Métrica | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| capabilities canônicas | 55 | 56 | +1 |
+| skills project-scoped | 4 | 5 | +1 transversal |
+| registry on-demand | 12.111 B | 12.475 B | +364 B |
+| bodies de skill on-demand | 12.872 B | 20.263 B | +7.391 B |
+| discovery payload com paths | 1.074 B | 1.417 B | +343 B |
+| `AGENTS.md` | 3.046 B | 3.174 B | +128 B |
+| metadata `name+description` | 787 B | 1.053 B | +266 B |
+| recorte permanente comparável | 4.402 B | 4.796 B | +394 B / +8,9% |
+| contexto benchmark (3 casos) | 349.859 B | 71.729 B | -79,5% |
+| `CONTEXT_TOKEN_PROXY` | 87.469 | 17.938 | -79,5% |
+
+O recorte permanente soma `AGENTS.md`, metadata das skills e 569 B dos quatro
+agents, inalterados. O benchmark mede artifacts/ranges reais do Harness e exige
+preservação/superset declarada de tests, validations, risk flags e invariants.
+Por caso: bounded `-89,6%`, architectural `-68,5%` e critical runtime `-83,0%`.
+O proxy é operacional; billed/session tokens continuam `UNKNOWN` sem receipt.
+Nenhum subagent foi usado na implementação (`S0`, brief `0 B`).
+
+### Deterministic Capability Router — Shadow
+
+Baseline local de 2026-08-31, reproduzida por `npm run quality:router`:
+
+| Métrica | Resultado |
+| --- | ---: |
+| registry canônico on-demand | 16.145 B |
+| router / testes / corpus on-demand | 33.793 / 12.216 / 19.133 B |
+| evals SHADOW | 18/18 PASS |
+| capability precision / recall | 100% / 100% |
+| profile precision / coverage / redundancy | 100% / 100% / 0 |
+| output JSON agregado | 49.702 B |
+| candidates / selected profiles | 15 / 11 |
+| estimated context cost agregado | 19.424 token-proxy |
+| LLM calls / agents spawned / Graphify executions | 0 / 0 / 0 |
+
+O registry cresceu somente com quatro declarações `repositories: ["wayper"]`;
+nenhuma capability, skill ou profile novo foi criado. Router, testes, fixture e
+logs opcionais são on-demand, logo `PERMANENT_CONTEXT_BYTES` ficou inalterado.
+Tempo é medido a cada execução e reportado como performance local, nunca como
+latência do runtime ou receipt de provider.
+
+### Capability-scoped Context Packets — Shadow
+
+Baseline local de 2026-09-01, reproduzida por `npm run quality:packets`:
+
+| Métrica | Resultado |
+| --- | ---: |
+| evals / packets SHADOW | 20/20 PASS / 22 |
+| broad context baseline / packet payloads | 526.962 B / 24.112 B |
+| redução agregada | 95,4% |
+| redução p50 / p90 | 95,7% / 96,2% |
+| best / worst | 100,0% zero-specialist / 88,2% shared evidence em três packets |
+| evidence / capability / proof-gap coverage | 100% / 100% / 100% |
+| source materialized pelos packets | 0 B |
+| router ativado / packets injetados / agents executados | 0 / 0 / 0 |
+
+O baseline broad soma mapa, registry, router output e source bytes que seriam
+materializados sem filtering; o packet contém refs. `sourceBytesReferenced` não
+é `sourceBytesMaterialized`. Dedupe conta unique/repeated refs e bytes
+hipoteticamente duplicados sem o mapa; não afirma cache hit nem billing evitado.
+
+Telemetria Goal-scoped reporta somente observáveis locais. Reads completos/range
+sem instrumentação suportada ficam `UNKNOWN`; provider usage entra apenas por
+interface suportada fornecida pelo host. A documentação oficial do Codex expõe
+`/status` para uso da sessão e `/usage` para atividade da conta, mas não fornece
+nesse contrato público attribution machine-readable por Goal/turn/subagent
+([Developer commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli)).
+O SDK público documenta thread/run, sem prometer esses campos no result
+([Codex SDK](https://learn.chatgpt.com/docs/codex-sdk)). O Harness não lê UI nem
+arquivos internos; ausência vira `PROVIDER_ATTRIBUTION_UNAVAILABLE`.
+
+### Structured Handoff + packetized runtime canary
+
+Baseline local de 2026-09-01: um control e um canary usaram o mesmo
+`wayper_geospatial_reviewer` e a mesma pergunta sobre
+`src/utils/zones.js#L37-L92`. O control usou `fork_turns=all`; o canary usou
+`fork_turns=none`, Context Packet explícito, read-only e sem descendants.
+
+| Métrica | Control | Canary |
+| --- | ---: | ---: |
+| payload explícito observável | brief 674 B / 169 proxy + history `UNKNOWN` | packet 2.096 B / 524 proxy + framing/bootstrap `UNKNOWN` |
+| resultado | narrativa 2.786 B / 697 proxy | handoff validado 3.864 B / 966 proxy |
+| findings | 3 | 3 |
+| findings em comum | 2 | 2 |
+| files/ranges declarados | 5, com expansão ampla | 1 packet-scoped |
+| out-of-packet | 4 arquivos mais expansão do target | 0 |
+| testes | 1 source probe | 0 |
+| proof gaps | 2 runtime/external | 1 range incompleto |
+| correction attempts / invalid handoffs | n/a | 1 / 1 |
+| writes / recursive spawns | 0 / 0 | 0 / 0 |
+| wall time / provider per-agent usage | `UNKNOWN` | `UNKNOWN` |
+
+O control confirmou callers/safeguards e encontrou collinearidade fora do range;
+o canary encontrou coerção de string vazia, mas retornou corretamente `PARTIAL`
+porque o packet cortou `isValidPolygon`. Portanto os dois preservaram o número
+de findings, mas não a mesma coverage. O input observável de source caiu e a
+herança da parent conversation foi removida no canary; o output proxy cresceu
+38,7%. O total de input continua incomparável porque bootstrap e history não têm
+receipt de bytes/tokens. Veredicto: `IMPROVED_WITH_LIMITED_RUNTIME_EVIDENCE`, sem
+claim de billing nem de runtime packetizado forte.
+
+Hidden-context audit:
+
+| Fonte | Control | Canary | Classe | Medição |
+| --- | --- | --- | --- | --- |
+| Context Packet | ausente | explícito | `TARGET_PACKET` | 2.096 B |
+| parent history / conversation | presente e auto-reportada | excluída por `fork_turns=none` | `INHERITED_HISTORY` | bytes `UNKNOWN` |
+| project/global AGENTS e RTK | esperado pelo runtime | esperado pelo runtime | `REQUIRED_BOOTSTRAP` | payload serializado `UNKNOWN` |
+| system/developer/Codex bootstrap | presente | presente | `UNAVOIDABLE_RUNTIME` | `UNKNOWN` |
+| profile TOML/role | mesmo profile | mesmo profile | `REQUIRED_BOOTSTRAP` | `UNKNOWN` |
+| skills de domínio | territory skill lida pelo control | possível carga automática | `OPTIONAL_SKILL` | `UNKNOWN` |
+| Ponytail/plugin lifecycle | presente | presente | `UNAVOIDABLE_RUNTIME` | `UNKNOWN` |
+| outras injections | não enumeráveis pela interface | não enumeráveis pela interface | `UNKNOWN` | `UNKNOWN` |
+
+`fork_turns=none` prova ausência de parent turns no payload delegado, não mede
+bootstrap oculto. Se uma surface ignorar essa opção ou reenviar history, o
+veredicto volta a `IMPROVED_PROXY_ONLY` até nova evidência.
+
 ## Contabilidade
 
 | Métrica | Definição | Claim permitido |
@@ -266,6 +419,17 @@ declara budgets como tetos. Contrato, matriz, evals e report permanecem on-deman
 | `TOOL_OUTPUT_OPTIMIZED` | output após filtro, com mesmo cenário/exit | bytes/linhas observados e delta |
 | `SUBAGENT_BRIEF_BYTES` | briefing explicitamente enviado; `0` em `S0` | não inclui overhead oculto/runtime |
 | `FINAL_OUTPUT_BYTES` | resposta final UTF-8 observada | model output bytes, não tokens |
+| `CONTEXT_TOKEN_PROXY` | `ceil(UTF-8 bytes / 4)` dos artifacts declarados | comparação reproduzível; não provider receipt |
+| `KNOWN_GOOD_UNCHANGED` | artifact com proof e fingerprint idêntico | reuse scoped; não verdade do produto |
+| `INVALIDATED_CONTEXT` | artifacts cujo fingerprint mudou | invalidação localizada, não reset global |
+| `ESTIMATED_ROUTER_CONTEXT_COST` | proxy determinístico dos assets/TOML dos profiles recomendados | comparação SHADOW; não billed tokens nem spawn real |
+| `PACKET_BYTES` / `PACKET_TOKEN_PROXY` | JSON derivado realmente construído e `ceil(bytes/4)` | payload SHADOW; não prompt enviado nem billing |
+| `SOURCE_BYTES_REFERENCED` | bytes dos sources apontados pelas evidence refs | referência potencial; não materialização |
+| `SOURCE_BYTES_MATERIALIZED` | inline source realmente presente no packet | `0` nesta fase reference-only |
+| `DUPLICATED_BYTES_AVOIDED` | duplicação hipotética de source quando refs compartilhadas fossem blobs | proxy de dedupe; não cache/provider savings |
+| `HANDOFF_BYTES` / `HANDOFF_TOKEN_PROXY` | JSON final validado e `ceil(bytes/4)` | output payload; não billing nem reasoning tokens |
+| `CONTROL_PAYLOAD_PROXY` / `CANARY_PAYLOAD_PROXY` | componentes explicitamente observáveis de input | total fica `UNKNOWN` quando history/bootstrap não são medidos |
+| `CONTROL_RESULT_PROXY` / `CANARY_HANDOFF_PROXY` | bytes/4 dos outputs observados | compara output local, não provider usage |
 
 Sempre separe `PROMPT/CONTEXT SAVINGS`, `TOOL OUTPUT SAVINGS` e `MODEL OUTPUT
 SAVINGS`. `TOTAL SESSION` fica `UNKNOWN` salvo receipt do provider. RTK `gain`,

@@ -5,7 +5,9 @@
 > **Owner:** [`harness-v1.md`](harness-v1.md)<br>
 > **Registry:** [`capability-registry.json`](capability-registry.json)<br>
 > **Router:** [`context-routing.md`](context-routing.md)<br>
-> **Evals:** [`capability-routing-evals.json`](capability-routing-evals.json) e
+> **Evals:** [`capability-routing-evals.json`](capability-routing-evals.json),
+> [`agent-router-shadow-evals.json`](agent-router-shadow-evals.json),
+> [`context-packet-evals.json`](context-packet-evals.json) e
 > [`design-routing-evals.json`](design-routing-evals.json)
 
 ## Princípio
@@ -29,8 +31,10 @@ permanente, router executável, grafo autoritativo ou autorização de produto.
 | `CAPABILITY` | Unidade nomeada de conhecimento ou comportamento que pode ser necessária para explicar/alterar uma tarefa | registry; não implica uma skill própria |
 | `SKILL` | Workflow/knowledge de domínio reutilizável, com metadata permanente pequena e corpo on-demand | `.agents/skills/`; não é processo transversal, reviewer ou source of truth |
 | `REFERENCE` | Documento canônico suficiente para cobrir capability que não merece skill | docs/ADR owner; não repete workflow genérico |
-| `CAPABILITY_ONLY` | Decisão de não criar skill/reference quando source/owners já bastam | resultado válido de promotion; schema v1 persiste somente capabilities asset-backed |
+| `CAPABILITY_ONLY` | Decisão de não criar skill/reference quando source/owners já bastam | resultado válido de promotion; o catálogo atual mantém capabilities asset-backed |
 | `SPECIALIST` | Reviewer read-only independente selecionado por risco concreto | `.codex/agents/`; não implementa, orquestra ou aprova integração |
+| `AGENT_PROFILE` | Forma operacional de executar uma ou mais capabilities | registry; pode apontar para TOML runtime ou role nativa, sem virar capability/skill |
+| `CONTEXT_PACKET` | View mínima de refs para um target/capability da Goal | derivado do `CONTEXT_MAP`; não é registry, memória, prompt automático ou handoff |
 | `PROCESS` | Sequência transversal como bug investigation ou safe refactor | `process-workflows.md`; não recebe metadata de skill por padrão |
 | `TOOL` | Mecanismo de busca, shell, gate ou apoio de discovery | runtime/global/project conforme owner; output nunca vira verdade por si só |
 | `MEMORY` | Lição hard-earned auxiliar, seletiva e invalidável | `memory-policy.md`; nunca precede source, teste ou decisão canônica |
@@ -42,16 +46,57 @@ trabalhar no domínio sem copiar a implementação para o registry.
 
 ## Registry canônico
 
-[`capability-registry.json`](capability-registry.json) é a única lista
-machine-readable de capabilities. Ele contém somente:
+[`capability-registry.json`](capability-registry.json) é a única fonte
+machine-readable de metadata de capabilities e agent profiles. O schema v2
+contém somente:
 
 - domains já definidos pelo router;
 - assets `SKILL` ou `REFERENCE` e paths relativos existentes;
 - capability, domain primário, asset mínimo e relações `suggests` esparsas.
+- profiles operacionais já existentes, com scope, repositório, capabilities,
+  activation signals, exclusions e apenas metadata comprovada de runtime.
 
-O registry não contém triggers completos, callers, testes, regras de quality,
-processos, specialist checklists, source graph ou conteúdo dos assets. Esses
-owners permanecem onde já vivem. `suggests` acelera discovery; não autoriza load.
+O registry não contém callers, testes, regras de quality, processos, specialist
+checklists, source graph ou conteúdo dos assets. Esses owners permanecem onde já
+vivem. `suggests` acelera discovery; não autoriza load.
+
+As fronteiras são deliberadas:
+
+- registry = metadata canônica de capability/profile;
+- `.codex/agents/*.toml` = sandbox e configuração runtime suportada pelo Codex;
+- skills = conhecimento/workflow de domínio;
+- source/testes = autoridade final do produto;
+- Working Context = estado efêmero/persistido e `CONTEXT_MAP` de refs da Goal.
+- Context Packet = input derivado, capability/repository-scoped e reconstruível.
+
+TOML não é gerado por capability. `nativeRole` read-only com Context Packet é o
+default; TOML permanece nos profiles em que sandbox ou instrução runtime
+específica já possui evidência. Cada profile declara apenas um dos dois. Não
+existe registry paralelo ou gerado.
+
+## Context Packet derivado
+
+`scripts/wayper-context-packet.mjs` resolve o target contra o Registry V2, mas
+seleciona contexto somente do `CONTEXT_MAP` Goal-scoped. Required/optional
+capabilities são a interseção do target com a Goal; repository boundaries são
+explícitas; evidence/proof gaps/Graphify refs usam `capabilityRefs`; dependencies
+entram por closure comprovada e registram `DEPENDENCY_CLOSURE`. Known-good
+inalterado fica como ref compacta; `QUESTIONED`/`STALE` vira ambiguidade, nunca
+prova. Capability descoberta sem profile operacional recebe capability packet
+ou `NO_OPERATIONAL_PROFILE_AVAILABLE`.
+
+O packet não carrega asset bodies, source, conclusions marcadas para reviewer
+independente ou dados de outro repositório. O mapa carrega fingerprint do
+Registry V2 e invalida routing anterior quando ele muda. Mesmos
+mapa/registry/router/target, inclusive motivo de budget, geram mesmo `packetId`;
+mudança do fingerprint do mapa produz `PACKET_STALE`.
+
+Uma Goal cross-repo não amplia o scope de um profile mobile: targets
+`agentProfile` usam a interseção dos repositórios da Goal com os do profile.
+Targets `nativeRole` ou `capabilitySet` podem representar ambos os repositórios
+quando explicitamente selecionados para essa análise. O caso `CP11_CROSS_REPO`
+usa uma role nativa para testar esse contrato sem depender da ausência de um
+profile no catálogo; construir o packet não autoriza dispatch.
 
 O validator canônico é:
 
@@ -59,9 +104,62 @@ O validator canônico é:
 npm run quality:capabilities
 ```
 
-Ele valida schema, IDs, domains, paths, metadata das quatro skills, referências,
-relações e evals. Não classifica linguagem natural, não usa embeddings/vector DB,
-não lê o grafo inteiro e não altera o Stop hook.
+Ele valida schema v2, IDs, domains, assets, capabilities, profiles, skills,
+TOMLs, roles nativas, conflicts, prerequisites, validators, relações e evals.
+Não classifica linguagem natural, não usa embeddings/vector DB, não lê o grafo
+inteiro e não altera o Stop hook nem o routing operacional.
+
+## Router determinístico — SELECTIVE e avaliação SHADOW
+
+[`scripts/wayper-agent-router.mjs`](../../scripts/wayper-agent-router.mjs)
+consome exclusivamente o registry canônico e um task fingerprint schema v1. Ele
+normaliza fatos determinísticos (`goalId`, operação, repositórios, paths, riscos,
+capabilities conhecidas/known-good e incerteza estrutural) separadamente de
+sinais comportamentais, que exigem `provenance.source` explícito.
+
+O matching versionado calcula coverage, evidência de risco/path/domain/
+subdomain/keyword, exclusões, conflicts, prerequisites, validators, overlap e
+custo estimado. A seleção usa greedy weighted set-cover determinístico e para
+por coverage ou ganho marginal; não existe `MAX_SELECTED_AGENTS`. Perfil sem
+ganho novo recebe `ALREADY_COVERED`, capability sem perfil pode terminar em
+`NO_OPERATIONAL_PROFILE_AVAILABLE`, e residual sem evidência fica marcado para
+julgamento do modelo.
+
+O output de `routeTask` usa JSON schema v1 e `mode: SELECTIVE`, fingerprint/hash,
+capabilities required/optional com reasons/provenance, candidates, selected e
+excluded profiles, coverage, decisão de Graphify, ambiguities, custo,
+`selectionReceipt` e comparação com a seleção comportamental quando fornecida.
+Sem observação, a comparação é `UNKNOWN`; nunca é inventada.
+
+`SELECTIVE` permite `ROUTER_SELECTED` somente depois de `S1/S2` read-only,
+com task class não crítica/arquitetural, um único repositório, assessment completo,
+coverage required+optional completa e nenhum conflito, prerequisite ou residual
+de julgamento. Nos demais casos, `BEHAVIORAL_FALLBACK` deixa `profileIds` vazio.
+`selectedProfiles` no output do matching são propostas; somente os IDs do receipt
+validado representam seleção autorizada. O `CONTEXT_MAP` preserva essa distinção
+entre `proposedProfiles` e `selectedProfiles`.
+
+`SHADOW` representa avaliação/comparação sem autoridade de seleção. O relatório
+de `--eval` continua usando `mode: SHADOW`, embora execute a policy atual
+`SELECTIVE`; isso não muda o modo operacional de `routeTask`. O mapa ainda aceita
+receipts legados SHADOW, mas o adapter não os aceita como autoridade de router.
+
+```text
+SHADOW MODE != ACTIVE ROUTING
+RECOMMENDATION != SPAWN
+ROUTER_SELECTED != SPAWN
+DISAGREEMENT != GATE FAILURE
+```
+
+O script não chama modelo, Graphify, agent, hook ou runtime. `--log <path>` apenas
+acrescenta o JSON calculado a um JSONL explicitamente escolhido dentro do repo.
+O gate comportamental continua owner de `S0-S3` e da execução. Um receipt
+`ROUTER_SELECTED` validado pode escolher o specialist no recorte acima; o
+adapter exige Context Packet, `fork_turns=none`, model/reasoning explícitos e
+Structured Handoff validado. Packet/handoff inválido usa o fallback bounded
+do mesmo specialist. Os testes AR19/AR21/AR22 e SH8 cobrem seleção, rejeição e
+consumo desse receipt. Invocações manuais externas continuam
+`OUT_OF_BAND_UNENFORCEABLE`; não há interceptação universal do runtime.
 
 As capabilities de design usam `DESIGN.md` como uma reference deduplicada. O
 contrato de seleção específico é validado por:
@@ -275,6 +373,12 @@ Não existe limite artificial de skills; promoção continua baseada em ROI.
 positiva/negativa, dependency inesperada, relação negada, no-recursion, gap,
 multi-skill e catálogo de 70 capabilities simulado em memória. Capabilities
 sintéticas não são persistidas.
+
+[`agent-router-shadow-evals.json`](agent-router-shadow-evals.json) cobre 18
+cenários mobile/site/cross-repo. `npm run quality:router` mede capability
+precision/recall separadamente de profile precision/coverage/redundancy e falha
+em schema inválido, nondeterminism, dangling reference, policy regression ou eval
+declarativa divergente. Comparação SHADOW vs seleção comportamental não bloqueia.
 
 Precision/recall do validator mede igualdade do working set contra fixtures
 declarativas, não acurácia semântica do modelo sobre linguagem natural. Source

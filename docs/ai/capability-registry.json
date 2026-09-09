@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "domains": [
     "RUN_RUNTIME",
     "MOBILE_SHELL",
@@ -34,6 +34,11 @@
       "id": "skill:wayper-territory-map",
       "kind": "SKILL",
       "path": ".agents/skills/wayper-territory-map/SKILL.md"
+    },
+    {
+      "id": "skill:wayper-context-efficiency",
+      "kind": "SKILL",
+      "path": ".agents/skills/wayper-context-efficiency/SKILL.md"
     },
     {
       "id": "reference:firebase",
@@ -436,6 +441,12 @@
       "suggests": ["harness-routing"]
     },
     {
+      "id": "context-efficiency",
+      "domain": "HARNESS_AI",
+      "asset": "skill:wayper-context-efficiency",
+      "suggests": ["goal-runtime", "harness-routing", "token-economy", "quality-gates"]
+    },
+    {
       "id": "skill-architecture",
       "domain": "HARNESS_AI",
       "asset": "reference:capability-architecture",
@@ -446,6 +457,221 @@
       "domain": "HARNESS_AI",
       "asset": "reference:external-skill-acquisition",
       "suggests": ["skill-architecture", "token-economy", "quality-gates"]
+    }
+  ],
+  "agentProfiles": [
+    {
+      "id": "wayper_concurrency_reviewer",
+      "repositories": ["wayper"],
+      "domain": "RUN_RUNTIME",
+      "subdomain": "concurrency-ordering",
+      "capabilities": [
+        "active-run-lifecycle",
+        "active-run-recovery",
+        "durable-run-save",
+        "run-finalization",
+        "run-sync-replay"
+      ],
+      "activationSignals": {
+        "riskFlags": ["CONCURRENCY"],
+        "keywords": ["race", "ordering", "single-flight", "stale callback", "lock", "cancellation"]
+      },
+      "skills": ["wayper-active-run", "wayper-persistence-sync"],
+      "tomlProfile": ".codex/agents/wayper_concurrency_reviewer.toml",
+      "writePermission": "none",
+      "sandbox": "read-only",
+      "modelPolicy": "specialist-risk-capability-task-cost-v1",
+      "reasoningPolicy": "specialist-risk-capability-task-cost-v1",
+      "handoffSchema": "structured-handoff-v1",
+      "exclusions": ["sequential flow without shared state", "hypothetical concurrency risk"]
+    },
+    {
+      "id": "wayper_geospatial_reviewer",
+      "repositories": ["wayper"],
+      "domain": "TERRITORY_GEO",
+      "subdomain": "geospatial-data",
+      "capabilities": [
+        "live-gps-ingestion",
+        "route-geometry",
+        "territory-capture",
+        "territory-storage",
+        "map-data-adaptation"
+      ],
+      "activationSignals": {
+        "riskFlags": ["GPS_GEO", "TERRITORY_GEO"],
+        "keywords": ["GPS", "route geometry", "Turf", "MapLibre data", "coordinates", "distance"]
+      },
+      "skills": ["wayper-active-run", "wayper-territory-map"],
+      "tomlProfile": ".codex/agents/wayper_geospatial_reviewer.toml",
+      "writePermission": "none",
+      "sandbox": "read-only",
+      "modelPolicy": "specialist-risk-capability-task-cost-v1",
+      "reasoningPolicy": "specialist-risk-capability-task-cost-v1",
+      "handoffSchema": "structured-handoff-v1",
+      "exclusions": ["map copy", "map styling", "map layout without geospatial transformation"]
+    },
+    {
+      "id": "wayper_mobile_lifecycle_reviewer",
+      "repositories": ["wayper"],
+      "domain": "RUN_RUNTIME",
+      "subdomain": "mobile-lifecycle-native-boundary",
+      "capabilities": [
+        "active-run-lifecycle",
+        "active-run-recovery",
+        "active-run-notification",
+        "run-finish-handoff",
+        "onboarding-permissions",
+        "android-run-boundary"
+      ],
+      "activationSignals": {
+        "riskFlags": ["LIFECYCLE", "NATIVE_ANDROID"],
+        "keywords": ["AppState", "mount", "unmount", "background", "screen off", "notification", "headless task"]
+      },
+      "skills": ["wayper-active-run", "wayper-mobile-shell"],
+      "tomlProfile": ".codex/agents/wayper_mobile_lifecycle_reviewer.toml",
+      "writePermission": "none",
+      "sandbox": "read-only",
+      "modelPolicy": "specialist-risk-capability-task-cost-v1",
+      "reasoningPolicy": "specialist-risk-capability-task-cost-v1",
+      "handoffSchema": "structured-handoff-v1",
+      "exclusions": ["styling or UI without lifecycle transition", "UI without native boundary"]
+    },
+    {
+      "id": "wayper_persistence_reviewer",
+      "repositories": ["wayper"],
+      "domain": "PERSISTENCE_SYNC",
+      "subdomain": "durability-replay",
+      "capabilities": [
+        "active-run-recovery",
+        "durable-run-save",
+        "run-finalization",
+        "deferred-post-run-processing",
+        "run-sync-replay",
+        "storage-migration"
+      ],
+      "activationSignals": {
+        "riskFlags": ["OFFLINE_STORAGE", "SYNC", "DATA_MIGRATION"],
+        "keywords": ["recovery storage", "migration", "sync queue", "durability", "idempotency", "replay"]
+      },
+      "skills": ["wayper-persistence-sync"],
+      "tomlProfile": ".codex/agents/wayper_persistence_reviewer.toml",
+      "writePermission": "none",
+      "sandbox": "read-only",
+      "modelPolicy": "specialist-risk-capability-task-cost-v1",
+      "reasoningPolicy": "specialist-risk-capability-task-cost-v1",
+      "handoffSchema": "structured-handoff-v1",
+      "exclusions": ["read-only UI", "storage-neutral work"]
+    },
+    {
+      "id": "wayper_auth_security_reviewer",
+      "repositories": ["wayper"],
+      "domain": "FIREBASE_AUTH",
+      "subdomain": "identity-access-trust-boundary",
+      "scope": "Firebase Auth, authorization and Firestore access boundaries in the Wayper mobile repository",
+      "capabilities": [
+        "auth-session-gate",
+        "firebase-auth",
+        "firestore-access"
+      ],
+      "activationSignals": {
+        "riskFlags": ["AUTH_SECURITY", "FIREBASE"],
+        "keywords": ["authentication", "authorization", "Firebase Auth", "Firestore access", "trust boundary", "credential"]
+      },
+      "nativeRole": "explorer",
+      "writePermission": "none",
+      "sandbox": "read-only",
+      "modelPolicy": "specialist-risk-capability-task-cost-v1",
+      "reasoningPolicy": "specialist-risk-capability-task-cost-v1",
+      "handoffSchema": "structured-handoff-v1",
+      "exclusions": [
+        "Firebase mention without access or identity behavior",
+        "local fallback without remote or auth boundary",
+        "auth screen styling without identity behavior"
+      ]
+    },
+    {
+      "id": "wayper_accessibility_reviewer",
+      "repositories": ["wayper"],
+      "domain": "UI_DESIGN",
+      "subdomain": "mobile-accessibility-semantics",
+      "scope": "Screen-reader semantics, focus, accessible interaction and state in the Wayper mobile UI",
+      "capabilities": [
+        "screen-ui-accessibility",
+        "accessibility"
+      ],
+      "activationSignals": {
+        "riskFlags": ["ACCESSIBILITY"],
+        "keywords": ["accessibility", "screen reader", "TalkBack", "VoiceOver", "focus order", "accessible state"]
+      },
+      "nativeRole": "explorer",
+      "writePermission": "none",
+      "sandbox": "read-only",
+      "modelPolicy": "specialist-risk-capability-task-cost-v1",
+      "reasoningPolicy": "specialist-risk-capability-task-cost-v1",
+      "handoffSchema": "structured-handoff-v1",
+      "exclusions": [
+        "copy-only change without semantic or interaction behavior",
+        "visual styling without accessibility behavior",
+        "map data or geometry"
+      ]
+    },
+    {
+      "id": "wayper_diagnostics_privacy_reviewer",
+      "repositories": ["wayper"],
+      "domain": "DIAGNOSTICS_SENTRY",
+      "subdomain": "diagnostics-privacy-boundary",
+      "scope": "Sensitive-data redaction, bounded diagnostic export and fail-open monitoring behavior in Wayper mobile",
+      "capabilities": [
+        "local-diagnostics",
+        "sentry-monitoring"
+      ],
+      "activationSignals": {
+        "riskFlags": ["PRIVACY"],
+        "keywords": ["redaction", "sensitive data", "Sentry", "diagnostic export", "PII", "monitoring bridge"]
+      },
+      "nativeRole": "explorer",
+      "writePermission": "none",
+      "sandbox": "read-only",
+      "modelPolicy": "specialist-risk-capability-task-cost-v1",
+      "reasoningPolicy": "specialist-risk-capability-task-cost-v1",
+      "handoffSchema": "structured-handoff-v1",
+      "exclusions": [
+        "product bug that only uses diagnostics as evidence",
+        "performance work outside diagnostics or monitoring",
+        "Sentry mention in documentation only"
+      ]
+    },
+    {
+      "id": "wayper_progression_rules_reviewer",
+      "repositories": ["wayper"],
+      "domain": "PRODUCT_RULES",
+      "subdomain": "progression-ranking-rule-conformance",
+      "scope": "Conformance of implemented XP, achievement, ranking and local profile-stat rules to approved Wayper behavior",
+      "capabilities": [
+        "xp-progression",
+        "local-profile-stats",
+        "achievements-rewards",
+        "weekly-ranking",
+        "monthly-ranking",
+        "local-leader-ranking",
+        "product-rules"
+      ],
+      "activationSignals": {
+        "riskFlags": ["PRODUCT_RULE"],
+        "keywords": ["XP", "level", "achievement", "reward", "weekly ranking", "monthly ranking", "leader ranking"]
+      },
+      "nativeRole": "explorer",
+      "writePermission": "none",
+      "sandbox": "read-only",
+      "modelPolicy": "specialist-risk-capability-task-cost-v1",
+      "reasoningPolicy": "specialist-risk-capability-task-cost-v1",
+      "handoffSchema": "structured-handoff-v1",
+      "exclusions": [
+        "new or unapproved product rule",
+        "conflicting approved rules requiring human decision",
+        "storage or sync mechanics without rule behavior",
+        "ranking UI styling"
+      ]
     }
   ]
 }

@@ -11,6 +11,10 @@ export const DEPENDENCY_CLASSES = new Set([
   'BEHAVIOR_RELEVANT',
   'OWNER_CRITICAL',
 ]);
+export const NATIVE_ROLES = new Set(['default', 'explorer', 'worker']);
+export const ROUTER_REPOSITORIES = new Set(['wayper', 'wayper-site']);
+const SANDBOXES = new Set(['read-only', 'workspace-write', 'danger-full-access']);
+const WRITE_PERMISSIONS = new Set(['none', 'scoped', 'full']);
 
 const unique = (items = []) => [...new Set(items)];
 const sorted = (items = []) => unique(items).sort();
@@ -45,6 +49,22 @@ export function parseSkillMetadata(source, relativePath) {
   return { name, description };
 }
 
+function parseTomlString(source, key, relativePath) {
+  const value = source.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm'))?.[1];
+  if (!value) throw new Error(`Missing ${key} in TOML profile: ${relativePath}`);
+  return value;
+}
+
+function validateStringArray(value, field, profileId) {
+  if (
+    !Array.isArray(value) ||
+    value.some((item) => typeof item !== 'string' || !item) ||
+    unique(value).length !== value.length
+  ) {
+    throw new Error(`Invalid ${field} in agent profile: ${profileId}`);
+  }
+}
+
 export function loadCapabilityFiles(root = ROOT) {
   const registryFile = requireFile(root, REGISTRY_PATH);
   const evalsFile = requireFile(root, EVALS_PATH);
@@ -57,10 +77,11 @@ export function loadCapabilityFiles(root = ROOT) {
 
 export function validateRegistry(registry, root = ROOT) {
   if (
-    registry?.schemaVersion !== 1 ||
+    registry?.schemaVersion !== 2 ||
     !Array.isArray(registry.domains) ||
     !Array.isArray(registry.assets) ||
-    !Array.isArray(registry.capabilities)
+    !Array.isArray(registry.capabilities) ||
+    !Array.isArray(registry.agentProfiles)
   ) {
     throw new Error('Unsupported capability registry schema');
   }
@@ -106,7 +127,107 @@ export function validateRegistry(registry, root = ROOT) {
       }
     }
   }
-  return { domains, assets, capabilities };
+
+  const agentProfiles = new Map();
+  for (const profile of registry.agentProfiles) {
+    if (
+      !profile?.id ||
+      agentProfiles.has(profile.id) ||
+      !domains.has(profile.domain) ||
+      !Array.isArray(profile.capabilities) ||
+      profile.capabilities.length === 0
+    ) {
+      throw new Error(`Invalid or duplicate agent profile: ${profile?.id}`);
+    }
+    validateStringArray(profile.capabilities, 'capabilities', profile.id);
+    for (const capability of profile.capabilities) {
+      if (!capabilities.has(capability)) {
+        throw new Error(`Unknown capability in agent profile: ${profile.id} -> ${capability}`);
+      }
+    }
+
+    for (const field of ['paths', 'ownedPaths', 'relatedPaths', 'skills', 'graphifyQueries',
+      'exclusions', 'conflicts', 'prerequisites', 'validators']) {
+      if (profile[field] !== undefined) validateStringArray(profile[field], field, profile.id);
+    }
+    if (profile.repositories !== undefined) {
+      validateStringArray(profile.repositories, 'repositories', profile.id);
+      if (
+        profile.repositories.length === 0 ||
+        profile.repositories.some((repository) => !ROUTER_REPOSITORIES.has(repository))
+      ) {
+        throw new Error(`Invalid repositories in agent profile: ${profile.id}`);
+      }
+    }
+    for (const field of ['scope', 'subdomain', 'modelPolicy', 'reasoningPolicy', 'handoffSchema']) {
+      if (profile[field] !== undefined && (typeof profile[field] !== 'string' || !profile[field])) {
+        throw new Error(`Invalid ${field} in agent profile: ${profile.id}`);
+      }
+    }
+    if (
+      profile.activationSignals !== undefined &&
+      (!profile.activationSignals || Array.isArray(profile.activationSignals) ||
+        typeof profile.activationSignals !== 'object')
+    ) {
+      throw new Error(`Invalid activationSignals in agent profile: ${profile.id}`);
+    }
+    for (const [signal, values] of Object.entries(profile.activationSignals ?? {})) {
+      validateStringArray(values, `activationSignals.${signal}`, profile.id);
+    }
+    if (profile.nativeRole !== undefined && !NATIVE_ROLES.has(profile.nativeRole)) {
+      throw new Error(`Invalid native role in agent profile: ${profile.id}`);
+    }
+    if (profile.writePermission !== undefined && !WRITE_PERMISSIONS.has(profile.writePermission)) {
+      throw new Error(`Invalid write permission in agent profile: ${profile.id}`);
+    }
+    if (profile.sandbox !== undefined && !SANDBOXES.has(profile.sandbox)) {
+      throw new Error(`Invalid sandbox in agent profile: ${profile.id}`);
+    }
+    if (profile.estimatedContextCost !== undefined) {
+      const costs = profile.estimatedContextCost;
+      if (!costs || Array.isArray(costs) || typeof costs !== 'object' ||
+        Object.values(costs).some((value) => !Number.isInteger(value) || value < 0)) {
+        throw new Error(`Invalid estimated context cost in agent profile: ${profile.id}`);
+      }
+    }
+    for (const skill of profile.skills ?? []) {
+      if (assets.get(`skill:${skill}`)?.kind !== 'SKILL') {
+        throw new Error(`Unknown skill in agent profile: ${profile.id} -> ${skill}`);
+      }
+    }
+    if (profile.tomlProfile != null) {
+      const tomlFile = requireFile(root, profile.tomlProfile);
+      if (path.extname(tomlFile) !== '.toml') {
+        throw new Error(`Invalid TOML profile path: ${profile.tomlProfile}`);
+      }
+      const toml = fs.readFileSync(tomlFile, 'utf8');
+      if (parseTomlString(toml, 'name', profile.tomlProfile) !== profile.id) {
+        throw new Error(`TOML profile id mismatch: ${profile.id}`);
+      }
+      const tomlSandbox = parseTomlString(toml, 'sandbox_mode', profile.tomlProfile);
+      if (profile.sandbox !== undefined && tomlSandbox !== profile.sandbox) {
+        throw new Error(`TOML sandbox mismatch: ${profile.id}`);
+      }
+    }
+    if (profile.nativeRole !== undefined && profile.tomlProfile != null) {
+      throw new Error(`Agent profile cannot declare nativeRole and tomlProfile: ${profile.id}`);
+    }
+    if (profile.writePermission === 'none' && profile.sandbox !== 'read-only') {
+      throw new Error(`Read-only sandbox required for no-write profile: ${profile.id}`);
+    }
+    agentProfiles.set(profile.id, profile);
+  }
+  for (const profile of agentProfiles.values()) {
+    for (const field of ['conflicts', 'prerequisites']) {
+      for (const reference of profile[field] ?? []) {
+        if (reference === profile.id || !agentProfiles.has(reference)) {
+          throw new Error(`Unknown ${field} agent profile: ${profile.id} -> ${reference}`);
+        }
+      }
+    }
+    for (const validator of profile.validators ?? []) requireFile(root, validator);
+  }
+  return { domains, assets, capabilities, agentProfiles };
 }
 
 export function validateEvals(evals, registryState, root = ROOT) {

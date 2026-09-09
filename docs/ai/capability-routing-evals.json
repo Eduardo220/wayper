@@ -261,6 +261,19 @@
         "skills": [],
         "capabilityGap": true
       }
+    },
+    {
+      "id": "CR13_NATIVE_GOAL_CONTEXT",
+      "task": "inicie ou retome um Goal nativo no Wayper",
+      "entryDomain": "HARNESS_AI",
+      "entryCapabilities": ["context-efficiency"],
+      "dependencies": [],
+      "expected": {
+        "capabilities": ["context-efficiency"],
+        "skills": ["wayper-context-efficiency"],
+        "excluded": ["active-run-lifecycle", "durable-run-save", "territory-capture"],
+        "capabilityGap": false
+      }
     }
   ]
 }

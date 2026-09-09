@@ -5,28 +5,33 @@
 > **Owner:** [`docs/ai/harness-v1.md`](harness-v1.md)<br>
 > **Classificador:** [`docs/ai/task-classification.md`](task-classification.md)
 
-O router é declarativo. Ele não executa código, não substitui o agente principal
-e não autoriza produto. [`docs/00-fontes-do-projeto.md`](../00-fontes-do-projeto.md)
+O routing operacional é declarativo. O router determinístico pode selecionar um
+specialist read-only somente no recorte fechado descrito abaixo. Nos demais
+casos ele emite `BEHAVIORAL_FALLBACK`; nunca cria agents, muda `S0-S3`, substitui
+o agente principal ou autoriza produto.
+[`docs/00-fontes-do-projeto.md`](../00-fontes-do-projeto.md)
 continua sendo o catálogo de autoridade documental; este mapa decide o menor
 subconjunto a abrir para a tarefa atual.
 
 ## Sequência
 
-1. inferir pela intenção `TASK_MODE` ou `META_GOAL_MODE`; carregar
+1. quando o runtime expuser Goal nativo, carregar
+   `wayper-context-efficiency` e refrescar o Working Context antes de reler;
+2. inferir pela intenção `TASK_MODE` ou `META_GOAL_MODE`; carregar
    [`meta-goal-runtime.md`](meta-goal-runtime.md) somente no segundo;
-2. classificar a tarefa e marcar flags semânticas;
-3. inspecionar o diff real e selecionar `GATE_LEVEL`/`REVIEW_MODE` por
+3. classificar a tarefa e marcar flags semânticas;
+4. inspecionar o diff real e selecionar `GATE_LEVEL`/`REVIEW_MODE` por
    [`quality-gates.md`](quality-gates.md);
-4. selecionar processo somente quando ele acrescentar disciplina;
-5. executar Pass 1: escolher `ENTRY_DOMAIN`, `ENTRY_CAPABILITY` e o menor
+5. selecionar processo somente quando ele acrescentar disciplina;
+6. executar Pass 1: escolher `ENTRY_DOMAIN`, `ENTRY_CAPABILITY` e o menor
    skill/reference do [`capability-registry.json`](capability-registry.json);
-6. iniciar no menor context level suficiente e consultar memory somente quando
+7. iniciar no menor context level suficiente e consultar memory somente quando
    task, domínio e risco justificarem;
-7. investigar source/callers/testes pelo dependency walk aplicável;
-8. executar Pass 2: expandir apenas dependencies confirmadas, classificá-las e
+8. investigar source/callers/testes pelo dependency walk aplicável;
+9. executar Pass 2: expandir apenas dependencies confirmadas, classificá-las e
    fechar o minimum sufficient context;
-9. usar Graphify ou specialist apenas quando incerteza/risco justificar;
-10. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
+10. usar Graphify ou specialist apenas quando incerteza/risco justificar;
+11. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
 
 Palavra não é gatilho: “corrida” em texto não implica `RUN_RUNTIME`; “mapa”
 visual não implica `TERRITORY_GEO`; “Firebase” em doc não chama reviewer de
@@ -37,6 +42,7 @@ ativa `META_GOAL_MODE` sem intenção de outcome contínuo.
 
 | Intenção observada | Mode | Contexto adicional |
 | --- | --- | --- |
+| Goal nativo, qualquer intenção | preservar modo inferido | `wayper-context-efficiency` + Working Context |
 | objetivo pontual, mesmo grande | `TASK_MODE` | nenhum Goal contract |
 | outcome amplo com melhoria iterativa e vários slices | `META_GOAL_MODE` | `meta-goal-runtime.md` |
 | palavra “meta” dentro do conteúdo alterado | inferir pelo pedido real | não ativar por keyword |
@@ -72,6 +78,33 @@ cobrirem o conhecimento/workflow necessário. Discovery externa ainda exige os
 seis campos e o pipeline de
 [`external-skill-acquisition.md`](external-skill-acquisition.md); sem gap provado,
 o router não chama Find Skills nem `skills find`.
+
+### Capability/profile router seletivo
+
+O agente principal pode serializar o fingerprint já classificado e executar
+`npm run quality:router` para validar a policy ou
+`node scripts/wayper-agent-router.mjs --input <arquivo>`. Facts e sinais com
+proveniência entram no resolver determinístico; texto bruto não vira capability
+por keyword dentro do script. `ROUTER_SELECTED` exige `S1/S2`, intenção
+read-only, task class não crítica/arquitetural, um único repositório inequívoco,
+profiles operacionais existentes, coverage required+optional completa, zero
+conflict/prerequisite/ambiguity e nenhuma redundância. Facts ausentes, `S0/S3`,
+writer, cross-repo, `ARCHITECTURAL`, `CRITICAL_RUNTIME` ou residual de julgamento
+produzem `BEHAVIORAL_FALLBACK` com motivo fechado. O Working Context guarda o
+receipt e fingerprints/refs compactos; o receipt não autoriza Graphify ou spawn.
+
+Depois dessa persistência, um Context Packet pode derivar a view mínima de
+um profile, role nativa, capability set ou validation role. O builder usa apenas
+o `CONTEXT_MAP` validado, Registry V2, output do router e target explícito;
+evidence sem relação demonstrável não entra. Packet é input de avaliação local,
+não prompt injection, handoff ou autorização de spawn. Somente um receipt
+`ROUTER_SELECTED` validado autoriza o target specialist pelo router. Capability
+sem profile pode produzir `CAPABILITY_PACKET`; não cria profile nem spawn.
+
+Graphify retorna apenas `NOT_NEEDED`, `TARGETED_RECOMMENDED` ou
+`REQUIRED_BY_STRUCTURAL_UNCERTAINTY`. O router nunca executa a ferramenta. Um
+resultado fornecido precisa declarar repositório e fingerprint; Goal cross-repo
+mantém os dois graphs isolados e combina apenas signals depois.
 
 ## Memory lookup gate
 
@@ -196,7 +229,8 @@ branch atual sempre confirmam ownership.
 - **Tests:** permission/onboarding tests e consumers de navegação/autenticação.
 - **Skills:** `wayper-mobile-shell`.
 - **Specialists:** lifecycle somente para AppState, permission ou native entry;
-  persistence apenas se sessão durável for afetada.
+  auth security para identidade/autorização; persistence apenas se sessão
+  durável for afetada.
 - **Tools:** busca direta; Graphify só para bootstrap/consumer graph incerto.
 - **Validation:** cold start, auth loading, signed-out/signed-in, deep links e
   permission denial proporcionais ao diff.
@@ -280,7 +314,8 @@ branch atual sempre confirmam ownership.
   não houver suíte direta.
 - **Skills:** `wayper-mobile-shell` para auth/bootstrap;
   `wayper-persistence-sync` para durabilidade/sync.
-- **Specialists:** persistence somente para consistência/Firestore; lifecycle
+- **Specialists:** auth security para identidade, autorização e acesso
+  Firestore; persistence somente para durabilidade/consistência; lifecycle
   somente para boundary de sessão móvel.
 - **Tools:** busca de imports/config; documentação oficial do SDK somente quando
   a API atual exigir confirmação.
@@ -303,7 +338,8 @@ branch atual sempre confirmam ownership.
   `docs/wayper/06-xp-nivel-ranking.md`, `docs/10-regras-de-negocio.md`.
 - **Tests:** testes de feed, ranking, profile, social/home repositories.
 - **Skills:** nenhuma por padrão; persistence somente se contrato durable/sync.
-- **Specialists:** persistence apenas por storage/sync; demais papéis são
+- **Specialists:** persistence por storage/sync, auth security por acesso e
+  progression rules somente para ranking/regra já aprovada; demais papéis são
   nativos.
 - **Tools:** busca direta; Graphify para feature ampla com muitos consumers.
 - **Validation:** regra de visibilidade/ranking, fallback local, estados de erro
@@ -335,11 +371,12 @@ branch atual sempre confirmam ownership.
   contrato.
 - **Skills:** nenhuma de design nesta baseline; todas as capabilities usam a
   reference on-demand. `wayper-mobile-shell` só para shell/navigation real.
-- **Specialists:** nenhum por padrão; geospatial não revisa styling do mapa.
+- **Specialists:** accessibility somente quando semântica/interação assistiva é
+  capability explícita; geospatial não revisa styling do mapa.
 - **Tools:** source direto; Graphify não é necessário para ajuste local.
 - **Validation:** `npm run quality:design`, estados, interação, accessibility,
   screenshot nativo e teste afetado conforme o diff.
-- **Risk flags:** `UI_UX`, `PRODUCT_RULE`, `PERFORMANCE`.
+- **Risk flags:** `UI_UX`, `ACCESSIBILITY`, `PRODUCT_RULE`, `PERFORMANCE`.
 - **Escalation:** state ownership, navegação pública ou vários fluxos reais sobe
   para bounded/architectural e adiciona domínio correspondente.
 
@@ -357,10 +394,12 @@ branch atual sempre confirmam ownership.
   `docs/08-decisoes-tecnicas.md`.
 - **Tests:** diagnostics e Sentry monitoring tests.
 - **Skills:** nenhuma; active-run somente para diagnóstico no caminho crítico.
-- **Specialists:** specialist do risco observado, não um reviewer de logging.
+- **Specialists:** diagnostics privacy somente para redaction/export/telemetria
+  sensível; demais specialists seguem o risco observado, não a presença de log.
 - **Tools:** busca/log local; painel externo só com acesso/autorização.
 - **Validation:** redaction, fail-open, limite de output e testes do bridge.
-- **Risk flags:** `PERFORMANCE`, `AUTH_SECURITY`, `BUILD_TOOLING`, `RUN_DATA_LOSS`.
+- **Risk flags:** `PRIVACY`, `PERFORMANCE`, `AUTH_SECURITY`, `BUILD_TOOLING`,
+  `RUN_DATA_LOSS`.
 - **Escalation:** dado sensível, trabalho pesado no GPS ou mudança de build
   adiciona security/run/build e eleva o nível.
 
@@ -430,7 +469,9 @@ branch atual sempre confirmam ownership.
   `docs/product/10-decisoes-aprovadas.md` e `docs/10-regras-de-negocio.md`.
 - **Tests:** testes do domínio que codifica a regra.
 - **Skills:** skill do domínio técnico somente após a decisão de produto.
-- **Specialists:** specialist técnico pela flag; conflito aprovado exige humano.
+- **Specialists:** progression rules para conformidade de XP/recompensa/ranking
+  já implementado; demais specialists pelas flags técnicas. Regra nova ou
+  conflito aprovado exige humano.
 - **Tools:** leitura documental e source; Graphify só para impacto transversal.
 - **Validation:** regra aprovada, estados/bordas e teste de regressão.
 - **Risk flags:** `PRODUCT_RULE`, `DATA_MIGRATION`, `UI_UX`, `AUTH_SECURITY`.
@@ -451,8 +492,10 @@ branch atual sempre confirmam ownership.
   `meta-goal-runtime.md` para metas contínuas/autonomia e `memory-policy.md` para
   hard-earned learning on-demand; `hooks-and-gates.md` somente para runtime de
   hooks/automação determinística; `capability-architecture.md` e seu registry
-  para capabilities/closure; `token-economy.md` para leitura, output, briefs e
-  compaction; `external-skill-acquisition.md` somente após `CAPABILITY_GAP` ou
+  para capabilities/closure; `working-context.md` e
+  `wayper-context-efficiency` para reuse/fingerprint/delta por Goal;
+  `token-economy.md` para leitura, output, briefs e compaction;
+  `external-skill-acquisition.md` somente após `CAPABILITY_GAP` ou
   quando aquisição externa for o objeto explícito da tarefa.
 - **Docs:** `harness-v1.md` e somente o owner do aspecto tocado; não pré-carregue a
   suíte `docs/ai`. `token-economy.md` entra para contexto/output/RTK/Caveman,
@@ -460,9 +503,12 @@ branch atual sempre confirmam ownership.
 - **Tests:** evals declarativas de routing, links, metadata/config e suíte do
   produto para garantir ausência de regressão; `npm run quality:meta-goal`
   quando Goal Execution Contract, completion ou falsification mudar;
-  `npm run quality:capabilities` quando registry/closure/aquisição mudar.
-- **Skills:** nenhuma skill de domínio por padrão.
-- **Specialists:** nenhum dos quatro reviewers mobile por padrão; papéis de
+  `npm run quality:capabilities` quando registry/closure/aquisição mudar;
+  `npm run quality:router` quando fingerprint, matching, profiles, shadow evals
+  ou policy de recomendação mudar.
+- **Skills:** `wayper-context-efficiency` em todo Goal nativo; nenhuma skill de
+  domínio mobile por padrão.
+- **Specialists:** nenhum profile mobile por padrão; papéis de
   architecture/review genérico são nativos.
 - **Tools:** busca direta; Graphify apenas para inventário/dependência ampla;
   Codex doctor para saúde/config suportada.
@@ -480,6 +526,7 @@ branch atual sempre confirmam ownership.
 | `wayper-mobile-shell` | entry, providers, auth gate, root navigation, deep link, onboarding, permission | runtime ativo, finalization/queues, detalhe local de tela | `MOBILE_SHELL`, `FIREBASE_AUTH`, `UI_DESIGN` no shell | `LIFECYCLE`, `AUTH_SECURITY`, `FIREBASE`, `UI_UX` | cold start, auth/nav/deep-link/permission paths | lifecycle; persistence só se sessão durável |
 | `wayper-persistence-sync` | save/finalization/recovery storage, migration, deferred/sync/replay | GPS vivo, geometria pura, UI-only | `PERSISTENCE_SYNC`, `FIREBASE_AUTH`, `SOCIAL` quando durable | `RUN_DATA_LOSS`, `OFFLINE_STORAGE`, `SYNC`, `FIREBASE`, `CONCURRENCY`, `DATA_MIGRATION` | durable ordering, offline recovery, idempotência, falha remota | persistence, concurrency, lifecycle no handoff |
 | `wayper-territory-map` | territory geometry/capture/storage, coordinates, MapLibre data/rendering | styling visual sem geo, live lifecycle, post-run queue | `TERRITORY_GEO`, `UI_DESIGN` só no boundary de dados | `GPS_GEO`, `OFFLINE_STORAGE`, `DATA_MIGRATION`, `PERFORMANCE` | coordenadas, normalização, validade, capture e repository | geospatial; outros só por flags adicionais |
+| `wayper-context-efficiency` | Goal nativo ou mudança explícita de context/token economy do Harness | task comum fora de Goal sem eficiência de contexto em escopo | `HARNESS_AI` transversal aos domínios do Goal | `DOCUMENTATION`, `BUILD_TOOLING` e flags já classificadas | `quality:context`, owner gates e provas do Goal preservadas | nenhum; roteia specialists existentes somente pelas flags reais |
 
 ## Specialist routing
 
@@ -487,12 +534,13 @@ Custom agent nunca é default. Delegue só quando especialização ou isolamento
 contexto superar o overhead. Specialists read-only independentes podem compor a
 mesma wave `S2`; não conversam entre si e o agente principal sintetiza.
 
-| Specialist | Trigger | Negative trigger |
-| --- | --- | --- |
-| `wayper_concurrency_reviewer` | race, async ownership, single-flight, stale callback, lock, cancellation ou write ordering | fluxo sequencial sem estado compartilhado ou risco apenas hipotético |
-| `wayper_mobile_lifecycle_reviewer` | AppState, mount/unmount relevante, foreground/background, screen off, notification, Android lifecycle ou headless task | styling/UI sem transição de lifecycle/native boundary |
-| `wayper_persistence_reviewer` | local/recovery storage, migration, sync queue, Firestore consistency, durability ou idempotência | leitura/UI sem mudança de storage/ordering |
-| `wayper_geospatial_reviewer` | GPS, route geometry, Turf, MapLibre data, territory, coordinates, filters ou distance | copy/style/layout do mapa sem transformação geográfica |
+IDs, scope, capabilities, activation signals, exclusions, runtime e sandbox dos
+specialists atuais pertencem exclusivamente aos `agentProfiles` de
+[`capability-registry.json`](capability-registry.json). O router usa essa
+metadata somente depois que o Decision Gate autorizar `S1/S2` read-only;
+seleção automática existe apenas no receipt fechado `ROUTER_SELECTED`.
+Profiles usam `nativeRole` com Context Packet por padrão; TOML permanece apenas
+onde sandbox ou instrução runtime específica já o justifica.
 
 Descoberta, pesquisa, teste, debugging, arquitetura, implementação e review
 genérico usam o agente principal ou subagentes nativos do Codex. Não recriar
@@ -502,19 +550,25 @@ reviewer genérico. Workers nativos só escrevem em paralelo segundo
 
 ## Graphify, RTK e modos de output
 
-Graphify é opcional e sob demanda. Use somente quando ownership é incerto, o
+Graphify é opcional e sob demanda. Consulte fingerprints do Working Context
+antes de executá-lo. Use somente quando ownership é incerto, o
 dependency map é amplo, consumers cruzam módulos ou `path`/`explain`/`affected`
 reduzirem materialmente a leitura. Comece por busca direta; alvo conhecido,
 mudança trivial/doc/local, enforcement arquitetural e wiring dinâmico não
 justificam grafo. Em corrida crítica ele apenas sugere working set: source,
 callers e testes continuam obrigatórios.
 
-Uma sessão Graphify do mobile começa por refresh AST app-only explícito
-(`graphify extract . --code-only --no-cluster --out .`). Sem refresh, trate o
-cache como stale; stage não é uma versão distinta, pois o extractor lê o
-filesystem. O grafo compartilhado do workspace, hooks Git automáticos,
-extração semântica remota e `save-result` não fazem parte do fluxo default.
-`graphify-out/` é gerado/ignorado e pode ser apagado sem perda de verdade.
+Cada sessão seleciona explicitamente `mobile` ou `site`; `npm run
+graphify:build -- <scope>` cria AST code-only/no-cluster no `graphify-out/` do
+próprio repositório, e `npm run graphify:update -- <scope>` atualiza esse mesmo
+cache. Goal cross-repo consulta os dois graphs separadamente e combina evidence,
+sem merge. Reuse é permitido quando fingerprint e metadata permanecem atuais;
+query `affected/path/explain` continua limitada ao símbolo alvo. Sem
+fingerprint/refresh, trate o cache como stale; stage não é uma versão distinta,
+pois o extractor lê o filesystem. O graph misto do workspace, hooks Git
+automáticos, extração semântica remota e `save-result` não fazem parte do fluxo
+default. `npm run quality:graph-scopes` valida roots, fingerprints, metadata,
+contaminação e integridade; caches continuam gerados/ignorados e descartáveis.
 Graphify descobre; source confirma. Evidência e decisão:
 [`2026-08-24-graphify-roi.md`](../audits/2026-08-24-graphify-roi.md).
 

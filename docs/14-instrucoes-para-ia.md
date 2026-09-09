@@ -18,8 +18,9 @@ conteúdos em prompts, skills, agents ou hooks.
 | `AGENTS.md` | comportamento permanente e invariantes universais |
 | `docs/` | estado, direção, decisões e explicações detalhadas |
 | `docs/ai/memory/` | índice/topics técnicos hard-earned, somente sob demanda |
-| `.agents/skills/` | workflow de domínio carregado sob demanda |
-| `docs/ai/capability-registry.json` | inventário on-demand de capability → skill/reference |
+| `.agents/skills/` | workflow de domínio/transversal carregado por trigger |
+| `.wayper-context/` | Working Context + `CONTEXT_MAP` no mesmo Markdown por Goal; estado local ignorado pelo Git; Context Packets são views derivadas |
+| `docs/ai/capability-registry.json` | metadata canônica on-demand de capabilities e agent profiles |
 | `DESIGN.md` | contrato visual; não duplica runtime tokens nem verdade de produto |
 | `.codex/agents/` | especialização read-only com gatilho concreto |
 | hooks | enforcement determinístico; não substituem documentação |
@@ -41,6 +42,9 @@ staleness de hard-earned learning pertencem a
 testes ou decisão canônica. Modos de output, leitura progressiva e contabilidade
 de contexto pertencem a
 [`docs/ai/token-economy.md`](ai/token-economy.md).
+Reuse-before-read, diff-before-file, fingerprints e budgets por classe em Goal
+pertencem a [`wayper-context-efficiency`](../.agents/skills/wayper-context-efficiency/SKILL.md)
+e [`docs/ai/working-context.md`](ai/working-context.md).
 Aquisição externa após `CAPABILITY_GAP`, vetting, trial, provenance, update e
 revogação pertencem a
 [`docs/ai/external-skill-acquisition.md`](ai/external-skill-acquisition.md);
@@ -67,18 +71,21 @@ motivo proporcional. Um campo que não se aplica pode ser omitido com motivo.
 ## Descoberta progressiva
 
 1. Leia `AGENTS.md` e o catálogo.
-2. Classifique tarefa/flags, leia o diff e selecione gate/review proporcionais.
-3. Leia os documentos mínimos e acione skill apenas quando o gatilho casar.
-4. Localize headings/símbolos/callers e leia ranges suficientes antes de abrir
+2. Em Goal nativo, refresque Working Context/`CONTEXT_MAP` e reuse proof
+   inalterado antes de reler; artifacts mudados seguem diff-before-file.
+3. Classifique tarefa/flags, leia o diff e selecione gate/review proporcionais.
+4. Leia os documentos mínimos e acione skill apenas quando o gatilho casar.
+5. Localize headings/símbolos/callers e leia ranges suficientes antes de abrir
    arquivos grandes inteiros.
-5. Use Graphify apenas para reduzir incerteza estrutural; confirme no source.
-6. Leia implementação, callers, testes, configuração e bugs relevantes.
-7. Acione especialista somente quando houver risco específico que justifique o
+6. Use Graphify apenas para reduzir incerteza estrutural; reuse/update pelo
+   fingerprint do scope e confirme no source.
+7. Leia implementação, callers, testes, configuração e bugs relevantes.
+8. Acione especialista somente quando houver risco específico que justifique o
    contexto adicional.
 
 Skills não decidem prioridade nem autorizam produto. Specialists não orquestram
 outros agents nem substituem o agente principal; delegação é opt-in e segue o
-protocolo de orchestration. Outputs derivados de Graphify, benchmarks e caches
+protocolo de orchestration. Outputs derivados de Context Packets, Graphify, benchmarks e caches
 são pistas reproduzíveis, nunca autoridade.
 
 ## Planejamento e execução

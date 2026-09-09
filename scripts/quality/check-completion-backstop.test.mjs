@@ -38,6 +38,9 @@ test('HB1 changed scope is deterministic and conservative', () => {
   assert.equal(classifyChangedScope(['src/App.js']), 'PRODUCT_SOURCE');
   assert.equal(classifyChangedScope(['src/App.test.js']), 'TESTS');
   assert.equal(classifyChangedScope(['scripts/quality/check-code-size.mjs']), 'QUALITY_TOOLING');
+  assert.equal(classifyChangedScope(['scripts/wayper-context.mjs']), 'QUALITY_TOOLING');
+  assert.equal(classifyChangedScope(['scripts/wayper-context-map.mjs']), 'QUALITY_TOOLING');
+  assert.equal(classifyChangedScope(['scripts/wayper-structured-handoff.mjs']), 'QUALITY_TOOLING');
   assert.equal(classifyChangedScope(['package.json']), 'PACKAGE_CONFIG');
   assert.equal(classifyChangedScope(['android/app/build.gradle']), 'NATIVE_ANDROID');
   assert.equal(classifyChangedScope(['README.md', 'src/App.js']), 'MIXED');
@@ -71,6 +74,30 @@ test('HB4 quality tooling selects only directly associated tests', () => {
     ]
   );
   assert.deepEqual(relevantQualityTests(['docs/ai/architecture-boundaries.md']), []);
+  assert.deepEqual(
+    relevantQualityTests(['.agents/skills/wayper-context-efficiency/SKILL.md']),
+    ['scripts/quality/check-context-efficiency.test.mjs']
+  );
+  assert.deepEqual(
+    relevantQualityTests(['scripts/wayper-context-map.mjs']),
+    [
+      'scripts/quality/check-context-efficiency.test.mjs',
+      'scripts/wayper-structured-handoff.test.mjs',
+    ]
+  );
+  assert.deepEqual(
+    relevantQualityTests(['scripts/quality/evaluate-context-map-cases.mjs']),
+    ['scripts/quality/check-context-efficiency.test.mjs']
+  );
+  assert.deepEqual(
+    relevantQualityTests(['scripts/quality/evaluate-structured-handoff-cases.mjs']),
+    ['scripts/wayper-structured-handoff.test.mjs']
+  );
+  assert.deepEqual(relevantQualityTests(['scripts/wayper-context-packet.mjs']), [
+    'scripts/quality/check-context-efficiency.test.mjs',
+    'scripts/wayper-structured-handoff.test.mjs',
+  ]);
+  assert.deepEqual(relevantQualityTests(['package.json']), ['scripts/wayper-structured-handoff.test.mjs']);
 });
 
 test('HB5 unchanged legacy debt remains a pass', () => {

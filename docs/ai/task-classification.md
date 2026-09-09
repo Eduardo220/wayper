@@ -78,6 +78,8 @@ Flags são combináveis e descrevem o risco concreto, não o nome do arquivo.
 | `PERFORMANCE` | latência, bloqueio, memória, frequência de render/write ou trabalho pesado |
 | `DATA_MIGRATION` | schema/shape persistido, compatibilidade, backfill ou migração |
 | `UI_UX` | apresentação, interação, acessibilidade, estados visuais ou feedback |
+| `ACCESSIBILITY` | semântica assistiva, foco, leitor de tela, ação ou estado acessível |
+| `PRIVACY` | PII, localização, credencial ou payload sensível em log, diagnóstico ou telemetria |
 | `PRODUCT_RULE` | regra, entitlement, economia, ranking, comportamento aprovado ou decisão de produto |
 | `DOCUMENTATION` | fonte documental, link, instrução, owner ou registro técnico |
 | `BUILD_TOOLING` | teste, build, dependency, script, CI, Expo/EAS, Gradle ou configuração de ferramenta |
@@ -102,7 +104,7 @@ automaticamente; só pode ser encerrado por evidência e validação explícitas
 
 | Nível | Conteúdo | Regra de subida |
 | --- | --- | --- |
-| `LEVEL 0 — PERMANENT` | `AGENTS.md` e metadata de descoberta de skills/agents | sempre; nenhum doc de domínio por padrão |
+| `LEVEL 0 — PERMANENT` | `AGENTS.md`, metadata de descoberta e, somente em Goal nativo, Working Context do `threadId` | sempre; nenhum doc de domínio por padrão |
 | `LEVEL 1 — TASK ROUTING` | classe, flags e menor rota do mapa de contexto | qualquer tarefa não resolvida no nível 0 |
 | `LEVEL 2 — DOMAIN` | uma ou poucas skills/docs e owners do domínio | tarefa funcional ou risco de domínio conhecido |
 | `LEVEL 3 — DEEP INVESTIGATION` | source, callers, testes, docs específicos, Graphify quando útil e especialistas seletivos | incerteza estrutural, bug complexo ou impacto amplo |
@@ -122,6 +124,7 @@ TASK_CLASS:
 RISK_FLAGS:
 DOMAINS:
 CONTEXT_LEVEL:
+CONTEXT_BUDGET:
 GATE_LEVEL:
 REVIEW_MODE:
 PROCESS:

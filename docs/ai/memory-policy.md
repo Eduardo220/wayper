@@ -41,7 +41,8 @@ invariantes críticos, arquitetura, negócio, migrations e safety contracts nunc
 dependem exclusivamente dela.
 
 Estado de execução — branch, HEAD, diff, warnings atuais, resultado de testes,
-candidate ranking ou Goal em andamento — não é memória.
+candidate ranking ou Goal em andamento — não é memória. Ele pode viver no
+Working Context Markdown ignorado pelo Git sem entrar neste índice.
 
 ## Auditoria da memória nativa do Codex
 
@@ -70,6 +71,8 @@ esta auditoria; a repo memory continua portátil.
 - não havia store de project memory ativo neste repositório;
 - `wayper-brain` está em backup histórico e não é memória nem runtime ativo;
 - Graphify mantém graph/cache gerado, reproduzível e não autoritativo;
+- `.wayper-context/<threadId>.md` mantém estado operacional/fingerprints do Goal,
+  não conhecimento compartilhado;
 - audits, changelog, revisões, ADRs e docs do Obsidian preservam documentação e
   história, não entries desta memória;
 - o banco interno observado pelo Codex é runtime global e não owner técnico do
@@ -90,8 +93,9 @@ LEARNING_DELTA
 ```
 
 Promotion ocorre somente depois de `SYNTHESIS + VALIDATION`, ao fim de um slice
-importante ou Goal. Learning Delta não é persistido automaticamente e hipótese
-de baixa confiança permanece em investigação/follow-up.
+importante ou Goal. Learning Delta pode persistir no Working Context daquele
+Goal, mas nunca é promovido automaticamente a repo memory; hipótese de baixa
+confiança permanece em investigação/follow-up.
 
 ### Teste obrigatório
 

@@ -15,20 +15,22 @@ generic implementer/reviewer.
 
 ## Suporte observado e boundary de configuração
 
-Na baseline de 2026-08-16, Codex CLI `0.147.0` expõe multi-agent estável,
+Na baseline observada de 2026-09-02, Codex CLI `0.152.1` expõe multi-agent estável,
 subagents nativos, steering/interrupção e custom agents project-scoped em
 `.codex/agents/`. A sessão atual oferece quatro slots totais, incluindo o agente
 principal; a configuração global e o projeto não definem `[agents]` nem limite
 próprio. O limite efetivo continua pertencendo ao runtime.
 
-- Não fixe modelo ou reasoning tier automaticamente; os quatro specialists
-  herdam a configuração aplicável e continuam read-only.
+- O dispatch canônico aplica `specialist-risk-capability-task-cost-v1`: modelo e
+  reasoning são explícitos por chamada; os TOMLs continuam sem override estático
+  para permitir variação por risco/tarefa. Invocações externas ao Harness ainda
+  herdam a configuração aplicável.
 - Não versione limite de concorrência enquanto o default suportado e o cap do
   runtime forem suficientes. Como orientação, não exceda três a quatro agentes
   totais sem benchmark e nunca exceda o cap anunciado pela sessão.
-- O runtime atual permite delegação aninhada, mas specialists Wayper não
-  delegam. Workers nativos também não criam uma segunda hierarquia sem plano
-  explícito do agente principal.
+- O runtime atual permite delegação aninhada, mas o Harness fixa `max_depth=1`:
+  specialists e workers Wayper não delegam. O agente principal permanece o
+  único nível de orquestração.
 - Subagents desta sessão compartilham checkout e filesystem. Isso não fornece
   isolamento para escrita; worktree é uma decisão separada.
 
@@ -43,13 +45,19 @@ Use multi-agent somente quando pelo menos um valor material existir:
 
 - `CONTEXT_ISOLATION`: exploração separada evita poluir decisões do agente
   principal;
-- `REAL_SPECIALIZATION`: um dos quatro specialists possui checklist pertinente;
+- `REAL_SPECIALIZATION`: um profile catalogado possui responsabilidade pertinente;
 - `REAL_PARALLELISM`: unidades independentes podem avançar simultaneamente;
 - `INDEPENDENT_REVIEW`: perspectivas read-only reduzem risco concreto.
 
 Considere também overhead de agente, contexto duplicado e síntese contra
 speedup, isolamento, especialização e redução de risco. Se o valor líquido for
 baixo ou incerto, use `S0`.
+
+O Decision Gate continua definindo `S0-S3`, intenção read-only/writer e valor de
+delegação. Depois de `S1/S2` read-only, um receipt `ROUTER_SELECTED` pode escolher
+o profile somente quando a coverage for completa e sem residual; qualquer outro
+resultado é `BEHAVIORAL_FALLBACK`. O router nunca cria wave, chama specialist ou
+autoriza spawn.
 
 Não delegue typo, copy, styling local, rename local, doc pequena, arquivo único
 bem compreendido, investigação curta, teste simples, `BOUNDED` sem
@@ -140,7 +148,7 @@ justificarem, lifecycle, concurrency, persistence e geospatial podem revisar o
 mesmo diff em paralelo. Cada task recebe pergunta e escopo distintos; não chame
 todos por rotina.
 
-Os quatro specialists:
+Os specialists catalogados:
 
 - investigam, verificam failure modes e produzem evidência;
 - não editam, delegam, fazem commit, aprovam merge ou redefinem arquitetura;
@@ -156,7 +164,10 @@ dependências, validação e proibição de commit/push.
 Use o menor `fork_turns` que preserve a intenção. Não herde ou cole histórico
 completo por hábito: passe paths/symbols para leitura no owner e somente o
 Learning Delta relevante. O brief mínimo e os modos de evidence pertencem a
-[`token-economy.md`](token-economy.md).
+[`token-economy.md`](token-economy.md); em Goal nativo,
+`wayper-context-efficiency` aplica também o ceiling por classe. Nunca envie o
+Working Context inteiro: envie somente outcome, scope, files/symbols,
+constraints, risk, evidence, validation e Learning Delta relevante.
 
 Sem isolamento, seja mais conservador. Não use `S3` quando houver file scope
 desconhecido, contrato central, mesmo index Git, estado persistente comum ou
@@ -164,7 +175,8 @@ necessidade de decisão ainda aberta.
 
 ## Contrato de retorno
 
-Todo subagent recebe briefing bounded e retorna de forma compacta:
+O contrato textual compacto abaixo permanece como fallback bounded quando o
+packet ou handoff não puder ser preparado/validado:
 
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | REPLAN_REQUIRED
@@ -193,6 +205,33 @@ CONFIDENCE:
 
 Sem cenário e evidência, não promover claim a bug confirmado. Read-only retorna
 `FILES_CHANGED: none`. Finding fora do escopo vira `CONCERN`; o agent não edita.
+
+Depois que o Decision Gate operacional autorizar `S1/S2` read-only e o profile
+for escolhido pelo gate comportamental ou por receipt `ROUTER_SELECTED`,
+`HARNESS_SPECIALIST_DISPATCH_V1` torna obrigatório o caminho
+`Context Packet v1 -> specialist existente -> Structured Handoff v1 -> validator`.
+`preparePacketizedSpecialist` produz o packet/receipt esperado e
+`consumePacketizedSpecialist` valida o evento final; nenhum dos dois decide
+`S0-S3`.
+Essa troca de input/output não muda `S0-S3` e não
+autoriza spawn. O orquestrador usa `fork_turns=none`, `readOnly=true`, zero
+descendants, o target `nativeRole` ou TOML declarado no profile e o par
+model/reasoning calculado pelo packet: risco/capability
+crítica, `ARCHITECTURAL` ou `CRITICAL_RUNTIME` usa `gpt-5.6-sol/high`; `BUG` e
+`INVESTIGATION` não críticos usam `gpt-5.6-terra/high`; `BOUNDED` não crítico
+usa `gpt-5.6-terra/medium`; `TRIVIAL` não crítico usa
+`gpt-5.6-luna/medium`. O receipt precisa coincidir com a policy registrada.
+Source/config operacional com dispatch direto ou referência direta a profile
+fora do adapter falha deterministicamente. Invocação manual externa permanece
+`OUT_OF_BAND_UNENFORCEABLE`, pois não há interceptor/receipt assinado do runtime.
+O handoff é JSON fechado, referencia evidence canônica por ID, registra reads e
+source expansion, mantém `filesChanged=[]` e não carrega narrativa/transcript.
+Somente o orquestrador calcula métricas e prepara um merge plan; somente o owner
+do Context Map decide persistência. Completion inválida recebe no máximo uma
+correção e depois aciona o fallback textual para o mesmo specialist já escolhido.
+Packet inválido ou indisponível aciona o mesmo fallback antes da chamada. A
+entrega final do subagent é o evento consumido; nenhum polling ou spawn recursivo
+é autorizado.
 
 ## Políticas por risco/processo
 
@@ -245,8 +284,9 @@ somente tasks ainda independentes.
 
 Falha de agent é `TOOL_FAILURE`, `CONTEXT_MISSING`, `TASK_AMBIGUOUS` ou
 `ACTUAL_BLOCKER`. Faça no máximo um retry racional para falha transitória; não
-crie loop. Para contexto faltante, forneça somente o delta. Se houver stall, o
-principal interrompe, preserva evidence e replana; não existe daemon/timeout
+crie loop. Para contexto faltante, forneça somente o delta; respostas repetidas
+também omitem fatos/decisões inalterados. Se houver stall, o principal
+interrompe, preserva evidence e replana; não existe daemon/timeout
 custom do projeto.
 
 Entre waves, propague somente deltas factuais relevantes como `NEW_FACTS`,
@@ -286,3 +326,16 @@ WAVE 3 — SYNTHESIS + VALIDATION
 Graphify pode apoiar `WAVE 0` quando o dependency map é amplo; permanece
 discovery on-demand e source confirma qualquer claim. Os casos de aceitação e a
 matriz de segurança estão em [`routing-evals.md`](routing-evals.md).
+O router apenas emite a decisão de Graphify; execução de query/build continua
+com o agente principal e sempre separada por repositório.
+
+Context Packets permanecem views derivadas e nunca satisfazem o Decision Gate,
+mudam `S0-S3`, criam agent ou substituem o contrato de decomposição. Quando o
+fluxo operacional já decidiu chamar um specialist read-only catalogado, o
+packet passa a ser seu input default; Goals sem specialist escolhido não recebem
+packet automaticamente. `INDEPENDENT_REVIEW_PACKET` exclui
+known-good e entradas marcadas `PRIOR_ANALYSIS_CONCLUSION` até a síntese, sem
+ocultar failures/gaps objetivos não marcados; follow-up explícito usa
+`FOLLOWUP_REVIEW_PACKET`. Structured Handoff v1 é o output default somente desse
+boundary já selecionado; falha retorna ao contrato textual anterior. Receipt
+`BEHAVIORAL_FALLBACK` nunca autoriza profile ou dispatch.

@@ -705,6 +705,23 @@ e mantém os quatro specialists read-only. Nenhum generic/security reviewer,
 Brain, adjudicator, hook, dependência ou código funcional foi criado. A política
 canônica está em `docs/ai/quality-gates.md`.
 
+### Adendo — Expansão seletiva do catálogo de specialists
+
+**Status:** aceito em 2026-09-02
+
+**Decisão:** o Registry V2 preserva os quatro profiles TOML existentes e passa a
+catalogar também reviewers read-only para auth/trust boundary, accessibility,
+diagnostics privacy e conformidade de progressão/ranking. Os novos profiles
+reusam `nativeRole: explorer`, Context Packet e a policy existente de
+model/reasoning; nenhum writer, TOML, capability, cross-repo path ou mecanismo de
+dispatch novo é criado.
+
+**Consequências:** coverage operacional cresce apenas sobre capabilities com
+responsabilidade independente e owners/testes atuais. Capabilities genéricas de
+UI, build, Harness e social continuam nativas; regra nova/conflitante permanece
+humana. O receipt seletivo mantém os mesmos gates de coverage completa,
+read-only, single-repo e zero ambiguidade.
+
 ### Adendo — Meta Goal Runtime + Autonomy Contract
 
 **Status:** aceito em 2026-08-17

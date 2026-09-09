@@ -153,10 +153,10 @@ O comando manual equivalente é:
 npm run quality:backstop
 ```
 
-Não há cache/fingerprint. Um cache correto precisaria cobrir untracked content,
-config, baselines e scripts; a complexidade não compensou uma execução por
-attempted completion. Validação manual repetida do mesmo diff pode ser
-duplicada conscientemente.
+O Stop não usa cache/fingerprint: precisa cobrir untracked content, config,
+baselines e scripts em toda tentativa de completion. Working Context possui
+fingerprints separados apenas para reuse de leitura/proof por Goal; eles nunca
+suprimem, marcam `PASS` ou substituem este backstop.
 
 O command requer shell POSIX, Node, npm e Git como o app já requer. Não contém
 path de usuário: `git rev-parse --show-toplevel` suporta o checkout principal e
@@ -173,7 +173,7 @@ Q-level.
 | --- | --- |
 | `NO_CHANGES` | `SKIP`, nenhum processo de quality |
 | `DOCS_ONLY` | `git diff --check HEAD --` |
-| `HARNESS_ONLY` | teste do backstop se afetado + diff check; evals/links continuam agent-owned |
+| `HARNESS_ONLY` | teste do backstop se afetado + `quality:context` quando seu owner muda + diff check; demais evals/links continuam agent-owned |
 | `PRODUCT_SOURCE` | `npm run quality:gate -- --json` |
 | `TESTS` | FAST gate; targeted semantic tests continuam agent-owned |
 | `QUALITY_TOOLING` | teste diretamente associado + FAST gate |
@@ -182,8 +182,9 @@ Q-level.
 | `MIXED` | união dos testes de tooling aplicáveis + FAST gate |
 
 Os testes associados são somente os owners existentes de size, architecture,
-quality gate e completion backstop. Não foi criado test-impact engine nem parser
-de Markdown. Typo/docs comum não roda ESLint completo, Jest ou Expo Doctor.
+quality gate, context efficiency, structured handoff e completion backstop. Não foi criado
+test-impact engine nem parser de Markdown. Typo/docs comum não roda ESLint
+completo, Jest ou Expo Doctor.
 
 ## FAST e DEEP
 
@@ -192,6 +193,7 @@ Automação FAST do hook:
 - diff whitespace para docs/Harness;
 - diff whitespace de arquivos untracked via Git;
 - testes unitários do quality tool alterado;
+- teste/gate de context efficiency quando skill/helper/Working Context/`CONTEXT_MAP`/evals mudam;
 - `quality:gate` para source, tests, quality tooling, package/config, Android e
   mixed.
 
@@ -228,6 +230,18 @@ timeout e output malformado podem ser silenciosos e fail-open. Isso não é
 convertido falsamente em falha do código. O agente deve
 registrar `TOOLING_BLOCKER` após retry racional se a ferramenta essencial
 continuar indisponível.
+
+## Completion de specialist packetized
+
+A documentação oficial corrente inclui `SubagentStop` e entrega metadata do
+resultado final, mas o evento não foi promovido a hook project-scoped nesta
+fase: trust, surfaces e failure semantics locais continuam apenas parcialmente
+observados. O adapter usa o resultado final event-driven já entregue pela
+interface de colaboração, valida o Structured Handoff e admite uma única
+correção bounded. Ele só é default após o fluxo operacional escolher um
+specialist read-only; falha retorna ao brief textual anterior. Não lê
+`transcript_path`, cujo formato não é contrato estável, e não instala daemon ou
+polling. O único hook versionado segue sendo o backstop `Stop`.
 
 ## Trust e security boundary
 
@@ -282,7 +296,7 @@ trace; o comando indicado abre detalhes sob demanda.
 Em uma Meta, cada slice continua usando Execution Kernel e Q/R próprios. O Stop
 hook apenas captura uma tentativa acidental de concluir com regressão
 determinística; não forma waves, rankeia candidates, decide produto, promove
-memory ou marca Goal satisfied.
+memory, atualiza Working Context ou marca Goal satisfied.
 
 Limitações confirmadas:
 
@@ -301,6 +315,7 @@ Limitações confirmadas:
 
 ```sh
 node --test scripts/quality/check-completion-backstop.test.mjs
+npm run quality:context
 npm run quality:backstop
 ```
 

@@ -1,0 +1,557 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "AR1_TRIVIAL_TEXT",
+      "category": "trivial text change",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar1",
+        "operation": "EDIT_TEXT",
+        "repositories": ["wayper"],
+        "changedFiles": ["docs/README.md"],
+        "candidatePaths": [],
+        "riskFlags": [],
+        "knownCapabilities": [],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": []
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": [],
+        "forbiddenCapabilities": ["active-run-lifecycle", "screen-ui-accessibility"],
+        "acceptableProfileSets": [[]],
+        "forbiddenProfiles": ["wayper_mobile_lifecycle_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR2_LOCALIZED_KNOWN_BUG",
+      "category": "localized bug with known owner",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar2",
+        "operation": "FIX_LOCALIZED_BUG",
+        "repositories": ["wayper"],
+        "changedFiles": ["src/services/ranking/compute.js"],
+        "candidatePaths": [],
+        "riskFlags": [],
+        "knownCapabilities": ["weekly-ranking"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": []
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["weekly-ranking"],
+        "forbiddenCapabilities": ["friends", "active-run-lifecycle"],
+        "acceptableProfileSets": [["wayper_progression_rules_reviewer"]],
+        "forbiddenProfiles": ["wayper_persistence_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR3_ACTIVE_RUN_LIFECYCLE",
+      "category": "active-run lifecycle",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar3",
+        "operation": "INVESTIGATE_ACTIVE_RUN",
+        "repositories": ["wayper"],
+        "changedFiles": [],
+        "candidatePaths": ["src/services/runTracking/activeRunRuntimeService.js"],
+        "riskFlags": ["LIFECYCLE"],
+        "knownCapabilities": ["active-run-lifecycle"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": [
+          {
+            "type": "keyword",
+            "value": "background AppState transition",
+            "provenance": { "source": "USER_TASK" }
+          }
+        ]
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["active-run-lifecycle"],
+        "forbiddenCapabilities": ["territory-capture"],
+        "acceptableProfileSets": [["wayper_mobile_lifecycle_reviewer"]],
+        "forbiddenProfiles": ["wayper_geospatial_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR4_GPS_QUALITY",
+      "category": "GPS quality",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar4",
+        "operation": "INVESTIGATE_GPS_QUALITY",
+        "repositories": ["wayper"],
+        "changedFiles": [],
+        "candidatePaths": ["src/services/runTracking/locationSubscription.js"],
+        "riskFlags": ["GPS_GEO"],
+        "knownCapabilities": ["live-gps-ingestion"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": [
+          {
+            "type": "keyword",
+            "value": "GPS coordinates and distance",
+            "provenance": { "source": "USER_TASK" }
+          }
+        ]
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["live-gps-ingestion"],
+        "forbiddenCapabilities": ["map-ui"],
+        "acceptableProfileSets": [["wayper_geospatial_reviewer"]],
+        "forbiddenProfiles": ["wayper_persistence_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR5_PERSISTENCE_FINALIZATION",
+      "category": "persistence and finalization",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar5",
+        "operation": "FIX_RUN_FINALIZATION",
+        "repositories": ["wayper"],
+        "changedFiles": ["src/services/run/runFinalizationService.js"],
+        "candidatePaths": [],
+        "riskFlags": ["OFFLINE_STORAGE"],
+        "knownCapabilities": ["run-finalization", "durable-run-save"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": [
+          {
+            "type": "keyword",
+            "value": "durability after offline finish",
+            "provenance": { "source": "SOURCE_WALK" }
+          }
+        ]
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["durable-run-save", "run-finalization"],
+        "forbiddenCapabilities": ["weekly-ranking"],
+        "acceptableProfileSets": [["wayper_persistence_reviewer"]],
+        "forbiddenProfiles": ["wayper_geospatial_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR6_CONCURRENCY",
+      "category": "concurrency",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar6",
+        "operation": "REVIEW_CONCURRENCY",
+        "repositories": ["wayper"],
+        "changedFiles": [],
+        "candidatePaths": ["src/services/runTracking/activeRunRuntimeService.js"],
+        "riskFlags": ["CONCURRENCY"],
+        "knownCapabilities": ["active-run-lifecycle", "durable-run-save"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": [
+          {
+            "type": "keyword",
+            "value": "race ordering and stale callback",
+            "provenance": { "source": "FAILURE_MODE_REVIEW" }
+          }
+        ]
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["active-run-lifecycle", "durable-run-save"],
+        "forbiddenCapabilities": ["territory-capture"],
+        "acceptableProfileSets": [["wayper_concurrency_reviewer"]],
+        "forbiddenProfiles": ["wayper_geospatial_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR7_TERRITORY_GEOMETRY",
+      "category": "territory geometry",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar7",
+        "operation": "FIX_TERRITORY_GEOMETRY",
+        "repositories": ["wayper"],
+        "changedFiles": ["src/services/territory/territoryService.js"],
+        "candidatePaths": [],
+        "riskFlags": ["TERRITORY_GEO"],
+        "knownCapabilities": ["route-geometry", "territory-capture"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": [
+          {
+            "type": "keyword",
+            "value": "Turf route geometry",
+            "provenance": { "source": "SOURCE_WALK" }
+          }
+        ]
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["route-geometry", "territory-capture"],
+        "forbiddenCapabilities": ["map-ui"],
+        "acceptableProfileSets": [["wayper_geospatial_reviewer"]],
+        "forbiddenProfiles": ["wayper_mobile_lifecycle_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR8_MAPLIBRE_BOUNDARY",
+      "category": "MapLibre data boundary",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar8",
+        "operation": "CHANGE_MAP_DATA_ADAPTER",
+        "repositories": ["wayper"],
+        "changedFiles": ["src/services/territory/mapAdapter.js"],
+        "candidatePaths": [],
+        "riskFlags": ["TERRITORY_GEO"],
+        "knownCapabilities": ["map-data-adaptation"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": [
+          {
+            "type": "keyword",
+            "value": "MapLibre data coordinates",
+            "provenance": { "source": "USER_TASK" }
+          }
+        ]
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["map-data-adaptation"],
+        "forbiddenCapabilities": ["map-ui", "layout"],
+        "acceptableProfileSets": [["wayper_geospatial_reviewer"]],
+        "forbiddenProfiles": ["wayper_mobile_lifecycle_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR9_PERMISSIONS_AUTH",
+      "category": "permissions and auth",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar9",
+        "operation": "CHANGE_PERMISSION_GATE",
+        "repositories": ["wayper"],
+        "changedFiles": ["src/services/permissions/permissionService.js"],
+        "candidatePaths": [],
+        "riskFlags": ["LIFECYCLE"],
+        "knownCapabilities": ["onboarding-permissions", "firebase-auth"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": []
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["firebase-auth", "onboarding-permissions"],
+        "forbiddenCapabilities": ["active-run-notification"],
+        "acceptableProfileSets": [["wayper_auth_security_reviewer", "wayper_mobile_lifecycle_reviewer"]],
+        "forbiddenProfiles": ["wayper_geospatial_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR10_ANDROID_NATIVE",
+      "category": "Android native boundary",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar10",
+        "operation": "CHANGE_ANDROID_TASK",
+        "repositories": ["wayper"],
+        "changedFiles": ["android/app/src/main/AndroidManifest.xml"],
+        "candidatePaths": [],
+        "riskFlags": ["NATIVE_ANDROID"],
+        "knownCapabilities": ["android-run-boundary"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": [
+          {
+            "type": "keyword",
+            "value": "headless task notification",
+            "provenance": { "source": "NATIVE_DIFF" }
+          }
+        ]
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["android-run-boundary"],
+        "forbiddenCapabilities": ["territory-capture"],
+        "acceptableProfileSets": [["wayper_mobile_lifecycle_reviewer"]],
+        "forbiddenProfiles": ["wayper_geospatial_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR11_MOBILE_PERFORMANCE",
+      "category": "mobile performance without catalog capability",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar11",
+        "operation": "PROFILE_MOBILE_PERFORMANCE",
+        "repositories": ["wayper"],
+        "changedFiles": [],
+        "candidatePaths": ["src/screens/Map/MapScreen.js"],
+        "riskFlags": ["PERFORMANCE"],
+        "knownCapabilities": [],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": false,
+        "structuralUncertainty": false,
+        "signals": [
+          {
+            "type": "text",
+            "value": "JS thread frame drops",
+            "provenance": { "source": "PROFILER_OBSERVATION" }
+          }
+        ]
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": [],
+        "forbiddenCapabilities": ["map-data-adaptation"],
+        "acceptableProfileSets": [[]],
+        "forbiddenProfiles": ["wayper_geospatial_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": true
+      }
+    },
+    {
+      "id": "AR12_SITE_WEBGL_PERFORMANCE",
+      "category": "site WebGL performance",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar12",
+        "operation": "PROFILE_SITE_WEBGL",
+        "repositories": ["wayper-site"],
+        "changedFiles": [],
+        "candidatePaths": ["src/components/territory/WebGlMap.tsx"],
+        "riskFlags": ["PERFORMANCE"],
+        "knownCapabilities": [],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": false,
+        "structuralUncertainty": false,
+        "signals": []
+      },
+      "expected": {
+        "repositories": ["wayper-site"],
+        "requiredCapabilities": [],
+        "forbiddenCapabilities": ["map-data-adaptation", "territory-capture"],
+        "acceptableProfileSets": [[]],
+        "forbiddenProfiles": ["wayper_geospatial_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": true
+      }
+    },
+    {
+      "id": "AR13_SITE_SEO_CONTRACT",
+      "category": "site SEO public contract",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar13",
+        "operation": "CHANGE_SITE_SEO",
+        "repositories": ["wayper-site"],
+        "changedFiles": ["src/app/page.tsx"],
+        "candidatePaths": [],
+        "riskFlags": ["PUBLIC_CONTRACT"],
+        "knownCapabilities": [],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": false,
+        "structuralUncertainty": false,
+        "signals": []
+      },
+      "expected": {
+        "repositories": ["wayper-site"],
+        "requiredCapabilities": [],
+        "forbiddenCapabilities": ["screen-ui-accessibility", "firebase-auth"],
+        "acceptableProfileSets": [[]],
+        "forbiddenProfiles": ["wayper_mobile_lifecycle_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": true
+      }
+    },
+    {
+      "id": "AR14_CROSS_DOMAIN_MOBILE",
+      "category": "cross-domain mobile",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar14",
+        "operation": "CHANGE_CROSS_DOMAIN_RUN_FLOW",
+        "repositories": ["wayper"],
+        "changedFiles": [],
+        "candidatePaths": ["src/services/run/runFinalizationService.js"],
+        "riskFlags": ["LIFECYCLE", "OFFLINE_STORAGE", "TERRITORY_GEO"],
+        "knownCapabilities": [
+          "active-run-notification",
+          "deferred-post-run-processing",
+          "territory-storage"
+        ],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": []
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": [
+          "active-run-notification",
+          "deferred-post-run-processing",
+          "territory-storage"
+        ],
+        "forbiddenCapabilities": ["weekly-ranking"],
+        "acceptableProfileSets": [[
+          "wayper_geospatial_reviewer",
+          "wayper_mobile_lifecycle_reviewer",
+          "wayper_persistence_reviewer"
+        ]],
+        "forbiddenProfiles": ["wayper_concurrency_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR15_CROSS_REPOSITORY",
+      "category": "cross-repository change",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar15",
+        "operation": "CHANGE_CROSS_REPOSITORY_CONTRACT",
+        "repositories": ["wayper", "wayper-site"],
+        "changedFiles": [],
+        "candidatePaths": [],
+        "riskFlags": ["CROSS_REPO"],
+        "knownCapabilities": ["harness-routing"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": []
+      },
+      "expected": {
+        "repositories": ["wayper", "wayper-site"],
+        "requiredCapabilities": ["harness-routing"],
+        "forbiddenCapabilities": ["active-run-lifecycle"],
+        "acceptableProfileSets": [[]],
+        "forbiddenProfiles": ["wayper_concurrency_reviewer"],
+        "graphifyDecision": "TARGETED_RECOMMENDED",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR16_ARCHITECTURAL",
+      "category": "architectural structural uncertainty",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar16",
+        "operation": "ARCHITECTURAL_CHANGE",
+        "repositories": ["wayper"],
+        "changedFiles": [],
+        "candidatePaths": [],
+        "riskFlags": ["BUILD_TOOLING"],
+        "knownCapabilities": ["harness-routing"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": true,
+        "signals": []
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["harness-routing"],
+        "forbiddenCapabilities": ["goal-runtime"],
+        "acceptableProfileSets": [[]],
+        "forbiddenProfiles": ["wayper_persistence_reviewer"],
+        "graphifyDecision": "REQUIRED_BY_STRUCTURAL_UNCERTAINTY",
+        "ambiguity": false
+      }
+    },
+    {
+      "id": "AR17_AMBIGUOUS_BUG",
+      "category": "ambiguous bug",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar17",
+        "operation": "INVESTIGATE_AMBIGUOUS_BUG",
+        "repositories": ["wayper"],
+        "changedFiles": [],
+        "candidatePaths": [],
+        "riskFlags": [],
+        "knownCapabilities": [],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": false,
+        "structuralUncertainty": true,
+        "signals": [
+          {
+            "type": "text",
+            "value": "sometimes the app is wrong",
+            "provenance": { "source": "USER_TASK" }
+          }
+        ]
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": [],
+        "forbiddenCapabilities": ["active-run-lifecycle", "territory-capture"],
+        "acceptableProfileSets": [[]],
+        "forbiddenProfiles": ["wayper_concurrency_reviewer"],
+        "graphifyDecision": "REQUIRED_BY_STRUCTURAL_UNCERTAINTY",
+        "ambiguity": true
+      }
+    },
+    {
+      "id": "AR18_ACCESSIBILITY_SPECIALIST",
+      "category": "known accessibility capability with specialist",
+      "input": {
+        "schemaVersion": 1,
+        "goalId": "eval-ar18",
+        "operation": "FIX_ACCESSIBILITY_LABEL",
+        "repositories": ["wayper"],
+        "changedFiles": ["src/components/Button.js"],
+        "candidatePaths": [],
+        "riskFlags": ["ACCESSIBILITY"],
+        "knownCapabilities": ["screen-ui-accessibility"],
+        "knownGoodCapabilities": [],
+        "capabilityAssessmentComplete": true,
+        "structuralUncertainty": false,
+        "signals": []
+      },
+      "expected": {
+        "repositories": ["wayper"],
+        "requiredCapabilities": ["screen-ui-accessibility"],
+        "forbiddenCapabilities": ["active-run-lifecycle"],
+        "acceptableProfileSets": [["wayper_accessibility_reviewer"]],
+        "forbiddenProfiles": ["wayper_mobile_lifecycle_reviewer"],
+        "graphifyDecision": "NOT_NEEDED",
+        "ambiguity": false
+      }
+    }
+  ]
+}

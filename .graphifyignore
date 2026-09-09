@@ -1,0 +1,14 @@
+# Generated, dependency, build, cache, test, and stale-copy scopes.
+graphify-out/
+node_modules/
+.next/
+.expo/
+dist/
+build/
+coverage/
+tmp/
+temp/
+backups/
+backup/
+clones/
+debug-clones/
