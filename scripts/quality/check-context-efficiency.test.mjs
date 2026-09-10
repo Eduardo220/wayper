@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { proveFixture, observedGate } from './evidence-fixture.mjs';
 
 import {
   ROOT,
@@ -32,6 +33,7 @@ import { createGoalExecution, goalReference } from '../wayper-context-identity.m
 
 function fixtureRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wayper-context-'));
+  fs.writeFileSync(path.join(root, '.gitignore'), '.wayper-context/\n');
   fs.writeFileSync(path.join(root, 'a.md'), 'stable owner\nunrelated tail\n');
   fs.writeFileSync(path.join(root, 'b.md'), 'mutable dependency\n');
   execFileSync('git', ['init', '-q'], { cwd: root });
@@ -44,7 +46,7 @@ function gitFixture(name = 'wayper') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `${name}-context-map-`));
   fs.writeFileSync(path.join(root, 'owner.js'), 'export const owner = true;\n');
   fs.writeFileSync(path.join(root, 'owner.test.js'), 'owner is covered\n');
-  fs.writeFileSync(path.join(root, '.gitignore'), 'graphify-out/\n');
+  fs.writeFileSync(path.join(root, '.gitignore'), 'graphify-out/\n.wayper-context/\n');
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['-c', 'user.name=Wayper', '-c', 'user.email=wayper@example.test',
@@ -102,10 +104,10 @@ test('CE1 Working Context round-trips and stops only after proof', () => {
   });
   assert.deepEqual(state.artifacts.map((item) => item.status), ['REUSE_BEFORE_READ', 'REUSE_BEFORE_READ']);
   assert.throws(() => proveWorkingContext(state, { artifact: 'a.md#L1-L1', evidence: 'trust me' }),
-    /source range or an observed validation/);
-  state = proveWorkingContext(state, { artifact: 'a.md#L1-L1', evidence: 'a.md:1' });
-  state = proveWorkingContext(state, { artifact: 'b.md', evidence: 'b.md:1' });
-  state = proveWorkingContext(state, { requirement: 'SUCCESS:owner-proven', evidence: 'node --test PASS' });
+    /Evidence Receipt/);
+  state = proveFixture(state, { artifact: 'a.md#L1-L1' }, { root });
+  state = proveFixture(state, { artifact: 'b.md' }, { root });
+  state = proveFixture(state, { requirement: 'SUCCESS:owner-proven' }, { root });
   assert.equal(state.contextDecision, 'STOP_WHEN_PROVEN');
   assert.throws(
     () => proveWorkingContext(state, { artifact: 'b.md', requirement: 'SUCCESS:owner-proven', evidence: 'x' }),
@@ -125,8 +127,8 @@ test('CE2 fingerprints invalidate only changed context and preserve unchanged ra
     specs: ['a.md#L1-L1', 'b.md'],
     requirements: ['RISK:covered'],
   });
-  state = proveWorkingContext(state, { artifact: 'a.md#L1-L1', evidence: 'a.md:1' });
-  state = proveWorkingContext(state, { artifact: 'b.md', evidence: 'b.md:1' });
+  state = proveFixture(state, { artifact: 'a.md#L1-L1' }, { root });
+  state = proveFixture(state, { artifact: 'b.md' }, { root });
 
   fs.writeFileSync(path.join(root, 'a.md'), 'stable owner\nchanged outside tracked range\n');
   fs.writeFileSync(path.join(root, 'b.md'), 'changed dependency\n');
@@ -142,7 +144,7 @@ test('CE2 fingerprints invalidate only changed context and preserve unchanged ra
   const changed = state.artifacts.find((item) => item.spec === 'b.md');
   assert.equal(changed.status, 'DIFF_BEFORE_FILE');
   assert.deepEqual(changed.evidence, []);
-  assert.deepEqual(changed.invalidatedEvidence, ['b.md:1']);
+  assert.match(changed.invalidatedEvidence[0], /^ER-[a-f0-9]{64}$/);
 
   state = workingFixture({
     root,
@@ -165,7 +167,7 @@ test('CE3 artifact paths and ranges cannot escape or overrun the repository', ()
     requirements: ['SUCCESS:site'] });
   assert.equal(state.artifacts[0].repository, 'wayper-site');
   assert.equal(state.artifacts[0].spec, 'wayper-site:a.md#L1-L1');
-  state = proveWorkingContext(state, { artifact: 'wayper-site:a.md#L1-L1', evidence: 'a.md:1' });
+  state = proveFixture(state, { artifact: 'wayper-site:a.md#L1-L1' }, { root, repositories: [repo('wayper', root), repo('wayper-site', site)] });
   assert.equal(state.artifacts[0].status, 'PROVEN');
 });
 
@@ -239,43 +241,47 @@ test('CM2b STOP_WHEN_PROVEN remains evidence-gated by the Context Map', () => {
     specs: ['owner.js'], requirements: ['SUCCESS:map'], riskFlags: ['BUILD_TOOLING'],
     invariants: ['ONE_WRITER'], validations: ['quality:context'] });
   options.execution = state.execution; options.goalId = state.goalId;
-  state = proveWorkingContext(state, { artifact: 'owner.js', evidence: 'owner.js:1' });
-  state = proveWorkingContext(state, { requirement: 'SUCCESS:map', evidence: 'quality:context PASS' });
+  state = proveFixture(state, { artifact: 'owner.js' }, { root });
+  state = proveFixture(state, { requirement: 'SUCCESS:map' }, { root });
   let map = refreshContextMap(null, options);
   map = recordContextEntry(map, 'evidence', { repository: 'wayper', path: 'owner.js', claim: 'Owner is current',
     provenance: 'SOURCE', status: 'PROVEN' }, repositories, options);
   map = recordContextEntry(map, 'proof-gap', { claim: 'Gate result required', reason: 'Validation not recorded',
     requiredEvidence: 'quality:context PASS' }, repositories, options);
   state.contextMap = map;
-  assert.equal(contextDecision(state), 'CONTINUE_CONTEXT');
+  assert.equal(contextDecision(state, { root }), 'CONTINUE_CONTEXT');
   map = recordContextEntry(map, 'validation', { id: 'quality:context', status: 'PASS',
-    evidence: 'quality:context PASS' }, repositories, options);
+    evidence: observedGate({ root, repositories, execution: state.execution }, 'quality:context').receiptId }, repositories, options);
   map = recordContextEntry(map, 'proof-gap', { claim: 'Gate result required', reason: 'Validation not recorded',
-    requiredEvidence: 'quality:context PASS', status: 'RESOLVED', evidenceIds: ['quality:context'] }, repositories, options);
+    requiredEvidence: 'quality:context PASS', status: 'RESOLVED', evidenceIds: ['quality:context'],
+    receiptIds: [map.validation.checks.find((item) => item.id === 'quality:context').evidence],
+    receiptRequirement: { kinds: ['QUALITY_GATE'], repository: 'wayper', target: 'quality:context', result: 'PASS' } }, repositories, options);
   state.contextMap = map;
-  assert.equal(contextDecision(state), 'CONTINUE_CONTEXT');
+  assert.equal(contextDecision(state, { root }), 'CONTINUE_CONTEXT');
   map = recordContextEntry(map, 'validation', { id: 'risk:BUILD_TOOLING', status: 'PASS',
-    evidence: 'risk BUILD_TOOLING review PASS' }, repositories, options);
+    evidence: observedGate({ root, repositories, execution: state.execution }, 'risk:BUILD_TOOLING').receiptId }, repositories, options);
   map = recordContextEntry(map, 'validation', { id: 'invariant:ONE_WRITER', status: 'PASS',
-    evidence: 'invariant ONE_WRITER review PASS' }, repositories, options);
+    evidence: observedGate({ root, repositories, execution: state.execution }, 'invariant:ONE_WRITER').receiptId }, repositories, options);
   state.contextMap = map;
-  assert.equal(contextDecision(state), 'STOP_WHEN_PROVEN');
+  assert.equal(contextDecision(state, { root }), 'STOP_WHEN_PROVEN');
   const graphRequired = structuredClone(state);
   graphRequired.contextMap.graphify.wayper.decision = 'REQUIRED_BY_STRUCTURAL_UNCERTAINTY';
   graphRequired.contextMap.graphify.wayper.status = 'NOT_USED';
-  assert.equal(contextDecision(graphRequired), 'CONTINUE_CONTEXT');
+  assert.equal(contextDecision(graphRequired, { root }), 'CONTINUE_CONTEXT');
   map = recordContextEntry(map, 'validation', { id: 'quality:context', status: 'FAIL',
     evidence: 'quality:context FAIL' }, repositories, options);
   state.contextMap = map;
   assert.equal(map.proofGaps[0].status, 'OPEN');
-  assert.equal(contextDecision(state), 'CONTINUE_CONTEXT');
+  assert.equal(contextDecision(state, { root }), 'CONTINUE_CONTEXT');
   map = recordContextEntry(map, 'validation', { id: 'quality:context', status: 'PASS',
-    evidence: 'quality:context PASS' }, repositories, options);
+    evidence: observedGate({ root, repositories, execution: state.execution }, 'quality:context').receiptId }, repositories, options);
   map = recordContextEntry(map, 'proof-gap', { claim: 'Gate result required', reason: 'Validation not recorded',
-    requiredEvidence: 'quality:context PASS', status: 'RESOLVED', evidenceIds: ['quality:context'] }, repositories, options);
+    requiredEvidence: 'quality:context PASS', status: 'RESOLVED', evidenceIds: ['quality:context'],
+    receiptIds: [map.validation.checks.find((item) => item.id === 'quality:context').evidence],
+    receiptRequirement: { kinds: ['QUALITY_GATE'], repository: 'wayper', target: 'quality:context', result: 'PASS' } }, repositories, options);
   fs.writeFileSync(path.join(root, 'owner.js'), 'export const owner = false;\n');
   state.contextMap = refreshContextMap(map, options);
-  assert.equal(contextDecision(state), 'CONTINUE_CONTEXT');
+  assert.equal(contextDecision(state, { root }), 'CONTINUE_CONTEXT');
 });
 
 test('CM2c a source shortened past an evidence range invalidates instead of aborting refresh', () => {

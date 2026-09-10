@@ -99,11 +99,11 @@ npm run context:refresh -- --thread-id <threadId> \
   --goal-run-id <goalRunId> --revision <N>
 npm run context:prove -- --thread-id <threadId> \
   --goal-run-id <goalRunId> --revision <N> \
-  --artifact <path[#Lx-Ly]> --evidence <source|test|command>
+  --artifact <path[#Lx-Ly]> --evidence ER-<sha256>
 # Ou --requirement <KIND:ID>, em vez de --artifact.
 node scripts/wayper-context.mjs record --thread-id <threadId> \
   --goal-run-id <goalRunId> --revision <N> \
-  --kind <evidence|dependency|known-good|proof-gap|graphify|validation> \
+  --kind <receipt|evidence|dependency|known-good|proof-gap|graphify|validation> \
   --data '<JSON compacto>'
 node scripts/wayper-context.mjs router --thread-id <threadId> \
   --goal-run-id <goalRunId> --revision <N> \
@@ -142,7 +142,8 @@ mas não infere independência semântica. Se essa independência não está pro
 use a invalidação padrão. No-op é `NO_MATERIAL_AMENDMENT`; copy/metadata sem
 mudança semântica não deve ser enviado como amendment.
 
-- Slices explicitamente não afetados preservam prova somente com hash atual.
+- Slices explicitamente não afetados preservam discovery com hash atual.
+  Receipts de outra revision exigem nova observação material, mesmo nesses slices.
 - Artifact afetado vira `DIFF_BEFORE_FILE`, conservando `invalidatedEvidence`;
   requisito afetado volta a `PENDING`, requisito novo nasce sem evidence.
 - Evidence afetada vira `STALE`; checks afetados voltam a `NOT_RUN`. Proof refs
@@ -254,9 +255,14 @@ capability por heurística textual.
   Conclusão da análise anterior usa
   `reviewDisposition=PRIOR_ANALYSIS_CONCLUSION`; o mesmo marcador estruturado vale para proof gaps
   e validations. Review independente não infere esse boundary por palavras.
+- `evidenceReceipts` indexa receipts V1 do mesmo lifecycle, com kind, subject,
+  provenance, baseline relation, verification/reasons e summary bounded.
+  [Evidence Receipts](evidence-receipts.md) define observers, store e aceitação.
+  Evidence refs legadas continuam úteis para discovery; texto não satisfaz prova.
 - Evidence source-backed cujo hash diverge vira `STALE` no refresh. O validator
-  rejeita `PROVEN` silenciosamente stale. Range além do EOF falha; evidence sem
-  source range ou resultado observado (`PASS|FAIL|BLOCKED|NOT_APPLICABLE`) também.
+  rejeita `PROVEN` silenciosamente stale. Range além do EOF falha. `context:prove`
+  exige receipt observado compatível; regex de range ou token PASS/FAIL em texto
+  não constitui prova.
   Se um range antes válido desaparecer porque o arquivo encolheu, refresh o marca
   `RANGE_INVALIDATED` em vez de abortar e deixar proof antiga ativa.
 - `dependencies` registra endpoints repo-scoped, relação e provenance
@@ -275,6 +281,8 @@ capability por heurística textual.
   correspondente no Registry V2; ID ausente ou fingerprint divergente falha.
   Uma proof fresca do artifact substitui a entrada stale/questioned; ela só volta
   a `KNOWN_GOOD_UNCHANGED` no próximo refresh sem mudança.
+  Sem receipt suficiente, `verification` é `KNOWN_GOOD_UNVERIFIED`; esse estado
+  não permite completion. O scoring do router não foi alterado nesta fase.
 - `proofGaps` separa claims abertas do que já foi provado. `learningDelta`
   acrescenta somente IDs adicionados, atualizados ou invalidados.
 - `metrics` mede bytes do JSON canônico, `ceil(bytes/4)`, counts e bytes de
@@ -359,9 +367,11 @@ Os ceilings por classe vivem na skill e no helper. São proxy inicial de context
 obrigatório pode exceder o ceiling somente com
 `BUDGET_ESCALATION_REASON`; contexto opcional é cortado primeiro.
 
-`STOP_WHEN_PROVEN` exige ao menos um artifact e um requirement, todos com proof;
+`STOP_WHEN_PROVEN` exige ao menos um artifact e um requirement, todos com
+receipts verificados e compatíveis, revalidados no consumo;
 um check evidenciado `risk:<FLAG>` para cada risco e `invariant:<ID>` para cada
-invariante; demais checks `PASS|NOT_APPLICABLE`; nenhum proof gap aberto, nenhum
+invariante; demais checks PASS com receipt compatível; nenhum proof gap aberto ou
+resolvido apenas por texto/refs legadas, nenhum
 known-good stale/questionado e nenhuma staleness sem prova atual. Se Graphify for
 `REQUIRED_BY_STRUCTURAL_UNCERTAINTY`, o estado do repository precisa ser `CURRENT`.
 Ele encerra somente expansão de contexto/Graphify/spawn. Conclusão do Goal ainda

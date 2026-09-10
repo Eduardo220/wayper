@@ -12,7 +12,14 @@ const QUALITY_TESTS = {
   backstop: 'scripts/quality/check-completion-backstop.test.mjs',
   context: 'scripts/quality/check-context-efficiency.test.mjs',
   handoff: 'scripts/wayper-structured-handoff.test.mjs',
+  evidence: 'scripts/quality/check-evidence-receipts.test.mjs',
 };
+
+function isEvidence(file) {
+  return file.startsWith('scripts/wayper-evidence') || file.startsWith('scripts/quality/check-evidence') ||
+    file === 'scripts/quality/evidence-fixture.mjs' || file.startsWith('docs/ai/evidence-receipt') ||
+    file === 'package.json';
+}
 
 function isContextEfficiency(file) {
   return file.startsWith('scripts/wayper-context')
@@ -42,6 +49,7 @@ function isQualityTooling(file) {
   return file === 'eslint.config.js'
     || file.startsWith('scripts/wayper-context')
     || file.startsWith('scripts/wayper-structured-handoff')
+    || file.startsWith('scripts/wayper-evidence')
     || file.startsWith('scripts/quality/');
 }
 
@@ -74,6 +82,7 @@ export function classifyChangedScope(files) {
 export function relevantQualityTests(files) {
   const tests = new Set();
   for (const file of files) {
+    if (isEvidence(file)) tests.add(QUALITY_TESTS.evidence);
     if (isStructuredHandoff(file)) tests.add(QUALITY_TESTS.handoff);
     if (isContextEfficiency(file) || file.includes('context-efficiency')) {
       tests.add(QUALITY_TESTS.context);

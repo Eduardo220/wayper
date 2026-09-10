@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "id": "EE01", "action": "text", "value": "FAIL not validated", "expected": "UNSATISFIED" },
+    { "id": "EE02", "action": "text", "value": "all tests passed", "expected": "UNSATISFIED" },
+    { "id": "EE03", "action": "text", "value": "some-reference", "expected": "UNSATISFIED" },
+    { "id": "EE04", "action": "pass", "expected": "SATISFIED" },
+    { "id": "EE05", "action": "wrongGoal", "expected": "UNSATISFIED" },
+    { "id": "EE06", "action": "wrongBaseline", "expected": "UNSATISFIED" },
+    { "id": "EE07", "action": "stale", "expected": "UNSATISFIED" },
+    { "id": "EE08", "action": "failedCommand", "expected": "UNSATISFIED" },
+    { "id": "EE09", "action": "failedTest", "expected": "UNSATISFIED" },
+    { "id": "EE10", "action": "handoffAssertion", "expected": "UNSATISFIED" },
+    { "id": "EE11", "action": "wrongRepository", "expected": "UNSATISFIED" },
+    { "id": "EE12", "action": "wrongTarget", "expected": "UNSATISFIED" }
+  ]
+}

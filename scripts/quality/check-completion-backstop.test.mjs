@@ -97,7 +97,8 @@ test('HB4 quality tooling selects only directly associated tests', () => {
     'scripts/quality/check-context-efficiency.test.mjs',
     'scripts/wayper-structured-handoff.test.mjs',
   ]);
-  assert.deepEqual(relevantQualityTests(['package.json']), ['scripts/wayper-structured-handoff.test.mjs']);
+  assert.deepEqual(relevantQualityTests(['package.json']), ['scripts/quality/check-evidence-receipts.test.mjs',
+    'scripts/wayper-structured-handoff.test.mjs']);
 });
 
 test('HB5 unchanged legacy debt remains a pass', () => {

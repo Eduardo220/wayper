@@ -2,9 +2,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { sourceFingerprint, RECEIPT_ID, EVIDENCE_KINDS, EVIDENCE_ORIGINS, validateEvidenceRequirement } from './wayper-evidence-receipts.mjs';
+import { readReceipt, receiptIndexEntry, evaluateEvidenceRequirement } from './wayper-evidence-store.mjs';
 import { fingerprintCorpus } from './quality/check-graph-scopes.mjs';
 import { validateRouterSelectionReceipt } from './wayper-agent-router.mjs';
 import { assertGoalExecution, assertSameExecution, invalidateMapProofs, repositorySnapshot } from './wayper-context-identity.mjs';
+
+export { sourceFingerprint } from './wayper-evidence-receipts.mjs';
 
 export const CONTEXT_MAP_SCHEMA_VERSION = 2;
 export const CONTEXT_MAP_REPOSITORIES = new Set(['wayper', 'wayper-site']);
@@ -71,17 +75,6 @@ function repoFile(root, relativePath, allowMissing = false) {
   return real;
 }
 
-export function sourceFingerprint(root, relativePath, rangeValue = null) {
-  const file = repoFile(root, relativePath, true);
-  if (!file) return null;
-  const source = fs.readFileSync(file, 'utf8');
-  const range = parseRange(rangeValue);
-  const lines = source.split(/\r?\n/);
-  if (range && range.end > lines.length) throw new Error(`Artifact range exceeds file: ${relativePath}#${range.value}`);
-  const content = range ? lines.slice(range.start - 1, range.end).join('\n') : source;
-  return { hash: sha256(content), bytes: Buffer.byteLength(content) };
-}
-
 function observedSourceFingerprint(root, relativePath, rangeValue = null) {
   try {
     const current = sourceFingerprint(root, relativePath, rangeValue);
@@ -117,6 +110,68 @@ function reusableProofIds(map) {
     ...map.evidence.filter((item) => REUSABLE_EVIDENCE.has(item.status)).map((item) => item.id),
     ...map.validation.checks.filter((item) => item.status === 'PASS').map((item) => item.id),
   ]);
+}
+
+function receiptOptions(map, repositories, options = {}) {
+  return { root: options.root ?? repositories.find((repo) => repo.id === 'wayper')?.root ?? repositories[0]?.root,
+    execution: map.execution, repositories };
+}
+
+function indexReceipt(map, id, repositories, options) {
+  const context = receiptOptions(map, repositories, options);
+  const receipt = readReceipt(id, context);
+  if (!receipt) throw new Error('Missing Evidence Receipt');
+  const entry = receiptIndexEntry(receipt, context);
+  if (entry.verification === 'INVALID') throw new Error(`Invalid Evidence Receipt: ${entry.reasons.join(',')}`);
+  map.evidenceReceipts ??= [];
+  map.evidenceReceipts = [...map.evidenceReceipts.filter((item) => item.receiptId !== id), entry];
+}
+
+function refreshReceiptIndex(map, repositories, options) {
+  const context = receiptOptions(map, repositories, options);
+  map.evidenceReceipts ??= [];
+  const relatedIds = sortedUnique([...map.evidence.map((item) => item.receiptId),
+    ...map.validation.checks.map((item) => item.evidence), ...map.knownGood.flatMap((item) => item.receiptIds ?? []),
+    ...map.proofGaps.flatMap((item) => item.receiptIds ?? [])].filter((id) => RECEIPT_ID.test(id)));
+  for (const id of relatedIds) if (!map.evidenceReceipts.some((item) => item.receiptId === id)) {
+    let receipt;
+    try { receipt = readReceipt(id, context); } catch { /* Unavailable refs never acquire verification. */ }
+    if (receipt) map.evidenceReceipts.push(receiptIndexEntry(receipt, context));
+  }
+  map.evidenceReceipts = (map.evidenceReceipts ?? []).map((entry) => {
+    let receipt;
+    try { receipt = readReceipt(entry.receiptId, context); } catch { /* Corrupt/missing evidence stays visible. */ }
+    return receipt ? receiptIndexEntry(receipt, context) : { ...entry, verification: 'INVALID', reasons: ['MISSING_RECEIPT'] };
+  });
+  const accepts = (policy, ids) => evaluateEvidenceRequirement(policy, ids, context).status === 'SATISFIED';
+  for (const entry of map.evidence) {
+    if (!entry.receiptId) { delete entry.verification; continue; } // Legacy refs remain assertions by default.
+    entry.verification = accepts({ kinds: ['SOURCE', 'DOCUMENT'],
+    repository: entry.repository, path: entry.path, range: entry.range ?? null, result: 'OBSERVED' }, [entry.receiptId])
+    ? 'VERIFIED_SOURCE_OBSERVATION' : 'ASSERTED';
+  }
+  for (const check of map.validation.checks) {
+    // No receipt means LEGACY_UNVERIFIED. Omit this repeated default in the bounded Map.
+    if (!RECEIPT_ID.test(check.evidence ?? '')) { delete check.verification; continue; }
+    check.verification = check.status === 'PASS' && accepts({
+    kinds: ['COMMAND', 'TEST', 'QUALITY_GATE'], repository: map.evidenceReceipts.find((item) => item.receiptId === check.evidence)?.repository ?? 'wayper',
+    target: check.id, result: 'PASS' }, [check.evidence]) ? 'VERIFIED' : 'LEGACY_UNVERIFIED';
+  }
+  for (const item of map.knownGood) {
+    const ids = sortedUnique([...(item.receiptIds ?? []), ...item.proofRefs.flatMap((ref) => {
+      const evidence = map.evidence.find((entry) => entry.id === ref);
+      const check = map.validation.checks.find((entry) => entry.id === ref);
+      return [evidence?.receiptId, check?.evidence].filter((id) => RECEIPT_ID.test(id));
+    })]);
+    const location = item.artifact ? artifactLocation(item.artifact) : null;
+    item.receiptIds = ids;
+    item.verification = (location && accepts({ kinds: ['SOURCE', 'DOCUMENT'], repository: item.repository,
+      path: location.path, range: location.range, result: 'OBSERVED' }, ids) || !location && accepts({
+      kinds: ['QUALITY_GATE'], repository: item.repository, target: 'quality:capabilities', result: 'PASS' }, ids))
+      ? 'VERIFIED' : 'KNOWN_GOOD_UNVERIFIED';
+  }
+  for (const gap of map.proofGaps) gap.verification = gap.receiptRequirement &&
+    accepts(gap.receiptRequirement, gap.receiptIds) ? 'VERIFIED' : 'UNVERIFIED';
 }
 
 function registryCapabilityFingerprint(registry, capability) {
@@ -188,6 +243,7 @@ function baseMap({ goalId, execution, taskClass, tokenCeiling }) {
     risks: [],
     invariants: [],
     evidence: [],
+    evidenceReceipts: [],
     dependencies: [],
     knownGood: [],
     graphify: {},
@@ -208,6 +264,7 @@ function semanticFingerprint(map) {
 
 export function finalizeContextMap(map, { tokenCeiling, budgetReason } = {}) {
   const next = structuredClone(map);
+  if (next.evidenceReceipts) next.evidenceReceipts.sort((a, b) => a.receiptId.localeCompare(b.receiptId));
   next.evidence.sort((a, b) => a.id.localeCompare(b.id));
   next.dependencies.sort((a, b) => a.id.localeCompare(b.id));
   next.knownGood.sort((a, b) => a.id.localeCompare(b.id));
@@ -384,7 +441,7 @@ export function refreshContextMap(existing, options) {
     const prior = map.knownGood.find((item) => item.id === id);
     const remainsQuestioned = questioned || prior?.status === 'QUESTIONED';
     const entry = { id, repository, artifact: artifactSpec,
-      fingerprint: artifact.fingerprint, proofRefs: [`WC:${repository}:${artifactSpec}@${artifact.fingerprint}`],
+      fingerprint: artifact.fingerprint, receiptIds: artifact.evidence.filter((ref) => RECEIPT_ID.test(ref)), proofRefs: [`WC:${repository}:${artifactSpec}@${artifact.fingerprint}`],
       validatedAtGoal: map.goalId, phase: 'WORKING_CONTEXT_REFRESH',
       status: remainsQuestioned ? 'QUESTIONED' : 'KNOWN_GOOD_UNCHANGED',
       invalidationReason: remainsQuestioned ? 'EXPLICITLY_QUESTIONED' : null };
@@ -394,6 +451,7 @@ export function refreshContextMap(existing, options) {
   const checks = new Map(map.validation?.checks?.map((item) => [item.id, item]));
   for (const id of options.validations ?? []) checks.set(id, checks.get(id) ?? { id, status: 'NOT_RUN', evidence: null });
   map.validation.checks = [...checks.values()];
+  refreshReceiptIndex(map, [...repos.values()], options);
   delta(map, { phase: options.phase, invalidated });
   return finalizeContextMap(map, options);
 }
@@ -416,7 +474,10 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
   const repos = definitions(repositoryDefinitions);
   const next = structuredClone(map);
   let id; let existed = false; let invalidated = [];
-  if (kind === 'evidence') {
+  if (kind === 'receipt') {
+    id = input.receiptId;
+    existed = next.evidenceReceipts?.some((item) => item.receiptId === id) ?? false;
+  } else if (kind === 'evidence') {
     if (!repos.has(input.repository) || !EVIDENCE_STATUSES.has(input.status) ||
       !EVIDENCE_PROVENANCE.has(input.provenance)) throw new Error('Invalid evidence entry');
     const claim = compactText(input.claim, 'claim');
@@ -432,6 +493,7 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
       ...(range ? { range } : {}), sourceHash: source.hash, sourceBytes: source.bytes,
       claim, category: normalizedCategory(input.category ?? 'GENERAL'),
       provenance: input.provenance, status: input.status,
+      ...(input.receiptId ? { receiptId: input.receiptId } : {}),
       ...(input.reviewDisposition ? { reviewDisposition: input.reviewDisposition } : {}),
       ...(capabilityRefs.length ? { capabilityRefs } : {}) };
     if (input.reviewDisposition && input.reviewDisposition !== PRIOR_ANALYSIS_CONCLUSION) {
@@ -487,7 +549,8 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
     if (capabilityRefs.some((id) => !options.registry?.capabilities?.some((item) => item.id === id))) {
       throw new Error('Invalid proof-gap capability refs');
     }
-    const entry = { claim: compactText(input.claim, 'proof gap claim'),
+    const entry = { ...(input.receiptRequirement ? { receiptRequirement: input.receiptRequirement, receiptIds: input.receiptIds ?? [] } : {}),
+      claim: compactText(input.claim, 'proof gap claim'),
       reason: compactText(input.reason, 'proof gap reason'),
       requiredEvidence: compactText(input.requiredEvidence, 'required evidence'), status, evidenceIds,
       ...(input.reviewDisposition ? { reviewDisposition: input.reviewDisposition } : {}),
@@ -531,7 +594,7 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
     id = idFor('KG', [input.repository, input.artifact ?? input.capability]);
     const entry = { id, repository: input.repository,
       ...(input.artifact ? { artifact: input.artifact } : { capability: input.capability }),
-      fingerprint, proofRefs, validatedAtGoal: next.goalId,
+      fingerprint, proofRefs, receiptIds: sortedUnique(input.receiptIds ?? []), validatedAtGoal: next.goalId,
       phase: compactText(input.phase ?? 'CURRENT', 'phase', 80), status: 'KNOWN_GOOD_UNCHANGED',
       invalidationReason: null };
     const index = next.knownGood.findIndex((item) => item.id === id);
@@ -599,6 +662,10 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
       }
     }
   } else throw new Error(`Unknown Context Map entry kind: ${kind}`);
+  if (input.receiptId) indexReceipt(next, input.receiptId, [...repos.values()], options);
+  if (kind === 'validation' && RECEIPT_ID.test(input.evidence)) indexReceipt(next, input.evidence, [...repos.values()], options);
+  for (const receiptId of input.receiptIds ?? []) indexReceipt(next, receiptId, [...repos.values()], options);
+  refreshReceiptIndex(next, [...repos.values()], options);
   delta(next, { phase: input.phase ?? options.phase, invalidated,
     added: existed ? [] : [id], updated: existed ? [id] : [] });
   return finalizeContextMap(next, options);
@@ -671,17 +738,19 @@ function rejectUnknownKeys(value, allowed, label, errors) {
 
 const MAP_KEYS = new Set(['schemaVersion', 'goalId', 'execution', 'taskClass', 'repositories', 'taskFingerprint',
   'routerFingerprint', 'registryFingerprint', 'repositoryState', 'capabilities', 'router', 'risks', 'evidence', 'dependencies',
-  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants']);
+  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants', 'evidenceReceipts']);
 const REPOSITORY_KEYS = new Set(['repository', 'logicalRoot', 'relevantRefs', 'branch', 'head',
   'dirtyFingerprint', 'relevantDiffFingerprint', 'checkoutFingerprint', 'dirty', 'contentFingerprint']);
 const EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'symbol', 'range', 'sourceHash', 'sourceBytes',
-  'claim', 'category', 'provenance', 'status', 'invalidationReason', 'capabilityRefs', 'reviewDisposition']);
+  'claim', 'category', 'provenance', 'status', 'invalidationReason', 'capabilityRefs', 'reviewDisposition', 'receiptId', 'verification']);
+const RECEIPT_INDEX_KEYS = new Set(['receiptId', 'kind', 'repository', 'subject', 'origin', 'verification',
+  'reasons', 'baselineFingerprint', 'result', 'summary', 'producer', 'producedAt']);
 const DEPENDENCY_KEYS = new Set(['id', 'from', 'to', 'relation', 'provenance', 'evidenceIds']);
 const KNOWN_GOOD_KEYS = new Set(['id', 'repository', 'artifact', 'capability', 'fingerprint', 'proofRefs',
-  'validatedAtGoal', 'phase', 'status', 'invalidationReason']);
+  'validatedAtGoal', 'phase', 'status', 'invalidationReason', 'receiptIds', 'verification']);
 const GRAPHIFY_KEYS = new Set(['decision', 'status', 'scopeFingerprint', 'version', 'graphFingerprint', 'queries']);
 const QUERY_KEYS = new Set(['queryFingerprint', 'purpose', 'nodeRefs', 'edgeRefs', 'capabilityRefs']);
-const GAP_KEYS = new Set(['id', 'claim', 'reason', 'requiredEvidence', 'status', 'evidenceIds', 'capabilityRefs',
+const GAP_KEYS = new Set(['id', 'claim', 'reason', 'requiredEvidence', 'status', 'evidenceIds', 'capabilityRefs', 'verification', 'receiptIds', 'receiptRequirement',
   'reviewDisposition']);
 const DELTA_KEYS = new Set(['id', 'phase', 'added', 'updated', 'invalidated']);
 const METRIC_KEYS = new Set(['bytes', 'tokenProxy', 'tokenProxyCeiling', 'budgetStatus', 'budgetReason',
@@ -720,7 +789,7 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
       errors.push('too many router refs');
     }
   }
-  const limits = { repositories: 2, risks: 64, invariants: 64, evidence: 256, dependencies: 256, knownGood: 128,
+  const limits = { repositories: 2, risks: 64, invariants: 64, evidence: 256, evidenceReceipts: 256, dependencies: 256, knownGood: 128,
     learningDelta: 256, ambiguities: 64, proofGaps: 128 };
   for (const [field, limit] of Object.entries(limits)) if ((map[field] ?? []).length > limit) errors.push(`too many ${field}`);
   if (map.validation.checks.length > 128) errors.push('too many validation checks');
@@ -804,6 +873,25 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
       errors.push(`invalid dependency refs: ${item.id}`);
     }
   }
+  const checkedReceipts = structuredClone(map);
+  for (const entry of map.evidenceReceipts ?? []) {
+    rejectUnknownKeys(entry, RECEIPT_INDEX_KEYS, 'receipt index', errors);
+    rejectUnknownKeys(entry.subject, new Set(['path', 'range', 'target', 'fingerprint']), 'receipt subject', errors);
+    if ([...RECEIPT_INDEX_KEYS].some((key) => !Object.hasOwn(entry, key)) || !RECEIPT_ID.test(entry.receiptId) ||
+      !declared.has(entry.repository) || !EVIDENCE_KINDS.includes(entry.kind) || !EVIDENCE_ORIGINS.includes(entry.origin) ||
+      !HASH.test(entry.baselineFingerprint) || !HASH.test(entry.subject?.fingerprint) ||
+      !['VERIFIED', 'STALE', 'INVALID', 'UNVERIFIED'].includes(entry.verification) || !Array.isArray(entry.reasons)) {
+      errors.push('invalid receipt index entry');
+    }
+  }
+  if (new Set((map.evidenceReceipts ?? []).map((entry) => entry.receiptId)).size !== (map.evidenceReceipts ?? []).length) {
+    errors.push('duplicate receipt index refs');
+  }
+  refreshReceiptIndex(checkedReceipts, [...repos.values()], {});
+  if (stable(checkedReceipts.evidenceReceipts) !== stable(map.evidenceReceipts ?? [])) errors.push('stale or invalid receipt index');
+  for (const collection of ['evidence', 'knownGood', 'proofGaps']) {
+    for (const item of map[collection]) if (item.verification && item.verification !== checkedReceipts[collection].find((other) => other.id === item.id)?.verification) errors.push(`invalid receipt verification: ${item.id}`);
+  }
   const reusableProofs = reusableProofIds(map);
   const allProofs = new Set([...map.evidence.map((item) => item.id), ...map.validation.checks.map((item) => item.id)]);
   for (const item of map.knownGood) {
@@ -838,6 +926,9 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
   }
   for (const item of map.proofGaps) {
     rejectUnknownKeys(item, GAP_KEYS, `proof gap ${item.id}`, errors);
+    if (item.receiptRequirement && validateEvidenceRequirement(item.receiptRequirement).status !== 'VALID') {
+      errors.push(`invalid receipt requirement: ${item.id}`);
+    }
     if (!['OPEN', 'RESOLVED'].includes(item.status) || !item.claim || !item.reason || !item.requiredEvidence ||
       !Array.isArray(item.evidenceIds) || item.evidenceIds.some((id) => !reusableProofs.has(id)) ||
       item.evidenceIds.length > 64 ||
@@ -912,10 +1003,11 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
       map.taskFingerprint !== map.router.selectionReceipt?.taskFingerprint) errors.push('invalid selective router refs');
   }
   for (const check of map.validation.checks) {
-    rejectUnknownKeys(check, new Set(['id', 'status', 'evidence', 'reviewDisposition']), `validation check ${check.id}`, errors);
+    rejectUnknownKeys(check, new Set(['id', 'status', 'evidence', 'reviewDisposition', 'verification']), `validation check ${check.id}`, errors);
     if (!check.id || !['NOT_RUN', 'PASS', 'FAIL', 'NOT_APPLICABLE', 'BLOCKED'].includes(check.status)) {
       errors.push(`invalid validation check: ${check.id}`);
     }
+    if (check.verification && check.verification !== checkedReceipts.validation.checks.find((item) => item.id === check.id)?.verification) errors.push(`invalid receipt validation: ${check.id}`);
     if (check.status !== 'NOT_RUN' && !check.evidence) errors.push(`missing validation evidence: ${check.id}`);
     if (check.reviewDisposition && check.reviewDisposition !== PRIOR_ANALYSIS_CONCLUSION) {
       errors.push(`invalid validation review disposition: ${check.id}`);

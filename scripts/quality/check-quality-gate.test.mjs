@@ -54,6 +54,7 @@ function result(lintResult = lint(), overrides = {}) {
     size: overrides.size ?? PASS,
     architecture: overrides.architecture ?? PASS,
     router: overrides.router ?? PASS,
+    evidence: overrides.evidence ?? PASS,
     diff: overrides.diff ?? PASS,
   });
 }
@@ -121,6 +122,12 @@ test('QG7b an invalid deterministic router policy blocks', () => {
   const quality = result(lint(), { router: { status: 'fail', detail: 'shadow eval failed' } });
   assert.equal(quality.status, 'FAIL');
   assert.deepEqual(quality.blocking, ['ROUTER_REGRESSION']);
+});
+
+test('QG7c invalid Evidence Receipt contracts block the Harness gate', () => {
+  const quality = result(lint(), { evidence: { status: 'fail', detail: 'receipt eval failed' } });
+  assert.equal(quality.status, 'FAIL');
+  assert.ok(quality.blocking.includes('EVIDENCE_REGRESSION'));
 });
 
 test('QG9 tool failure is inconclusive when no confirmed blocker exists', () => {

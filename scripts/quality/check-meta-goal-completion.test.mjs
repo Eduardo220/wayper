@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   evaluateBudgetControl,
   evaluateCompletion,
+  completionEvalInputs,
   GOAL_BUDGET_POLICY,
   loadEvalSuite,
   runEvalSuite,
@@ -23,7 +24,7 @@ test('MGC2 FAST pass cannot hide a mandatory targeted test not run', () => {
 });
 
 test('MGC3 treated material uncertainty remains explicit without blocking', () => {
-  const { baseRun } = loadEvalSuite();
+  const { suite: { baseRun }, evidenceContext } = completionEvalInputs();
   const result = evaluateCompletion({
     ...baseRun,
     uncertainties: [{
@@ -33,7 +34,7 @@ test('MGC3 treated material uncertainty remains explicit without blocking', () =
       treatment: 'documented mitigation',
       impact: 'no material completion gap',
     }],
-  });
+  }, evidenceContext);
   assert.equal(result.result, 'GOAL_SATISFIED');
 });
 
@@ -44,11 +45,11 @@ test('MGC4 falsification failure continues execution', () => {
 });
 
 test('MGC5 Stop cannot own semantic completion', () => {
-  const { baseRun } = loadEvalSuite();
+  const { suite: { baseRun }, evidenceContext } = completionEvalInputs();
   const result = evaluateCompletion({
     ...baseRun,
     stop: { ...baseRun.stop, semanticJudge: true },
-  });
+  }, evidenceContext);
   assert.equal(result.eligible, false);
   assert.match(result.gaps.join('\n'), /STOP_OWNS_SEMANTIC_COMPLETION/);
 });
@@ -59,12 +60,12 @@ test('MGC6 shadow produces no unexpected false negative', () => {
 });
 
 test('MGC7 changed scope derives mandatory validation', () => {
-  const { baseRun } = loadEvalSuite();
+  const { suite: { baseRun }, evidenceContext } = completionEvalInputs();
   const result = evaluateCompletion({
     ...baseRun,
     scope: 'RUN_TRACKING_CRITICAL',
     validation: baseRun.validation,
-  });
+  }, evidenceContext);
   assert.equal(result.eligible, false);
   assert.match(result.gaps.join('\n'), /VALIDATION_MISSING:CONCURRENCY/);
   assert.match(result.gaps.join('\n'), /VALIDATION_MISSING:STATE_TRANSITIONS/);

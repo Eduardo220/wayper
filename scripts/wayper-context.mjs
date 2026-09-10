@@ -16,6 +16,8 @@ import {
   contextStatePath, createGoalExecution, goalReference, invalidateMapProofs, invalidateWorkingProof,
   repositoryChanges, stable,
 } from './wayper-context-identity.mjs';
+import { RECEIPT_ID, requirementPolicy } from './wayper-evidence-receipts.mjs';
+import { evaluateEvidenceRequirement } from './wayper-evidence-store.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
@@ -106,6 +108,12 @@ export function parseWorkingContext(markdown) {
     throw new Error('Unsupported Working Context schema');
   }
   if (state.schemaVersion === 2) assertWorkingContext(state);
+  for (const item of [...(state.requirements ?? []), ...state.artifacts]) {
+    if (item.evidence?.length && (!Array.isArray(item.evidence) || !item.evidence.every((id) => RECEIPT_ID.test(id)))) {
+      item.verification = 'LEGACY_UNVERIFIED';
+      item.status = item.spec ? 'REUSE_BEFORE_READ' : 'REVALIDATION_REQUIRED';
+    }
+  }
   return state;
 }
 
@@ -125,22 +133,37 @@ export function renderWorkingContext(state) {
   ].join('\n');
 }
 
-export function contextDecision(state) {
+const artifactPolicy = (item) => ({ kinds: ['SOURCE', 'DOCUMENT'], repository: item.repository ?? 'wayper',
+  path: item.path, range: item.start === null ? null : `L${item.start}${item.end !== item.start ? `-L${item.end}` : ''}`,
+  fingerprint: item.fingerprint, result: 'OBSERVED' });
+
+function proofOptions(state, options = {}) {
+  const root = options.root ?? ROOT;
+  return { ...options, root, execution: state.execution, repositories: options.repositories ??
+    (state.contextMap ? Object.values(state.contextMap.repositoryState).map((item) => ({ id: item.repository,
+      root: path.resolve(root, item.logicalRoot) })) : [{ id: 'wayper', root }]) };
+}
+
+export function contextDecision(state, options = {}) {
   try { assertWorkingContext(state); } catch { return 'REVALIDATION_REQUIRED'; }
+  const accepts = (policy, evidence) => evaluateEvidenceRequirement(policy, evidence, proofOptions(state, options)).status === 'SATISFIED';
   const requirements = state.requirements ?? [];
   const requirementsProven = requirements.length > 0 && requirements.every(
-    (item) => ['SATISFIED', 'NOT_APPLICABLE'].includes(item.status) && item.evidence?.length,
+    (item) => item.status === 'SATISFIED' && accepts(requirementPolicy(item), item.evidence),
   );
   const artifactsProven = state.artifacts.length > 0
-    && state.artifacts.every((item) => PROVEN.has(item.status));
+    && state.artifacts.every((item) => PROVEN.has(item.status) && accepts(artifactPolicy(item), item.evidence));
   if (!requirementsProven || !artifactsProven) return 'CONTINUE_CONTEXT';
   const map = state.contextMap;
   if (!map) return 'STOP_WHEN_PROVEN';
+  if (validateContextMap(map, { repositoryDefinitions: proofOptions(state, options).repositories,
+    registry: options.registry }).status !== 'VALID') return 'CONTINUE_CONTEXT';
   const checks = map.validation?.checks ?? [];
   const checksProven = checks.every(
-    (item) => ['PASS', 'NOT_APPLICABLE'].includes(item.status) && item.evidence,
+    (item) => item.status === 'PASS' && accepts(requirementPolicy({ kind: 'QUALITY_GATE', id: item.id }), [item.evidence]),
   );
-  const provenChecks = new Set(checks.filter((item) => ['PASS', 'NOT_APPLICABLE'].includes(item.status) && item.evidence)
+  const provenChecks = new Set(checks.filter((item) => item.status === 'PASS' &&
+    accepts(requirementPolicy({ kind: 'QUALITY_GATE', id: item.id }), [item.evidence]))
     .map((item) => item.id));
   const declaredValidationsProven = (state.validations ?? []).every((id) => provenChecks.has(id));
   const assurancesProven = [
@@ -149,8 +172,8 @@ export function contextDecision(state) {
   ].every((id) => provenChecks.has(id));
   const graphifyProven = Object.values(map.graphify).every((item) =>
     item.decision !== 'REQUIRED_BY_STRUCTURAL_UNCERTAINTY' || item.status === 'CURRENT');
-  const unresolved = map.proofGaps.some((item) => item.status !== 'RESOLVED') ||
-    map.knownGood.some((item) => item.status !== 'KNOWN_GOOD_UNCHANGED');
+  const unresolved = map.proofGaps.some((item) => item.status !== 'RESOLVED' || item.verification !== 'VERIFIED') ||
+    map.knownGood.some((item) => item.status !== 'KNOWN_GOOD_UNCHANGED' || item.verification !== 'VERIFIED');
   const reusableSubjects = new Set(map.evidence.filter((item) => ['PROVEN', 'HIGH_CONFIDENCE'].includes(item.status))
     .map((item) => [item.repository, item.path, item.category,
       item.claim.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()].join('|')));
@@ -291,45 +314,57 @@ export function refreshWorkingContext({
     if (values.some((value) => !state[field].includes(value))) throw new Error('Definition change requires explicit amendment');
   }
   state.requirements = [...knownRequirements.values()];
+  for (const item of state.requirements) if (item.status === 'SATISFIED' && evaluateEvidenceRequirement(
+    requirementPolicy(item), item.evidence, proofOptions(state, { root, repositories })).status !== 'SATISFIED') {
+    item.status = 'REVALIDATION_REQUIRED'; item.verification = 'REVALIDATION_REQUIRED';
+  }
   state.riskFlags = unique([...(state.riskFlags ?? []), ...riskFlags]);
   state.invariants = unique([...(state.invariants ?? []), ...invariants]);
   state.validations = unique([...(state.validations ?? []), ...validations]);
   state.artifacts = [...refreshed.values()].sort((left, right) => left.spec.localeCompare(right.spec));
+  for (const item of state.artifacts) if (PROVEN.has(item.status) && evaluateEvidenceRequirement(
+    artifactPolicy(item), item.evidence, proofOptions(state, { root, repositories })).status !== 'SATISFIED') {
+    item.status = 'REUSE_BEFORE_READ'; item.verification = 'REVALIDATION_REQUIRED';
+  }
   if (state.contextMap) state.contextMap = refreshContextMap(state.contextMap, {
     goalId: state.goalId, execution: state.execution, repositories, taskClass,
     tokenCeiling: state.budget.contextTokenCeiling, workingArtifacts: state.artifacts,
     risks: state.riskFlags, invariants: state.invariants, validations: state.validations,
     registry: registry ?? loadCapabilityFiles().registry,
   });
-  state.contextDecision = contextDecision(state);
+  state.contextDecision = contextDecision(state, { root, repositories });
   return state;
 }
 
-export function proveWorkingContext(state, { artifact, requirement, evidence }) {
+export function proveWorkingContext(state, { artifact, requirement, evidence }, options = {}) {
   assertWorkingContext(state);
   if (Boolean(artifact) === Boolean(requirement)) {
     throw new Error('Choose exactly one of --artifact or --requirement');
   }
-  const proof = String(evidence ?? '').trim();
-  if (!proof || Buffer.byteLength(proof) > 400 ||
-    !(/(?:^|\s)[\w./-]+(?:#L\d+(?:-L\d+)?|:\d+)(?:\s|$)/.test(proof) ||
-      /\b(?:PASS|FAIL|BLOCKED|NOT_APPLICABLE)\b/.test(proof))) {
-    throw new Error('Evidence must reference a source range or an observed validation result');
-  }
+  if (!RECEIPT_ID.test(evidence ?? '')) throw new Error('Verified compatible Evidence Receipt reference required');
+  const proof = evidence;
   const next = structuredClone(state);
   if (artifact) {
     const item = next.artifacts.find((candidate) => candidate.spec === artifact);
     if (!item) throw new Error(`Unknown artifact: ${artifact}`);
+    const accepted = evaluateEvidenceRequirement(artifactPolicy(item), [proof], proofOptions(state, options));
+    if (accepted.status !== 'SATISFIED') throw new Error(`Evidence receipt rejected: ${accepted.reasons.join(',')}`);
     item.status = 'PROVEN';
+    item.verification = 'VERIFIED';
     item.evidence = unique([...(item.evidence ?? []), proof]);
     item.invalidatedEvidence = [];
   } else if (requirement) {
     const item = next.requirements.find((candidate) => `${candidate.kind}:${candidate.id}` === requirement);
     if (!item) throw new Error(`Unknown requirement: ${requirement}`);
+    const accepted = evaluateEvidenceRequirement(requirementPolicy(item), [proof], proofOptions(state, options));
+    if (accepted.status !== 'SATISFIED') throw new Error(`Evidence receipt rejected: ${accepted.reasons.join(',')}`);
     item.status = 'SATISFIED';
+    item.verification = 'VERIFIED';
     item.evidence = unique([...(item.evidence ?? []), proof]);
   } else throw new Error('Choose --artifact or --requirement');
-  next.contextDecision = contextDecision(next);
+  if (next.contextMap) next.contextMap = recordContextEntry(next.contextMap, 'receipt', { receiptId: proof },
+    proofOptions(state, options).repositories, proofOptions(state, options));
+  next.contextDecision = contextDecision(next, options);
   return next;
 }
 
@@ -652,7 +687,7 @@ async function main() {
       artifact: args.artifact,
       requirement: args.requirement,
       evidence: args.evidence,
-    });
+    }, { root: ROOT, repositories });
     state = refreshMap(state, args);
     writeState(file, state);
     console.log(`CONTEXT PROVEN ${args.artifact ?? args.requirement}\nDECISION ${state.contextDecision}`);

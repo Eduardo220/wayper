@@ -141,6 +141,7 @@ function buildContextPacketCandidate(contextMap, target, { registry, routerOutpu
     throw new Error('Packet target paths exceed the authority limit');
   }
   const authoritativePaths = new Set([
+    ...(contextMap.evidenceReceipts ?? []).filter((item) => item.subject.path).map((item) => qualify(item.repository, item.subject.path)),
     ...contextMap.evidence.map((item) => qualify(item.repository, item.path)),
     ...contextMap.dependencies.flatMap((item) => [qualify(item.from.repository, item.from.ref),
       qualify(item.to.repository, item.to.ref)]),
@@ -204,7 +205,8 @@ function buildContextPacketCandidate(contextMap, target, { registry, routerOutpu
     const relevant = repositorySet.has(item.repository) && (item.capability ? capabilitySet.has(item.capability) :
       paths.has(qualify(item.repository, item.artifact)));
     if (!relevant) continue;
-    if (item.status === 'KNOWN_GOOD_UNCHANGED') knownGoodRefs.push(item.id);
+    if (item.status === 'KNOWN_GOOD_UNCHANGED' && item.verification === 'VERIFIED') knownGoodRefs.push(item.id);
+    else if (item.status === 'KNOWN_GOOD_UNCHANGED') ambiguities.push(`KNOWN_GOOD_UNVERIFIED:${item.id}`);
     else ambiguities.push(`KNOWN_GOOD_${item.status}:${item.id}`);
   }
   const proofGapRefs = contextMap.proofGaps.filter((item) => item.status === 'OPEN' &&
@@ -247,6 +249,13 @@ function buildContextPacketCandidate(contextMap, target, { registry, routerOutpu
     riskFlags: risks,
     invariants,
     evidenceRefs: [...selectedEvidence].sort(),
+    evidenceReceiptIds: sortedUnique((contextMap.evidenceReceipts ?? []).filter((item) =>
+      repositorySet.has(item.repository) && item.verification === 'VERIFIED' &&
+      ((item.subject.path && paths.has(qualify(item.repository, item.subject.path)) &&
+        !(independent && contextMap.evidence.some((entry) => entry.receiptId === item.receiptId && isReviewConclusionEvidence(entry)))) ||
+        validationRefs.some((id) => contextMap.validation.checks.find((check) => check.id === id)?.evidence === item.receiptId) ||
+        knownGoodRefs.some((id) => contextMap.knownGood.find((entry) => entry.id === id)?.receiptIds?.includes(item.receiptId))))
+      .map((item) => item.receiptId)),
     dependencyRefs: [...dependencyRefs].map(([id, reason]) => ({ id, reason })).sort((a, b) => a.id.localeCompare(b.id)),
     knownGoodRefs: sortedUnique(knownGoodRefs),
     proofGapRefs: sortedUnique(proofGapRefs),
@@ -276,7 +285,7 @@ export function buildContextPacket(contextMap, target, options = {}) {
 }
 
 const PACKET_KEYS = new Set(['schemaVersion', 'goalId', 'packetId', 'contextMapFingerprint', 'target', 'objective',
-  'repositories', 'capabilities', 'scope', 'riskFlags', 'invariants', 'evidenceRefs', 'dependencyRefs',
+  'repositories', 'capabilities', 'scope', 'riskFlags', 'invariants', 'evidenceRefs', 'dependencyRefs', 'evidenceReceiptIds',
   'knownGoodRefs', 'proofGapRefs', 'graphifyRefs', 'validationRefs', 'exclusions', 'ambiguities', 'contextBudget', 'metrics']);
 const METRIC_KEYS = new Set(['packetBytes', 'packetTokenProxy', 'evidenceCount', 'dependencyCount', 'pathCount',
   'inlineBytes', 'sourceBytesReferenced', 'sourceBytesMaterialized', 'knownGoodRefCount', 'duplicateRefsAvoided']);
@@ -287,12 +296,16 @@ const rejectKeys = (value, allowed, label, errors) => {
 };
 const uniqueArray = (value) => Array.isArray(value) && new Set(value).size === value.length;
 
-function validateContextPacketUnsafe(packet, { contextMap, registry } = {}) {
+function validateContextPacketUnsafe(packet, { contextMap, registry, repositoryDefinitions } = {}) {
   const errors = [];
   if (packet?.schemaVersion !== CONTEXT_PACKET_SCHEMA_VERSION || !contextMap || !registry) {
     return { status: 'INVALID', errors: ['unsupported Context Packet schema or missing authority'] };
   }
   assertGoalExecution(contextMap.execution, contextMap.goalId);
+  if ((packet.evidenceReceiptIds ?? []).length && (!repositoryDefinitions ||
+    validateContextMap(contextMap, { registry, repositoryDefinitions }).status !== 'VALID')) {
+    errors.push('receipt authority stale or unavailable');
+  }
   rejectKeys(packet, PACKET_KEYS, 'packet', errors);
   rejectKeys(packet.target, new Set(['type', 'id', 'reviewPolicy']), 'target', errors);
   rejectKeys(packet.capabilities, new Set(['required', 'optional']), 'capabilities', errors);
@@ -347,6 +360,7 @@ function validateContextPacketUnsafe(packet, { contextMap, registry } = {}) {
       relativePath.split('/').includes('..');
   })) errors.push('packet scope repository leakage');
   const authorityPaths = new Set([
+    ...(contextMap.evidenceReceipts ?? []).filter((item) => item.subject.path).map((item) => qualify(item.repository, item.subject.path)),
     ...contextMap.evidence.map((item) => qualify(item.repository, item.path)),
     ...contextMap.dependencies.flatMap((item) => [qualify(item.from.repository, item.from.ref),
       qualify(item.to.repository, item.to.ref)]),
@@ -359,6 +373,15 @@ function validateContextPacketUnsafe(packet, { contextMap, registry } = {}) {
   const knownGood = new Map(contextMap.knownGood.map((item) => [item.id, item]));
   const proofGaps = new Map(contextMap.proofGaps.map((item) => [item.id, item]));
   const validations = new Map(contextMap.validation.checks.map((item) => [item.id, item]));
+  const receiptIndex = new Map((contextMap.evidenceReceipts ?? []).map((item) => [item.receiptId, item]));
+  if (!uniqueArray(packet.evidenceReceiptIds ?? []) || (packet.evidenceReceiptIds ?? []).length > 64 ||
+    (packet.evidenceReceiptIds ?? []).some((id) => {
+      const entry = receiptIndex.get(id);
+      return !entry || entry.verification !== 'VERIFIED' || !packet.repositories.includes(entry.repository) ||
+        !(entry.subject.path && packet.scope.paths.includes(qualify(entry.repository, entry.subject.path)) ||
+          packet.validationRefs.some((ref) => validations.get(ref)?.evidence === id) ||
+          packet.knownGoodRefs.some((ref) => knownGood.get(ref)?.receiptIds?.includes(id)));
+    })) errors.push('invalid packet receipt refs or repository leakage');
   const graphify = new Set(Object.entries(contextMap.graphify).flatMap(([repository, graph]) =>
     graph.status === 'CURRENT' ? graph.queries.map((query) => `${repository}:${query.queryFingerprint}`) : []));
   if (packet.evidenceRefs.some((id) => !evidence.has(id) || !REUSABLE_EVIDENCE.has(evidence.get(id).status) ||
@@ -367,7 +390,7 @@ function validateContextPacketUnsafe(packet, { contextMap, registry } = {}) {
       [dependencies.get(item.id)?.from.repository, dependencies.get(item.id)?.to.repository]
         .some((repository) => !packet.repositories.includes(repository)) ||
       !dependencies.get(item.id)?.evidenceIds.some((id) => packet.evidenceRefs.includes(id))) ||
-    packet.knownGoodRefs.some((id) => knownGood.get(id)?.status !== 'KNOWN_GOOD_UNCHANGED' ||
+    packet.knownGoodRefs.some((id) => knownGood.get(id)?.status !== 'KNOWN_GOOD_UNCHANGED' || knownGood.get(id)?.verification !== 'VERIFIED' ||
       !packet.repositories.includes(knownGood.get(id)?.repository)) ||
     packet.proofGapRefs.some((id) => proofGaps.get(id)?.status !== 'OPEN') ||
     packet.graphifyRefs.some((id) => !graphify.has(id) || !packet.repositories.includes(id.split(':', 1)[0])) ||
@@ -518,7 +541,8 @@ async function main() {
   if (mapValidation.status !== 'VALID') throw new Error(`Context Map is not current: ${mapValidation.errors.join('; ')}`);
   const routerOutput = options['router-output'] ? JSON.parse(fs.readFileSync(options['router-output'], 'utf8')) : undefined;
   const packet = buildContextPacket(state.contextMap, JSON.parse(options.target), { registry, routerOutput });
-  const validation = validateContextPacket(packet, { contextMap: state.contextMap, registry });
+  const validation = validateContextPacket(packet, { contextMap: state.contextMap, registry,
+    repositoryDefinitions: repositoryDefinitions(options, state) });
   if (validation.status !== 'VALID') throw new Error(validation.errors.join('; '));
   console.log(JSON.stringify(packet, null, 2));
 }

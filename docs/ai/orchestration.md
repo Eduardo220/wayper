@@ -13,6 +13,13 @@ valor; não é um tier de qualidade nem um passo obrigatório. Este protocolo é
 declarativo: não existe Brain, planner executável, custom orchestrator ou
 generic implementer/reviewer.
 
+Evidence Receipts V1 seguem [evidence-receipts.md](evidence-receipts.md).
+Packets levam IDs bounded por repo/subject. Handoffs podem devolver
+`existingEvidenceReceiptIds`; assertions novas, inclusive resultados de teste,
+ficam `HANDOFF_ASSERTED/UNVERIFIED` no merge plan e exigem observação do owner.
+Isso preserva owner review, correction bounded e fallback; não acrescenta
+enforcement de dispatch, writers ou scheduling.
+
 ## Suporte observado e boundary de configuração
 
 Na baseline observada de 2026-09-02, Codex CLI `0.152.1` expõe multi-agent estável,

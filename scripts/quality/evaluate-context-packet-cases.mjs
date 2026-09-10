@@ -23,6 +23,7 @@ import {
 } from '../wayper-context-packet.mjs';
 import { loadCapabilityFiles } from './check-capability-routing.mjs';
 import { fingerprintCorpus } from './check-graph-scopes.mjs';
+import { observedGate } from './evidence-fixture.mjs';
 
 const CEILINGS = { TRIVIAL: 1_500, BOUNDED: 4_000, BUG: 8_000, INVESTIGATION: 10_000,
   ARCHITECTURAL: 16_000, CRITICAL_RUNTIME: 24_000 };
@@ -37,7 +38,7 @@ const REQUIRED_CASE_IDS = new Set([
 
 function repository(id, files) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `${id}-packet-`));
-  fs.writeFileSync(path.join(root, '.gitignore'), 'graphify-out/\n');
+  fs.writeFileSync(path.join(root, '.gitignore'), 'graphify-out/\n.wayper-context/\n');
   for (const [file, content] of Object.entries(files)) fs.writeFileSync(path.join(root, file), content);
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['add', '.'], { cwd: root });
@@ -137,7 +138,8 @@ function executeCase(item, registry, registryBytes) {
     }
     if (item.knownGood) {
       map = recordContextEntry(map, 'validation', { id: 'quality:capabilities', status: 'PASS',
-        evidence: 'quality:capabilities PASS' }, repos, options);
+        evidence: observedGate({ root: repos[0].root, repositories: repos, execution,
+          repository: repos[0].id }, 'quality:capabilities').receiptId }, repos, options);
       map = recordContextEntry(map, 'known-good', { repository: repos[0].id,
         capability: item.capabilities[0], proofRefs: ['quality:capabilities'] }, repos, options);
       if (item.questionKnownGood) map = refreshContextMap(map, { ...options, questions: [item.capabilities[0]] });
@@ -153,12 +155,12 @@ function executeCase(item, registry, registryBytes) {
     assert.equal(mapValidation.status, 'VALID', mapValidation.errors.join('; '));
     const targets = targetList(item, routerOutput);
     const packets = targets.map((target) => buildContextPacket(map, target, { registry, routerOutput }));
-    const packetValidations = packets.map((packet) => validateContextPacket(packet, { contextMap: map, registry }));
+    const packetValidations = packets.map((packet) => validateContextPacket(packet, { contextMap: map, registry, repositoryDefinitions: repos }));
     let staleDetected = false;
     if (item.scenario === 'STALE_PACKET') {
       map = recordContextEntry(map, 'validation', { id: 'post-build-change', status: 'PASS',
         evidence: 'post-build-change PASS' }, repos, options);
-      staleDetected = validateContextPacket(packets[0], { contextMap: map, registry }).errors.includes('PACKET_STALE');
+      staleDetected = validateContextPacket(packets[0], { contextMap: map, registry, repositoryDefinitions: repos }).errors.includes('PACKET_STALE');
     }
     const telemetry = aggregatePacketTelemetry(map, packets, { routerOutput, shadowLogBytes: 0 });
     const allEvidence = new Set(packets.flatMap((packet) => packet.evidenceRefs));

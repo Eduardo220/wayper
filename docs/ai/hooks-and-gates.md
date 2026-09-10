@@ -10,6 +10,11 @@
 
 ## Contrato
 
+Evidence Receipts V1 integram o gate FAST via `quality:evidence`. O changed-scope
+seleciona a suíte quando schema, producer, store, fixtures ou evals de Evidence
+mudam. Isso valida a infraestrutura; o backstop não intercepta shell nem decide
+completion semântica. O contrato está em [evidence-receipts.md](evidence-receipts.md).
+
 Hooks removem validação determinística repetitiva; não tomam decisões
 semânticas. O agente ainda escolhe Q0-Q3, R0-R3, targeted tests, review, deep
 checks e validação física. A única automação project-scoped adotada é um

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { proveFixture } from './evidence-fixture.mjs';
 import * as context from '../wayper-context.mjs';
 import { recordContextEntry, refreshContextMap, validateContextMap } from '../wayper-context-map.mjs';
 import { assertGoalExecution, captureRepositories, contextStatePath } from '../wayper-context-identity.mjs';
@@ -35,8 +36,8 @@ function mapFor(state, options) {
 
 function proven(options) {
   let state = context.startWorkingContext(options);
-  for (const artifact of options.specs) state = context.proveWorkingContext(state, { artifact, evidence: `${artifact.replace(/^wayper-site:/, '')}:1` });
-  for (const requirement of options.requirements) state = context.proveWorkingContext(state, { requirement, evidence: 'node --test PASS' });
+  for (const artifact of options.specs) state = proveFixture(state, { artifact }, options);
+  for (const requirement of options.requirements) state = proveFixture(state, { requirement }, options);
   state.contextMap = mapFor(state, options);
   state.contextMap = recordContextEntry(state.contextMap, 'evidence', { repository: 'wayper', path: 'a.js',
     claim: 'Goal A owner', category: 'OWNER', provenance: 'SOURCE', status: 'PROVEN' }, options.repositories);
@@ -93,9 +94,9 @@ test('GI4 amendment versions the Goal and invalidates only the declared affected
   assert.equal(amended.execution.identity.goalRunId, a.execution.identity.goalRunId);
   assert.equal(amended.execution.identity.revision, 2);
   assert.deepEqual(amended.revisionHistory[0], a.execution);
-  assert.equal(amended.requirements.find((item) => item.id === 'stable').status, 'SATISFIED');
+  assert.equal(amended.requirements.find((item) => item.id === 'stable').status, 'REVALIDATION_REQUIRED');
   assert.equal(amended.requirements.find((item) => item.id === 'A2').status, 'PENDING');
-  assert.equal(amended.artifacts.find((item) => item.spec === 'b.js').status, 'KNOWN_GOOD_UNCHANGED');
+  assert.equal(amended.artifacts.find((item) => item.spec === 'b.js').status, 'REUSE_BEFORE_READ');
   assert.equal(amended.artifacts.find((item) => item.spec === 'a.js').status, 'DIFF_BEFORE_FILE');
   assert.equal(amended.contextMap.evidence[0].status, 'STALE');
   assert.equal(amended.contextMap.goalId, amended.goalId);
@@ -108,10 +109,10 @@ test('GI5 a new Goal after completion cannot inherit the completed proof state',
   const options = fixture(t);
   const a = proven(options);
   delete a.contextMap; // Native completion has no separate persisted bit in V1 or V2.
-  assert.equal(context.contextDecision(a), 'STOP_WHEN_PROVEN');
+  assert.equal(context.contextDecision(a, options), 'STOP_WHEN_PROVEN');
   const b = context.startWorkingContext(options); // Even identical text is an explicit new execution.
   assert.notEqual(a.execution.identity.goalRunId, b.execution.identity.goalRunId);
-  assert.equal(context.contextDecision(b), 'CONTINUE_CONTEXT');
+  assert.equal(context.contextDecision(b, options), 'CONTINUE_CONTEXT');
   assert.ok(b.requirements.every((item) => item.status === 'PENDING'));
 });
 

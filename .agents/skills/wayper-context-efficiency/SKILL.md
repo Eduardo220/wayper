@@ -73,8 +73,11 @@ the current Goal/slice needs them.
    Add dependencies only after source confirms them. Refresh just the added or
    changed artifact specs; repository changes also revalidate tracked artifacts.
    Adding/changing requirements, risks, invariants or checks requires amendment.
-6. Record proof with `context:prove`. Evidence must name a source range, command,
-   test, validator, or observed behavior; intent and summaries do not qualify.
+6. Record proof with `context:prove` using a compatible verified Evidence Receipt
+   ID from the project-owned file observer or runner. Follow
+   [`evidence-receipts.md`](../../../docs/ai/evidence-receipts.md).
+   Text, direct shell output and handoff assertions do not create receipts.
+   Legacy refs are unverified; receipts never carry forward across revisions.
 7. Add only new compact map entries with `wayper-context.mjs record`; use
    `inspect`, `stats`, `evidence`, `gaps`, and `validate` read-only. Persist the
    router only through the explicit command. Trust specialist selection only

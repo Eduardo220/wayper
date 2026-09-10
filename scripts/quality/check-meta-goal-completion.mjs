@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { evaluateEvidenceRequirement } from '../wayper-evidence-store.mjs';
+import { createCompletionEvidenceFixture } from './evidence-fixture.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ROOT = path.resolve(path.dirname(SCRIPT_PATH), '../..');
@@ -60,8 +62,10 @@ function merge(base, override) {
   return result;
 }
 
-function hasEvidence(item) {
-  return Array.isArray(item.evidence) && item.evidence.length > 0;
+function hasEvidence(item, context, target = item.id) {
+  const requirement = item.receiptRequirement ?? { kinds: target?.includes('PHYSICAL') ? ['RUNTIME'] : ['COMMAND', 'TEST', 'QUALITY_GATE'],
+    repository: 'wayper', target, result: 'PASS' };
+  return evaluateEvidenceRequirement(requirement, item.evidence, context).status === 'SATISFIED';
 }
 
 function isNumber(value) {
@@ -276,7 +280,7 @@ export function evaluateBudgetControl(run) {
   };
 }
 
-export function evaluateCompletion(run) {
+export function evaluateCompletion(run, evidenceContext = {}) {
   const blockers = [];
   const gaps = [];
   const criteria = run.successCriteria ?? [];
@@ -290,11 +294,11 @@ export function evaluateCompletion(run) {
     gaps.push('SCOPE_SHRINKING');
   }
   for (const criterion of criteria) {
-    if (criterion.status === 'SATISFIED' && !hasEvidence(criterion)) {
+    if (criterion.status === 'SATISFIED' && !hasEvidence(criterion, evidenceContext)) {
       gaps.push(`CRITERION_WITHOUT_EVIDENCE:${criterion.id}`);
     } else if (
       criterion.status === 'NOT_APPLICABLE'
-      && !(criterion.reason && criterion.scopeEvidence)
+      && !(criterion.reason && hasEvidence({ ...criterion, evidence: criterion.scopeEvidence }, evidenceContext, `${criterion.id}:scope`))
     ) {
       gaps.push(`NOT_APPLICABLE_WITHOUT_REASON:${criterion.id}`);
     } else if (!['SATISFIED', 'NOT_APPLICABLE'].includes(criterion.status)) {
@@ -329,11 +333,11 @@ export function evaluateCompletion(run) {
     }
     if (validation.status === 'BLOCKED') blockers.push(`VALIDATION_BLOCKED:${validation.id}`);
     else if (validation.status !== 'PASS') gaps.push(`VALIDATION_${validation.status}:${validation.id}`);
-    else if (!hasEvidence(validation)) gaps.push(`VALIDATION_WITHOUT_EVIDENCE:${validation.id}`);
+    else if (!hasEvidence(validation, evidenceContext)) gaps.push(`VALIDATION_WITHOUT_EVIDENCE:${validation.id}`);
   }
 
   for (const claim of run.claims ?? []) {
-    if (claim.material && !hasEvidence(claim)) gaps.push(`CLAIM_WITHOUT_EVIDENCE:${claim.id}`);
+    if (claim.material && !hasEvidence(claim, evidenceContext)) gaps.push(`CLAIM_WITHOUT_EVIDENCE:${claim.id}`);
   }
 
   if (run.accounting?.tokensUsed === undefined || !run.accounting?.source) {
@@ -355,6 +359,7 @@ export function evaluateCompletion(run) {
   const falsification = run.falsification ?? {};
   if (!falsification.performed) gaps.push('FALSIFICATION_NOT_RUN');
   else if (falsification.result !== 'PASS') gaps.push('FALSIFICATION_FAILED');
+  else if (!hasEvidence(falsification, evidenceContext, 'FINAL_FALSIFICATION')) gaps.push('FALSIFICATION_WITHOUT_EVIDENCE');
   if ((falsification.findings ?? []).some(
     (finding) => finding.material || ['BLOCKING', 'MATERIAL'].includes(finding.severity)
   )) {
@@ -394,7 +399,18 @@ export function loadEvalSuite(file = EVALS_PATH) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
+const evalFixtures = new Map();
+export function completionEvalInputs(suite = loadEvalSuite()) {
+  const key = JSON.stringify(suite);
+  if (!evalFixtures.has(key)) evalFixtures.set(key, createCompletionEvidenceFixture(suite));
+  const fixture = evalFixtures.get(key);
+  return { suite: fixture.bind(suite), evidenceContext: fixture.context };
+}
+process.once('exit', () => { for (const fixture of evalFixtures.values()) fixture.cleanup(); });
+
 export function runEvalSuite(suite = loadEvalSuite()) {
+  const inputs = completionEvalInputs(suite);
+  suite = inputs.suite;
   assert.equal(suite.version, 2, 'unsupported Meta Goal eval schema');
   assert.ok(
     suite.baseRun && suite.baseBudgetRun && Array.isArray(suite.cases) && Array.isArray(suite.budgetCases),
@@ -406,7 +422,7 @@ export function runEvalSuite(suite = loadEvalSuite()) {
     assert.ok(item.id && !ids.has(item.id), `duplicate or missing eval id: ${item.id}`);
     ids.add(item.id);
     const run = merge(suite.baseRun, item.override ?? {});
-    const actual = evaluateCompletion(run);
+    const actual = evaluateCompletion(run, inputs.evidenceContext);
     assert.equal(actual.result, item.expected.result, `${item.id} result`);
     assert.equal(actual.eligible, item.expected.eligible, `${item.id} eligibility`);
     assert.equal(actual.earlyCompletion, item.expected.earlyCompletion, `${item.id} early completion`);

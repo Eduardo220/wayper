@@ -92,9 +92,11 @@ BUDGET_CONTROL != COMPLETION_PROOF
 - **Success Criteria Ledger:** cada critério tem `PENDING`, `SATISFIED`,
   `BLOCKED` ou `NOT_APPLICABLE`. `SATISFIED` referencia evidence concreta;
   `NOT_APPLICABLE` registra motivo e evidence verificável do changed scope.
-- **Evidence Ledger:** cada claim material aponta para `file`, `line/range`,
-  `test`, `command`, `validator`, `runtime output`, `config`, `commit` ou
-  comportamento observado. “Parece correto” não é provenance.
+- **Evidence Ledger:** cada claim material aponta para um
+  [Evidence Receipt V1](evidence-receipts.md) verificado e compatível, vinculado
+  ao Goal/revision/baseline/repository/subject. Paths, comandos escritos, texto
+  não vazio e handoff assertions permanecem UNVERIFIED. SOURCE prova conteúdo
+  observado; TEST/QUALITY_GATE exigem execução pelo observer.
 - **Validation Ledger:** cada validação derivada do changed scope usa `NOT_RUN`,
   `PASS`, `FAIL`, `NOT_APPLICABLE` ou `BLOCKED`, com comando/evidence e owner.
 - **Uncertainty Ledger:** cada incerteza usa severidade `BLOCKING`, `MATERIAL` ou
@@ -106,6 +108,12 @@ BUDGET_CONTROL != COMPLETION_PROOF
 
 Evidence pode sustentar vários ledgers por referência; não duplique output ou
 reasoning. Chain of thought não é coletado, persistido nem exigido.
+
+O evaluator existente também exige receipts para scope evidence de
+NOT_APPLICABLE e falsification executada. Unknowns não bloqueadores tratados
+continuam permitidos. O adapter de eval cria execuções observadas de fixtures;
+labels `fixture:pass:*` não são aceitas pelo evaluator. Nenhuma conexão nova ao
+Goal host ou Completion Boundary V2 é implementada na Fase 2.
 
 ## Integração com Goal mode
 

@@ -40,7 +40,7 @@ const NEW_EVIDENCE_ID = /^NE-[A-Za-z0-9._-]{1,80}$/;
 const FORBIDDEN_KEY = /transcript|chain.?of.?thought|source.?blob|raw.?graph|raw.?diff|tool.?diar|stdout|stderr|test.?log|packet.?content/i;
 const TOP_KEYS = new Set(['schemaVersion', 'goalId', 'taskId', 'agentId', 'packetId', 'status', 'confidence',
   'coverage', 'findings', 'evidenceRefs', 'newEvidence', 'risks', 'recommendations', 'filesRead', 'filesChanged',
-  'tests', 'proofGaps', 'ambiguities', 'blockers', 'metrics']);
+  'tests', 'proofGaps', 'ambiguities', 'blockers', 'metrics', 'existingEvidenceReceiptIds']);
 const FINDING_KEYS = new Set(['id', 'severity', 'category', 'claim', 'scenario', 'impact', 'safeguard',
   'confidence', 'evidenceRefs', 'proofGapRefs', 'affectedCapabilities']);
 const NEW_EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'range', 'symbol', 'sourceHash', 'category',
@@ -226,7 +226,7 @@ function validateStructuredHandoffUnsafe(handoff, { packet, contextMap, registry
   if (repos.some((item) => contextMap.repositoryState[item.id]?.logicalRoot !== item.logicalRoot)) {
     return { status: 'INVALID_HANDOFF', errors: ['contextMap: repository definition mismatch'] };
   }
-  const packetValidation = validateContextPacket(packet, { contextMap, registry });
+  const packetValidation = validateContextPacket(packet, { contextMap, registry, repositoryDefinitions: repos });
   if (packetValidation.status !== 'VALID') return { status: 'INVALID_HANDOFF',
     errors: packetValidation.errors.map((item) => `packet: ${item}`) };
   rejectKeys(handoff, TOP_KEYS, 'handoff', errors);
@@ -254,6 +254,10 @@ function validateStructuredHandoffUnsafe(handoff, { packet, contextMap, registry
   if (packet.capabilities.required.some((id) => !handoff.coverage.includes(id))) errors.push('required capability coverage omitted');
   if (packet.riskFlags.some((id) => !handoff.risks.includes(id))) errors.push('packet risk omitted');
   const evidence = new Map(contextMap.evidence.map((item) => [item.id, item]));
+  if (!unique(handoff.existingEvidenceReceiptIds ?? []) || (handoff.existingEvidenceReceiptIds ?? []).length > 64 ||
+    (handoff.existingEvidenceReceiptIds ?? []).some((id) => !(packet.evidenceReceiptIds ?? []).includes(id))) {
+    errors.push('invalid handoff Evidence Receipt refs');
+  }
   if (handoff.evidenceRefs.some((id) => !packet.evidenceRefs.includes(id) || !REUSABLE_EVIDENCE.has(evidence.get(id)?.status))) {
     errors.push('invalid or stale evidence ref');
   }
@@ -380,6 +384,13 @@ export function planContextMapMerge(handoff, options = {}) {
   const validation = validateStructuredHandoff(handoff, options);
   if (validation.status !== 'VALID') throw new Error(validation.errors.join('; '));
   return {
+    existingEvidenceReceiptIds: [...(handoff.existingEvidenceReceiptIds ?? [])],
+    candidateEvidence: [
+      ...handoff.newEvidence.map((item) => ({ proposalId: item.id, kind: 'REVIEW', summary: item.claim,
+        origin: 'HANDOFF_ASSERTED', verification: 'UNVERIFIED' })),
+      ...handoff.tests.map((item) => ({ kind: 'TEST', summary: item.summary,
+        origin: 'HANDOFF_ASSERTED', verification: 'UNVERIFIED' })),
+    ],
     newEvidence: handoff.newEvidence.map(({ id, sourceHash, ...item }) => ({ proposalId: id, ...item, status: 'UNVALIDATED' })),
     proofGaps: handoff.proofGaps.filter((item) => item.id.startsWith('PGP-')),
     findingRefs: handoff.findings.map((item) => item.id), risks: [...handoff.risks],
@@ -423,7 +434,7 @@ export function preparePacketizedSpecialist({ selection, contextMap, registry, r
     }
     const packet = buildContextPacket(contextMap, { type: 'agentProfile', id: selection.agentId,
       objective: selection.objective, repositories: selection.repositories }, { registry });
-    const packetValidation = validateContextPacket(packet, { contextMap, registry });
+    const packetValidation = validateContextPacket(packet, { contextMap, registry, repositoryDefinitions: repos });
     if (packetValidation.status !== 'VALID') {
       return fallback('CONTEXT_PACKET_INVALID', { agentId: selection.agentId, errors: packetValidation.errors });
     }

@@ -86,6 +86,7 @@ basta.
 
 | Delta observado | Evidência adicional |
 | --- | --- |
+| Evidence schema/producer/store/evals | `npm run quality:evidence`; false proof, integridade, identity/baseline, stale, parent, redaction e integração Map/Packet/Handoff; incluído em `quality:gate` |
 | `package.json`, lockfile, Expo/Metro/Babel/EAS | dependency check e Expo config/Doctor proporcionais |
 | `eslint.config.js` ou script quality | lint canônico + teste do tooling |
 | baseline size/architecture/lint | gate correspondente + review explícito da baseline; nunca atualização automática |
