@@ -1,3 +1,4 @@
+import { createGoalExecution, goalReference } from '../wayper-context-identity.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -25,7 +26,8 @@ export function createHandoffFixture(targetId = 'wayper_geospatial_reviewer', ov
   const evidence = overrides.evidence ?? { path: 'src/utils/zones.js', range: 'L37-L92',
     claim: 'Zone coordinate normalization and polygon validation owner' };
   const repositories = [{ id: 'wayper', root: ROOT, logicalRoot: '.' }];
-  const mapOptions = { goalId: 'handoff-eval', taskClass: 'BOUNDED', tokenCeiling: 4_000,
+  const execution = createGoalExecution({ threadId: 'handoff-eval', repositories });
+  const mapOptions = { execution, goalId: goalReference(execution.identity), taskClass: 'BOUNDED', tokenCeiling: 4_000,
     repositories, registry, risks, invariants: ['STRUCTURED_FACTS_NOT_TRANSCRIPT'],
     validations: [], workingArtifacts: [] };
   let map = refreshContextMap(null, mapOptions);

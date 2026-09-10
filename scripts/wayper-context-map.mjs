@@ -4,8 +4,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fingerprintCorpus } from './quality/check-graph-scopes.mjs';
 import { validateRouterSelectionReceipt } from './wayper-agent-router.mjs';
+import { assertGoalExecution, assertSameExecution, invalidateMapProofs, repositorySnapshot } from './wayper-context-identity.mjs';
 
-export const CONTEXT_MAP_SCHEMA_VERSION = 1;
+export const CONTEXT_MAP_SCHEMA_VERSION = 2;
 export const CONTEXT_MAP_REPOSITORIES = new Set(['wayper', 'wayper-site']);
 const EVIDENCE_STATUSES = new Set(['PROVEN', 'HIGH_CONFIDENCE', 'INFERRED', 'UNVALIDATED', 'STALE']);
 const EVIDENCE_PROVENANCE = new Set(['SOURCE', 'TEST', 'CONFIG', 'DOC', 'GRAPHIFY', 'COMMAND', 'OBSERVATION']);
@@ -131,7 +132,8 @@ function git(root, args) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-function gitFingerprint(root, relevantPaths = []) {
+function gitFingerprint(root, relevantPaths = [], id = 'wayper') {
+  const snapshot = repositorySnapshot({ id, root });
   const status = git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
   const paths = sortedUnique(relevantPaths.map((item) => item.replace(/#L\d+(?:-L\d+)?$/, '')));
   const diff = git(root, ['diff', '--no-ext-diff', '--binary', 'HEAD']);
@@ -141,8 +143,9 @@ function gitFingerprint(root, relevantPaths = []) {
   const relevantUntracked = untracked.filter((item) => paths.includes(item))
     .map((item) => `${item}:${sourceFingerprint(root, item)?.hash ?? 'MISSING'}`).join('\n');
   return {
-    branch: git(root, ['branch', '--show-current']) || 'DETACHED',
-    head: git(root, ['rev-parse', 'HEAD']),
+    branch: snapshot.branch ?? 'DETACHED', head: snapshot.head,
+    checkoutFingerprint: snapshot.checkoutFingerprint, dirty: snapshot.dirty,
+    contentFingerprint: snapshot.contentFingerprint,
     dirtyFingerprint: sha256(`${status}\n${diff}\n${untrackedHashes}`),
     relevantDiffFingerprint: sha256(`${relevantDiff}\n${relevantUntracked}`),
   };
@@ -169,10 +172,11 @@ function delta(map, payload) {
   map.learningDelta.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function baseMap({ goalId, taskClass, tokenCeiling }) {
+function baseMap({ goalId, execution, taskClass, tokenCeiling }) {
   return {
     schemaVersion: CONTEXT_MAP_SCHEMA_VERSION,
     goalId,
+    execution: structuredClone(execution),
     taskClass,
     repositories: [],
     taskFingerprint: null,
@@ -237,7 +241,15 @@ export function finalizeContextMap(map, { tokenCeiling, budgetReason } = {}) {
 }
 
 export function refreshContextMap(existing, options) {
+  assertGoalExecution(options.execution, options.goalId);
+  if (existing) {
+    if (existing.schemaVersion !== CONTEXT_MAP_SCHEMA_VERSION) throw new Error('LEGACY_UNVERIFIED Context Map');
+    assertSameExecution(existing.execution, options.execution);
+  }
   const repos = definitions(options.repositories);
+  if (stable([...repos.keys()].sort()) !== stable(options.execution.baseline.repositories.map((repo) => repo.repositoryId).sort())) {
+    throw new Error('Context Map baseline repository mismatch');
+  }
   const map = existing ? structuredClone(existing) : baseMap(options);
   if (map.goalId !== options.goalId) throw new Error('Context Map Goal mismatch');
   const nextRegistryFingerprint = capabilityRegistryFingerprint(options.registry);
@@ -267,7 +279,7 @@ export function refreshContextMap(existing, options) {
   for (const [id, repo] of repos) {
     map.repositoryState[id] = { repository: id, logicalRoot: repo.logicalRoot,
       relevantRefs: sortedUnique(relevant[id]),
-      ...gitFingerprint(repo.root, relevant[id]) };
+      ...gitFingerprint(repo.root, relevant[id], id) };
     map.graphify[id] ??= { decision: 'NOT_NEEDED', status: 'NOT_USED', scopeFingerprint: null,
       version: null, graphFingerprint: null, queries: [] };
     map.graphify[id].status ??= map.graphify[id].queries.length ? 'STALE' : 'NOT_USED';
@@ -276,6 +288,17 @@ export function refreshContextMap(existing, options) {
   }
   for (const id of Object.keys(map.repositoryState)) if (!repos.has(id)) delete map.repositoryState[id];
   for (const id of Object.keys(map.graphify)) if (!repos.has(id)) delete map.graphify[id];
+  const changed = map.repositories.filter((id) => previousRepositoryState[id] &&
+    previousRepositoryState[id].contentFingerprint !== map.repositoryState[id].contentFingerprint);
+  const incompatible = map.repositories.filter((id) => previousRepositoryState[id] &&
+    ['branch', 'head', 'checkoutFingerprint'].some((field) => previousRepositoryState[id][field] !== map.repositoryState[id][field]));
+  if (changed.length || incompatible.length) invalidateMapProofs(map, {
+    evidence: map.evidence.filter((item) => incompatible.includes(item.repository) ||
+      changed.includes(item.repository) && ['COMMAND', 'TEST', 'OBSERVATION'].includes(item.provenance)).map((item) => item.id),
+    validations: map.validation.checks.map((item) => item.id),
+    artifacts: map.knownGood.filter((item) => incompatible.includes(item.repository)).map((item) => `${item.repository}:${item.artifact}`),
+    graphify: [...changed, ...incompatible],
+  }, 'REPOSITORY_STATE_CHANGED');
   map.dependencies = [...map.dependencies.reduce((items, item) => {
     const id = idFor('D', { from: item.from, to: item.to, relation: item.relation, provenance: item.provenance });
     const prior = items.get(id);
@@ -389,6 +412,7 @@ function dependencyPath(ref) {
 }
 
 export function recordContextEntry(map, kind, input, repositoryDefinitions, options = {}) {
+  assertGoalExecution(map.execution, map.goalId);
   const repos = definitions(repositoryDefinitions);
   const next = structuredClone(map);
   let id; let existed = false; let invalidated = [];
@@ -581,6 +605,7 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
 }
 
 export function integrateRouterOutput(map, output, options = {}) {
+  assertGoalExecution(map.execution, map.goalId);
   if (!['SHADOW', 'SELECTIVE'].includes(output?.mode) || !HASH.test(output.taskFingerprint?.hash ?? '') ||
     output.taskFingerprint.facts.goalId !== map.goalId ||
     output.repositories.some((id) => !map.repositories.includes(id))) throw new Error('Invalid router output');
@@ -644,11 +669,11 @@ function rejectUnknownKeys(value, allowed, label, errors) {
   for (const key of Object.keys(value)) if (!allowed.has(key)) errors.push(`unknown ${label} field: ${key}`);
 }
 
-const MAP_KEYS = new Set(['schemaVersion', 'goalId', 'taskClass', 'repositories', 'taskFingerprint',
+const MAP_KEYS = new Set(['schemaVersion', 'goalId', 'execution', 'taskClass', 'repositories', 'taskFingerprint',
   'routerFingerprint', 'registryFingerprint', 'repositoryState', 'capabilities', 'router', 'risks', 'evidence', 'dependencies',
   'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants']);
 const REPOSITORY_KEYS = new Set(['repository', 'logicalRoot', 'relevantRefs', 'branch', 'head',
-  'dirtyFingerprint', 'relevantDiffFingerprint']);
+  'dirtyFingerprint', 'relevantDiffFingerprint', 'checkoutFingerprint', 'dirty', 'contentFingerprint']);
 const EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'symbol', 'range', 'sourceHash', 'sourceBytes',
   'claim', 'category', 'provenance', 'status', 'invalidationReason', 'capabilityRefs', 'reviewDisposition']);
 const DEPENDENCY_KEYS = new Set(['id', 'from', 'to', 'relation', 'provenance', 'evidenceIds']);
@@ -673,6 +698,10 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
     return { status: 'INVALID', errors: ['unsupported Context Map schema'] };
   }
   rejectUnknownKeys(map, MAP_KEYS, 'Context Map', errors);
+  assertGoalExecution(map.execution, map.goalId);
+  if (stable(map.repositories) !== stable(map.execution.baseline.repositories.map((repo) => repo.repositoryId).sort())) {
+    errors.push('Context Map baseline repository mismatch');
+  }
   rejectUnknownKeys(map.capabilities, new Set(['required', 'optional', 'knownGood']), 'capabilities', errors);
   rejectUnknownKeys(map.validation, new Set(['structural', 'fingerprint', 'checks']), 'validation', errors);
   rejectUnknownKeys(map.metrics, METRIC_KEYS, 'metrics', errors);
@@ -718,8 +747,8 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
       !Array.isArray(state.relevantRefs) || state.relevantRefs.length > 512 || !HASH.test(state.dirtyFingerprint) ||
       !HASH.test(state.relevantDiffFingerprint)) errors.push(`invalid repository state: ${id}`);
     else {
-      const current = gitFingerprint(repos.get(id).root, state.relevantRefs);
-      if (['branch', 'head', 'dirtyFingerprint', 'relevantDiffFingerprint']
+      const current = gitFingerprint(repos.get(id).root, state.relevantRefs, id);
+      if (['branch', 'head', 'dirtyFingerprint', 'relevantDiffFingerprint', 'checkoutFingerprint', 'dirty', 'contentFingerprint']
         .some((field) => current[field] !== state[field])) errors.push(`stale repository state: ${id}`);
     }
   }
@@ -787,7 +816,8 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
       ? observedSourceFingerprint(repos.get(item.repository).root, location.path, location.range).current : null;
     const groundedProof = item.artifact
       ? item.proofRefs.some((proofRef) => proofRef === workingContextRef ||
-        map.validation.checks.some((check) => check.id === proofRef && check.status === 'PASS') ||
+        map.validation.checks.some((check) => check.id === proofRef &&
+          (item.status !== 'KNOWN_GOOD_UNCHANGED' || check.status === 'PASS')) ||
         map.evidence.some((evidence) => evidence.id === proofRef && evidence.repository === item.repository &&
           evidence.path === location.path))
       : item.proofRefs.includes('quality:capabilities') || item.proofRefs.some((proofRef) =>

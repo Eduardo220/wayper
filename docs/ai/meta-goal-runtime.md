@@ -40,6 +40,9 @@ GOAL_EXECUTION
 
 goal:
   id | mode | objective | started_at
+execution:                         # Working Context owns this persisted reference
+  identity: schemaVersion | threadId | goalRunId | revision
+  baseline: schemaVersion | repositories[] | fingerprint
 budget:
   requested_token_budget | requested_duration_budget
   harness_token_ceiling | harness_duration_ceiling
@@ -63,6 +66,7 @@ completion:
 working_context:
   markdown | artifacts | fingerprints | invalidated | known_good_unchanged
   context_map_schema | context_map_fingerprint | proof_gaps | learning_delta
+  revision_history | current_repositories
   context_budget | budget_escalation_reason | context_decision
 ```
 
@@ -137,8 +141,23 @@ Status descreve esta superfície integrada, não capability genérica externa.
   fallback. O Harness permanece portátil e capability-based.
 
 Todo Goal nativo carrega automaticamente `wayper-context-efficiency` antes da
-releitura task-specific. O `threadId` seleciona
-`.wayper-context/<threadId>.md`; fingerprints preservam somente proof inalterado.
+releitura task-specific. A thread é somente a conversa. `start` cria um
+`goalRunId` project-owned e revision 1 em `.wayper-context/<goalRunId>.md`.
+Resume/refresh exige `threadId + goalRunId + revision`; amendment material usa
+`amend`, preserva run ID e incrementa revision. Outro objetivo lógico exige outro
+start, inclusive depois de completion; similaridade textual não decide identidade.
+
+O contrato canônico de identidade, baseline e compatibilidade pertence a
+[`working-context.md`](working-context.md). Cada revisão captura repository ID,
+checkout fingerprint, branch, HEAD, dirty state e content fingerprint por repo.
+Baseline inicial é imutável; estado atual vive separado e baselines anteriores
+permanecem em `revisionHistory`. `goal.id` usa a referência opaca retornada como
+`goalId` (`<goalRunId>.r<N>`); evidence/validation/context state desta execução
+referenciam `execution` e o fingerprint do Context Map, nunca a thread isolada.
+Legado sem identidade suficiente permanece `LEGACY_UNVERIFIED`, requer novas
+provas e não é associado automaticamente à missão. `attemptId`, receipts tipados
+e Completion Boundary permanecem fases futuras. Os evals de completion abaixo
+continuam avaliando sua política existente, sem se tornar runtime de identidade.
 Isso não transforma toda task pontual em `META_GOAL_MODE`.
 
 ```text

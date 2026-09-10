@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadCapabilityFiles, validateRegistry } from './quality/check-capability-routing.mjs';
-import { parseWorkingContext, repositoryDefinitions, ROOT } from './wayper-context.mjs';
+import { readWorkingContext, repositoryDefinitions, ROOT } from './wayper-context.mjs';
 import { sourceFingerprint, validateContextMap } from './wayper-context-map.mjs';
 import { buildContextPacket, validateContextPacket } from './wayper-context-packet.mjs';
 import { validateRouterSelectionReceipt } from './wayper-agent-router.mjs';
@@ -550,8 +550,7 @@ async function main() {
     return;
   }
   const options = args(process.argv.slice(2));
-  if (!/^[A-Za-z0-9._-]+$/.test(options['goal-id'] ?? '')) throw new Error('Safe --goal-id is required');
-  const state = parseWorkingContext(fs.readFileSync(path.join(ROOT, '.wayper-context', `${options['goal-id']}.md`), 'utf8'));
+  const state = readWorkingContext(ROOT, options);
   const repositories = repositoryDefinitions(options, state);
   const { registry } = loadCapabilityFiles();
   const target = JSON.parse(options.target);

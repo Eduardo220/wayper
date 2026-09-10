@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseWorkingContext, repositoryDefinitions, ROOT } from './wayper-context.mjs';
-import { capabilityRegistryFingerprint, validateContextMap } from './wayper-context-map.mjs';
+import { readWorkingContext, repositoryDefinitions, ROOT } from './wayper-context.mjs';
+import { assertGoalExecution } from './wayper-context-identity.mjs';
+import { CONTEXT_MAP_SCHEMA_VERSION, capabilityRegistryFingerprint, validateContextMap } from './wayper-context-map.mjs';
 import { loadCapabilityFiles, NATIVE_ROLES, validateRegistry } from './quality/check-capability-routing.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -126,7 +127,7 @@ function finalizePacket(packet, budgetReason) {
 }
 
 function buildContextPacketCandidate(contextMap, target, { registry, routerOutput } = {}, requiredOnly = false) {
-  if (contextMap?.schemaVersion !== 1 || contextMap.validation?.structural !== 'VALID' ||
+  if (contextMap?.schemaVersion !== CONTEXT_MAP_SCHEMA_VERSION || contextMap.validation?.structural !== 'VALID' ||
     !HASH.test(contextMap.validation?.fingerprint ?? '') || !registry ||
     contextMap.registryFingerprint !== capabilityRegistryFingerprint(registry)) {
     throw new Error('Validated Context Map with current Registry V2 is required');
@@ -264,6 +265,7 @@ function buildContextPacketCandidate(contextMap, target, { registry, routerOutpu
 }
 
 export function buildContextPacket(contextMap, target, options = {}) {
+  assertGoalExecution(contextMap.execution, contextMap.goalId);
   let packet = buildContextPacketCandidate(contextMap, target, options);
   if (packet.contextBudget.status === 'OVER_BUDGET' && packet.capabilities.required.length &&
     packet.capabilities.optional.length) packet = buildContextPacketCandidate(contextMap, target, options, true);
@@ -290,6 +292,7 @@ function validateContextPacketUnsafe(packet, { contextMap, registry } = {}) {
   if (packet?.schemaVersion !== CONTEXT_PACKET_SCHEMA_VERSION || !contextMap || !registry) {
     return { status: 'INVALID', errors: ['unsupported Context Packet schema or missing authority'] };
   }
+  assertGoalExecution(contextMap.execution, contextMap.goalId);
   rejectKeys(packet, PACKET_KEYS, 'packet', errors);
   rejectKeys(packet.target, new Set(['type', 'id', 'reviewPolicy']), 'target', errors);
   rejectKeys(packet.capabilities, new Set(['required', 'optional']), 'capabilities', errors);
@@ -507,9 +510,7 @@ async function main() {
     return;
   }
   const options = args(process.argv.slice(2));
-  const goalId = options['goal-id'];
-  if (!/^[A-Za-z0-9._-]+$/.test(goalId ?? '')) throw new Error('Safe --goal-id is required');
-  const state = parseWorkingContext(fs.readFileSync(path.join(ROOT, '.wayper-context', `${goalId}.md`), 'utf8'));
+  const state = readWorkingContext(ROOT, options);
   const { registry } = loadCapabilityFiles();
   const mapValidation = validateContextMap(state.contextMap, {
     repositoryDefinitions: repositoryDefinitions(options, state), registry,

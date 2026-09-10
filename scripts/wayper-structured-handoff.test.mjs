@@ -21,6 +21,8 @@ import {
 } from './wayper-structured-handoff.mjs';
 import { createHandoffFixture, validHandoffDraft } from './quality/evaluate-structured-handoff-cases.mjs';
 import { ROUTER_SELECTION_DECISIONS, routeTask } from './wayper-agent-router.mjs';
+import { baselineFor, createGoalExecution, goalReference } from './wayper-context-identity.mjs';
+import { validateContextPacket } from './wayper-context-packet.mjs';
 
 const options = (fixture) => ({ packet: fixture.packet, contextMap: fixture.map, registry: fixture.registry,
   repositoryDefinitions: fixture.repositories });
@@ -35,6 +37,26 @@ const operationalDispatch = (fixture) => ({ ...dispatch(fixture), mode: PACKETIZ
   selectionSource: 'DECISION_GATE' });
 const selection = (fixture) => ({ source: 'DECISION_GATE', decided: true, agentId: fixture.packet.target.id,
   objective: fixture.packet.objective, repositories: fixture.packet.repositories });
+
+test('SH10 Packet/Handoff v1 reject another Goal, revision or baseline through the Map reference', () => {
+  const fixture = createHandoffFixture();
+  const handoff = buildStructuredHandoff(validHandoffDraft(fixture.packet), options(fixture));
+  for (const change of ['goal', 'revision', 'baseline']) {
+    const map = structuredClone(fixture.map);
+    if (change === 'goal') map.execution = createGoalExecution({
+      threadId: map.execution.identity.threadId, repositories: fixture.repositories });
+    if (change === 'revision') map.execution.identity.revision += 1;
+    if (change === 'baseline') {
+      map.execution.baseline.repositories[0].head = 'f'.repeat(40);
+      map.execution.baseline = baselineFor(map.execution.baseline.repositories);
+    }
+    map.goalId = goalReference(map.execution.identity);
+    const changed = finalizeContextMap(map);
+    assert.notEqual(changed.validation.fingerprint, fixture.map.validation.fingerprint);
+    assert.ok(validateContextPacket(fixture.packet, { contextMap: changed, registry: fixture.registry }).errors.includes('PACKET_STALE'));
+    assert.equal(validateStructuredHandoff(handoff, { ...options(fixture), contextMap: changed }).status, 'INVALID_HANDOFF');
+  }
+});
 
 test('SH1 builds a compact closed read-only handoff and owner-only merge plan', () => {
   const fixture = createHandoffFixture();

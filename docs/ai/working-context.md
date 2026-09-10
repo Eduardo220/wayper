@@ -10,10 +10,10 @@
 
 Working Context conserva apenas o estado necessário para continuar um Goal sem
 reler ou redescobrir contexto já provado. Cada Goal usa um Markdown local em
-`.wayper-context/<threadId>.md`; o diretório é ignorado pelo Git, persiste entre
+`.wayper-context/<goalRunId>.md`; o diretório é ignorado pelo Git, persiste entre
 turns/compaction e não é memória técnica compartilhada.
 
-O `CONTEXT_MAP` schema v1 vive no mesmo bloco JSON. Ele é o índice compacto das
+O `CONTEXT_MAP` schema v2 vive no mesmo bloco JSON. Ele é o índice compacto das
 references, evidências e dependências da Goal; não possui arquivo, lifecycle ou
 writer separado. Context Packets são views reconstruíveis desse índice e não
 entram no Markdown como outra autoridade.
@@ -46,51 +46,137 @@ Delta. Ele não substitui as fontes do produto:
 Obsidian pode abrir ou indexar `.wayper-context/` como Markdown. Nenhum comando,
 plugin, vault ou metadata do Obsidian é necessário ao Harness.
 
-## Lifecycle automático no Goal
+## Identidade, baseline e lifecycle
 
-`AGENTS.md` seleciona `wayper-context-efficiency` em todo Goal nativo. A skill:
+`AGENTS.md` seleciona `wayper-context-efficiency` em todo Goal nativo.
+A criação é explícita; `threadId` sozinho nunca seleciona uma missão persistida.
 
-1. obtém `threadId` e classifica o trabalho;
-2. inicializa/atualiza o arquivo com `context:refresh`;
-3. consulta status antes de qualquer releitura;
-4. acrescenta artifacts/dependencies somente após evidence;
-5. registra proof com `context:prove`;
-6. registra somente novas evidências/dependências/gaps no mapa;
-7. para expansão quando `contextDecision=STOP_WHEN_PROVEN`.
+| Campo | Significado | Quando muda |
+| --- | --- | --- |
+| `execution.identity.threadId` | conversa do host; pode conter vários Goals | outra conversa |
+| `execution.identity.goalRunId` | UUID project-owned de uma execução lógica | cada `start`, inclusive após completion ou com objetivo textual idêntico |
+| `execution.identity.revision` | versão positiva e monotônica da definição | `amend` material; começa em 1 |
+| `execution.baseline` | referência imutável de Git/conteúdo no início da revisão | nova revisão recebe outra captura; anterior permanece histórica |
+| `goalId` | referência opaca `<goalRunId>.r<revision>` para contratos existentes | nova execução ou revisão |
+
+Thread, objetivo lógico, execução, revisão e eventual execution attempt são
+conceitos distintos. `refresh`, resume, continuação e reconstrução de contexto
+preservam `goalRunId`, `revision` e baseline. Não há comparação por similaridade
+textual. A superfície integrada observada nesta implementação não forneceu uma
+identidade nativa de execução apropriada; o host fornece a thread, e o projeto
+cria o UUID. Uma futura vinculação a ID nativo deve preservar este contrato.
+`attemptId` e comportamento de retry não são implementados.
+
+`execution` tem schema fechado: `identity` (schema 1) e `baseline` (schema 1).
+A baseline contém `repositories[]`, ordenados por `repositoryId`, e fingerprint
+SHA-256 do conjunto. Cada repository registra `repositoryId`,
+`checkoutFingerprint` (hash do root real, sem URL/credencial), `branch` (null em
+HEAD detached), `head`, `dirty` e `contentFingerprint`. O fingerprint inclui
+HEAD, status, index, diff binário contra HEAD e hashes dos arquivos untracked não
+ignorados. Symlinks untracked são identificados pelo link, sem ler seu alvo.
+Arquivos ignorados, incluindo caches e Working Context, não entram nessa captura;
+artifacts explicitamente rastreados continuam sujeitos ao próprio hash/range.
+Roots devem ser repositórios Git com HEAD existente. Falha de captura não gera
+baseline fictícia. Roots/branches/HEADs de `wayper` e `wayper-site` permanecem
+separados; mover o checkout é incompatibilidade conservadora.
+
+`currentRepositories` e `contextMap.repositoryState` representam o estado atual.
+Eles podem mudar durante o trabalho sem reescrever a baseline.
+`revisionHistory` conserva as identidades/baselines das revisões anteriores no
+mesmo Markdown. Não é um event log nem snapshot completo de cada definição.
+A validação confere a sequência e os fingerprints; o writer rejeita reescrita
+histórica e transição de revisão inválida.
 
 Comandos canônicos:
 
 ```sh
-npm run context:refresh -- --goal-id <threadId> --class <TASK_CLASS> \
+node scripts/wayper-context.mjs start --thread-id <threadId> \
+  --objective '<objetivo lógico>' --class <TASK_CLASS> \
   --track <path[#Lx-Ly]> --risk <FLAG> --invariant <ID> \
   --validation <CHECK> --requirement <KIND:ID>
-npm run context:prove -- --goal-id <threadId> \
+# Guardar GOAL_RUN_ID e REVISION retornados; não inferir pela thread.
+npm run context:refresh -- --thread-id <threadId> \
+  --goal-run-id <goalRunId> --revision <N>
+npm run context:prove -- --thread-id <threadId> \
+  --goal-run-id <goalRunId> --revision <N> \
   --artifact <path[#Lx-Ly]> --evidence <source|test|command>
-npm run context:prove -- --goal-id <threadId> \
-  --requirement <KIND:ID> --evidence <source|test|command>
-node scripts/wayper-context.mjs record --goal-id <threadId> \
+# Ou --requirement <KIND:ID>, em vez de --artifact.
+node scripts/wayper-context.mjs record --thread-id <threadId> \
+  --goal-run-id <goalRunId> --revision <N> \
   --kind <evidence|dependency|known-good|proof-gap|graphify|validation> \
   --data '<JSON compacto>'
-node scripts/wayper-context.mjs router --goal-id <threadId> \
-  --data '<task fingerprint schema v1>'
+node scripts/wayper-context.mjs router --thread-id <threadId> \
+  --goal-run-id <goalRunId> --revision <N> \
+  --data '<task fingerprint schema v1; goalId = referência retornada>'
 node scripts/wayper-context.mjs inspect|stats|evidence|gaps|validate \
-  --goal-id <threadId>
+  --thread-id <threadId> --goal-run-id <goalRunId> --revision <N>
 ```
 
-`refresh`, `prove`, `record` e `router` são os únicos writes; os cinco últimos
-comandos são read-only. `router` persiste hashes/refs e um receipt
-`ROUTER_SELECTED` ou `BEHAVIORAL_FALLBACK`; nunca executa spawn.
-O output normal é delta-only. O estado completo permanece no Markdown. O path é
-sempre `.wayper-context/<goalId>.md`: `--state` é rejeitado e todo write usa
-temporary file + rename atômico no mesmo diretório.
+Packet e Handoff CLI usam o mesmo seletor triplo. Revisão ausente, diferente ou
+thread divergente falha antes de reutilizar/escrever estado. `start` nunca abre
+arquivo por thread; `refresh` não cria missão. O path é canônico, `--state` é
+rejeitado e cada write usa temporary file + rename atômico no mesmo diretório.
+Não há ponteiro de “Goal atual da thread”, lease, CAS ou merge entre waves.
 
-Lifecycle não duplica o estado do Goal nativo. Criação ocorre no primeiro
-`refresh`; resume/refresh conserva somente proof com fingerprint atual;
-`prove` e `record` fazem append/update determinístico; source/proof alterado
-invalida os derivados. Completion continua pertencendo ao Goal nativo e ao seu
-backstop, não a um bit gravado pelo mapa. Depois da completion o Markdown é
-arquivo read-only daquela Goal. Outra Goal recebe outro `goalId` e outro arquivo;
-mapa antigo pode ser consultado, mas nunca importado ou promovido automaticamente.
+### Amendment e invalidação
+
+`amend` exige `--changes` e `--reason`. `changes.requirements` aceita patch
+`{add:[], remove:[]}`; `objective`, `riskFlags`, `invariants` e `validations` são
+substituições explícitas. Acrescentar critérios/constraints pelo refresh falha e
+exige amendment. Descoberta de novos artifacts continua usando `--track`.
+
+```sh
+node scripts/wayper-context.mjs amend --thread-id <threadId> \
+  --goal-run-id <goalRunId> --revision <N> \
+  --changes '{"requirements":{"remove":["SUCCESS:old"],"add":["SUCCESS:new"]}}' \
+  --reason 'Critério material substituído'
+```
+
+Sem `--invalidate`, toda prova da revisão anterior requer revalidação.
+Para amendment parcial, o owner pode fornecer um objeto fechado contendo todas
+as listas `artifacts`, `requirements`, `evidence`, `validations`, `capabilities`
+e `graphify`. Elas nomeiam apenas IDs/specs afetados já existentes; `graphify`
+usa repository IDs. O motivo deve explicar o limite semântico da alteração,
+confirmado em source/callers/dependencies. O helper valida IDs e fingerprints,
+mas não infere independência semântica. Se essa independência não está provada,
+use a invalidação padrão. No-op é `NO_MATERIAL_AMENDMENT`; copy/metadata sem
+mudança semântica não deve ser enviado como amendment.
+
+- Slices explicitamente não afetados preservam prova somente com hash atual.
+- Artifact afetado vira `DIFF_BEFORE_FILE`, conservando `invalidatedEvidence`;
+  requisito afetado volta a `PENDING`, requisito novo nasce sem evidence.
+- Evidence afetada vira `STALE`; checks afetados voltam a `NOT_RUN`. Proof refs
+  inválidas removem edges derivados, tornam known-good stale e reabrem gaps.
+  Checks retirados da declaração permanecem inspecionáveis; seu descarte de
+  escopo exige registro explícito de `NOT_APPLICABLE` pelo owner antes de stop.
+- Referências Graphify afetadas ficam stale; não há rebuild automático.
+- Router receipt é descartado na nova revisão. Capabilities/risks/invariants e
+  os demais índices continuam no Map; o algoritmo SELECTIVE não muda.
+- Mudança de branch/HEAD/checkout invalida artifacts e evidence daquele repo,
+  mesmo com bytes iguais. Mudança local preserva ranges inalterados, revalida os
+  artifacts rastreados e invalida checks/critérios textuais sem escopo suficiente.
+  Evidence de comando/teste/observação no repo alterado requer revalidação.
+- Membership de repos não muda por refresh/amend nesta fase; uma execução
+  cross-repo declara ambos no start. Ownership/migração operacional ficam futuros.
+
+Completion continua no host e no backstop existente. Depois de completion,
+o owner conserva o arquivo como histórico; outro Goal exige `start`. Esta fase
+não adiciona terminal state, reopen, attempt budget ou Completion Boundary.
+
+### Compatibilidade legada
+
+Working Context schema 1 continua legível, sem modificar seus bytes. Somente
+`inspect --goal-id <id-antigo>` e `validate --goal-id <id-antigo>` aceitam o seletor
+legado; retornam `LEGACY_UNVERIFIED` / `REVALIDATION_REQUIRED` (validate falha).
+`contextDecision` nunca retorna `STOP_WHEN_PROVEN` para estado legado.
+Refresh/prove/record/router e Packet/Handoff não promovem esse estado. Uma nova
+execução começa vazia, sem importar criteria/proofs/Map. Não existe bulk migration.
+Working Context e Map subiram para schema 2 porque aceitar campos de identidade
+ausentes como opcionais reabriria a herança silenciosa. Packet e Handoff seguem
+schema 1: `goalId` + fingerprint do Map vinculam identidade, revisão e baseline.
+
+Rollback de código é revert do commit; arquivos schema 1 continuam preservados.
+Readers antigos rejeitam schema 2 em vez de interpretá-lo como estado da thread.
 
 Artifact mobile usa `path[#range]`. Artifact do site usa
 `wayper-site:path[#range]` e requer a definição
@@ -100,7 +186,8 @@ path persistido e known-good são calculados no root correspondente.
 ## Fingerprints e reuse
 
 Fingerprint é SHA-256 do UTF-8 do arquivo ou range `#Lx-Ly`. O helper compara
-somente artifacts solicitados; entradas não tocadas permanecem intactas.
+artifacts solicitados quando o estado do repo permanece igual; quando Git/conteúdo
+muda, revalida todos os artifacts já rastreados antes de permitir reuse.
 
 | Status | Semântica | Próxima ação |
 | --- | --- | --- |
@@ -123,7 +210,8 @@ Arquivo removido, path inválido, parse inválido ou escape por symlink falha co
 Schema atual:
 
 ```text
-schemaVersion | goalId | taskClass | budget
+schemaVersion | goalId | execution | objective | revisionHistory | currentRepositories
+taskClass | budget
 riskFlags | invariants | validations | requirements
 artifacts | contextMap | learningDelta | contextDecision
 ```
@@ -138,12 +226,12 @@ Working Context é temporário mesmo quando dura vários turns. Lição técnica
 compartilhável continua passando por [`memory-policy.md`](memory-policy.md);
 estado de Goal nunca vira repo memory automaticamente.
 
-## CONTEXT_MAP schema v1
+## CONTEXT_MAP schema v2
 
 `contextMap` usa `REFERENCE_BEFORE_CONTENT` e contém somente:
 
 ```text
-schemaVersion | goalId | taskClass | repositories
+schemaVersion | goalId | execution | taskClass | repositories
 taskFingerprint | routerFingerprint | registryFingerprint | repositoryState
 capabilities | router | risks | invariants | evidence | dependencies
 knownGood | graphify | validation | learningDelta
@@ -198,8 +286,8 @@ source blobs, transcript, chain-of-thought, tool diary, raw diff/Graphify, agent
 summary e valores gigantes. Motivo de `OVER_BUDGET` não autoriza campos extras.
 Todas as coleções compactas possuem caps estruturais e o mapa tem limite absoluto
 de 1 MB, mesmo quando há motivo legítimo para exceder o ceiling da task.
-Um mapa não cruza Goals:
-`goalId` divergente ou schema incompatível falha; após completion ele pode ser
+Um mapa não cruza execuções/revisões:
+`goalId`, `execution.identity` ou baseline divergente e schema incompatível falham; após completion ele pode ser
 consultado, mas reuse em outra Goal exige nova criação e novas provas.
 
 ## Context Packets derivados
@@ -299,7 +387,8 @@ recebe Working Context completo nem cria descendants; `max_depth=1` permanece.
 
 ## Gate e benchmark
 
-`npm run quality:context` executa testes de round-trip, invalidação localizada,
+`npm run quality:context` executa regressões de identidade, baseline, amendment,
+legado e CLI, além de round-trip, invalidação localizada,
 range unchanged, stop-when-proven, path safety, schema/map validation,
 staleness, deduplicação, Graphify repo-scoped e compactness, além dos benchmarks em
 [`context-efficiency-evals.json`](context-efficiency-evals.json).

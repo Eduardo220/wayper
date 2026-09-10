@@ -71,7 +71,7 @@ esta auditoria; a repo memory continua portátil.
 - não havia store de project memory ativo neste repositório;
 - `wayper-brain` está em backup histórico e não é memória nem runtime ativo;
 - Graphify mantém graph/cache gerado, reproduzível e não autoritativo;
-- `.wayper-context/<threadId>.md` mantém estado operacional/fingerprints do Goal,
+- `.wayper-context/<goalRunId>.md` mantém estado operacional/fingerprints da execução e revisão do Goal,
   não conhecimento compartilhado;
 - audits, changelog, revisões, ADRs e docs do Obsidian preservam documentação e
   história, não entries desta memória;

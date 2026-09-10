@@ -1,3 +1,4 @@
+import { createGoalExecution, goalReference } from '../wayper-context-identity.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -98,7 +99,8 @@ function executeCase(item, registry, registryBytes) {
   const repos = item.repositories.map((id) => repository(id, files));
   try {
     const graph = item.graphify ? graphFixture(repos[0]) : null;
-    const options = { goalId: item.id.toLocaleLowerCase(), taskClass: item.taskClass,
+    const execution = createGoalExecution({ threadId: item.id, repositories: repos });
+    const options = { execution, goalId: goalReference(execution.identity), taskClass: item.taskClass,
       tokenCeiling: CEILINGS[item.taskClass], repositories: repos, risks: item.riskFlags ?? [],
       invariants: ['MINIMUM_SUFFICIENT_CONTEXT', 'REFERENCE_BEFORE_CONTENT'],
       validations: ['quality:context-packets'], workingArtifacts: [], registry };

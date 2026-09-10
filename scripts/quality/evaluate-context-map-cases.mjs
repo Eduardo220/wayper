@@ -1,3 +1,4 @@
+import { createGoalExecution, goalReference } from '../wayper-context-identity.mjs';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -87,10 +88,10 @@ function writeGraphFixture(repository) {
   return metadata;
 }
 
-function routerOutput(item, features, decision) {
+function routerOutput(item, features, decision, goalId) {
   const capabilities = [features.has('MULTI_CAPABILITY') ? 'context-efficiency' : null,
     features.has('MULTI_CAPABILITY') ? 'quality-gates' : null].filter(Boolean);
-  const facts = { goalId: item.id, knownGoodCapabilities: [], changedFiles: [], candidatePaths: [],
+  const facts = { goalId, knownGoodCapabilities: [], changedFiles: [], candidatePaths: [],
     questionsExistingBehavior: false };
   return { mode: 'SHADOW', routerVersion: 'eval-1', taskFingerprint: { hash: hash(JSON.stringify(facts)), facts },
     repositories: [...item.repositories], requiredCapabilities: capabilities.map((id) => ({ id })),
@@ -111,13 +112,14 @@ function executeCase(item, sourceRoot) {
     const risks = features.has('RISK_LIFECYCLE') ? ['LIFECYCLE']
       : features.has('PERSISTENCE') ? ['OFFLINE_STORAGE']
         : features.has('TERRITORY') ? ['GEOSPATIAL'] : ['BUILD_TOOLING'];
-    const options = { goalId: item.id, taskClass: item.taskClass,
+    const execution = createGoalExecution({ threadId: item.id, repositories: fixture.repositories });
+    const options = { execution, goalId: goalReference(execution.identity), taskClass: item.taskClass,
       tokenCeiling: CEILINGS[item.taskClass], repositories: fixture.repositories,
       risks, validations: ['eval'], workingArtifacts };
     let map = refreshContextMap(null, options);
     const targeted = features.has('GRAPHIFY_TARGETED') || features.has('GRAPHIFY_ISOLATED');
     map = integrateRouterOutput(map, routerOutput(item, features,
-      targeted ? 'TARGETED_RECOMMENDED' : 'NOT_NEEDED'), options);
+      targeted ? 'TARGETED_RECOMMENDED' : 'NOT_NEEDED', options.goalId), options);
 
     for (const [index, artifact] of fixture.artifacts.entries()) {
       map = recordContextEntry(map, 'evidence', { repository: artifact.repository,

@@ -54,6 +54,9 @@ o próprio escopo.
 - Workflow: `docs/14-instrucoes-para-ia.md`. Arquitetura do Harness:
   `docs/ai/harness-v1.md`.
 - META Goals usam evidence-gated completion; budgets são tetos, não quotas.
+- Working Context usa `threadId + goalRunId + revision`; novo Goal exige `start`,
+  amendment material exige `amend`. Baseline histórica não muda no refresh;
+  contexto identificado só por thread é legado sem validade automática.
 - Goal nativo carrega `wayper-context-efficiency`; reuse/fingerprint nunca reduz
   evidence, risco, invariantes ou validação.
 - Graphs, maps e caches nunca são verdade. RTK é ferramenta global opcional.

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createGoalExecution, goalReference } from './wayper-context-identity.mjs';
+import { ROOT } from './wayper-context.mjs';
 
 import {
   aggregatePacketTelemetry,
@@ -12,9 +14,10 @@ import { loadCapabilityFiles } from './quality/check-capability-routing.mjs';
 const fingerprint = `sha256:${'a'.repeat(64)}`;
 
 function contextMap(registry = loadCapabilityFiles().registry) {
+  const execution = createGoalExecution({ threadId: 'packet-unit', repositories: [{ id: 'wayper', root: ROOT }] });
   return {
-    schemaVersion: 1,
-    goalId: 'packet-unit',
+    schemaVersion: 2, execution,
+    goalId: goalReference(execution.identity),
     taskClass: 'BOUNDED',
     repositories: ['wayper', 'wayper-site'],
     registryFingerprint: capabilityRegistryFingerprint(registry),

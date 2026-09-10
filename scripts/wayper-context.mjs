@@ -11,6 +11,11 @@ import {
 } from './wayper-context-map.mjs';
 import { evaluateContextMapCases } from './quality/evaluate-context-map-cases.mjs';
 import { loadCapabilityFiles } from './quality/check-capability-routing.mjs';
+import {
+  assertGoalExecution, assertSameExecution, assertSameIdentity, baselineFor, captureRepositories,
+  contextStatePath, createGoalExecution, goalReference, invalidateMapProofs, invalidateWorkingProof,
+  repositoryChanges, stable,
+} from './wayper-context-identity.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
@@ -97,9 +102,10 @@ export function parseWorkingContext(markdown) {
   const end = source.indexOf(suffix, start + prefix.length);
   if (start < 0 || end < 0) throw new Error('Working Context JSON block missing');
   const state = JSON.parse(source.slice(start + prefix.length, end));
-  if (state.schemaVersion !== 1 || !state.goalId || !Array.isArray(state.artifacts)) {
+  if (![1, 2].includes(state.schemaVersion) || !state.goalId || !Array.isArray(state.artifacts)) {
     throw new Error('Unsupported Working Context schema');
   }
+  if (state.schemaVersion === 2) assertWorkingContext(state);
   return state;
 }
 
@@ -120,6 +126,7 @@ export function renderWorkingContext(state) {
 }
 
 export function contextDecision(state) {
+  try { assertWorkingContext(state); } catch { return 'REVALIDATION_REQUIRED'; }
   const requirements = state.requirements ?? [];
   const requirementsProven = requirements.length > 0 && requirements.every(
     (item) => ['SATISFIED', 'NOT_APPLICABLE'].includes(item.status) && item.evidence?.length,
@@ -155,12 +162,35 @@ export function contextDecision(state) {
     ? 'STOP_WHEN_PROVEN' : 'CONTINUE_CONTEXT';
 }
 
-function newState(goalId, taskClass) {
+export function assertWorkingContext(state, identity) {
+  if (state?.schemaVersion !== 2) throw new Error('LEGACY_UNVERIFIED: explicit new Goal required');
+  assertGoalExecution(state.execution, state.goalId);
+  assertGoalExecution({ identity: state.execution.identity, baseline: baselineFor(state.currentRepositories) });
+  repositoryChanges(state.execution.baseline.repositories, state.currentRepositories);
+  if (identity) assertSameIdentity(state.execution.identity, identity);
+  if (!Array.isArray(state.revisionHistory) || state.revisionHistory.length !== state.execution.identity.revision - 1) {
+    throw new Error('Invalid Goal revision history');
+  }
+  state.revisionHistory.forEach((execution, index) => {
+    assertGoalExecution(execution);
+    assertSameIdentity(execution.identity, { ...state.execution.identity, revision: index + 1 });
+  });
+  if (state.contextMap) {
+    if (state.contextMap.schemaVersion !== 2 || state.contextMap.goalId !== state.goalId) throw new Error('Context Map Goal mismatch');
+    assertSameExecution(state.execution, state.contextMap.execution);
+  }
+}
+
+function newState(execution, objective, taskClass) {
   const budget = TASK_BUDGETS[taskClass];
   if (!budget) throw new Error(`Unknown task class: ${taskClass}`);
   return {
-    schemaVersion: 1,
-    goalId,
+    schemaVersion: 2,
+    goalId: goalReference(execution.identity),
+    execution,
+    objective,
+    revisionHistory: [],
+    currentRepositories: structuredClone(execution.baseline.repositories),
     taskClass,
     budget,
     riskFlags: [],
@@ -173,6 +203,17 @@ function newState(goalId, taskClass) {
   };
 }
 
+export function startWorkingContext(options) {
+  const repositories = options.repositories ?? [{ id: 'wayper', root: options.root ?? ROOT, logicalRoot: '.' }];
+  const objective = String(options.objective ?? '').trim();
+  if (!objective || Buffer.byteLength(objective) > 400) throw new Error('Compact Goal objective required');
+  const execution = createGoalExecution({ threadId: options.threadId, repositories });
+  const existing = newState(execution, objective, options.taskClass);
+  existing.requirements = unique(options.requirements).map(requirementFromSpec);
+  for (const field of ['riskFlags', 'invariants', 'validations']) existing[field] = unique(options[field]);
+  return refreshWorkingContext({ ...options, repositories, existing, identity: execution.identity });
+}
+
 function requirementFromSpec(spec) {
   const separator = spec.indexOf(':');
   if (separator < 1 || separator === spec.length - 1) throw new Error(`Invalid requirement: ${spec}`);
@@ -183,20 +224,44 @@ export function refreshWorkingContext({
   root = ROOT,
   repositories,
   existing,
-  goalId,
-  taskClass,
+  identity,
+  objective,
+  taskClass = existing?.taskClass,
   specs = [],
   requirements = [],
   riskFlags = [],
   invariants = [],
   validations = [],
+  registry,
 }) {
-  const state = existing && existing.goalId === goalId ? structuredClone(existing) : newState(goalId, taskClass);
+  assertWorkingContext(existing);
+  assertSameIdentity(existing.execution.identity, identity);
+  if (objective !== undefined && String(objective).trim() !== existing.objective) {
+    throw new Error('Definition change requires explicit amendment or new Goal start');
+  }
+  const state = structuredClone(existing);
+  repositories ??= [{ id: 'wayper', root, logicalRoot: '.' }];
+  const currentRepositories = captureRepositories(repositories);
+  const { changed, incompatible } = repositoryChanges(state.currentRepositories, currentRepositories);
+  state.currentRepositories = currentRepositories;
+  if (changed.length) {
+    for (const item of state.requirements) invalidateWorkingProof(item, 'PENDING');
+    if (state.contextMap) invalidateMapProofs(state.contextMap, {
+      evidence: state.contextMap.evidence.filter((item) => incompatible.includes(item.repository) ||
+        changed.includes(item.repository) && ['COMMAND', 'TEST', 'OBSERVATION'].includes(item.provenance)).map((item) => item.id),
+      validations: state.contextMap.validation.checks.map((item) => item.id),
+      artifacts: state.contextMap.knownGood.filter((item) => incompatible.includes(item.repository))
+        .map((item) => `${item.repository}:${item.artifact}`), graphify: changed,
+    }, 'REPOSITORY_STATE_CHANGED');
+  }
+  for (const item of state.artifacts) if (incompatible.includes(item.repository ?? 'wayper')) {
+    invalidateWorkingProof(item, 'DIFF_BEFORE_FILE');
+  }
   if (!TASK_BUDGETS[taskClass]) throw new Error(`Unknown task class: ${taskClass}`);
   state.taskClass = taskClass;
   state.budget = TASK_BUDGETS[taskClass];
   const previous = new Map(state.artifacts.map((item) => [item.spec, item]));
-  const targets = specs.length ? unique(specs) : [...previous.keys()];
+  const targets = specs.length && !changed.length ? unique(specs) : unique([...previous.keys(), ...specs]);
   const refreshed = new Map(previous);
 
   for (const spec of targets) {
@@ -220,18 +285,28 @@ export function refreshWorkingContext({
 
   const knownRequirements = new Map((state.requirements ?? []).map((item) => [`${item.kind}:${item.id}`, item]));
   for (const spec of requirements) {
-    if (!knownRequirements.has(spec)) knownRequirements.set(spec, requirementFromSpec(spec));
+    if (!knownRequirements.has(spec)) throw new Error('Definition change requires explicit amendment');
+  }
+  for (const [field, values] of Object.entries({ riskFlags, invariants, validations })) {
+    if (values.some((value) => !state[field].includes(value))) throw new Error('Definition change requires explicit amendment');
   }
   state.requirements = [...knownRequirements.values()];
   state.riskFlags = unique([...(state.riskFlags ?? []), ...riskFlags]);
   state.invariants = unique([...(state.invariants ?? []), ...invariants]);
   state.validations = unique([...(state.validations ?? []), ...validations]);
   state.artifacts = [...refreshed.values()].sort((left, right) => left.spec.localeCompare(right.spec));
+  if (state.contextMap) state.contextMap = refreshContextMap(state.contextMap, {
+    goalId: state.goalId, execution: state.execution, repositories, taskClass,
+    tokenCeiling: state.budget.contextTokenCeiling, workingArtifacts: state.artifacts,
+    risks: state.riskFlags, invariants: state.invariants, validations: state.validations,
+    registry: registry ?? loadCapabilityFiles().registry,
+  });
   state.contextDecision = contextDecision(state);
   return state;
 }
 
 export function proveWorkingContext(state, { artifact, requirement, evidence }) {
+  assertWorkingContext(state);
   if (Boolean(artifact) === Boolean(requirement)) {
     throw new Error('Choose exactly one of --artifact or --requirement');
   }
@@ -256,6 +331,82 @@ export function proveWorkingContext(state, { artifact, requirement, evidence }) 
   } else throw new Error('Choose --artifact or --requirement');
   next.contextDecision = contextDecision(next);
   return next;
+}
+
+export function amendWorkingContext(options) {
+  const { existing, identity, changes, invalidate, reason } = options;
+  assertWorkingContext(existing);
+  assertSameIdentity(existing.execution.identity, identity);
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes) ||
+    Object.keys(changes).some((key) => !['objective', 'requirements', 'riskFlags', 'invariants', 'validations'].includes(key))) {
+    throw new Error('Invalid amendment changes');
+  }
+  const next = structuredClone(existing);
+  if (changes.objective !== undefined) {
+    if (typeof changes.objective !== 'string' || !changes.objective.trim() || Buffer.byteLength(changes.objective) > 400) {
+      throw new Error('Invalid amendment objective');
+    }
+    next.objective = changes.objective.trim();
+  }
+  if (changes.requirements !== undefined) {
+    const patch = changes.requirements;
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch) ||
+      Object.keys(patch).some((key) => !['add', 'remove'].includes(key)) ||
+      ['add', 'remove'].some((key) => patch[key] !== undefined && !Array.isArray(patch[key]))) throw new Error('Invalid requirements patch');
+    for (const spec of patch.remove ?? []) if (!next.requirements.some((item) => `${item.kind}:${item.id}` === spec)) {
+      throw new Error(`Unknown amendment requirement: ${spec}`);
+    }
+    next.requirements = next.requirements.filter((item) => !(patch.remove ?? []).includes(`${item.kind}:${item.id}`));
+    for (const spec of unique(patch.add)) {
+      if (next.requirements.some((item) => `${item.kind}:${item.id}` === spec)) throw new Error(`Duplicate amendment requirement: ${spec}`);
+      next.requirements.push(requirementFromSpec(spec));
+    }
+  }
+  for (const field of ['riskFlags', 'invariants', 'validations']) if (changes[field] !== undefined) {
+    if (!Array.isArray(changes[field]) || changes[field].some((item) => typeof item !== 'string' || !item)) {
+      throw new Error(`Invalid amendment ${field}`);
+    }
+    next[field] = unique(changes[field]);
+  }
+  const definition = (state) => [state.objective, state.requirements.map((item) => `${item.kind}:${item.id}`).sort(),
+    ...['riskFlags', 'invariants', 'validations'].map((field) => [...state[field]].sort())];
+  if (stable(definition(existing)) === stable(definition(next))) throw new Error('NO_MATERIAL_AMENDMENT');
+  if (typeof reason !== 'string' || !reason.trim() || Buffer.byteLength(reason) > 240) throw new Error('Amendment reason required');
+  const map = next.contextMap;
+  const available = { artifacts: next.artifacts.map((item) => item.spec),
+    requirements: existing.requirements.map((item) => `${item.kind}:${item.id}`),
+    evidence: map?.evidence.map((item) => item.id) ?? [], validations: map?.validation.checks.map((item) => item.id) ?? [],
+    capabilities: unique([...(map?.capabilities.required ?? []), ...(map?.capabilities.optional ?? []),
+      ...(map?.knownGood.map((item) => item.capability).filter(Boolean) ?? [])]), graphify: map?.repositories ?? [] };
+  const affected = invalidate ?? available;
+  if (!affected || Object.keys(affected).sort().join() !== Object.keys(available).sort().join() ||
+    Object.keys(available).some((key) => !Array.isArray(affected[key]) || affected[key].some((id) => !available[key].includes(id)))) {
+    throw new Error('Amendment requires a complete, valid invalidation scope');
+  }
+  for (const item of next.artifacts) if (affected.artifacts.includes(item.spec)) invalidateWorkingProof(item, 'DIFF_BEFORE_FILE');
+  for (const item of next.requirements) if (affected.requirements.includes(`${item.kind}:${item.id}`)) invalidateWorkingProof(item, 'PENDING');
+  const repositories = options.repositories ?? [{ id: 'wayper', root: options.root ?? ROOT, logicalRoot: '.' }];
+  const current = captureRepositories(repositories);
+  // Repository membership changes would require ownership migration, outside this phase.
+  repositoryChanges(next.currentRepositories, current);
+  next.revisionHistory.push(structuredClone(next.execution));
+  next.execution = { identity: { ...identity, revision: identity.revision + 1 }, baseline: baselineFor(current) };
+  next.goalId = goalReference(next.execution.identity);
+  next.learningDelta.push({ revision: next.execution.identity.revision, reason: reason.trim() });
+  if (map) {
+    invalidateMapProofs(map, { ...affected, artifacts: affected.artifacts.map((spec) => {
+      const artifact = next.artifacts.find((item) => item.spec === spec);
+      return `${artifact.repository}:${artifact.path}${artifact.start === null ? '' : `#L${artifact.start}-L${artifact.end}`}`;
+    }) }, 'GOAL_AMENDED');
+    map.execution = structuredClone(next.execution); map.goalId = next.goalId;
+    map.router = null; map.taskFingerprint = null; map.routerFingerprint = null;
+    map.capabilities.knownGood = map.capabilities.knownGood.filter((id) => !affected.capabilities.includes(id));
+    for (const item of map.knownGood) item.validatedAtGoal = next.goalId;
+  }
+  const refreshed = refreshWorkingContext({ ...options, existing: next, identity: next.execution.identity,
+    objective: next.objective, requirements: [], riskFlags: [], invariants: [], validations: [], specs: [] });
+  refreshed.contextDecision = contextDecision(refreshed);
+  return refreshed;
 }
 
 function countArtifacts(root, specs) {
@@ -307,15 +458,37 @@ const list = (value) => value === undefined ? [] : [].concat(value);
 
 function statePath(root, args) {
   if (args.state) throw new Error('--state is unsupported; Working Context is canonical per Goal');
-  if (!/^[A-Za-z0-9._-]+$/.test(args['goal-id'] ?? '')) throw new Error('Safe --goal-id is required');
-  return path.join(root, '.wayper-context', `${args['goal-id']}.md`);
+  return contextStatePath(root, args['goal-run-id']);
 }
 
 function readState(file) {
   return fs.existsSync(file) ? parseWorkingContext(fs.readFileSync(file, 'utf8')) : null;
 }
 
+export function readWorkingContext(root, args) {
+  const state = readState(statePath(root, args));
+  if (!state) throw new Error('Working Context missing; use explicit start');
+  assertWorkingContext(state);
+  assertSameIdentity(state.execution.identity, { schemaVersion: 1, threadId: args['thread-id'],
+    goalRunId: args['goal-run-id'], revision: Number(args.revision) });
+  return state;
+}
+
 function writeState(file, state) {
+  assertWorkingContext(state);
+  const previous = readState(file);
+  if (previous) {
+    assertWorkingContext(previous);
+    const currentRevision = previous.execution.identity.revision;
+    const nextRevision = state.execution.identity.revision;
+    if (nextRevision === currentRevision) {
+      assertSameExecution(previous.execution, state.execution);
+    } else if (nextRevision !== currentRevision + 1 ||
+      stable(state.revisionHistory.at(-1)) !== stable(previous.execution)) throw new Error('Invalid persisted revision transition');
+    if (stable(state.revisionHistory.slice(0, currentRevision - 1)) !== stable(previous.revisionHistory)) {
+      throw new Error('Historical baseline is immutable');
+    }
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   try {
@@ -342,6 +515,7 @@ export function repositoryDefinitions(args, state) {
 function mapOptions(state, args, repositories, registry) {
   return {
     goalId: state.goalId,
+    execution: state.execution,
     taskClass: state.taskClass,
     tokenCeiling: state.budget.contextTokenCeiling,
     budgetReason: args['budget-reason'],
@@ -370,6 +544,9 @@ function formatRefresh(state) {
   const delta = state.artifacts.filter((item) => ['DIFF_BEFORE_FILE', 'READ_REQUIRED'].includes(item.status));
   return [
     `WAYPER CONTEXT ${state.goalId}`,
+    `GOAL_RUN_ID ${state.execution.identity.goalRunId}`,
+    `REVISION ${state.execution.identity.revision}`,
+    `BASELINE ${state.execution.baseline.fingerprint}`,
     ...Object.entries(counts).map(([status, count]) => `${status} ${count}`),
     ...delta.map((item) => `${item.status} ${item.spec}`),
     `CONTEXT_MAP v${state.contextMap.schemaVersion} ${state.contextMap.metrics.bytes} B / ${state.contextMap.metrics.tokenProxy} token proxy`,
@@ -409,15 +586,51 @@ async function main() {
     return;
   }
   const args = parseArgs(rawArgs);
+  if (args.state) throw new Error('--state is unsupported; Working Context is canonical per Goal');
+  if (args['goal-id']) {
+    if (!['inspect', 'validate'].includes(command) || !/^[A-Za-z0-9._-]+$/.test(args['goal-id'])) {
+      throw new Error('LEGACY_UNVERIFIED: --goal-id is inspection-only; use explicit start or --goal-run-id');
+    }
+    const legacy = readState(path.join(ROOT, '.wayper-context', `${args['goal-id']}.md`));
+    if (!legacy || legacy.schemaVersion !== 1) throw new Error('Legacy Working Context missing');
+    console.log(JSON.stringify({ status: 'LEGACY_UNVERIFIED', decision: 'REVALIDATION_REQUIRED',
+      ...(command === 'inspect' ? { state: legacy } : {}) }, null, 2));
+    if (command === 'validate') process.exitCode = 1;
+    return;
+  }
+  if (command === 'start') {
+    if (args['goal-run-id'] || args.revision) throw new Error('Start always creates a new goalRunId at revision 1');
+    const repositories = repositoryDefinitions(args);
+    const state = refreshMap(startWorkingContext({ root: ROOT, repositories, threadId: args['thread-id'],
+      objective: args.objective, taskClass: args.class, specs: list(args.track), requirements: list(args.requirement),
+      riskFlags: list(args.risk), invariants: list(args.invariant), validations: list(args.validation) }), args, repositories);
+    const file = contextStatePath(ROOT, state.execution.identity.goalRunId);
+    if (fs.existsSync(file)) throw new Error('Goal run already exists');
+    writeState(file, state);
+    console.log(formatRefresh(state));
+    return;
+  }
   const file = statePath(ROOT, args);
-  const current = readState(file);
+  const current = readWorkingContext(ROOT, args);
+  if (command === 'amend') {
+    const repositories = repositoryDefinitions(args, current);
+    const { registry } = loadCapabilityFiles();
+    const state = refreshMap(amendWorkingContext({ root: ROOT, repositories, registry, existing: current,
+      identity: current.execution.identity, taskClass: current.taskClass,
+      changes: JSON.parse(args.changes), invalidate: args.invalidate ? JSON.parse(args.invalidate) : undefined,
+      reason: args.reason }), args, repositories);
+    writeState(file, state);
+    console.log(formatRefresh(state));
+    return;
+  }
   if (command === 'refresh') {
     const repositories = repositoryDefinitions(args, current);
     let state = refreshWorkingContext({
       root: ROOT,
       repositories,
       existing: current,
-      goalId: args['goal-id'],
+      identity: current.execution.identity,
+      objective: args.objective,
       taskClass: args.class ?? current?.taskClass,
       specs: list(args.track),
       requirements: list(args.requirement),
@@ -432,7 +645,10 @@ async function main() {
   }
   if (command === 'prove') {
     if (!current) throw new Error(`Working Context missing: ${file}`);
-    let state = proveWorkingContext(current, {
+    const repositories = repositoryDefinitions(args, current);
+    const refreshed = refreshWorkingContext({ root: ROOT, repositories, existing: current,
+      identity: current.execution.identity, taskClass: current.taskClass });
+    let state = proveWorkingContext(refreshMap(refreshed, args, repositories), {
       artifact: args.artifact,
       requirement: args.requirement,
       evidence: args.evidence,
@@ -445,7 +661,8 @@ async function main() {
   if (!current?.contextMap) throw new Error(`Context Map missing: ${file}`);
   const repositories = repositoryDefinitions(args, current);
   if (command === 'record') {
-    let state = structuredClone(current);
+    let state = refreshMap(refreshWorkingContext({ root: ROOT, repositories, existing: current,
+      identity: current.execution.identity, taskClass: current.taskClass }), args, repositories);
     const data = JSON.parse(args.data);
     let registry;
     if ((args.kind === 'known-good' && data.capability) || data.capabilityRefs?.length) {
@@ -464,7 +681,8 @@ async function main() {
   }
   if (command === 'router') {
     const { routeTask } = await import('./wayper-agent-router.mjs');
-    let state = structuredClone(current);
+    let state = refreshMap(refreshWorkingContext({ root: ROOT, repositories, existing: current,
+      identity: current.execution.identity, taskClass: current.taskClass }), args, repositories);
     const { registry } = loadCapabilityFiles();
     state.contextMap = integrateRouterOutput(state.contextMap, routeTask(JSON.parse(args.data), registry), {
       tokenCeiling: state.budget.contextTokenCeiling,
@@ -479,6 +697,7 @@ async function main() {
   if (command === 'inspect') {
     const map = current.contextMap;
     console.log(JSON.stringify({ schemaVersion: map.schemaVersion, goalId: map.goalId,
+      execution: current.execution, revisionHistory: current.revisionHistory,
       repositories: map.repositories, taskFingerprint: map.taskFingerprint,
       routerFingerprint: map.routerFingerprint, capabilities: map.capabilities,
       router: map.router, risks: map.risks, validation: map.validation, metrics: map.metrics }, null, 2));
@@ -503,7 +722,7 @@ async function main() {
     process.exitCode = result.status === 'VALID' ? 0 : 1;
     return;
   }
-  throw new Error('Usage: wayper-context.mjs refresh|prove|record|router|inspect|stats|evidence|gaps|validate|benchmark');
+  throw new Error('Usage: wayper-context.mjs start|amend|refresh|prove|record|router|inspect|stats|evidence|gaps|validate|benchmark');
 }
 
 if (path.resolve(process.argv[1] ?? '') === SCRIPT_PATH) {

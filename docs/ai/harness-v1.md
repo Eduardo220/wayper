@@ -9,8 +9,8 @@
 > Budget Control (`HARNESS`, não end-to-end) + Evidence-backed Finalization
 > Reserve (`ACTIVE`) + Persistent Working Context + Context Efficiency +
 > Registry Schema V2 + Repository-scoped Graphify + Goal-scoped Context Map +
-> Packetized Specialist Dispatch + Structured Handoff + Selective Router,
-> 2026-09-02<br>
+> Packetized Specialist Dispatch + Structured Handoff + Selective Router +
+> V2 Fase 1 Goal Execution Identity/Baseline, 2026-09-10<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -46,6 +46,13 @@ AGENTS.md
 detalhado. Este arquivo possui arquitetura e ownership; auditorias são apenas
 evidência datada.
 
+A Fase 1 V2 evolui o mesmo Working Context/Map para schema 2. `threadId`
+identifica conversa; `goalRunId` identifica execução; `revision` versiona a
+definição; baseline conserva o estado inicial de cada revisão. O lifecycle
+explícito e a leitura segura de legado pertencem a
+[`working-context.md`](working-context.md). Packet/Handoff v1 transportam a
+referência por `goalId` e fingerprint do Map. Fases posteriores não estão ativadas.
+
 ## Recursos project-scoped
 
 - `docs/ai/task-classification.md` e `docs/ai/context-routing.md`: decisão
@@ -77,9 +84,10 @@ evidência datada.
 - `docs/ai/token-economy.md`: modos `COMPACT/CLEAR/EXACT`, leitura progressiva,
   briefs mínimos, compaction nativa e medição sem confundir bytes com billing.
 - `docs/ai/working-context.md`, `.agents/skills/wayper-context-efficiency/`,
-  `scripts/wayper-context.mjs`, sua biblioteca `scripts/wayper-context-map.mjs` e
+  `scripts/wayper-context.mjs`, suas bibliotecas `scripts/wayper-context-map.mjs` e
+  `scripts/wayper-context-identity.mjs` e
   `docs/ai/context-efficiency-evals.json`: reuse/diff/fingerprint/delta e
-  `CONTEXT_MAP` schema v1 por Goal, budgets, validator e benchmark/gate; um único
+  `CONTEXT_MAP` schema v2 por execução/revisão, budgets, validator e benchmark/gate; um único
   Markdown é o estado persistente e o helper não decide semântica.
 - `docs/ai/capability-architecture.md` e
   `docs/ai/capability-registry.json`: vocabulário, policy skill-vs-reference,

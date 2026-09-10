@@ -94,7 +94,7 @@ basta.
 | geometry/Turf/coordinates/MapLibre data | testes geo e geospatial reviewer |
 | capability registry/closure/external acquisition evals | `npm run quality:capabilities`; source evidence, provenance e custo permanente |
 | capability/profile router, fingerprint, receipt ou evals | `npm run quality:router`; determinismo, refs, policy, coverage, fallback e zero spawn |
-| Working Context/efficiency skill/helper/evals | `npm run quality:context`; fingerprints, invalidation, budgets e preservação declarada de risk/invariants/validations/tests |
+| Working Context/efficiency skill/helper/evals | `npm run quality:context`; isolamento por goalRunId/revision, baseline imutável, resume/amendment, legado sem herança, fingerprints, invalidation, budgets e preservação declarada de risk/invariants/validations/tests |
 | Context Packet schema/builder/evals | `npm run quality:packets` (também incluído em `quality:context`); determinism, stale/invalid refs, repository leakage, coverage, bloat e duplicate materialization |
 | Structured Handoff schema/validator/selected-specialist adapter | `npm run quality:handoffs`; identity/refs/hash, grounding, source expansion, read-only, selection boundary, fallback, budget, bloat, correction única e 20 evals |
 | design contract/registry/routing evals | `npm run quality:design`; ownership visual, links e zero load irrelevante |

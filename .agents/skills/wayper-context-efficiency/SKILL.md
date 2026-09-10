@@ -29,25 +29,35 @@ the current Goal/slice needs them.
 
 ## Goal start and resume
 
-1. Read the native Goal and obtain its stable `threadId` when available.
+1. Read the Goal and obtain its host `threadId`. A thread is not a Goal execution.
+   On an explicit new Goal, create a fresh project-owned `goalRunId`; never infer
+   equality from text or import another run. On resume, use the recorded
+   `goalRunId` and `revision` with that `threadId`. Missing identity requires
+   locating the explicit execution reference, not selecting by thread alone.
 2. Ground in branch/status, then classify task, flags, domains, gate, review, and
    orchestration route before broad reading.
 3. Track only the initial owner/ranges and explicit proof requirements:
 
    ```sh
-   npm run context:refresh -- --goal-id <threadId> --class <TASK_CLASS> \
+   node scripts/wayper-context.mjs start --thread-id <threadId> \
+     --objective '<logical objective>' --class <TASK_CLASS> \
      --track AGENTS.md --track docs/00-fontes-do-projeto.md#L1-L32 \
      --risk <RISK_FLAG> --invariant <INVARIANT> --validation <CHECK> \
      --requirement SUCCESS:<criterion>
    ```
 
-   The same refresh initializes/refreshes repository state and staleness in the
+   Store the returned `GOAL_RUN_ID` and `REVISION`. Start captures the immutable
+   revision baseline; subsequent refresh updates only current repository state.
+   The same command initializes repository state and staleness in the
    embedded `CONTEXT_MAP`; do not create another map file.
 
    Prefix site artifacts with `wayper-site:` and pass both repository definitions;
    never encode a sibling checkout with `../` in an artifact path.
 
-4. On resume, refresh the existing Goal state before rereading. Follow each
+4. On resume, run `context:refresh -- --thread-id <threadId> --goal-run-id
+   <goalRunId> --revision <N>` before rereading. Every other command, including
+   Packet/Handoff CLI, uses this exact selector. Legacy `--goal-id` is
+   inspection-only and yields `LEGACY_UNVERIFIED`, never reusable proof. Follow each
    artifact status:
    - `KNOWN_GOOD_UNCHANGED`: reuse the recorded proof; do not reread.
    - `REUSE_BEFORE_READ`: reuse for discovery, but obtain proof before a material
@@ -55,8 +65,14 @@ the current Goal/slice needs them.
    - `DIFF_BEFORE_FILE`: inspect the current diff first, then only affected
      symbols/ranges, callers, and tests.
    - `READ_REQUIRED`: load the smallest sufficient range.
-5. Add dependencies only after source confirms them. Refresh just the added or
-   changed artifact specs; untouched fingerprints and evidence remain valid.
+5. Material amendments use explicit `amend --changes <JSON> --reason <reason>`
+   with the current selector; keep the run ID and consume revision N+1. Use
+   partial `--invalidate` only when source/dependencies prove the unaffected
+   slices; otherwise default to full invalidation. Copy/metadata alone is not an
+   amendment. Never revise the historical baseline.
+   Add dependencies only after source confirms them. Refresh just the added or
+   changed artifact specs; repository changes also revalidate tracked artifacts.
+   Adding/changing requirements, risks, invariants or checks requires amendment.
 6. Record proof with `context:prove`. Evidence must name a source range, command,
    test, validator, or observed behavior; intent and summaries do not qualify.
 7. Add only new compact map entries with `wayper-context.mjs record`; use

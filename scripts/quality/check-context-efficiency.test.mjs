@@ -13,6 +13,7 @@ import {
   parseWorkingContext,
   proveWorkingContext,
   refreshWorkingContext,
+  startWorkingContext,
   renderWorkingContext,
 } from '../wayper-context.mjs';
 import {
@@ -27,11 +28,15 @@ import { evaluateContextMapCases } from './evaluate-context-map-cases.mjs';
 import { routeTask } from '../wayper-agent-router.mjs';
 import { loadCapabilityFiles } from './check-capability-routing.mjs';
 import { fingerprintCorpus } from './check-graph-scopes.mjs';
+import { createGoalExecution, goalReference } from '../wayper-context-identity.mjs';
 
 function fixtureRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wayper-context-'));
   fs.writeFileSync(path.join(root, 'a.md'), 'stable owner\nunrelated tail\n');
   fs.writeFileSync(path.join(root, 'b.md'), 'mutable dependency\n');
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['add', '.'], { cwd: root });
+  execFileSync('git', ['-c', 'user.name=Wayper', '-c', 'user.email=wayper@example.test', 'commit', '-qm', 'fixture'], { cwd: root });
   return root;
 }
 
@@ -63,14 +68,18 @@ function graphFixture(root, repository = 'wayper') {
 }
 
 const repo = (id, root) => ({ id, root, logicalRoot: id === 'wayper' ? '.' : '../wayper-site' });
-const mapOptions = (goalId, repositories, extra = {}) => ({
-  goalId, taskClass: 'ARCHITECTURAL', tokenCeiling: 16_000, repositories,
-  risks: ['BUILD_TOOLING'], validations: ['quality:context'], workingArtifacts: [], ...extra,
-});
+const mapOptions = (threadId, repositories, extra = {}) => {
+  const execution = createGoalExecution({ threadId, repositories });
+  return { execution, goalId: goalReference(execution.identity), taskClass: 'ARCHITECTURAL', tokenCeiling: 16_000, repositories,
+    risks: ['BUILD_TOOLING'], validations: ['quality:context'], workingArtifacts: [], ...extra };
+};
+const workingFixture = (options) => options.existing
+  ? refreshWorkingContext({ ...options, identity: options.existing.execution.identity })
+  : startWorkingContext({ ...options, threadId: options.goalId, objective: options.goalId });
 
 test('CE1 Working Context round-trips and stops only after proof', () => {
   const root = fixtureRoot();
-  let state = refreshWorkingContext({
+  let state = workingFixture({
     root,
     goalId: 'goal-1',
     taskClass: 'BOUNDED',
@@ -84,7 +93,7 @@ test('CE1 Working Context round-trips and stops only after proof', () => {
   assert.deepEqual(state.artifacts.map((item) => item.status), ['READ_REQUIRED', 'READ_REQUIRED']);
   assert.deepEqual(state.riskFlags, ['BUILD_TOOLING']);
   assert.equal(state.contextDecision, 'CONTINUE_CONTEXT');
-  state = refreshWorkingContext({
+  state = workingFixture({
     root,
     existing: state,
     goalId: 'goal-1',
@@ -109,7 +118,7 @@ test('CE1 Working Context round-trips and stops only after proof', () => {
 
 test('CE2 fingerprints invalidate only changed context and preserve unchanged ranges', () => {
   const root = fixtureRoot();
-  let state = refreshWorkingContext({
+  let state = workingFixture({
     root,
     goalId: 'goal-2',
     taskClass: 'INVESTIGATION',
@@ -121,7 +130,7 @@ test('CE2 fingerprints invalidate only changed context and preserve unchanged ra
 
   fs.writeFileSync(path.join(root, 'a.md'), 'stable owner\nchanged outside tracked range\n');
   fs.writeFileSync(path.join(root, 'b.md'), 'changed dependency\n');
-  state = refreshWorkingContext({
+  state = workingFixture({
     root,
     existing: state,
     goalId: 'goal-2',
@@ -135,7 +144,7 @@ test('CE2 fingerprints invalidate only changed context and preserve unchanged ra
   assert.deepEqual(changed.evidence, []);
   assert.deepEqual(changed.invalidatedEvidence, ['b.md:1']);
 
-  state = refreshWorkingContext({
+  state = workingFixture({
     root,
     existing: state,
     goalId: 'goal-2',
@@ -151,7 +160,7 @@ test('CE3 artifact paths and ranges cannot escape or overrun the repository', ()
   assert.throws(() => fingerprintArtifact(root, 'a.md#L1-L99'), /range exceeds/);
   assert.throws(() => sourceFingerprint(root, 'a.md', 'L1-L99'), /range exceeds/);
   const site = fixtureRoot();
-  let state = refreshWorkingContext({ root, repositories: [repo('wayper', root), repo('wayper-site', site)],
+  let state = workingFixture({ root, repositories: [repo('wayper', root), repo('wayper-site', site)],
     goalId: 'cross-repo-working-context', taskClass: 'BOUNDED', specs: ['wayper-site:a.md#L1-L1'],
     requirements: ['SUCCESS:site'] });
   assert.equal(state.artifacts[0].repository, 'wayper-site');
@@ -173,16 +182,17 @@ test('CE4 benchmarks reduce context without dropping declared quality', () => {
 test('CM1 map stays Goal-scoped inside Working Context with deterministic repository state', () => {
   const root = gitFixture();
   const repositories = [repo('wayper', root)];
-  const map = refreshContextMap(null, mapOptions('map-goal-1', repositories));
-  const state = refreshWorkingContext({ root, goalId: 'map-goal-1', taskClass: 'ARCHITECTURAL',
+  const state = workingFixture({ root, goalId: 'map-goal-1', taskClass: 'ARCHITECTURAL',
     specs: ['owner.js'], requirements: ['SUCCESS:map'] });
+  const options = mapOptions('map-goal-1', repositories, { execution: state.execution, goalId: state.goalId });
+  const map = refreshContextMap(null, options);
   const restored = parseWorkingContext(renderWorkingContext({ ...state, contextMap: map }));
 
-  assert.equal(restored.contextMap.schemaVersion, 1);
+  assert.equal(restored.contextMap.schemaVersion, 2);
   assert.deepEqual(restored.contextMap.repositories, ['wayper']);
   assert.match(restored.contextMap.repositoryState.wayper.dirtyFingerprint, /^sha256:/);
   assert.equal(validateContextMap(map, { repositoryDefinitions: repositories }).status, 'VALID');
-  assert.equal(JSON.stringify(refreshContextMap(map, mapOptions('map-goal-1', repositories))), JSON.stringify(map));
+  assert.equal(JSON.stringify(refreshContextMap(map, options)), JSON.stringify(map));
 });
 
 test('CM2 evidence deduplicates normalized claims and becomes STALE after source change', () => {
@@ -225,9 +235,10 @@ test('CM2b STOP_WHEN_PROVEN remains evidence-gated by the Context Map', () => {
   const root = gitFixture();
   const repositories = [repo('wayper', root)];
   const options = mapOptions('map-stop', repositories, { validations: ['quality:context'] });
-  let state = refreshWorkingContext({ root, goalId: 'map-stop', taskClass: 'ARCHITECTURAL',
+  let state = workingFixture({ root, goalId: 'map-stop', taskClass: 'ARCHITECTURAL',
     specs: ['owner.js'], requirements: ['SUCCESS:map'], riskFlags: ['BUILD_TOOLING'],
     invariants: ['ONE_WRITER'], validations: ['quality:context'] });
+  options.execution = state.execution; options.goalId = state.goalId;
   state = proveWorkingContext(state, { artifact: 'owner.js', evidence: 'owner.js:1' });
   state = proveWorkingContext(state, { requirement: 'SUCCESS:map', evidence: 'quality:context PASS' });
   let map = refreshContextMap(null, options);
@@ -289,7 +300,7 @@ test('CM3 router receipts stay capability-valid and Graphify remains repository-
   const { registry } = loadCapabilityFiles();
   const options = mapOptions('map-goal-3', repositories, { registry });
   let map = refreshContextMap(null, options);
-  const output = routeTask({ schemaVersion: 1, goalId: 'map-goal-3', operation: 'CONTEXT_MAP',
+  const output = routeTask({ schemaVersion: 1, goalId: options.goalId, operation: 'CONTEXT_MAP',
     repositories: ['wayper', 'wayper-site'], changedFiles: [], candidatePaths: [],
     riskFlags: ['BUILD_TOOLING'], knownCapabilities: ['context-efficiency'],
     knownGoodCapabilities: [], capabilityAssessmentComplete: true, structuralUncertainty: false,
@@ -462,11 +473,11 @@ test('CM5b the CLI rejects a competing Working Context state path', () => {
 });
 
 test('CM5c the canonical CLI fingerprints a repository-qualified site artifact', () => {
-  const goalId = `map-cross-cli-${process.pid}`;
-  const stateFile = path.join(ROOT, '.wayper-context', `${goalId}.md`);
-  const result = spawnSync(process.execPath, [path.join(ROOT, 'scripts/wayper-context.mjs'), 'refresh',
-    '--goal-id', goalId, '--class', 'BOUNDED', '--repository', 'wayper=.',
+  const result = spawnSync(process.execPath, [path.join(ROOT, 'scripts/wayper-context.mjs'), 'start',
+    '--thread-id', `map-cross-cli-${process.pid}`, '--objective', 'Cross repo CLI', '--class', 'BOUNDED', '--repository', 'wayper=.',
     '--repository', 'wayper-site=../wayper-site', '--track', 'wayper-site:package.json'], { encoding: 'utf8' });
+  const goalRunId = result.stdout.match(/GOAL_RUN_ID (\S+)/)?.[1];
+  const stateFile = path.join(ROOT, '.wayper-context', `${goalRunId}.md`);
   try {
     assert.equal(result.status, 0, result.stderr);
     const state = parseWorkingContext(fs.readFileSync(stateFile, 'utf8'));
