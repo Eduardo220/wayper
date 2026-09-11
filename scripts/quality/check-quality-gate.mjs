@@ -156,8 +156,8 @@ export function classifyCommand(result) {
   };
 }
 
-export function synthesizeQuality({ lint, size, architecture, router, evidence, validation, diff }) {
-  const checks = { size, architecture, router, evidence, validation, diff };
+export function synthesizeQuality({ lint, size, architecture, router, evidence, validation, completion, diff }) {
+  const checks = { size, architecture, router, evidence, validation, ...(completion ? { completion } : {}), diff };
   const blocking = [];
   const toolFailures = [];
 
@@ -196,6 +196,7 @@ export function formatQuality(result, { details = false, json = false } = {}) {
     `router: ${result.checks.router.status === 'pass' ? 'shadow policy valid' : result.checks.router.status}`,
     `evidence: ${result.checks.evidence.status === 'pass' ? 'receipt contracts valid' : result.checks.evidence.status}`,
     `validation: ${result.checks.validation.status === 'pass' ? 'planner contracts valid' : result.checks.validation.status}`,
+    ...(result.checks.completion ? [`completion: ${result.checks.completion.status === 'pass' ? 'boundary contracts valid' : result.checks.completion.status}`] : []),
     `diff: ${result.checks.diff.status === 'pass' ? 'clean' : result.checks.diff.status}`,
   ];
   if (!details) return lines.join('\n');
@@ -232,13 +233,15 @@ function run(command, args) {
 
 async function executeQualityGate() {
   const eslintCli = path.join(ROOT, 'node_modules/eslint/bin/eslint.js');
-  const [lintRun, sizeRun, architectureRun, routerRun, evidenceRun, validationRun, diffCheckRun, diffRun] = await Promise.all([
+  const [lintRun, sizeRun, architectureRun, routerRun, evidenceRun, validationRun, completionRun, diffCheckRun, diffRun] = await Promise.all([
     run(process.execPath, [eslintCli, '.', '--format', 'json']),
     run(process.execPath, [path.join(ROOT, 'scripts/quality/check-code-size.mjs')]),
     run(process.execPath, [path.join(ROOT, 'scripts/quality/check-architecture.mjs')]),
     run(process.execPath, ['--test', path.join(ROOT, 'scripts/wayper-agent-router.test.mjs')]),
     run(process.execPath, ['--test', path.join(ROOT, 'scripts/quality/check-evidence-receipts.test.mjs')]),
     run(process.execPath, ['--test', path.join(ROOT, 'scripts/quality/check-validation-planner.test.mjs')]),
+    run(process.execPath, ['--test', path.join(ROOT, 'scripts/quality/check-completion-boundary.test.mjs'),
+      path.join(ROOT, 'scripts/quality/check-completion-adversarial.test.mjs')]),
     run('git', ['diff', '--check', 'HEAD', '--']),
     run('git', ['diff', '--no-ext-diff', '--no-renames', '--unified=0', 'HEAD', '--']),
   ]);
@@ -259,6 +262,7 @@ async function executeQualityGate() {
     router: classifyCommand(routerRun),
     evidence: classifyCommand(evidenceRun),
     validation: classifyCommand(validationRun),
+    completion: classifyCommand(completionRun),
     diff,
   });
 }

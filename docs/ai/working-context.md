@@ -8,6 +8,13 @@
 
 ## Responsabilidade
 
+A conclusão conectada é definida em [Completion Boundary V1](completion-boundary.md).
+`completion`/`completion-request` usam a execução persistida e retornam decisão
+e blockers estruturados. `inspect` expõe completion e stale status. O índice
+bounded fica em `contextMap.completion`; findings em `contextMap.findings`,
+gravados por `record --kind finding`. Isso não substitui contextDecision:
+STOP_WHEN_PROVEN, Validation COMPLETE, ADMISSIBLE e host DONE são distintos.
+
 Working Context conserva apenas o estado necessário para continuar um Goal sem
 reler ou redescobrir contexto já provado. Cada Goal usa um Markdown local em
 `.wayper-context/<goalRunId>.md`; o diretório é ignorado pelo Git, persiste entre
@@ -116,7 +123,9 @@ Packet e Handoff CLI usam o mesmo seletor triplo. Revisão ausente, diferente ou
 thread divergente falha antes de reutilizar/escrever estado. `start` nunca abre
 arquivo por thread; `refresh` não cria missão. O path é canônico, `--state` é
 rejeitado e cada write usa temporary file + rename atômico no mesmo diretório.
-Não há ponteiro de “Goal atual da thread”, lease, CAS ou merge entre waves.
+Não há descoberta de “Goal atual da thread”, lease, CAS ou merge entre waves.
+`completion-request` pode registrar vínculo explícito para o Stop contendo a
+identidade completa, baseline e turn opcional; não seleciona nem cria Goal pela thread.
 
 ### Amendment e invalidação
 

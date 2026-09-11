@@ -69,7 +69,9 @@ test('HB4 quality tooling selects only directly associated tests', () => {
     [
       'scripts/quality/check-architecture.test.mjs',
       'scripts/quality/check-code-size.test.mjs',
+      'scripts/quality/check-completion-adversarial.test.mjs',
       'scripts/quality/check-completion-backstop.test.mjs',
+      'scripts/quality/check-completion-boundary.test.mjs',
       'scripts/quality/check-quality-gate.test.mjs',
     ]
   );
@@ -81,6 +83,8 @@ test('HB4 quality tooling selects only directly associated tests', () => {
   assert.deepEqual(
     relevantQualityTests(['scripts/wayper-context-map.mjs']),
     [
+      'scripts/quality/check-completion-adversarial.test.mjs',
+      'scripts/quality/check-completion-boundary.test.mjs',
       'scripts/quality/check-context-efficiency.test.mjs',
       'scripts/wayper-structured-handoff.test.mjs',
     ]
@@ -94,10 +98,13 @@ test('HB4 quality tooling selects only directly associated tests', () => {
     ['scripts/wayper-structured-handoff.test.mjs']
   );
   assert.deepEqual(relevantQualityTests(['scripts/wayper-context-packet.mjs']), [
+    'scripts/quality/check-completion-adversarial.test.mjs',
+    'scripts/quality/check-completion-boundary.test.mjs',
     'scripts/quality/check-context-efficiency.test.mjs',
     'scripts/wayper-structured-handoff.test.mjs',
   ]);
-  assert.deepEqual(relevantQualityTests(['package.json']), ['scripts/quality/check-evidence-receipts.test.mjs',
+  assert.deepEqual(relevantQualityTests(['package.json']), ['scripts/quality/check-completion-adversarial.test.mjs',
+    'scripts/quality/check-completion-boundary.test.mjs', 'scripts/quality/check-evidence-receipts.test.mjs',
     'scripts/quality/check-validation-planner.test.mjs',
     'scripts/wayper-structured-handoff.test.mjs']);
 });

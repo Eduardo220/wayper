@@ -7,6 +7,7 @@ import { readWorkingContext, repositoryDefinitions, ROOT } from './wayper-contex
 import { sourceFingerprint, validateContextMap } from './wayper-context-map.mjs';
 import { buildContextPacket, validateContextPacket } from './wayper-context-packet.mjs';
 import { validateRouterSelectionReceipt } from './wayper-agent-router.mjs';
+import { digest } from './wayper-validation-policy.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const STRUCTURED_HANDOFF_SCHEMA_VERSION = 1;
@@ -393,6 +394,17 @@ export function planContextMapMerge(handoff, options = {}) {
   const validation = validateStructuredHandoff(handoff, options);
   if (validation.status !== 'VALID') throw new Error(validation.errors.join('; '));
   return {
+    completionAuthority: 'NONE',
+    findings: handoff.findings.flatMap((finding) => {
+      const evidence = [...options.contextMap.evidence, ...handoff.newEvidence].filter((e) => finding.evidenceRefs.includes(e.id));
+      const repositories = [...new Set(evidence.map((e) => e.repository))];
+      if (!repositories.length && options.packet.repositories.length === 1) repositories.push(options.packet.repositories[0]);
+      return repositories.map((repository) => ({ id: `F-${digest([handoff.taskId, finding.id, repository]).slice(7, 31)}`,
+        repository, paths: [...new Set(evidence.filter((e) => e.repository === repository).map((e) => e.path))].sort(),
+        severity: finding.severity, materiality: ['CRITICAL', 'HIGH'].includes(finding.severity) ? 'BLOCKING' :
+          finding.severity === 'INFO' ? 'INFORMATIONAL' : 'NON_BLOCKING', status: 'OPEN', claim: finding.claim,
+        scenario: finding.scenario, relatedRequirementIds: [], receiptIds: [], resolution: null }));
+    }),
     existingEvidenceReceiptIds: [...(handoff.existingEvidenceReceiptIds ?? [])],
     validationFindings: (handoff.validationFindings ?? []).map((item) => ({ ...item, origin: 'HANDOFF_ASSERTED',
       verification: 'UNVERIFIED', ownerAction: 'PLANNER_REASSESSMENT_REQUIRED' })),

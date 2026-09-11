@@ -37,9 +37,9 @@ AGENTS.md
               -> Context Packet derivado para target explícito
               -> waves/read-only specialists quando necessário
                  -> execution + evidence + validation pelo agente principal
-                    -> completion eligibility + final falsification
+                    -> Completion Boundary conectado + final falsification
                        -> Goal Execution Report
-                          -> Stop backstop determinístico
+                          -> Stop vinculado consulta a mesma API / host terminal separado
 ```
 
 [`docs/14-instrucoes-para-ia.md`](../14-instrucoes-para-ia.md) é o workflow
@@ -58,7 +58,9 @@ bounded no Packet/Handoff. Prova material exige receipt verificado e compatível
 texto, shell direto e assertions não substituem execução observada. A Fase 3
 acrescenta [Validation Planner V1](validation-planner.md): facts estruturados
 selecionam requisitos L0-L6 e receipts existentes produzem assessment. Planner
-não executa checks nem conclui Goals. Fases 4+ não estão ativadas.
+não executa checks nem conclui Goals. A Fase 4 conecta
+[Completion Boundary V1](completion-boundary.md) aos owners e ao Stop vinculado.
+Feedback Loop e fases posteriores não estão ativados.
 
 ## Recursos project-scoped
 
@@ -92,12 +94,16 @@ não executa checks nem conclui Goals. Fases 4+ não estão ativadas.
   falsification, report e stop conditions; carregado somente para intenção contínua.
 - `docs/ai/meta-goal-completion-evals.json` e
   `scripts/quality/check-meta-goal-completion.mjs`: evals machine-readable e
-  shadow `OLD_DECISION`/`NEW_DECISION`, incluindo budget; não são runtime de produção.
+  shadow histórico, incluindo budget; evaluator conectado delega à Completion
+  Boundary e fixtures legadas não concedem eligibility.
+- `docs/ai/completion-boundary.md` e `scripts/wayper-completion-boundary.mjs`:
+  admissibilidade canônica, conectada a Identity/Context/Evidence/Validation e
+  findings/gaps; não realiza a transição terminal do host.
 - `docs/ai/memory-policy.md` e `docs/ai/memory/index.json`: promotion de
   hard-earned learning e discovery por domínio/risco; index/topics nunca são
   contexto permanente nem source of truth.
 - `docs/ai/hooks-and-gates.md`: capability audit e completion backstop
-  project-scoped; automatiza somente gates determinísticos por changed-scope.
+  project-scoped; gates determinísticos e admissibilidade para Stop explicitamente vinculado.
 - `docs/ai/token-economy.md`: modos `COMPACT/CLEAR/EXACT`, leitura progressiva,
   briefs mínimos, compaction nativa e medição sem confundir bytes com billing.
 - `docs/ai/working-context.md`, `.agents/skills/wayper-context-efficiency/`,

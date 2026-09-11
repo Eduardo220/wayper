@@ -5,6 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import {
   integrateRouterOutput,
+  finalizeContextMap,
   recordContextEntry,
   refreshContextMap,
   validateContextMap,
@@ -19,6 +20,9 @@ import {
 import { RECEIPT_ID, requirementPolicy } from './wayper-evidence-receipts.mjs';
 import { evaluateEvidenceRequirement } from './wayper-evidence-store.mjs';
 import { refreshContextValidationPlan } from './wayper-validation-store.mjs';
+import { completionDefinition, completionIndex, validateCompletionRequirements, completionRequirementPolicy } from './wayper-completion-policy.mjs';
+import { assessGoalCompletion } from './wayper-completion-boundary.mjs';
+import { persistCompletionAssessment, recordCompletionAttempt, bindCompletionStop } from './wayper-completion-store.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
@@ -150,12 +154,20 @@ export function workingValidationStatus(state, options = {}) {
   return refreshContextValidationPlan(state.contextMap, proofOptions(state, options));
 }
 
+export function workingCompletionStatus(state, options = {}) {
+  const assessment = assessGoalCompletion({ root: options.root ?? ROOT, identity: state.execution?.identity });
+  return { decision: assessment.decision, blockers: assessment.blockers, assessment: assessment.assessmentId,
+    recordedAssessment: state.contextMap?.completion?.assessmentId ?? null,
+    recordedStatus: !state.contextMap?.completion ? 'LEGACY_UNASSESSED' :
+      state.contextMap.completion.assessmentId === assessment.assessmentId ? 'CURRENT' : 'STALE' };
+}
+
 export function contextDecision(state, options = {}) {
   try { assertWorkingContext(state); } catch { return 'REVALIDATION_REQUIRED'; }
   const accepts = (policy, evidence) => evaluateEvidenceRequirement(policy, evidence, proofOptions(state, options)).status === 'SATISFIED';
   const requirements = state.requirements ?? [];
   const requirementsProven = requirements.length > 0 && requirements.every(
-    (item) => item.status === 'SATISFIED' && accepts(requirementPolicy(item), item.evidence),
+    (item) => item.status === 'SATISFIED' && accepts(completionRequirementPolicy(item), item.evidence),
   );
   const artifactsProven = state.artifacts.length > 0
     && state.artifacts.every((item) => PROVEN.has(item.status) && accepts(artifactPolicy(item), item.evidence));
@@ -241,10 +253,17 @@ export function startWorkingContext(options) {
   const existing = newState(execution, objective, options.taskClass);
   existing.requirements = unique(options.requirements).map(requirementFromSpec);
   for (const field of ['riskFlags', 'invariants', 'validations']) existing[field] = unique(options[field]);
+  existing.definitionFingerprint = completionDefinition(existing);
   return refreshWorkingContext({ ...options, repositories, existing, identity: execution.identity });
 }
 
 function requirementFromSpec(spec) {
+  if (spec && typeof spec === 'object') {
+    if (Object.keys(spec).some((key) => !['kind', 'id', 'blocking', 'receiptRequirement'].includes(key))) throw new Error('Invalid requirement definition');
+    const item = { ...spec, status: 'PENDING', evidence: [] };
+    if (!validateCompletionRequirements([item])) throw new Error('Invalid requirement definition');
+    return item;
+  }
   const separator = spec.indexOf(':');
   if (separator < 1 || separator === spec.length - 1) throw new Error(`Invalid requirement: ${spec}`);
   return { kind: spec.slice(0, separator), id: spec.slice(separator + 1), status: 'PENDING', evidence: [] };
@@ -322,7 +341,7 @@ export function refreshWorkingContext({
   }
   state.requirements = [...knownRequirements.values()];
   for (const item of state.requirements) if (item.status === 'SATISFIED' && evaluateEvidenceRequirement(
-    requirementPolicy(item), item.evidence, proofOptions(state, { root, repositories })).status !== 'SATISFIED') {
+    completionRequirementPolicy(item), item.evidence, proofOptions(state, { root, repositories })).status !== 'SATISFIED') {
     item.status = 'REVALIDATION_REQUIRED'; item.verification = 'REVALIDATION_REQUIRED';
   }
   state.riskFlags = unique([...(state.riskFlags ?? []), ...riskFlags]);
@@ -339,6 +358,8 @@ export function refreshWorkingContext({
     risks: state.riskFlags, invariants: state.invariants, validations: state.validations,
     registry: registry ?? loadCapabilityFiles().registry,
   });
+  if (state.contextMap?.completion && stable(existing.requirements) !== stable(state.requirements)) state.contextMap.completion.stale = true;
+  if (state.contextMap?.completion) state.contextMap = finalizeContextMap(state.contextMap);
   state.contextDecision = contextDecision(state, { root, repositories });
   return state;
 }
@@ -363,7 +384,7 @@ export function proveWorkingContext(state, { artifact, requirement, evidence }, 
   } else if (requirement) {
     const item = next.requirements.find((candidate) => `${candidate.kind}:${candidate.id}` === requirement);
     if (!item) throw new Error(`Unknown requirement: ${requirement}`);
-    const accepted = evaluateEvidenceRequirement(requirementPolicy(item), [proof], proofOptions(state, options));
+    const accepted = evaluateEvidenceRequirement(completionRequirementPolicy(item), [proof], proofOptions(state, options));
     if (accepted.status !== 'SATISFIED') throw new Error(`Evidence receipt rejected: ${accepted.reasons.join(',')}`);
     item.status = 'SATISFIED';
     item.verification = 'VERIFIED';
@@ -371,6 +392,10 @@ export function proveWorkingContext(state, { artifact, requirement, evidence }, 
   } else throw new Error('Choose --artifact or --requirement');
   if (next.contextMap) next.contextMap = recordContextEntry(next.contextMap, 'receipt', { receiptId: proof },
     proofOptions(state, options).repositories, proofOptions(state, options));
+  if (next.contextMap?.completion) {
+    next.contextMap.completion.stale = true;
+    next.contextMap = finalizeContextMap(next.contextMap);
+  }
   next.contextDecision = contextDecision(next, options);
   return next;
 }
@@ -400,8 +425,9 @@ export function amendWorkingContext(options) {
     }
     next.requirements = next.requirements.filter((item) => !(patch.remove ?? []).includes(`${item.kind}:${item.id}`));
     for (const spec of unique(patch.add)) {
-      if (next.requirements.some((item) => `${item.kind}:${item.id}` === spec)) throw new Error(`Duplicate amendment requirement: ${spec}`);
-      next.requirements.push(requirementFromSpec(spec));
+      const addition = requirementFromSpec(spec);
+      if (next.requirements.some((item) => item.kind === addition.kind && item.id === addition.id)) throw new Error('Duplicate amendment requirement');
+      next.requirements.push(addition);
     }
   }
   for (const field of ['riskFlags', 'invariants', 'validations']) if (changes[field] !== undefined) {
@@ -410,9 +436,8 @@ export function amendWorkingContext(options) {
     }
     next[field] = unique(changes[field]);
   }
-  const definition = (state) => [state.objective, state.requirements.map((item) => `${item.kind}:${item.id}`).sort(),
-    ...['riskFlags', 'invariants', 'validations'].map((field) => [...state[field]].sort())];
-  if (stable(definition(existing)) === stable(definition(next))) throw new Error('NO_MATERIAL_AMENDMENT');
+  if (completionDefinition(existing) === completionDefinition(next)) throw new Error('NO_MATERIAL_AMENDMENT');
+  next.definitionFingerprint = completionDefinition(next);
   if (typeof reason !== 'string' || !reason.trim() || Buffer.byteLength(reason) > 240) throw new Error('Amendment reason required');
   const map = next.contextMap;
   const available = { artifacts: next.artifacts.map((item) => item.spec),
@@ -654,6 +679,20 @@ async function main() {
   }
   const file = statePath(ROOT, args);
   const current = readWorkingContext(ROOT, args);
+  if (command === 'completion' || command === 'completion-request') {
+    const options = { root: ROOT, identity: current.execution.identity };
+    if (command === 'completion-request') bindCompletionStop({ ...options, turnId: args['turn-id'] ?? null });
+    const assessment = assessGoalCompletion(options);
+    persistCompletionAssessment(assessment, options);
+    recordCompletionAttempt(assessment, { ...options, staleAssessment: Boolean(current.contextMap?.completion &&
+      current.contextMap.completion.assessmentId !== assessment.assessmentId) });
+    current.contextMap.completion = completionIndex(assessment, current.contextMap);
+    current.contextMap = finalizeContextMap(current.contextMap);
+    writeState(file, current);
+    console.log(JSON.stringify(assessment, null, 2));
+    process.exitCode = assessment.decision === 'ADMISSIBLE' ? 0 : 1;
+    return;
+  }
   if (command === 'amend') {
     const repositories = repositoryDefinitions(args, current);
     const { registry } = loadCapabilityFiles();
@@ -742,7 +781,8 @@ async function main() {
       execution: current.execution, revisionHistory: current.revisionHistory,
       repositories: map.repositories, taskFingerprint: map.taskFingerprint,
       routerFingerprint: map.routerFingerprint, capabilities: map.capabilities,
-      router: map.router, risks: map.risks, validation: map.validation, validationPlan: workingValidationStatus(current), metrics: map.metrics }, null, 2));
+      router: map.router, risks: map.risks, validation: map.validation, validationPlan: workingValidationStatus(current),
+      completion: workingCompletionStatus(current), metrics: map.metrics }, null, 2));
     return;
   }
   if (command === 'stats') {

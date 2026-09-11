@@ -8,6 +8,8 @@ import { fingerprintCorpus } from './quality/check-graph-scopes.mjs';
 import { validateRouterSelectionReceipt } from './wayper-agent-router.mjs';
 import { assertGoalExecution, assertSameExecution, invalidateMapProofs, repositorySnapshot } from './wayper-context-identity.mjs';
 import { createContextValidationPlan, refreshContextValidationPlan } from './wayper-validation-store.mjs';
+import { completionMapFingerprint, validateCompletionLedger, ASSESSMENT_ID, COMPLETION_DECISIONS } from './wayper-completion-policy.mjs';
+import { validCompletionIndexReference } from './wayper-completion-store.mjs';
 
 export { sourceFingerprint } from './wayper-evidence-receipts.mjs';
 
@@ -266,6 +268,8 @@ function semanticFingerprint(map) {
 
 export function finalizeContextMap(map, { tokenCeiling, budgetReason } = {}) {
   const next = structuredClone(map);
+  if (next.findings) next.findings.sort((a, b) => a.id.localeCompare(b.id));
+  if (next.completion && next.completion.mapFingerprint !== completionMapFingerprint(next)) next.completion.stale = true;
   if (next.evidenceReceipts) next.evidenceReceipts.sort((a, b) => a.receiptId.localeCompare(b.receiptId));
   next.evidence.sort((a, b) => a.id.localeCompare(b.id));
   next.dependencies.sort((a, b) => a.id.localeCompare(b.id));
@@ -318,7 +322,7 @@ export function refreshContextMap(existing, options) {
     map.routerFingerprint = null;
     map.capabilities = { required: [], optional: [], knownGood: [] };
     map.router = null;
-    map.ambiguities = [];
+    map.ambiguities = map.ambiguities.filter((item) => item.materiality);
   }
   map.registryFingerprint = nextRegistryFingerprint ?? map.registryFingerprint ?? null;
   if (map.router) map.router.missingOperationalProfiles = (map.router.missingOperationalProfiles ?? []).map((item) =>
@@ -477,7 +481,21 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
   const repos = definitions(repositoryDefinitions);
   const next = structuredClone(map);
   let id; let existed = false; let invalidated = [];
-  if (kind === 'validation-plan') {
+  if (kind === 'finding' || kind === 'ambiguity') {
+    const collection = kind === 'finding' ? 'findings' : 'ambiguities';
+    const field = kind === 'finding' ? 'id' : 'code';
+    next[collection] ??= [];
+    id = input[field];
+    const index = next[collection].findIndex((item) => item[field] === id);
+    if (index >= 0) {
+      const prior = next[collection][index];
+      if (kind === 'finding' && ['severity', 'materiality', 'repository', 'claim', 'scenario'].some((key) => prior[key] !== input[key])) {
+        throw new Error('Finding identity/materiality cannot be silently rewritten; resolve or invalidate with owner proof');
+      }
+      next[collection][index] = structuredClone(input); existed = true;
+    } else next[collection].push(structuredClone(input));
+    if (validateCompletionLedger(next).length) throw new Error('Invalid completion ledger entry');
+  } else if (kind === 'validation-plan') {
     next.validationPlan = createContextValidationPlan(next, input, receiptOptions(next, [...repos.values()], options));
     id = next.validationPlan.planId;
     existed = map.validationPlan?.planId === id;
@@ -556,7 +574,9 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
     if (capabilityRefs.some((id) => !options.registry?.capabilities?.some((item) => item.id === id))) {
       throw new Error('Invalid proof-gap capability refs');
     }
-    const entry = { ...(input.receiptRequirement ? { receiptRequirement: input.receiptRequirement, receiptIds: input.receiptIds ?? [] } : {}),
+    const entry = { ...(input.materiality ? { materiality: input.materiality, repository: input.repository,
+      relatedRequirementIds: input.relatedRequirementIds ?? [] } : {}),
+      ...(input.receiptRequirement ? { receiptRequirement: input.receiptRequirement, receiptIds: input.receiptIds ?? [] } : {}),
       claim: compactText(input.claim, 'proof gap claim'),
       reason: compactText(input.reason, 'proof gap reason'),
       requiredEvidence: compactText(input.requiredEvidence, 'required evidence'), status, evidenceIds,
@@ -673,6 +693,7 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
   if (kind === 'validation' && RECEIPT_ID.test(input.evidence)) indexReceipt(next, input.evidence, [...repos.values()], options);
   for (const receiptId of input.receiptIds ?? []) indexReceipt(next, receiptId, [...repos.values()], options);
   refreshReceiptIndex(next, [...repos.values()], options);
+  if (validateCompletionLedger(next).length) throw new Error('Invalid completion ledger');
   delta(next, { phase: input.phase ?? options.phase, invalidated,
     added: existed ? [] : [id], updated: existed ? [id] : [] });
   return finalizeContextMap(next, options);
@@ -711,8 +732,8 @@ export function integrateRouterOutput(map, output, options = {}) {
       ...next.repositoryState[item.repository].relevantRefs, item.path,
     ]);
   }
-  next.ambiguities = output.ambiguities.map((item) => ({ code: item.code,
-    ...(item.capabilities ? { capabilities: sortedUnique(item.capabilities) } : {}) }));
+  next.ambiguities = [...next.ambiguities.filter((item) => item.materiality), ...output.ambiguities.map((item) => ({ code: item.code,
+    ...(item.capabilities ? { capabilities: sortedUnique(item.capabilities) } : {}) }))];
   for (const repository of output.repositories) {
     const graph = next.graphify[repository];
     graph.decision = output.graphifyDecision;
@@ -745,7 +766,7 @@ function rejectUnknownKeys(value, allowed, label, errors) {
 
 const MAP_KEYS = new Set(['schemaVersion', 'goalId', 'execution', 'taskClass', 'repositories', 'taskFingerprint',
   'routerFingerprint', 'registryFingerprint', 'repositoryState', 'capabilities', 'router', 'risks', 'evidence', 'dependencies',
-  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants', 'evidenceReceipts', 'validationPlan']);
+  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants', 'evidenceReceipts', 'validationPlan', 'findings', 'completion']);
 const REPOSITORY_KEYS = new Set(['repository', 'logicalRoot', 'relevantRefs', 'branch', 'head',
   'dirtyFingerprint', 'relevantDiffFingerprint', 'checkoutFingerprint', 'dirty', 'contentFingerprint']);
 const EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'symbol', 'range', 'sourceHash', 'sourceBytes',
@@ -758,7 +779,7 @@ const KNOWN_GOOD_KEYS = new Set(['id', 'repository', 'artifact', 'capability', '
 const GRAPHIFY_KEYS = new Set(['decision', 'status', 'scopeFingerprint', 'version', 'graphFingerprint', 'queries']);
 const QUERY_KEYS = new Set(['queryFingerprint', 'purpose', 'nodeRefs', 'edgeRefs', 'capabilityRefs']);
 const GAP_KEYS = new Set(['id', 'claim', 'reason', 'requiredEvidence', 'status', 'evidenceIds', 'capabilityRefs', 'verification', 'receiptIds', 'receiptRequirement',
-  'reviewDisposition']);
+  'reviewDisposition', 'materiality', 'repository', 'relatedRequirementIds']);
 const DELTA_KEYS = new Set(['id', 'phase', 'added', 'updated', 'invalidated']);
 const METRIC_KEYS = new Set(['bytes', 'tokenProxy', 'tokenProxyCeiling', 'budgetStatus', 'budgetReason',
   'evidenceCount', 'dependencyCount', 'knownGoodCount', 'proofGapCount', 'referencedSourceBytes']);
@@ -774,6 +795,16 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
     return { status: 'INVALID', errors: ['unsupported Context Map schema'] };
   }
   rejectUnknownKeys(map, MAP_KEYS, 'Context Map', errors);
+  errors.push(...validateCompletionLedger(map));
+  if (map.completion) {
+    rejectUnknownKeys(map.completion, new Set(['assessmentId', 'decision', 'mapFingerprint', 'stale', 'blockers', 'warnings', 'omitted']), 'completion index', errors);
+    if (!ASSESSMENT_ID.test(map.completion.assessmentId) || !COMPLETION_DECISIONS.includes(map.completion.decision) ||
+      !HASH.test(map.completion.mapFingerprint) || typeof map.completion.stale !== 'boolean' ||
+      !Array.isArray(map.completion.blockers) || map.completion.blockers.length > 24 ||
+      !Array.isArray(map.completion.warnings) || map.completion.warnings.length > 12 ||
+      !Number.isSafeInteger(map.completion.omitted) || map.completion.omitted < 0) errors.push('invalid completion index');
+    if (!validCompletionIndexReference(map, receiptOptions(map, [...repos.values()], {}))) errors.push('unverified completion index');
+  }
   assertGoalExecution(map.execution, map.goalId);
   if (map.validationPlan) {
     rejectUnknownKeys(map.validationPlan, new Set(['planId', 'fingerprint', 'ownerContextFingerprint', 'availability',
@@ -1033,7 +1064,7 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
     }
   }
   for (const item of map.ambiguities) {
-    rejectUnknownKeys(item, new Set(['code', 'capabilities']), 'ambiguity', errors);
+    rejectUnknownKeys(item, new Set(['code', 'capabilities', 'materiality', 'repository', 'status', 'reason', 'relatedRequirementIds', 'receiptIds']), 'ambiguity', errors);
     if (item.capabilities && (!Array.isArray(item.capabilities) || item.capabilities.length > 56)) {
       errors.push('too many ambiguity capability refs');
     }

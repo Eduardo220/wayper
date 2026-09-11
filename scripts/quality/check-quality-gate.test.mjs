@@ -56,6 +56,7 @@ function result(lintResult = lint(), overrides = {}) {
     router: overrides.router ?? PASS,
     evidence: overrides.evidence ?? PASS,
     validation: overrides.validation ?? PASS,
+    completion: overrides.completion ?? PASS,
     diff: overrides.diff ?? PASS,
   });
 }
@@ -65,6 +66,11 @@ test('QG1 unchanged legacy warnings pass without becoming debt for the task', ()
   assert.equal(quality.status, 'PASS');
   assert.equal(quality.lint.currentWarnings, 2);
   assert.equal(quality.lint.newWarningCount, 0);
+});
+
+test('QG completion boundary regression blocks the aggregate gate', () => {
+  const quality = result(lint(), { completion: { status: 'fail', detail: 'CB regression' } });
+  assert.ok(quality.blocking.includes('COMPLETION_REGRESSION'));
 });
 
 test('QG2 a new general warning is visible and non-blocking debt', () => {

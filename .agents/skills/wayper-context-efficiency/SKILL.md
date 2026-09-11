@@ -82,6 +82,12 @@ the current Goal/slice needs them.
    risks, platforms and classified criteria to `validation-plan` in the existing
    Context Map writer. Follow [`validation-planner.md`](../../../docs/ai/validation-planner.md).
    Candidate checks are not executions; unavailable physical proof is not PASS.
+   Before requesting native Goal completion, use `completion-request` with the
+   explicit current selector (and `--turn-id` when exposed by the host). Consume
+   the canonical CompletionAssessment; only ADMISSIBLE permits the host request.
+   Follow [completion-boundary.md](../../../docs/ai/completion-boundary.md).
+   Register material findings through the existing owner `record --kind finding`.
+   Handoff DONE and STOP_WHEN_PROVEN never substitute for this assessment.
 7. Add only new compact map entries with `wayper-context.mjs record`; use
    `inspect`, `stats`, `evidence`, `gaps`, and `validate` read-only. Persist the
    router only through the explicit command. Trust specialist selection only
@@ -203,7 +209,7 @@ Run `npm run quality:context`, `wayper-context.mjs validate`, the affected Harne
 `git diff --check`. The context gate must fail if a benchmark saves context by
 dropping any declared test, validation, risk flag, or invariant. Run
 `quality:capabilities` when registry/skill routing changes and
-`quality:meta-goal` when Goal completion/budget behavior changes.
+`quality:meta-goal` and `quality:completion` when Goal completion/budget behavior changes.
 
 ## Output contract
 

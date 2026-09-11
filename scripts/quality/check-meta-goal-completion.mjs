@@ -5,6 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { evaluateEvidenceRequirement } from '../wayper-evidence-store.mjs';
 import { createCompletionEvidenceFixture } from './evidence-fixture.mjs';
+import { assessGoalCompletion } from '../wayper-completion-boundary.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ROOT = path.resolve(path.dirname(SCRIPT_PATH), '../..');
@@ -96,7 +97,9 @@ function nativeEnforcementReadiness(status) {
   return 'UNKNOWN';
 }
 
-export function evaluateBudgetControl(run) {
+export function evaluateBudgetControl(run, completionContext = {}) {
+  const completionEligible = (run.completionEligible || run.previousGoalResult === 'GOAL_SATISFIED') &&
+    assessGoalCompletion(completionContext).decision === 'ADMISSIBLE';
   const runtime = run.runtime ?? {};
   const accounting = run.accounting ?? {};
   const requestedTokenBudget = run.requestedTokenBudget ?? 'UNKNOWN';
@@ -155,7 +158,8 @@ export function evaluateBudgetControl(run) {
     && isNumber(accounting.tokensUsed)
     && accounting.tokensUsed >= substantiveTokenCeiling;
   const previousGoalResult = run.previousGoalResult;
-  const terminalImmutable = TERMINAL_RESULTS.has(previousGoalResult);
+  const terminalImmutable = TERMINAL_RESULTS.has(previousGoalResult) &&
+    (previousGoalResult !== 'GOAL_SATISFIED' || completionEligible);
   const hardLimitExceeded = tokenHard || durationHard || previousGoalResult === 'GOAL_BUDGET_EXHAUSTED';
   const budgetState = hardLimitExceeded
     ? 'HARD_LIMIT'
@@ -179,8 +183,8 @@ export function evaluateBudgetControl(run) {
           ? 'DURATION_BUDGET_EXCEEDED'
           : 'HARD_LIMIT_ORDER_UNKNOWN';
     } else stopReason = tokenHard ? 'TOKEN_BUDGET_EXCEEDED' : 'DURATION_BUDGET_EXCEEDED';
-  } else if (run.completionEligible) {
-    goalResult = 'GOAL_SATISFIED';
+  } else if (completionEligible) {
+    goalResult = 'COMPLETION_ADMISSIBLE';
     stopReason = 'EVIDENCE_GATED_COMPLETION';
   } else if (run.externalBlocker) {
     goalResult = 'GOAL_BLOCKED';
@@ -276,11 +280,12 @@ export function evaluateBudgetControl(run) {
     checkpointRecognized: GOAL_BUDGET_POLICY.checkpoints.includes(run.checkpoint),
     newHookRequired: false,
     cheapPathPreserved: ['NO_CHANGE', 'DOCS_ONLY'].includes(run.scope),
-    completionGatePreserved: goalResult !== 'GOAL_SATISFIED' || run.completionEligible === true,
+    completionGatePreserved: !['GOAL_SATISFIED', 'COMPLETION_ADMISSIBLE'].includes(goalResult) || completionEligible === true,
   };
 }
 
-export function evaluateCompletion(run, evidenceContext = {}) {
+// Historical diagnostics remain readable, but they cannot grant completion authority.
+function evaluateLegacyCompletion(run, evidenceContext = {}) {
   const blockers = [];
   const gaps = [];
   const criteria = run.successCriteria ?? [];
@@ -386,13 +391,24 @@ export function evaluateCompletion(run, evidenceContext = {}) {
   }
 
   return {
-    eligible,
-    result,
+    eligible: false,
+    result: eligible ? 'LEGACY_UNVERIFIED' : result,
     stopReason,
-    earlyCompletion: eligible && Boolean(run.budget?.remaining),
+    earlyCompletion: false,
     blockers,
     gaps,
   };
+}
+
+export function evaluateCompletion(run, context = {}) {
+  const identity = context.identity ?? context.execution?.identity;
+  const connected = context.root && identity && fs.existsSync(path.join(context.root, '.wayper-context', `${identity.goalRunId}.md`));
+  if (!connected) return evaluateLegacyCompletion(run, context);
+  const assessment = assessGoalCompletion({ root: context.root, identity });
+  const eligible = assessment.decision === 'ADMISSIBLE';
+  return { eligible, result: eligible ? 'COMPLETION_ADMISSIBLE' : 'GOAL_RUNNING',
+    stopReason: assessment.decision, earlyCompletion: eligible && Boolean(run.budget?.remaining),
+    blockers: assessment.blockers, gaps: assessment.reasons, assessment };
 }
 
 export function loadEvalSuite(file = EVALS_PATH) {
@@ -429,7 +445,7 @@ export function runEvalSuite(suite = loadEvalSuite()) {
     if (item.kind === 'SHADOW') {
       assert.ok(item.oldResult && SHADOW_ASSESSMENTS.has(item.expectedAssessment), `${item.id} shadow metadata`);
       if (item.expectedAssessment === 'NO_REGRESSION') {
-        assert.equal(actual.result, item.oldResult, `${item.id} unexpected regression`);
+        assert.equal(actual.result, item.oldResult === 'GOAL_SATISFIED' ? 'LEGACY_UNVERIFIED' : item.oldResult, `${item.id} unexpected regression`);
       } else if (item.expectedAssessment === 'OLD_FALSE_POSITIVE') {
         assert.equal(item.oldResult, 'GOAL_SATISFIED', `${item.id} invalid old false positive`);
         assert.notEqual(actual.result, 'GOAL_SATISFIED', `${item.id} false positive preserved`);
@@ -471,7 +487,7 @@ export function formatResult(results, json = false) {
   const unexpectedFalseNegatives = shadow.filter(
     (item) => item.assessment === 'NO_REGRESSION'
       && item.oldResult === 'GOAL_SATISFIED'
-      && item.result !== 'GOAL_SATISFIED'
+      && !['GOAL_SATISFIED', 'LEGACY_UNVERIFIED'].includes(item.result)
   ).length;
   const report = {
     status: 'PASS',
@@ -482,6 +498,7 @@ export function formatResult(results, json = false) {
     shadowDifferences: differences,
     unexpectedFalsePositives,
     unexpectedFalseNegatives,
+    legacyUnverified: results.filter((item) => item.result === 'LEGACY_UNVERIFIED').length,
   };
   if (json) return JSON.stringify(report);
   return [

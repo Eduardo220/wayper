@@ -142,6 +142,10 @@ em docs versionadas são relativos ao repositório.
 
 ## Entrega
 
+Em Goals, usar [Completion Boundary](ai/completion-boundary.md) com a identidade
+e revisão atuais antes de solicitar conclusão ao host. ADMISSIBLE é necessário;
+Validation COMPLETE, Handoff DONE e worktree limpa não o substituem.
+
 Informe diagnóstico, fontes, arquivos, decisões, recursos preservados/
 consolidados/removidos, testes reais, divergências, riscos, rollback, commits e
 próximo passo. Commit, push, deploy ou publicação exigem autorização da tarefa.

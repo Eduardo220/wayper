@@ -60,7 +60,7 @@
       "id": "EGC01",
       "kind": "COMPLETION",
       "scenario": "simple early completion",
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC02",
@@ -115,7 +115,7 @@
       "kind": "COMPLETION",
       "scenario": "large remaining budget does not create work",
       "override": { "budget": { "remaining": true, "tokenBudget": 150000, "durationBudgetMinutes": 60 } },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC07",
@@ -134,7 +134,7 @@
       "id": "EGC08",
       "kind": "COMPLETION",
       "scenario": "clean final falsification",
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC09",
@@ -150,7 +150,7 @@
           }
         ]
       },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC10",
@@ -166,21 +166,21 @@
       "kind": "COMPLETION",
       "scenario": "token usage unavailable is reported as unknown",
       "override": { "accounting": { "tokensUsed": "UNKNOWN", "source": "UNAVAILABLE" } },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC12",
       "kind": "COMPLETION",
       "scenario": "simple task invokes no artificial specialist",
       "override": { "execution": { "candidates": 1, "slices": 1, "specialists": 0 } },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC13",
       "kind": "COMPLETION",
       "scenario": "simple task uses one natural slice",
       "override": { "execution": { "candidates": 1, "slices": 1, "specialists": 0 } },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC14",
@@ -206,7 +206,7 @@
           "specialistRouter": false
         }
       },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC15",
@@ -219,14 +219,14 @@
           { "id": "LINKS", "required": true, "status": "PASS", "evidence": ["fixture:pass:LINKS"] }
         ]
       },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC16",
       "kind": "COMPLETION",
       "scenario": "no-change path stays cheap",
       "override": { "scope": "NO_CHANGE", "validation": [], "workExecuted": false },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC17",
@@ -242,7 +242,7 @@
           { "id": "STATE_TRANSITIONS", "required": true, "status": "PASS", "evidence": ["fixture:pass:STATE_TRANSITIONS"] }
         ]
       },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "EGC18",
@@ -278,7 +278,7 @@
       "scenario": "trivial task",
       "oldResult": "GOAL_SATISFIED",
       "expectedAssessment": "NO_REGRESSION",
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "SH02",
@@ -293,7 +293,7 @@
           { "id": "LINKS", "required": true, "status": "PASS", "evidence": ["fixture:pass:LINKS"] }
         ]
       },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "SH03",
@@ -301,7 +301,7 @@
       "scenario": "localized bug with complete proof",
       "oldResult": "GOAL_SATISFIED",
       "expectedAssessment": "NO_REGRESSION",
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "SH04",
@@ -344,7 +344,7 @@
           { "id": "ADJACENT_OWNER", "required": true, "status": "PASS", "evidence": ["fixture:pass:ADJACENT_OWNER"] }
         ]
       },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "SH07",
@@ -399,7 +399,7 @@
       "oldResult": "GOAL_SATISFIED",
       "expectedAssessment": "NO_REGRESSION",
       "override": { "scope": "NO_CHANGE", "validation": [], "workExecuted": false },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     },
     {
       "id": "SH12",
@@ -408,7 +408,7 @@
       "oldResult": "GOAL_SATISFIED",
       "expectedAssessment": "NO_REGRESSION",
       "override": { "workExecuted": false },
-      "expected": { "result": "GOAL_SATISFIED", "eligible": true, "earlyCompletion": true }
+      "expected": { "result": "LEGACY_UNVERIFIED", "eligible": false, "earlyCompletion": false }
     }
   ],
   "budgetCases": [
@@ -514,12 +514,12 @@
     },
     {
       "id": "BUD10",
-      "scenario": "evidence-backed success stops at twenty percent",
+      "scenario": "legacy completion boolean cannot stop at twenty percent",
       "override": { "accounting": { "tokensUsed": 200 }, "completionEligible": true },
       "expected": {
-        "goalResult": "GOAL_SATISFIED",
-        "stopReason": "EVIDENCE_GATED_COMPLETION",
-        "allowNewSubstantiveWork": false
+        "goalResult": "GOAL_RUNNING",
+        "stopReason": "WORK_REMAINS",
+        "allowNewSubstantiveWork": true
       }
     },
     {

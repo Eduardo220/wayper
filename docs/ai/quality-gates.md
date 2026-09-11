@@ -109,6 +109,11 @@ usa a suíte completa.
 
 ## Validation Matrix por changed scope
 
+`quality:completion` valida a fronteira canônica com CB1–CB24 e adversarial
+evals. Integra `quality:gate` e a seleção do backstop nos owners de completion,
+Context/Packet/Handoff e hooks. Gate verde prova o contrato executado, não
+conclui o Goal em uso. Consulte [completion-boundary.md](completion-boundary.md).
+
 Esta é a matriz normativa usada por Meta Goal Completion. O changed scope real
 seleciona todas as linhas aplicáveis; `MIXED` usa a união. O changed-scope
 determinístico do Stop permanece um subconjunto FAST e não substitui esta matriz.

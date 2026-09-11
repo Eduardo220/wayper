@@ -14,6 +14,13 @@ runtime de memória ou runtime JS. O Codex continua sendo executor e orquestrado
 
 ## Contrato da meta
 
+A Fase 4 conecta a elegibilidade à [Completion Boundary V1](completion-boundary.md).
+`assessGoalCompletion` lê Identity, Working Context/Map, Validation Planner e
+Evidence atuais; nenhum ledger textual ou booleano autoriza conclusão. O Meta
+evaluator conectado delega à API. Ledgers antigos seguem legíveis para diagnóstico
+como LEGACY_UNVERIFIED, sem eligibility. O principal mantém o julgamento
+semântico/falsification e só solicita host DONE após ADMISSIBLE.
+
 Uma meta possui quatro campos; o usuário pode fornecer apenas o resultado e o
 agente deriva o restante do repositório quando isso não inventa produto.
 
@@ -542,9 +549,10 @@ Cada slice usa Q/R adaptativos já definidos. `npm run quality:gate` é o loop
 FAST; testes direcionados ficam separados. Q2/Q3 adicionam full Jest, Expo,
 specialists e prova física somente conforme classe, flags e diff.
 
-O completion backstop de [`hooks-and-gates.md`](hooks-and-gates.md) só protege a
-tentativa de encerrar com regressão determinística. Ele não rankeia candidates,
-não avança slice, não decide `GOAL_SATISFIED` e não substitui review/DEEP.
+O completion backstop de [`hooks-and-gates.md`](hooks-and-gates.md) consulta a
+Completion Boundary quando explicitamente vinculado e protege contra regressão
+determinística. Não rankeia candidates, avança slice, realiza host DONE ou
+substitui review/DEEP.
 
 Quando comportamento de aparelho for obrigatório e não executado:
 
@@ -707,11 +715,12 @@ validation indisponível, no-change e tarefa já implementada.
 O shadow rejeita tanto falso positivo (`NEW` conclui sem evidence) quanto falso
 negativo (`NEW` bloqueia conclusão legítima). A suíte machine-readable e o
 validator ficam em `meta-goal-completion-evals.json` e
-`scripts/quality/check-meta-goal-completion.mjs`; são eval infrastructure, não
-Completion Judge de produção.
+`scripts/quality/check-meta-goal-completion.mjs`. A comparação histórica é eval
+infrastructure; o evaluator conectado usa a API canônica da Fase 4.
 
-Ativação não altera `.codex/hooks.json`. O Stop continua backstop determinístico,
-leve e project-scoped; não julga semântica, Goal, slices ou specialists.
+Ativação preserva o comando em `.codex/hooks.json`. O Stop continua determinístico
+e project-scoped; consulta admissibilidade estruturada quando vinculado, sem
+julgar semântica, planejar slices ou specialists. Cobertura do host é parcial.
 
 ## Estado e Goal Execution Report
 

@@ -35,7 +35,8 @@ test('MGC3 treated material uncertainty remains explicit without blocking', () =
       impact: 'no material completion gap',
     }],
   }, evidenceContext);
-  assert.equal(result.result, 'GOAL_SATISFIED');
+  assert.equal(result.result, 'LEGACY_UNVERIFIED');
+  assert.equal(result.eligible, false);
 });
 
 test('MGC4 falsification failure continues execution', () => {

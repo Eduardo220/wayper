@@ -186,6 +186,11 @@ necessidade de decisão ainda aberta.
 
 ## Contrato de retorno
 
+Handoff DONE não concede completion global. `planContextMapMerge()` propõe
+findings OPEN, preserva owner review e declara `completionAuthority: NONE`.
+O principal incorpora findings materiais pelo writer existente do Context Map
+e solicita [CompletionAssessment](completion-boundary.md) antes de host DONE.
+
 O contrato textual compacto abaixo permanece como fallback bounded quando o
 packet ou handoff não puder ser preparado/validado:
 

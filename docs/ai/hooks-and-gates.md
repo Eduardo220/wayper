@@ -10,9 +10,18 @@
 
 ## Contrato
 
+A Fase 4 conecta este mesmo Stop à [Completion Boundary](completion-boundary.md)
+quando `completion-request` registra a identidade/revisão/baseline explícitas.
+Essa consulta ocorre mesmo com worktree limpa. Sem vínculo, o gate técnico não
+afirma admissibilidade. O principal também usa a API antes de solicitar host
+DONE. O código do projeto não intercepta universalmente `update_goal`.
+Em 2026-09-11 foi observado CLI 0.154.0 com hooks ativo; a integração desta fase
+foi testada no processo do script, sem repetir o smoke do host 0.147.0 abaixo.
+
 Validation Planner V1 integra o FAST via `quality:validation`; alterações no
 registry, planner, schema e evals selecionam sua suíte no backstop. O gate valida
-o contrato; não executa os planos, não vira Stop V2 e não decide Goal completion.
+o contrato; não executa os planos. O Completion Boundary consome o assessment
+do Planner, sem duplicar as regras L0–L6.
 
 Evidence Receipts V1 integram o gate FAST via `quality:evidence`. O changed-scope
 seleciona a suíte quando schema, producer, store, fixtures ou evals de Evidence
@@ -28,6 +37,8 @@ completion backstop em `Stop`.
 agent validation / review
           ↓
 attempted Stop
+          ↓
+vínculo explícito -> Completion Boundary -> blockers / ADMISSIBLE
           ↓
 scope deterministicamente observável
           ↓
@@ -303,9 +314,9 @@ trace; o comando indicado abre detalhes sob demanda.
 ## Meta Goal e limitações
 
 Em uma Meta, cada slice continua usando Execution Kernel e Q/R próprios. O Stop
-hook apenas captura uma tentativa acidental de concluir com regressão
-determinística; não forma waves, rankeia candidates, decide produto, promove
-memory, atualiza Working Context ou marca Goal satisfied.
+consulta a Completion Boundary quando vinculado e executa gates técnicos; não
+forma waves, rankeia candidates, decide produto ou promove memory. Persiste
+assessment/evento observado, sem mudar o Working Context ou marcar host DONE.
 
 Limitações confirmadas:
 

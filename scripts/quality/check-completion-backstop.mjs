@@ -2,6 +2,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { assessGoalCompletion } from '../wayper-completion-boundary.mjs';
+import { completionStopBinding, persistCompletionAssessment, recordCompletionAttempt } from '../wayper-completion-store.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
@@ -14,6 +16,8 @@ const QUALITY_TESTS = {
   handoff: 'scripts/wayper-structured-handoff.test.mjs',
   evidence: 'scripts/quality/check-evidence-receipts.test.mjs',
   validation: 'scripts/quality/check-validation-planner.test.mjs',
+  completion: 'scripts/quality/check-completion-boundary.test.mjs',
+  adversarial: 'scripts/quality/check-completion-adversarial.test.mjs',
 };
 
 function isEvidence(file) {
@@ -58,6 +62,7 @@ function isQualityTooling(file) {
     || file.startsWith('scripts/wayper-structured-handoff')
     || file.startsWith('scripts/wayper-evidence')
     || file.startsWith('scripts/wayper-validation')
+    || file.startsWith('scripts/wayper-completion')
     || file.startsWith('scripts/quality/');
 }
 
@@ -90,6 +95,10 @@ export function classifyChangedScope(files) {
 export function relevantQualityTests(files) {
   const tests = new Set();
   for (const file of files) {
+    if (file.includes('completion') || file.startsWith('scripts/wayper-context') ||
+      file.startsWith('scripts/wayper-structured-handoff') || file === '.codex/hooks.json' || file === 'package.json') {
+      tests.add(QUALITY_TESTS.completion); tests.add(QUALITY_TESTS.adversarial);
+    }
     if (isEvidence(file)) tests.add(QUALITY_TESTS.evidence);
     if (isValidation(file)) tests.add(QUALITY_TESTS.validation);
     if (isStructuredHandoff(file)) tests.add(QUALITY_TESTS.handoff);
@@ -132,7 +141,7 @@ export function buildCheckPlan(scope, files) {
       id: 'quality-tests',
       command: process.execPath,
       args: ['--test', ...tests],
-      timeout: 30_000,
+      timeout: 60_000,
       retry: `node --test ${tests.join(' ')}`,
     });
   }
@@ -278,8 +287,19 @@ function checkOutcome(run, check) {
   return { status: 'PASS' };
 }
 
-export function runBackstop({ root, files, runner = defaultRunner }) {
+export function runBackstop({ root, files, runner = defaultRunner, completionIdentity, observeCompletion = false }) {
   const scope = classifyChangedScope(files);
+  if (completionIdentity) {
+    const assessment = assessGoalCompletion({ root, identity: completionIdentity });
+    if (observeCompletion) {
+      const options = { root, identity: completionIdentity };
+      persistCompletionAssessment(assessment, options);
+      recordCompletionAttempt(assessment, options);
+    }
+    if (assessment.decision !== 'ADMISSIBLE') return { status: 'FAIL', scope, assessment,
+      detail: `COMPLETION ${assessment.decision}: ${assessment.blockers.slice(0, 3).map((b) => `${b.sourceId} ${b.reasonCode}`).join('; ')}`,
+      retry: 'node scripts/wayper-context.mjs completion --thread-id <thread> --goal-run-id <run> --revision <revision>' };
+  }
   const plan = buildCheckPlan(scope, files);
   if (!plan.length) return { status: 'SKIP', scope };
   for (const check of plan) {
@@ -323,7 +343,9 @@ async function main() {
     if (hookMode) payload = JSON.parse(await readStdin());
     if (payload.stop_hook_active) return;
     const root = gitRoot(payload.cwd);
-    const result = runBackstop({ root, files: changedFiles(root) });
+    const binding = completionStopBinding(root, payload);
+    const result = runBackstop({ root, files: changedFiles(root), completionIdentity: binding.identity,
+      observeCompletion: Boolean(binding.identity) });
     if (hookMode) {
       process.stdout.write(hookResponse(result));
     } else {

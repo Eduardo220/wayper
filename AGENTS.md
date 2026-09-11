@@ -58,6 +58,10 @@ o próprio escopo.
   texto/shell direto/handoff assertion não bastam. Contrato: `docs/ai/evidence-receipts.md`.
 - Profundidade de validação deriva do Validation Planner V1 e seu registry;
   plano COMPLETE não é Goal DONE. Contrato: `docs/ai/validation-planner.md`.
+- Antes de concluir Goal, consultar `assessGoalCompletion`/`completion-request`
+  pelo seletor explícito atual; somente ADMISSIBLE permite solicitar host DONE.
+  Stop vinculado reutiliza a API, sem interceptação universal do host.
+  Contrato: `docs/ai/completion-boundary.md`.
 - Working Context usa `threadId + goalRunId + revision`; novo Goal exige `start`,
   amendment material exige `amend`. Baseline histórica não muda no refresh;
   contexto identificado só por thread é legado sem validade automática.
