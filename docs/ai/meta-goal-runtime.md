@@ -115,6 +115,11 @@ continuam permitidos. O adapter de eval cria execuções observadas de fixtures;
 labels `fixture:pass:*` não são aceitas pelo evaluator. Nenhuma conexão nova ao
 Goal host ou Completion Boundary V2 é implementada na Fase 2.
 
+A Fase 3 oferece [Validation Plan/Assessment](validation-planner.md), consultado
+por `evaluateValidationPlan()`. COMPLETE significa fechamento das validações
+obrigatórias do plano; não altera o Goal host nem substitui os critérios de
+completion existentes. A integração final dessa decisão pertence à Fase 4.
+
 ## Integração com Goal mode
 
 Na baseline local de 2026-08-24, Codex CLI `0.149.0` reporta a feature `goals`

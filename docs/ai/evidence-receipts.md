@@ -47,8 +47,9 @@ Working Context schema 2 (owner único)
 ```
 
 O evaluator Meta Goal usa a mesma API de aceitação. Não está conectado ao Goal
-host. Planner, Completion Boundary e Feedback futuros consomem estes contratos;
-nenhuma dessas fases é implementada aqui.
+host. O [Validation Planner V1](validation-planner.md), implementado na Fase 3,
+consome estes contratos sem executar checks automaticamente. Completion Boundary
+e Feedback continuam futuros.
 
 ## Contrato fechado
 
@@ -174,7 +175,7 @@ operacionais vêm do Working Context existente.
 
 | API | Consumer futuro |
 | --- | --- |
-| `observeFile`, `runObservedCommand`, `runObservedTest`, `runObservedQualityGate` | Execução explícita pelo Planner |
+| `observeFile`, `runObservedCommand`, `runObservedTest`, `runObservedQualityGate` | Execução explícita pelo owner; executor futuro |
 | `readReceipt`, `listReceipts`, `validateReceipt` | Inventário, validade, stale e provenance |
 | `evaluateEvidenceRequirement(policy, ids, context)` | Requisito -> receipts aceitos/rejeitados e motivos |
 | `validateEvidenceRequirement(policy)` | Validação do contrato fechado de aceitação |
@@ -225,6 +226,6 @@ de `quality:gate`; changed-scope do backstop reconhece producers, schema, testes
 e evals. Os testes existentes de Context, Identity, Map, Packet, Handoff e Meta
 continuam sendo gates separados. Testes automatizados não provam device.
 
-Ficam fora: Validation Planner, Completion Boundary/host integration, Feedback,
+Ficam fora da camada Evidence: execução automática pelo Planner, Completion Boundary/host integration, Feedback,
 retries/attempt budgets, Graphify cache/rebuild, dispatch enforcement, writers
 paralelos, CAS/leases, novos profiles, Brain e promoção automática para memória.

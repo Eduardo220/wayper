@@ -10,7 +10,7 @@
 > Reserve (`ACTIVE`) + Persistent Working Context + Context Efficiency +
 > Registry Schema V2 + Repository-scoped Graphify + Goal-scoped Context Map +
 > Packetized Specialist Dispatch + Structured Handoff + Selective Router +
-> V2 Fases 1–2 Goal Execution Identity/Baseline + Evidence Receipts, 2026-09-10<br>
+> V2 Fases 1–3 Goal Identity/Baseline + Evidence Receipts + Validation Planner, 2026-09-10<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -55,10 +55,17 @@ referência por `goalId` e fingerprint do Map. A Fase 2 acrescenta
 [Evidence Receipts V1](evidence-receipts.md) ao mesmo lifecycle: observação
 project-owned, store local imutável por execução/revisão, índice no Map e IDs
 bounded no Packet/Handoff. Prova material exige receipt verificado e compatível;
-texto, shell direto e assertions não substituem execução observada. Fases 3+
-não estão ativadas.
+texto, shell direto e assertions não substituem execução observada. A Fase 3
+acrescenta [Validation Planner V1](validation-planner.md): facts estruturados
+selecionam requisitos L0-L6 e receipts existentes produzem assessment. Planner
+não executa checks nem conclui Goals. Fases 4+ não estão ativadas.
 
 ## Recursos project-scoped
+
+- `scripts/wayper-validation-{policy,planner,store}.mjs`,
+  `validation-registry.json` e [validation-planner.md](validation-planner.md):
+  policy executável, plano imutável Goal/revision-scoped e assessment bounded;
+  `quality:validation` integra o gate FAST.
 
 - `scripts/wayper-evidence-{receipts,store,observer}.mjs` e
   [`evidence-receipts.md`](evidence-receipts.md): schema V1, observação,

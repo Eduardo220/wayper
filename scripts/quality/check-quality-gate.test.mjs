@@ -55,6 +55,7 @@ function result(lintResult = lint(), overrides = {}) {
     architecture: overrides.architecture ?? PASS,
     router: overrides.router ?? PASS,
     evidence: overrides.evidence ?? PASS,
+    validation: overrides.validation ?? PASS,
     diff: overrides.diff ?? PASS,
   });
 }
@@ -128,6 +129,12 @@ test('QG7c invalid Evidence Receipt contracts block the Harness gate', () => {
   const quality = result(lint(), { evidence: { status: 'fail', detail: 'receipt eval failed' } });
   assert.equal(quality.status, 'FAIL');
   assert.ok(quality.blocking.includes('EVIDENCE_REGRESSION'));
+});
+
+test('QG7d invalid Validation Planner contracts block the Harness gate', () => {
+  const quality = result(lint(), { validation: { status: 'fail', detail: 'planner eval failed' } });
+  assert.equal(quality.status, 'FAIL');
+  assert.ok(quality.blocking.includes('VALIDATION_REGRESSION'));
 });
 
 test('QG9 tool failure is inconclusive when no confirmed blocker exists', () => {

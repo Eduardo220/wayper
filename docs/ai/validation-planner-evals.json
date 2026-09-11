@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "VE01",
+      "attack": "unitAsPhysical",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE02",
+      "attack": "emulatorAsPhysical",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE03",
+      "attack": "buildAsRuntime",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE04",
+      "attack": "unitAsRemote",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE05",
+      "attack": "wrongRepository",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE06",
+      "attack": "stale",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE07",
+      "attack": "rawText",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE08",
+      "attack": "wrongCommand",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE09",
+      "attack": "reuse",
+      "expectedSatisfied": true
+    },
+    {
+      "id": "VE10",
+      "attack": "failedCheck",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE11",
+      "attack": "wrongGoal",
+      "expectedSatisfied": false
+    },
+    {
+      "id": "VE12",
+      "attack": "wrongBaseline",
+      "expectedSatisfied": false
+    }
+  ]
+}

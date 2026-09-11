@@ -78,6 +78,10 @@ the current Goal/slice needs them.
    [`evidence-receipts.md`](../../../docs/ai/evidence-receipts.md).
    Text, direct shell output and handoff assertions do not create receipts.
    Legacy refs are unverified; receipts never carry forward across revisions.
+   For validation planning, supply confirmed per-repository scope, capabilities,
+   risks, platforms and classified criteria to `validation-plan` in the existing
+   Context Map writer. Follow [`validation-planner.md`](../../../docs/ai/validation-planner.md).
+   Candidate checks are not executions; unavailable physical proof is not PASS.
 7. Add only new compact map entries with `wayper-context.mjs record`; use
    `inspect`, `stats`, `evidence`, `gaps`, and `validate` read-only. Persist the
    router only through the explicit command. Trust specialist selection only

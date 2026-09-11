@@ -56,6 +56,8 @@ o próprio escopo.
 - META Goals usam evidence-gated completion; budgets são tetos, não quotas.
 - Prova material exige Evidence Receipt observado, íntegro e compatível;
   texto/shell direto/handoff assertion não bastam. Contrato: `docs/ai/evidence-receipts.md`.
+- Profundidade de validação deriva do Validation Planner V1 e seu registry;
+  plano COMPLETE não é Goal DONE. Contrato: `docs/ai/validation-planner.md`.
 - Working Context usa `threadId + goalRunId + revision`; novo Goal exige `start`,
   amendment material exige `amend`. Baseline histórica não muda no refresh;
   contexto identificado só por thread é legado sem validade automática.

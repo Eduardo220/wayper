@@ -7,6 +7,7 @@ import { readReceipt, receiptIndexEntry, evaluateEvidenceRequirement } from './w
 import { fingerprintCorpus } from './quality/check-graph-scopes.mjs';
 import { validateRouterSelectionReceipt } from './wayper-agent-router.mjs';
 import { assertGoalExecution, assertSameExecution, invalidateMapProofs, repositorySnapshot } from './wayper-context-identity.mjs';
+import { createContextValidationPlan, refreshContextValidationPlan } from './wayper-validation-store.mjs';
 
 export { sourceFingerprint } from './wayper-evidence-receipts.mjs';
 
@@ -132,7 +133,8 @@ function refreshReceiptIndex(map, repositories, options) {
   map.evidenceReceipts ??= [];
   const relatedIds = sortedUnique([...map.evidence.map((item) => item.receiptId),
     ...map.validation.checks.map((item) => item.evidence), ...map.knownGood.flatMap((item) => item.receiptIds ?? []),
-    ...map.proofGaps.flatMap((item) => item.receiptIds ?? [])].filter((id) => RECEIPT_ID.test(id)));
+    ...map.proofGaps.flatMap((item) => item.receiptIds ?? []),
+    ...(map.validationPlan?.requirements ?? []).flatMap((item) => item.acceptedReceiptIds)].filter((id) => RECEIPT_ID.test(id)));
   for (const id of relatedIds) if (!map.evidenceReceipts.some((item) => item.receiptId === id)) {
     let receipt;
     try { receipt = readReceipt(id, context); } catch { /* Unavailable refs never acquire verification. */ }
@@ -451,6 +453,7 @@ export function refreshContextMap(existing, options) {
   const checks = new Map(map.validation?.checks?.map((item) => [item.id, item]));
   for (const id of options.validations ?? []) checks.set(id, checks.get(id) ?? { id, status: 'NOT_RUN', evidence: null });
   map.validation.checks = [...checks.values()];
+  if (map.validationPlan) map.validationPlan = refreshContextValidationPlan(map, receiptOptions(map, [...repos.values()], options));
   refreshReceiptIndex(map, [...repos.values()], options);
   delta(map, { phase: options.phase, invalidated });
   return finalizeContextMap(map, options);
@@ -474,7 +477,11 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
   const repos = definitions(repositoryDefinitions);
   const next = structuredClone(map);
   let id; let existed = false; let invalidated = [];
-  if (kind === 'receipt') {
+  if (kind === 'validation-plan') {
+    next.validationPlan = createContextValidationPlan(next, input, receiptOptions(next, [...repos.values()], options));
+    id = next.validationPlan.planId;
+    existed = map.validationPlan?.planId === id;
+  } else if (kind === 'receipt') {
     id = input.receiptId;
     existed = next.evidenceReceipts?.some((item) => item.receiptId === id) ?? false;
   } else if (kind === 'evidence') {
@@ -738,7 +745,7 @@ function rejectUnknownKeys(value, allowed, label, errors) {
 
 const MAP_KEYS = new Set(['schemaVersion', 'goalId', 'execution', 'taskClass', 'repositories', 'taskFingerprint',
   'routerFingerprint', 'registryFingerprint', 'repositoryState', 'capabilities', 'router', 'risks', 'evidence', 'dependencies',
-  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants', 'evidenceReceipts']);
+  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants', 'evidenceReceipts', 'validationPlan']);
 const REPOSITORY_KEYS = new Set(['repository', 'logicalRoot', 'relevantRefs', 'branch', 'head',
   'dirtyFingerprint', 'relevantDiffFingerprint', 'checkoutFingerprint', 'dirty', 'contentFingerprint']);
 const EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'symbol', 'range', 'sourceHash', 'sourceBytes',
@@ -768,6 +775,12 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
   }
   rejectUnknownKeys(map, MAP_KEYS, 'Context Map', errors);
   assertGoalExecution(map.execution, map.goalId);
+  if (map.validationPlan) {
+    rejectUnknownKeys(map.validationPlan, new Set(['planId', 'fingerprint', 'ownerContextFingerprint', 'availability',
+      'status', 'reasons', 'metrics', 'requirements']), 'validation plan index', errors);
+    const currentPlan = refreshContextValidationPlan(map, receiptOptions(map, [...repos.values()], {}));
+    if (stable(currentPlan) !== stable(map.validationPlan)) errors.push('stale or invalid validation plan index');
+  }
   if (stable(map.repositories) !== stable(map.execution.baseline.repositories.map((repo) => repo.repositoryId).sort())) {
     errors.push('Context Map baseline repository mismatch');
   }

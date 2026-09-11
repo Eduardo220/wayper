@@ -18,6 +18,7 @@ import {
 } from './wayper-context-identity.mjs';
 import { RECEIPT_ID, requirementPolicy } from './wayper-evidence-receipts.mjs';
 import { evaluateEvidenceRequirement } from './wayper-evidence-store.mjs';
+import { refreshContextValidationPlan } from './wayper-validation-store.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
@@ -144,6 +145,11 @@ function proofOptions(state, options = {}) {
       root: path.resolve(root, item.logicalRoot) })) : [{ id: 'wayper', root }]) };
 }
 
+export function workingValidationStatus(state, options = {}) {
+  if (!state.contextMap?.validationPlan) return { status: 'LEGACY_UNPLANNED', requirements: [] };
+  return refreshContextValidationPlan(state.contextMap, proofOptions(state, options));
+}
+
 export function contextDecision(state, options = {}) {
   try { assertWorkingContext(state); } catch { return 'REVALIDATION_REQUIRED'; }
   const accepts = (policy, evidence) => evaluateEvidenceRequirement(policy, evidence, proofOptions(state, options)).status === 'SATISFIED';
@@ -156,6 +162,7 @@ export function contextDecision(state, options = {}) {
   if (!requirementsProven || !artifactsProven) return 'CONTINUE_CONTEXT';
   const map = state.contextMap;
   if (!map) return 'STOP_WHEN_PROVEN';
+  if (map.validationPlan && workingValidationStatus(state, options).status !== 'COMPLETE') return 'CONTINUE_CONTEXT';
   if (validateContextMap(map, { repositoryDefinitions: proofOptions(state, options).repositories,
     registry: options.registry }).status !== 'VALID') return 'CONTINUE_CONTEXT';
   const checks = map.validation?.checks ?? [];
@@ -735,7 +742,7 @@ async function main() {
       execution: current.execution, revisionHistory: current.revisionHistory,
       repositories: map.repositories, taskFingerprint: map.taskFingerprint,
       routerFingerprint: map.routerFingerprint, capabilities: map.capabilities,
-      router: map.router, risks: map.risks, validation: map.validation, metrics: map.metrics }, null, 2));
+      router: map.router, risks: map.risks, validation: map.validation, validationPlan: workingValidationStatus(current), metrics: map.metrics }, null, 2));
     return;
   }
   if (command === 'stats') {

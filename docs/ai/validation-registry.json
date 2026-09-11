@@ -1,0 +1,755 @@
+{
+  "schemaVersion": 1,
+  "riskFlags": [
+    "RUN_DATA_LOSS",
+    "LIFECYCLE",
+    "CONCURRENCY",
+    "GPS_GEO",
+    "OFFLINE_STORAGE",
+    "SYNC",
+    "FIREBASE",
+    "AUTH_SECURITY",
+    "NATIVE_ANDROID",
+    "PERFORMANCE",
+    "DATA_MIGRATION",
+    "UI_UX",
+    "ACCESSIBILITY",
+    "PRIVACY",
+    "PRODUCT_RULE",
+    "DOCUMENTATION",
+    "BUILD_TOOLING"
+  ],
+  "checks": [
+    {
+      "id": "mobile-diff",
+      "repository": "wayper",
+      "level": "L0",
+      "type": "COMMAND",
+      "platform": "shared",
+      "command": "git",
+      "args": [
+        "diff",
+        "--check",
+        "HEAD",
+        "--"
+      ],
+      "paths": []
+    },
+    {
+      "id": "mobile-static",
+      "repository": "wayper",
+      "level": "L0",
+      "type": "COMMAND",
+      "platform": "shared",
+      "command": "npm",
+      "args": [
+        "run",
+        "quality:gate"
+      ],
+      "paths": []
+    },
+    {
+      "id": "mobile-L1",
+      "repository": "wayper",
+      "level": "L1",
+      "type": "OWNER_TESTS",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": []
+    },
+    {
+      "id": "mobile-L2",
+      "repository": "wayper",
+      "level": "L2",
+      "type": "OWNER_TESTS",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": [
+        "src/services/run/__tests__/activeRunLocalFirst.integration.test.js",
+        "scripts/quality/check-context-efficiency.test.mjs",
+        "scripts/quality/check-goal-identity.test.mjs",
+        "scripts/quality/check-evidence-receipts.test.mjs",
+        "scripts/quality/check-validation-planner.test.mjs",
+        "scripts/wayper-context-packet.test.mjs",
+        "scripts/wayper-structured-handoff.test.mjs"
+      ]
+    },
+    {
+      "id": "mobile-runtime",
+      "repository": "wayper",
+      "level": "L3",
+      "type": "RUNBOOK",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": [
+        "docs/22-teste-real-corrida-background.md"
+      ]
+    },
+    {
+      "id": "mobile-L5",
+      "repository": "wayper",
+      "level": "L5",
+      "type": "RUNBOOK",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": [
+        "docs/22-teste-real-corrida-background.md"
+      ]
+    },
+    {
+      "id": "mobile-L6",
+      "repository": "wayper",
+      "level": "L6",
+      "type": "RUNBOOK",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": [
+        "docs/22-teste-real-corrida-background.md"
+      ]
+    },
+    {
+      "id": "site-diff",
+      "repository": "wayper-site",
+      "level": "L0",
+      "type": "COMMAND",
+      "platform": "shared",
+      "command": "git",
+      "args": [
+        "diff",
+        "--check",
+        "HEAD",
+        "--"
+      ],
+      "paths": []
+    },
+    {
+      "id": "site-static",
+      "repository": "wayper-site",
+      "level": "L0",
+      "type": "COMMAND",
+      "platform": "shared",
+      "command": "npm",
+      "args": [
+        "run",
+        "lint"
+      ],
+      "paths": []
+    },
+    {
+      "id": "site-L1",
+      "repository": "wayper-site",
+      "level": "L1",
+      "type": "OWNER_TESTS",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": []
+    },
+    {
+      "id": "site-L2",
+      "repository": "wayper-site",
+      "level": "L2",
+      "type": "OWNER_TESTS",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": []
+    },
+    {
+      "id": "site-runtime",
+      "repository": "wayper-site",
+      "level": "L3",
+      "type": "RUNBOOK",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": [
+        "docs/16-experiencia-3d-fase-3.md"
+      ]
+    },
+    {
+      "id": "site-L5",
+      "repository": "wayper-site",
+      "level": "L5",
+      "type": "RUNBOOK",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": [
+        "docs/16-experiencia-3d-fase-3.md"
+      ]
+    },
+    {
+      "id": "site-L6",
+      "repository": "wayper-site",
+      "level": "L6",
+      "type": "RUNBOOK",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": [
+        "docs/16-experiencia-3d-fase-3.md"
+      ]
+    },
+    {
+      "id": "android-build",
+      "repository": "wayper",
+      "level": "L4",
+      "type": "COMMAND",
+      "platform": "android",
+      "command": "node",
+      "args": [
+        "scripts/run-gradle.cjs",
+        "assembleDevDebug"
+      ],
+      "paths": [
+        "scripts/run-gradle.cjs"
+      ]
+    },
+    {
+      "id": "ios-build",
+      "repository": "wayper",
+      "level": "L4",
+      "type": "RUNBOOK",
+      "platform": "ios",
+      "command": null,
+      "args": [],
+      "paths": [
+        "docs/12-guia-de-testes.md"
+      ]
+    },
+    {
+      "id": "webgl-unit",
+      "repository": "wayper-site",
+      "level": "L1",
+      "type": "COMMAND",
+      "platform": "web",
+      "command": "npm",
+      "args": [
+        "test",
+        "--",
+        "tests/unit/three-quality.test.ts",
+        "tests/unit/three-fallback.test.tsx",
+        "tests/unit/three-controller.test.ts"
+      ],
+      "paths": [
+        "tests/unit/three-quality.test.ts",
+        "tests/unit/three-fallback.test.tsx",
+        "tests/unit/three-controller.test.ts"
+      ]
+    },
+    {
+      "id": "webgl-browser",
+      "repository": "wayper-site",
+      "level": "L3",
+      "type": "COMMAND",
+      "platform": "web",
+      "command": "npm",
+      "args": [
+        "run",
+        "test:e2e",
+        "--",
+        "tests/e2e/three.spec.ts"
+      ],
+      "paths": [
+        "tests/e2e/three.spec.ts"
+      ]
+    },
+    {
+      "id": "mobile-local-first",
+      "repository": "wayper",
+      "level": "L2",
+      "type": "COMMAND",
+      "platform": "shared",
+      "command": "npm",
+      "args": [
+        "test",
+        "--",
+        "--runTestsByPath",
+        "src/services/run/__tests__/activeRunLocalFirst.integration.test.js"
+      ],
+      "paths": [
+        "src/services/run/__tests__/activeRunLocalFirst.integration.test.js"
+      ]
+    },
+    {
+      "id": "mobile-remote",
+      "repository": "wayper",
+      "level": "L3",
+      "type": "RUNBOOK",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": [
+        "docs/wayper/08-firebase-firestore.md"
+      ]
+    },
+    {
+      "id": "site-remote",
+      "repository": "wayper-site",
+      "level": "L3",
+      "type": "RUNBOOK",
+      "platform": "shared",
+      "command": null,
+      "args": [],
+      "paths": []
+    }
+  ],
+  "rules": [
+    {
+      "id": "minimal",
+      "when": {
+        "operations": [
+          "DOC_ONLY",
+          "TRIVIAL"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-diff",
+        "site-diff"
+      ]
+    },
+    {
+      "id": "material-static",
+      "when": {
+        "operations": [
+          "CONFIG",
+          "TEST_ONLY",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-static",
+        "site-static"
+      ]
+    },
+    {
+      "id": "logic",
+      "when": {
+        "operations": [
+          "TEST_ONLY",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-L1",
+        "site-L1"
+      ]
+    },
+    {
+      "id": "architecture",
+      "when": {
+        "operations": [
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-L2",
+        "site-L2"
+      ]
+    },
+    {
+      "id": "durability",
+      "when": {
+        "domains": [
+          "PERSISTENCE_SYNC",
+          "RUN_RUNTIME",
+          "FIREBASE_AUTH",
+          "TERRITORY_GEO"
+        ],
+        "operations": [
+          "CONFIG",
+          "TEST_ONLY",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-L2",
+        "site-L2"
+      ]
+    },
+    {
+      "id": "local-first-contract",
+      "when": {
+        "capabilities": [
+          "durable-run-save",
+          "run-finalization",
+          "active-run-recovery"
+        ],
+        "operations": [
+          "CONFIG",
+          "TEST_ONLY",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper"
+      ],
+      "checks": [
+        "mobile-local-first"
+      ]
+    },
+    {
+      "id": "material-risks",
+      "when": {
+        "risks": [
+          "RUN_DATA_LOSS",
+          "CONCURRENCY",
+          "OFFLINE_STORAGE",
+          "SYNC",
+          "DATA_MIGRATION",
+          "AUTH_SECURITY",
+          "FIREBASE",
+          "PRIVACY"
+        ],
+        "operations": [
+          "CONFIG",
+          "TEST_ONLY",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-L1",
+        "mobile-L2",
+        "site-L1",
+        "site-L2"
+      ]
+    },
+    {
+      "id": "lifecycle",
+      "when": {
+        "risks": [
+          "LIFECYCLE"
+        ],
+        "operations": [
+          "CONFIG",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-L1",
+        "mobile-L2",
+        "mobile-runtime",
+        "android-build",
+        "ios-build",
+        "site-L1",
+        "site-L2",
+        "site-runtime"
+      ]
+    },
+    {
+      "id": "permissions-notification",
+      "when": {
+        "capabilities": [
+          "onboarding-permissions",
+          "active-run-notification"
+        ],
+        "operations": [
+          "CONFIG",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper"
+      ],
+      "checks": [
+        "mobile-L1",
+        "mobile-runtime",
+        "android-build",
+        "ios-build"
+      ]
+    },
+    {
+      "id": "native-risk",
+      "when": {
+        "risks": [
+          "NATIVE_ANDROID"
+        ],
+        "operations": [
+          "CONFIG",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper"
+      ],
+      "checks": [
+        "android-build"
+      ]
+    },
+    {
+      "id": "native-capability",
+      "when": {
+        "capabilities": [
+          "android-run-boundary"
+        ],
+        "operations": [
+          "CONFIG",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper"
+      ],
+      "checks": [
+        "android-build"
+      ]
+    },
+    {
+      "id": "native-path",
+      "when": {
+        "pathPatterns": [
+          "^android/.*\\.(?:kt|java|gradle|kts)$",
+          "^android/.*AndroidManifest\\.xml$"
+        ],
+        "operations": [
+          "CONFIG",
+          "TEST_ONLY",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper"
+      ],
+      "checks": [
+        "android-build"
+      ]
+    },
+    {
+      "id": "gps-pipeline",
+      "when": {
+        "capabilities": [
+          "live-gps-ingestion"
+        ],
+        "operations": [
+          "CONFIG",
+          "TEST_ONLY",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper"
+      ],
+      "checks": [
+        "mobile-L1",
+        "mobile-L2"
+      ]
+    },
+    {
+      "id": "rendering",
+      "when": {
+        "claims": [
+          "RENDERING",
+          "ASSISTIVE",
+          "RUNTIME",
+          "PROCESS_DEATH"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-runtime",
+        "site-runtime"
+      ]
+    },
+    {
+      "id": "remote-service",
+      "when": {
+        "claims": [
+          "REMOTE_SERVICE"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-L1",
+        "mobile-L2",
+        "mobile-remote",
+        "site-L1",
+        "site-L2",
+        "site-remote"
+      ]
+    },
+    {
+      "id": "physical-claim",
+      "when": {
+        "claims": [
+          "PHYSICAL_DEVICE",
+          "REAL_SCENARIO",
+          "PROCESS_DEATH"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-L5",
+        "site-L5"
+      ]
+    },
+    {
+      "id": "real-scenario",
+      "when": {
+        "claims": [
+          "REAL_SCENARIO"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-L6",
+        "site-L6"
+      ]
+    },
+    {
+      "id": "webgl",
+      "when": {
+        "claims": [
+          "WEBGL"
+        ]
+      },
+      "repositories": [
+        "wayper-site"
+      ],
+      "checks": [
+        "webgl-unit",
+        "webgl-browser"
+      ]
+    },
+    {
+      "id": "architectural-class",
+      "when": {
+        "taskClasses": [
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ],
+        "operations": [
+          "CONFIG",
+          "TEST_ONLY",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper",
+        "wayper-site"
+      ],
+      "checks": [
+        "mobile-L2",
+        "site-L2"
+      ]
+    },
+    {
+      "id": "lifecycle-capability",
+      "when": {
+        "capabilities": [
+          "active-run-lifecycle"
+        ],
+        "operations": [
+          "CONFIG",
+          "BUG_FIX",
+          "FEATURE",
+          "REFACTOR",
+          "ARCHITECTURAL",
+          "CRITICAL_RUNTIME"
+        ]
+      },
+      "repositories": [
+        "wayper"
+      ],
+      "checks": [
+        "mobile-runtime",
+        "android-build",
+        "ios-build"
+      ]
+    }
+  ]
+}

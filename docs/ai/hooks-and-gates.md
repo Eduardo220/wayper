@@ -10,6 +10,10 @@
 
 ## Contrato
 
+Validation Planner V1 integra o FAST via `quality:validation`; alterações no
+registry, planner, schema e evals selecionam sua suíte no backstop. O gate valida
+o contrato; não executa os planos, não vira Stop V2 e não decide Goal completion.
+
 Evidence Receipts V1 integram o gate FAST via `quality:evidence`. O changed-scope
 seleciona a suíte quando schema, producer, store, fixtures ou evals de Evidence
 mudam. Isso valida a infraestrutura; o backstop não intercepta shell nem decide

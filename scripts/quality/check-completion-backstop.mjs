@@ -13,12 +13,19 @@ const QUALITY_TESTS = {
   context: 'scripts/quality/check-context-efficiency.test.mjs',
   handoff: 'scripts/wayper-structured-handoff.test.mjs',
   evidence: 'scripts/quality/check-evidence-receipts.test.mjs',
+  validation: 'scripts/quality/check-validation-planner.test.mjs',
 };
 
 function isEvidence(file) {
   return file.startsWith('scripts/wayper-evidence') || file.startsWith('scripts/quality/check-evidence') ||
     file === 'scripts/quality/evidence-fixture.mjs' || file.startsWith('docs/ai/evidence-receipt') ||
     file === 'package.json';
+}
+
+function isValidation(file) {
+  return file.startsWith('scripts/wayper-validation') || file.startsWith('scripts/quality/check-validation') ||
+    file.startsWith('docs/ai/validation-') || file === 'docs/ai/capability-registry.json' ||
+    file === 'docs/ai/task-classification.md' || file === 'package.json';
 }
 
 function isContextEfficiency(file) {
@@ -50,6 +57,7 @@ function isQualityTooling(file) {
     || file.startsWith('scripts/wayper-context')
     || file.startsWith('scripts/wayper-structured-handoff')
     || file.startsWith('scripts/wayper-evidence')
+    || file.startsWith('scripts/wayper-validation')
     || file.startsWith('scripts/quality/');
 }
 
@@ -83,6 +91,7 @@ export function relevantQualityTests(files) {
   const tests = new Set();
   for (const file of files) {
     if (isEvidence(file)) tests.add(QUALITY_TESTS.evidence);
+    if (isValidation(file)) tests.add(QUALITY_TESTS.validation);
     if (isStructuredHandoff(file)) tests.add(QUALITY_TESTS.handoff);
     if (isContextEfficiency(file) || file.includes('context-efficiency')) {
       tests.add(QUALITY_TESTS.context);

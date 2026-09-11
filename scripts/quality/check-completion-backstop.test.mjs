@@ -98,6 +98,7 @@ test('HB4 quality tooling selects only directly associated tests', () => {
     'scripts/wayper-structured-handoff.test.mjs',
   ]);
   assert.deepEqual(relevantQualityTests(['package.json']), ['scripts/quality/check-evidence-receipts.test.mjs',
+    'scripts/quality/check-validation-planner.test.mjs',
     'scripts/wayper-structured-handoff.test.mjs']);
 });
 

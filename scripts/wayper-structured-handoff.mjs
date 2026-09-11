@@ -40,7 +40,7 @@ const NEW_EVIDENCE_ID = /^NE-[A-Za-z0-9._-]{1,80}$/;
 const FORBIDDEN_KEY = /transcript|chain.?of.?thought|source.?blob|raw.?graph|raw.?diff|tool.?diar|stdout|stderr|test.?log|packet.?content/i;
 const TOP_KEYS = new Set(['schemaVersion', 'goalId', 'taskId', 'agentId', 'packetId', 'status', 'confidence',
   'coverage', 'findings', 'evidenceRefs', 'newEvidence', 'risks', 'recommendations', 'filesRead', 'filesChanged',
-  'tests', 'proofGaps', 'ambiguities', 'blockers', 'metrics', 'existingEvidenceReceiptIds']);
+  'tests', 'proofGaps', 'ambiguities', 'blockers', 'metrics', 'existingEvidenceReceiptIds', 'validationFindings']);
 const FINDING_KEYS = new Set(['id', 'severity', 'category', 'claim', 'scenario', 'impact', 'safeguard',
   'confidence', 'evidenceRefs', 'proofGapRefs', 'affectedCapabilities']);
 const NEW_EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'range', 'symbol', 'sourceHash', 'category',
@@ -254,6 +254,15 @@ function validateStructuredHandoffUnsafe(handoff, { packet, contextMap, registry
   if (packet.capabilities.required.some((id) => !handoff.coverage.includes(id))) errors.push('required capability coverage omitted');
   if (packet.riskFlags.some((id) => !handoff.risks.includes(id))) errors.push('packet risk omitted');
   const evidence = new Map(contextMap.evidence.map((item) => [item.id, item]));
+  if (!Array.isArray(handoff.validationFindings ?? []) || (handoff.validationFindings ?? []).length > 24) {
+    errors.push('invalid validation findings');
+  } else for (const item of handoff.validationFindings ?? []) {
+    rejectKeys(item, new Set(['validationRequirementId', 'summary', 'candidateChecks', 'existingEvidenceReceiptIds']), 'validation finding', errors);
+    if (!packet.validationPlan?.requirements.some((r) => r.validationRequirementId === item.validationRequirementId) ||
+      !validText(item.summary) || !validTexts(item.candidateChecks) || item.candidateChecks.length > 4 ||
+      !unique(item.existingEvidenceReceiptIds) || item.existingEvidenceReceiptIds.length > 8 ||
+      item.existingEvidenceReceiptIds.some((id) => !(packet.evidenceReceiptIds ?? []).includes(id))) errors.push('invalid validation finding refs');
+  }
   if (!unique(handoff.existingEvidenceReceiptIds ?? []) || (handoff.existingEvidenceReceiptIds ?? []).length > 64 ||
     (handoff.existingEvidenceReceiptIds ?? []).some((id) => !(packet.evidenceReceiptIds ?? []).includes(id))) {
     errors.push('invalid handoff Evidence Receipt refs');
@@ -385,6 +394,8 @@ export function planContextMapMerge(handoff, options = {}) {
   if (validation.status !== 'VALID') throw new Error(validation.errors.join('; '));
   return {
     existingEvidenceReceiptIds: [...(handoff.existingEvidenceReceiptIds ?? [])],
+    validationFindings: (handoff.validationFindings ?? []).map((item) => ({ ...item, origin: 'HANDOFF_ASSERTED',
+      verification: 'UNVERIFIED', ownerAction: 'PLANNER_REASSESSMENT_REQUIRED' })),
     candidateEvidence: [
       ...handoff.newEvidence.map((item) => ({ proposalId: item.id, kind: 'REVIEW', summary: item.claim,
         origin: 'HANDOFF_ASSERTED', verification: 'UNVERIFIED' })),

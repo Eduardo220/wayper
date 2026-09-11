@@ -20,6 +20,10 @@ ficam `HANDOFF_ASSERTED/UNVERIFIED` no merge plan e exigem observação do owner
 Isso preserva owner review, correction bounded e fallback; não acrescenta
 enforcement de dispatch, writers ou scheduling.
 
+O [Validation Planner](validation-planner.md) acrescenta requirements bounded ao
+Packet. Handoff pode propor `validationFindings`; required/blocking/N/A não são
+editáveis pelo specialist. O owner deve reavaliar o plano, preservando os receipts.
+
 ## Suporte observado e boundary de configuração
 
 Na baseline observada de 2026-09-02, Codex CLI `0.152.1` expõe multi-agent estável,

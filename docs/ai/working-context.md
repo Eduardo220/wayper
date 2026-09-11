@@ -103,7 +103,7 @@ npm run context:prove -- --thread-id <threadId> \
 # Ou --requirement <KIND:ID>, em vez de --artifact.
 node scripts/wayper-context.mjs record --thread-id <threadId> \
   --goal-run-id <goalRunId> --revision <N> \
-  --kind <receipt|evidence|dependency|known-good|proof-gap|graphify|validation> \
+  --kind <validation-plan|receipt|evidence|dependency|known-good|proof-gap|graphify|validation> \
   --data '<JSON compacto>'
 node scripts/wayper-context.mjs router --thread-id <threadId> \
   --goal-run-id <goalRunId> --revision <N> \
@@ -259,6 +259,11 @@ capability por heurística textual.
   provenance, baseline relation, verification/reasons e summary bounded.
   [Evidence Receipts](evidence-receipts.md) define observers, store e aceitação.
   Evidence refs legadas continuam úteis para discovery; texto não satisfaz prova.
+- `validationPlan` referencia plano V1 imutável e assessment bounded. O writer
+  recebe facts explícitos via `record --kind validation-plan --data '<JSON>'`.
+  [Validation Planner](validation-planner.md) define registry, reasons, receipts,
+  N/A/unavailable e replan. `workingValidationStatus()` consulta o estado atual;
+  contexto antigo sem plano é LEGACY_UNPLANNED, nunca COMPLETE implícito.
 - Evidence source-backed cujo hash diverge vira `STALE` no refresh. O validator
   rejeita `PROVEN` silenciosamente stale. Range além do EOF falha. `context:prove`
   exige receipt observado compatível; regex de range ou token PASS/FAIL em texto
@@ -369,6 +374,7 @@ obrigatório pode exceder o ceiling somente com
 
 `STOP_WHEN_PROVEN` exige ao menos um artifact e um requirement, todos com
 receipts verificados e compatíveis, revalidados no consumo;
+se houver Validation Plan, ele também precisa estar COMPLETE na avaliação atual;
 um check evidenciado `risk:<FLAG>` para cada risco e `invariant:<ID>` para cada
 invariante; demais checks PASS com receipt compatível; nenhum proof gap aberto ou
 resolvido apenas por texto/refs legadas, nenhum

@@ -5,10 +5,11 @@
 > **Owner:** [`harness-v1.md`](harness-v1.md)  
 > **Entradas:** classe, risk flags, domínios e diff real
 
-Este documento seleciona evidência proporcional à mudança. Ele não é um
-orquestrador executável, Brain ou substituto de julgamento técnico. O agente
-principal aplica a matriz, executa os checks e sintetiza reviews. Nenhuma
-dimensão de qualidade substitui outra.
+Este documento orienta gate/review proporcional à mudança. A derivação
+executável dos requisitos L0-L6 pertence ao [Validation Planner V1](validation-planner.md)
+e `validation-registry.json`. O principal confirma os fatos, executa checks
+explicitamente e sintetiza reviews. O planner não executa comandos nem conclui
+Goals. Nenhuma dimensão de qualidade substitui outra.
 
 ## Dimensões
 
@@ -86,6 +87,7 @@ basta.
 
 | Delta observado | Evidência adicional |
 | --- | --- |
+| Validation registry/planner/schema/evals | `npm run quality:validation`; VP1-VP20, isolamento, stale, N/A/unavailable e falsa profundidade; incluído em `quality:gate` |
 | Evidence schema/producer/store/evals | `npm run quality:evidence`; false proof, integridade, identity/baseline, stale, parent, redaction e integração Map/Packet/Handoff; incluído em `quality:gate` |
 | `package.json`, lockfile, Expo/Metro/Babel/EAS | dependency check e Expo config/Doctor proporcionais |
 | `eslint.config.js` ou script quality | lint canônico + teste do tooling |

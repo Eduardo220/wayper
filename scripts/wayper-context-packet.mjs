@@ -7,6 +7,7 @@ import { readWorkingContext, repositoryDefinitions, ROOT } from './wayper-contex
 import { assertGoalExecution } from './wayper-context-identity.mjs';
 import { CONTEXT_MAP_SCHEMA_VERSION, capabilityRegistryFingerprint, validateContextMap } from './wayper-context-map.mjs';
 import { loadCapabilityFiles, NATIVE_ROLES, validateRegistry } from './quality/check-capability-routing.mjs';
+import { packetValidationRequirements } from './wayper-validation-store.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const CONTEXT_PACKET_SCHEMA_VERSION = 1;
@@ -141,6 +142,7 @@ function buildContextPacketCandidate(contextMap, target, { registry, routerOutpu
     throw new Error('Packet target paths exceed the authority limit');
   }
   const authoritativePaths = new Set([
+    ...(contextMap.validationPlan?.requirements ?? []).flatMap((r) => r.scope.map((p) => qualify(r.repository, p))),
     ...(contextMap.evidenceReceipts ?? []).filter((item) => item.subject.path).map((item) => qualify(item.repository, item.subject.path)),
     ...contextMap.evidence.map((item) => qualify(item.repository, item.path)),
     ...contextMap.dependencies.flatMap((item) => [qualify(item.from.repository, item.from.ref),
@@ -233,6 +235,9 @@ function buildContextPacketCandidate(contextMap, target, { registry, routerOutpu
     !(independent && isReviewConclusionEvidence(item)) && (target.type === 'validationRole' || explicitValidations.has(item.id) ||
     ['FAIL', 'BLOCKED'].includes(item.status))).map((item) => item.id);
   const selectedSourceBytes = [...selectedEvidence].reduce((total, id) => total + (evidenceById.get(id).sourceBytes ?? 0), 0);
+  const validationRequirements = packetValidationRequirements(contextMap, normalized.repositories, [...paths]);
+  if (validationRequirements.length > 24) throw new Error('Validation requirements exceed Packet budget; narrow target scope');
+  if (contextMap.validationPlan?.status === 'REPLAN_REQUIRED') ambiguities.push('VALIDATION_PLAN_REPLAN_REQUIRED');
   const duplicateRefsAvoided = contextMap.dependencies.filter((item) => dependencyRefs.has(item.id))
     .reduce((total, item) => total + item.evidenceIds.filter((id) => selectedEvidence.has(id)).length, 0);
   const packet = {
@@ -249,11 +254,14 @@ function buildContextPacketCandidate(contextMap, target, { registry, routerOutpu
     riskFlags: risks,
     invariants,
     evidenceRefs: [...selectedEvidence].sort(),
+    ...(contextMap.validationPlan ? { validationPlan: { planId: contextMap.validationPlan.planId,
+      status: contextMap.validationPlan.status, requirements: validationRequirements } } : {}),
     evidenceReceiptIds: sortedUnique((contextMap.evidenceReceipts ?? []).filter((item) =>
       repositorySet.has(item.repository) && item.verification === 'VERIFIED' &&
       ((item.subject.path && paths.has(qualify(item.repository, item.subject.path)) &&
         !(independent && contextMap.evidence.some((entry) => entry.receiptId === item.receiptId && isReviewConclusionEvidence(entry)))) ||
         validationRefs.some((id) => contextMap.validation.checks.find((check) => check.id === id)?.evidence === item.receiptId) ||
+        validationRequirements.some((r) => r.acceptedReceiptIds.includes(item.receiptId)) ||
         knownGoodRefs.some((id) => contextMap.knownGood.find((entry) => entry.id === id)?.receiptIds?.includes(item.receiptId))))
       .map((item) => item.receiptId)),
     dependencyRefs: [...dependencyRefs].map(([id, reason]) => ({ id, reason })).sort((a, b) => a.id.localeCompare(b.id)),
@@ -286,7 +294,7 @@ export function buildContextPacket(contextMap, target, options = {}) {
 
 const PACKET_KEYS = new Set(['schemaVersion', 'goalId', 'packetId', 'contextMapFingerprint', 'target', 'objective',
   'repositories', 'capabilities', 'scope', 'riskFlags', 'invariants', 'evidenceRefs', 'dependencyRefs', 'evidenceReceiptIds',
-  'knownGoodRefs', 'proofGapRefs', 'graphifyRefs', 'validationRefs', 'exclusions', 'ambiguities', 'contextBudget', 'metrics']);
+  'knownGoodRefs', 'proofGapRefs', 'graphifyRefs', 'validationRefs', 'validationPlan', 'exclusions', 'ambiguities', 'contextBudget', 'metrics']);
 const METRIC_KEYS = new Set(['packetBytes', 'packetTokenProxy', 'evidenceCount', 'dependencyCount', 'pathCount',
   'inlineBytes', 'sourceBytesReferenced', 'sourceBytesMaterialized', 'knownGoodRefCount', 'duplicateRefsAvoided']);
 const BUDGET_KEYS = new Set(['taskClass', 'targetType', 'tokenProxyCeiling', 'status', 'reason']);
@@ -302,11 +310,16 @@ function validateContextPacketUnsafe(packet, { contextMap, registry, repositoryD
     return { status: 'INVALID', errors: ['unsupported Context Packet schema or missing authority'] };
   }
   assertGoalExecution(contextMap.execution, contextMap.goalId);
-  if ((packet.evidenceReceiptIds ?? []).length && (!repositoryDefinitions ||
+  if (((packet.evidenceReceiptIds ?? []).length || contextMap.validationPlan) && (!repositoryDefinitions ||
     validateContextMap(contextMap, { registry, repositoryDefinitions }).status !== 'VALID')) {
     errors.push('receipt authority stale or unavailable');
   }
   rejectKeys(packet, PACKET_KEYS, 'packet', errors);
+  const expectedPlan = contextMap.validationPlan ? { planId: contextMap.validationPlan.planId, status: contextMap.validationPlan.status,
+    requirements: packetValidationRequirements(contextMap, packet.repositories ?? [], packet.scope?.paths ?? []) } : undefined;
+  if (stable(packet.validationPlan) !== stable(expectedPlan) || (packet.validationPlan?.requirements?.length ?? 0) > 24) {
+    errors.push('invalid or omitted validation requirements / repository leakage');
+  }
   rejectKeys(packet.target, new Set(['type', 'id', 'reviewPolicy']), 'target', errors);
   rejectKeys(packet.capabilities, new Set(['required', 'optional']), 'capabilities', errors);
   rejectKeys(packet.scope, new Set(['paths', 'symbols']), 'scope', errors);
@@ -360,6 +373,7 @@ function validateContextPacketUnsafe(packet, { contextMap, registry, repositoryD
       relativePath.split('/').includes('..');
   })) errors.push('packet scope repository leakage');
   const authorityPaths = new Set([
+    ...(contextMap.validationPlan?.requirements ?? []).flatMap((r) => r.scope.map((p) => qualify(r.repository, p))),
     ...(contextMap.evidenceReceipts ?? []).filter((item) => item.subject.path).map((item) => qualify(item.repository, item.subject.path)),
     ...contextMap.evidence.map((item) => qualify(item.repository, item.path)),
     ...contextMap.dependencies.flatMap((item) => [qualify(item.from.repository, item.from.ref),
@@ -380,6 +394,7 @@ function validateContextPacketUnsafe(packet, { contextMap, registry, repositoryD
       return !entry || entry.verification !== 'VERIFIED' || !packet.repositories.includes(entry.repository) ||
         !(entry.subject.path && packet.scope.paths.includes(qualify(entry.repository, entry.subject.path)) ||
           packet.validationRefs.some((ref) => validations.get(ref)?.evidence === id) ||
+          packet.validationPlan?.requirements.some((r) => r.acceptedReceiptIds.includes(id)) ||
           packet.knownGoodRefs.some((ref) => knownGood.get(ref)?.receiptIds?.includes(id)));
     })) errors.push('invalid packet receipt refs or repository leakage');
   const graphify = new Set(Object.entries(contextMap.graphify).flatMap(([repository, graph]) =>

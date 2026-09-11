@@ -156,8 +156,8 @@ export function classifyCommand(result) {
   };
 }
 
-export function synthesizeQuality({ lint, size, architecture, router, evidence, diff }) {
-  const checks = { size, architecture, router, evidence, diff };
+export function synthesizeQuality({ lint, size, architecture, router, evidence, validation, diff }) {
+  const checks = { size, architecture, router, evidence, validation, diff };
   const blocking = [];
   const toolFailures = [];
 
@@ -195,6 +195,7 @@ export function formatQuality(result, { details = false, json = false } = {}) {
     `architecture: ${result.checks.architecture.status === 'pass' ? '0 regressions' : result.checks.architecture.status}`,
     `router: ${result.checks.router.status === 'pass' ? 'shadow policy valid' : result.checks.router.status}`,
     `evidence: ${result.checks.evidence.status === 'pass' ? 'receipt contracts valid' : result.checks.evidence.status}`,
+    `validation: ${result.checks.validation.status === 'pass' ? 'planner contracts valid' : result.checks.validation.status}`,
     `diff: ${result.checks.diff.status === 'pass' ? 'clean' : result.checks.diff.status}`,
   ];
   if (!details) return lines.join('\n');
@@ -231,12 +232,13 @@ function run(command, args) {
 
 async function executeQualityGate() {
   const eslintCli = path.join(ROOT, 'node_modules/eslint/bin/eslint.js');
-  const [lintRun, sizeRun, architectureRun, routerRun, evidenceRun, diffCheckRun, diffRun] = await Promise.all([
+  const [lintRun, sizeRun, architectureRun, routerRun, evidenceRun, validationRun, diffCheckRun, diffRun] = await Promise.all([
     run(process.execPath, [eslintCli, '.', '--format', 'json']),
     run(process.execPath, [path.join(ROOT, 'scripts/quality/check-code-size.mjs')]),
     run(process.execPath, [path.join(ROOT, 'scripts/quality/check-architecture.mjs')]),
     run(process.execPath, ['--test', path.join(ROOT, 'scripts/wayper-agent-router.test.mjs')]),
     run(process.execPath, ['--test', path.join(ROOT, 'scripts/quality/check-evidence-receipts.test.mjs')]),
+    run(process.execPath, ['--test', path.join(ROOT, 'scripts/quality/check-validation-planner.test.mjs')]),
     run('git', ['diff', '--check', 'HEAD', '--']),
     run('git', ['diff', '--no-ext-diff', '--no-renames', '--unified=0', 'HEAD', '--']),
   ]);
@@ -256,6 +258,7 @@ async function executeQualityGate() {
     architecture: classifyCommand(architectureRun),
     router: classifyCommand(routerRun),
     evidence: classifyCommand(evidenceRun),
+    validation: classifyCommand(validationRun),
     diff,
   });
 }

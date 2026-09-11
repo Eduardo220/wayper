@@ -25,6 +25,10 @@ owner da seleção; o documento de processo não reclassifica a tarefa.
 Gate e review proporcionais são selecionados depois da inspeção do diff, pela
 matriz de [`quality-gates.md`](quality-gates.md).
 
+O [Validation Planner V1](validation-planner.md) consome essa classificação já
+confirmada para derivar requisitos L0-L6. A policy executável vive somente em
+`validation-registry.json`; o planner não classifica intenção nem substitui o router.
+
 Antes da classe, a intenção seleciona `TASK_MODE` para um resultado pontual ou
 `META_GOAL_MODE` para progresso contínuo em vários slices. O modo não substitui
 nem eleva a classe: cada slice de uma meta é classificado normalmente. O

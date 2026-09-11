@@ -13,6 +13,7 @@
     "quality:external-skills": "node scripts/quality/check-external-skill-acquisition.mjs",
     "quality:design": "node scripts/quality/check-design-routing.mjs",
     "quality:meta-goal": "node scripts/quality/check-meta-goal-completion.mjs",
+    "quality:validation": "node --test scripts/quality/check-validation-planner.test.mjs",
     "quality:evidence": "node --test scripts/quality/check-evidence-receipts.test.mjs",
     "evidence:observe": "node scripts/wayper-evidence-observer.mjs",
     "quality:context": "node --test scripts/quality/check-goal-identity.test.mjs scripts/quality/check-context-efficiency.test.mjs && node scripts/wayper-context.mjs benchmark && npm run quality:packets",
