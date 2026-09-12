@@ -2,7 +2,7 @@ import { assertIdentity } from './wayper-context-identity.mjs';
 import { HASH, RECEIPT_ID, safeEvidencePath } from './wayper-evidence-receipts.mjs';
 import { ASSESSMENT_ID } from './wayper-completion-policy.mjs';
 import { digest, exact } from './wayper-validation-policy.mjs';
-import { FEEDBACK_ID, FAILURE_ID, ATTEMPT_ID, FAILURE_CLASSES, ACTIONS, OUTCOMES, STATES, failureIdentity, failureSetFingerprint, hypothesisFingerprint } from './wayper-feedback-policy.mjs';
+import { FEEDBACK_ID, FAILURE_ID, ATTEMPT_ID, FAILURE_CLASSES, ACTIONS, OUTCOMES, STATES, failureIdentity, failureSetFingerprint, hypothesisFingerprint, normalizeActionCommand, operationalActionFingerprint, actionFingerprint } from './wayper-feedback-policy.mjs';
 
 export const shortText = (v) => typeof v === 'string' && v.trim().length > 0 && Buffer.byteLength(v) <= 240;
 const refs = (v, regex, max = 128) => Array.isArray(v) && v.length <= max && new Set(v).size === v.length &&
@@ -11,10 +11,12 @@ const repo = (r) => r === null || ['wayper', 'wayper-site'].includes(r);
 const sealed = (v) => HASH.test(v?.fingerprint) && sealFeedback(v).fingerprint === v.fingerprint;
 export function sealFeedback(value) { const { fingerprint: _old, ...content } = value; return { ...content, fingerprint: digest(content) }; }
 export function validProgress(p) {
-  return exact(p, 'relation materialProgress regression removedFailureIds addedFailureIds satisfiedRequirementIds consecutiveNoProgress') &&
+  const vector = (v) => exact(v, 'completionRank blockingFailures criticalHighFailures maxSeverity missingValidation staleEvidence materialFindings') &&
+    Object.values(v).every((n) => Number.isSafeInteger(n) && n >= 0);
+  return exact(p, 'relation materialProgress regression removedFailureIds addedFailureIds satisfiedRequirementIds beforeVector afterVector consecutiveNoProgress') &&
     ['SAME', 'REDUCED', 'CHANGED', 'RESOLVED', 'EXPANDED'].includes(p.relation) && typeof p.materialProgress === 'boolean' &&
     typeof p.regression === 'boolean' && refs(p.removedFailureIds, FAILURE_ID) && refs(p.addedFailureIds, FAILURE_ID) &&
-    refs(p.satisfiedRequirementIds) && Number.isSafeInteger(p.consecutiveNoProgress) && p.consecutiveNoProgress >= 0;
+    refs(p.satisfiedRequirementIds) && vector(p.beforeVector) && vector(p.afterVector) && Number.isSafeInteger(p.consecutiveNoProgress) && p.consecutiveNoProgress >= 0;
 }
 export function validFailure(f) {
   return exact(f, 'kind sourceId reasonCode repository relatedRequirementIds relatedFindingIds failureId failureClass priority severity blockerIds relatedReceiptIds dependencyIds dependencyStatus') &&
@@ -26,7 +28,8 @@ export function validFailure(f) {
     ['KNOWN', 'UNKNOWN'].includes(f.dependencyStatus);
 }
 export function validateFeedbackDiagnosis(d, context) {
-  return exact(d, 'failureIds causeClass summary hypothesis confidence affectedScope proposedActionKind validationRequirementIds evidenceRefs') &&
+  try { normalizeActionCommand(d.actionCommand); } catch { return false; }
+  return exact(d, 'failureIds causeClass summary hypothesis confidence affectedScope proposedActionKind validationRequirementIds evidenceRefs actionCommand') &&
     refs(d.failureIds, FAILURE_ID, 1) && d.failureIds[0] === context.failure.failureId && d.causeClass === context.failure.failureClass &&
     shortText(d.summary) && shortText(d.hypothesis) && Number.isFinite(d.confidence) && d.confidence >= 0 && d.confidence <= 1 &&
     exact(d.affectedScope, 'repository paths') && d.affectedScope.repository === context.failure.repository &&
@@ -39,24 +42,30 @@ const validation = (v) => exact(v, 'planId status fingerprint') && (v.planId ===
   ['LEGACY_UNPLANNED', 'COMPLETE', 'INCOMPLETE', 'BLOCKED', 'REPLAN_REQUIRED'].includes(v.status) && HASH.test(v.fingerprint);
 export function validateFeedbackAttempt(a) {
   try {
-    if (!exact(a, 'schemaVersion attemptId feedbackId attemptNumber goalReference baselineReference failureId failureClass repository diagnosis hypothesis hypothesisFingerprint action actionFingerprint selectionReason dependencyStatus stateBefore stateAfter changedFiles validationBefore validationAfter completionBefore completionAfter executionRefs receiptIds progress outcome contextMetrics fingerprint') ||
+    const scope = (v) => exact(v, 'repository paths') && repo(v.repository) && Array.isArray(v.paths) && v.paths.length <= 16 &&
+      v.paths.every((p) => exact(p, 'path fingerprint') && safeEvidencePath(p.path) && (p.fingerprint === null || HASH.test(p.fingerprint)));
+    const lineage = (v) => Array.isArray(v) && v.length <= 1024 && v.every((item) => exact(item, 'failureId relatedFailureId relation evidenceRefs') &&
+      FAILURE_ID.test(item.failureId) && (item.relatedFailureId === null || FAILURE_ID.test(item.relatedFailureId)) &&
+      ['SAME_ROOT', 'CAUSED_BY_ATTEMPT', 'SUPERSEDES', 'INDEPENDENT', 'UNKNOWN'].includes(item.relation) && refs(item.evidenceRefs, RECEIPT_ID, 64));
+    if (!exact(a, 'schemaVersion attemptId feedbackId attemptNumber goalReference baselineReference failureId failureClass repository diagnosis hypothesis hypothesisFingerprint action actionSemanticFingerprint actionFingerprint selectionReason dependencyStatus stateBefore stateAfter scopeBefore scopeAfter changedFiles validationBefore validationAfter completionBefore completionAfter executionRefs receiptIds progress lineage outcome contextMetrics fingerprint') ||
       a.schemaVersion !== 1 || !ATTEMPT_ID.test(a.attemptId) || !FEEDBACK_ID.test(a.feedbackId) || !FAILURE_ID.test(a.failureId) ||
       !Number.isSafeInteger(a.attemptNumber) || a.attemptNumber < 1 || a.attemptNumber > 3 || !FAILURE_CLASSES.includes(a.failureClass) ||
       !repo(a.repository) || !exact(a.baselineReference, 'fingerprint') || !HASH.test(a.baselineReference.fingerprint) ||
-      !shortText(a.hypothesis) || !HASH.test(a.hypothesisFingerprint) || !HASH.test(a.actionFingerprint) ||
-      !exact(a.action, 'kind repository paths validationRequirementIds') || !ACTIONS[a.failureClass].includes(a.action.kind) ||
+      !shortText(a.hypothesis) || !HASH.test(a.hypothesisFingerprint) || !HASH.test(a.actionSemanticFingerprint) || !HASH.test(a.actionFingerprint) ||
+      !exact(a.action, 'kind repository paths validationRequirementIds command') || !ACTIONS[a.failureClass].includes(a.action.kind) ||
       a.action.repository !== a.repository || !refs(a.action.paths, null, 16) || !a.action.paths.every(safeEvidencePath) ||
-      !refs(a.action.validationRequirementIds, /^VR-[a-f0-9]{24}$/, 16) || !shortText(a.selectionReason) ||
+      !refs(a.action.validationRequirementIds, /^VR-[a-f0-9]{24}$/, 16) || normalizeActionCommand(a.action.command) === undefined || !shortText(a.selectionReason) ||
       !['KNOWN', 'UNKNOWN'].includes(a.dependencyStatus) || !HASH.test(a.stateBefore) || !(a.stateAfter === null || HASH.test(a.stateAfter)) ||
+      !scope(a.scopeBefore) || !(a.scopeAfter === null || scope(a.scopeAfter)) ||
       !refs(a.changedFiles, null, 128) || !validation(a.validationBefore) || !(a.validationAfter === null || validation(a.validationAfter)) ||
       !ASSESSMENT_ID.test(a.completionBefore) || !(a.completionAfter === null || ASSESSMENT_ID.test(a.completionAfter)) ||
-      !refs(a.executionRefs, RECEIPT_ID, 64) || !refs(a.receiptIds, RECEIPT_ID, 64) || !validProgress(a.progress) ||
+      !refs(a.executionRefs, RECEIPT_ID, 64) || !refs(a.receiptIds, RECEIPT_ID, 64) || !validProgress(a.progress) || !lineage(a.lineage) ||
       ![null, 'SUCCEEDED', 'PROGRESS', 'SAME', 'REGRESSION', 'ACTION_FAILED', 'INTERRUPTED'].includes(a.outcome) ||
       !exact(a.contextMetrics, 'bytes tokenProxy') || !Number.isSafeInteger(a.contextMetrics.bytes) || a.contextMetrics.bytes < 0 ||
       a.contextMetrics.tokenProxy !== Math.ceil(a.contextMetrics.bytes / 4) || !sealed(a)) return false;
     assertIdentity(a.goalReference);
     if (a.attemptId !== `AT-${digest([a.feedbackId, a.attemptNumber]).slice(7)}` ||
-      a.actionFingerprint !== digest(a.action) || a.hypothesisFingerprint !== hypothesisFingerprint(a.hypothesis) ||
+      a.actionSemanticFingerprint !== operationalActionFingerprint(a.action) || a.actionFingerprint !== actionFingerprint(a.action, a.failureId, a.stateBefore) || a.hypothesisFingerprint !== hypothesisFingerprint(a.hypothesis) ||
       a.action.kind !== a.diagnosis.proposedActionKind || digest(a.action.paths) !== digest([...a.diagnosis.affectedScope.paths].sort()) ||
       digest(a.action.validationRequirementIds) !== digest([...a.diagnosis.validationRequirementIds].sort()) ||
       a.outcome !== null && (!a.stateAfter || !a.validationAfter || !a.completionAfter)) return false;
@@ -66,7 +75,7 @@ export function validateFeedbackAttempt(a) {
 }
 export function attemptIndex(a) {
   return Object.fromEntries(['attemptId', 'attemptNumber', 'failureId', 'failureClass', 'repository', 'hypothesis',
-    'hypothesisFingerprint', 'actionFingerprint', 'stateBefore', 'stateAfter', 'receiptIds', 'progress', 'outcome', 'contextMetrics', 'fingerprint'].map((key) => [key, a[key]]));
+    'hypothesisFingerprint', 'actionSemanticFingerprint', 'actionFingerprint', 'stateBefore', 'stateAfter', 'receiptIds', 'progress', 'lineage', 'outcome', 'contextMetrics', 'fingerprint'].map((key) => [key, a[key]]));
 }
 export function validateFeedbackSession(s) {
   try {

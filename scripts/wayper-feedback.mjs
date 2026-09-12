@@ -2,16 +2,17 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { digest } from './wayper-validation-policy.mjs';
-import { FEEDBACK_ID, feedbackBudget, selectFeedbackFailure, failureSetFingerprint, compareFeedbackProgress,
-  hypothesisFingerprint, feedbackDecisionRequest } from './wayper-feedback-policy.mjs';
+import { FEEDBACK_ID, feedbackBudget, selectFeedbackFailure, failureSetFingerprint, compareFeedbackProgress, failureLineage,
+  hypothesisFingerprint, feedbackDecisionRequest, normalizeActionCommand, operationalActionFingerprint, actionFingerprint } from './wayper-feedback-policy.mjs';
 import { sealFeedback, validateFeedbackDiagnosis, attemptIndex } from './wayper-feedback-schema.mjs';
 import { readFeedbackSession, appendFeedbackCheckpoint, persistFeedbackAttempt } from './wayper-feedback-store.mjs';
 import { readCompletionAssessment } from './wayper-completion-store.mjs';
 import { feedbackFacts, feedbackState, publishFeedbackContext, storeFeedbackAssessment, feedbackDiagnosisContext, feedbackExecutor,
-  validationSummary } from './wayper-feedback-context.mjs';
+  validationSummary, feedbackActionScope } from './wayper-feedback-context.mjs';
 
 const initialProgress = () => ({ relation: 'SAME', materialProgress: false, regression: false, removedFailureIds: [],
-  addedFailureIds: [], satisfiedRequirementIds: [], consecutiveNoProgress: 0 });
+  addedFailureIds: [], satisfiedRequirementIds: [], beforeVector: { completionRank: 0, blockingFailures: 0, criticalHighFailures: 0, maxSeverity: 0, missingValidation: 0, staleEvidence: 0, materialFindings: 0 },
+  afterVector: { completionRank: 0, blockingFailures: 0, criticalHighFailures: 0, maxSeverity: 0, missingValidation: 0, staleEvidence: 0, materialFindings: 0 }, consecutiveNoProgress: 0 });
 function save(value, options, previous = null) {
   const next = appendFeedbackCheckpoint(value, options, previous);
   // An amendment/concurrent owner is never overwritten just to update a cache index.
@@ -59,8 +60,26 @@ export function resumeFeedbackSession(options) {
   if (current.state.execution.baseline.fingerprint !== session.baselineReference.fingerprint || current.fingerprint !== session.currentStateFingerprint) {
     return { status: 'STALE', reasonCode: 'STALE_SESSION', session, receiptIds };
   }
-  if (session.activeAttempt) return { status: 'INTERRUPTED', reasonCode: 'IN_FLIGHT_ATTEMPT_REQUIRES_OWNER_RECONCILIATION', session, receiptIds };
+  if (session.activeAttempt) return { status: 'INTERRUPTED_UNKNOWN_OUTCOME', reasonCode: 'IN_FLIGHT_ATTEMPT_REQUIRES_RECONCILIATION', session, receiptIds };
   return { status: 'CURRENT', reasonCode: 'CURRENT', session, receiptIds };
+}
+
+// Read-only reconciliation never assigns a changed file to the owner without
+// a matching observed receipt. Unknown and partial outcomes are intentionally terminal for automatic recovery.
+export function reconcileFeedbackSession(options) {
+  const session = readFeedbackSession(options.feedbackId, options);
+  if (!session.activeAttempt) return { status: 'NOT_INTERRUPTED', session, receiptIds: [], changedPaths: [] };
+  const current = feedbackFacts(options); const attempt = session.activeAttempt;
+  const receipts = current.receipts.filter((r) => r.metadata.attemptId === attempt.attemptId && r.metadata.failureId === attempt.failureId);
+  const scope = feedbackActionScope(current, attempt.action);
+  const changedPaths = scope.paths.filter((p, i) => p.fingerprint !== attempt.scopeBefore.paths[i]?.fingerprint).map((p) => p.path);
+  const stateChanged = current.fingerprint !== attempt.stateBefore;
+  const outcome = (['ACTION_COMPLETE', 'VALIDATING'].includes(session.state) && current.fingerprint === session.currentStateFingerprint) || receipts.length ? 'ACTION_APPLIED' :
+    !stateChanged && session.reasonCode === 'ATTEMPT_RESERVED' ? 'ACTION_NOT_APPLIED' :
+      changedPaths.length && changedPaths.length < attempt.scopeBefore.paths.length ? 'ACTION_PARTIALLY_APPLIED' :
+        stateChanged && !changedPaths.length ? 'EXTERNAL_CHANGE_DETECTED' : 'ACTION_OUTCOME_UNKNOWN';
+  return { status: 'INTERRUPTED_UNKNOWN_OUTCOME', outcome, session, receiptIds: receipts.map((r) => r.receiptId), changedPaths,
+    stateFingerprint: current.fingerprint, validation: validationSummary(current), completionAssessmentId: current.assessment.assessmentId };
 }
 
 export function cancelFeedbackSession(options) {
@@ -94,28 +113,32 @@ export async function runFeedbackIteration(options) {
   if (readFeedbackSession(session.feedbackId, options).fingerprint !== session.fingerprint) throw new Error('FEEDBACK_BUSY');
   const hypothesis = hypothesisFingerprint(diagnosis.hypothesis);
   const action = { kind: diagnosis.proposedActionKind, repository: diagnosis.affectedScope.repository,
-    paths: [...diagnosis.affectedScope.paths].sort(), validationRequirementIds: [...diagnosis.validationRequirementIds].sort() };
-  const actionFingerprint = digest(action);
+    paths: [...diagnosis.affectedScope.paths].sort(), validationRequirementIds: [...diagnosis.validationRequirementIds].sort(), command: normalizeActionCommand(diagnosis.actionCommand) };
+  const semanticActionFingerprint = operationalActionFingerprint(action); const fingerprint = actionFingerprint(action, failure.failureId, before.fingerprint);
   const previous = session.attempts.filter((a) => a.failureId === failure.failureId && !a.progress.materialProgress);
-  if (previous.some((a) => a.actionFingerprint === actionFingerprint && a.hypothesisFingerprint === hypothesis && a.stateBefore === before.fingerprint)) {
-    return refused(session, 'DUPLICATE_ACTION', options, 'NO_PROGRESS');
+  // An attempt's own receipts change the raw state fingerprint. Its recorded
+  // post-state is still the same relevant state for duplicate-action policy.
+  if (previous.some((a) => a.actionSemanticFingerprint === semanticActionFingerprint && a.hypothesisFingerprint === hypothesis &&
+    [a.stateBefore, a.stateAfter].includes(before.fingerprint))) {
+    return refused(session, 'REJECT_DUPLICATE_ACTION', options, 'NO_PROGRESS');
   }
-  if (previous.some((a) => a.hypothesisFingerprint === hypothesis)) return refused(session, 'NEW_HYPOTHESIS_REQUIRED', options, 'NO_PROGRESS');
+  if (previous.some((a) => a.hypothesisFingerprint === hypothesis && a.actionSemanticFingerprint !== semanticActionFingerprint)) return refused(session, 'NEW_HYPOTHESIS_REQUIRED', options, 'NO_PROGRESS');
   if (['EDIT', 'REVIEW', 'INSPECT'].includes(action.kind) && typeof options.act !== 'function') return refused(session, 'OWNER_EXECUTOR_REQUIRED', options);
   const number = session.attempts.length + 1;
   let attempt = sealFeedback({ schemaVersion: 1, attemptId: `AT-${digest([session.feedbackId, number]).slice(7)}`, feedbackId: session.feedbackId,
     attemptNumber: number, goalReference: session.goalReference, baselineReference: session.baselineReference,
     failureId: failure.failureId, failureClass: failure.failureClass, repository: failure.repository, diagnosis,
-    hypothesis: diagnosis.hypothesis, hypothesisFingerprint: hypothesis, action, actionFingerprint,
-    selectionReason: input.selectionReason, dependencyStatus: failure.dependencyStatus,
-    stateBefore: before.fingerprint, stateAfter: null, changedFiles: [], validationBefore: validationSummary(before), validationAfter: null,
+    hypothesis: diagnosis.hypothesis, hypothesisFingerprint: hypothesis, action, actionSemanticFingerprint: semanticActionFingerprint, actionFingerprint: fingerprint,
+    selectionReason: previous.some((a) => a.hypothesisFingerprint === hypothesis) ? `${input.selectionReason}:STATE_CHANGED_RECONSIDERATION` : input.selectionReason, dependencyStatus: failure.dependencyStatus,
+    stateBefore: before.fingerprint, stateAfter: null, scopeBefore: feedbackActionScope(before, action), scopeAfter: null, changedFiles: [], validationBefore: validationSummary(before), validationAfter: null,
     completionBefore: before.assessment.assessmentId, completionAfter: null, executionRefs: [], receiptIds: [], progress: initialProgress(), outcome: null,
-    contextMetrics: { bytes: Buffer.byteLength(JSON.stringify(input)), tokenProxy: Math.ceil(Buffer.byteLength(JSON.stringify(input)) / 4) } });
+    lineage: [], contextMetrics: { bytes: Buffer.byteLength(JSON.stringify(input)), tokenProxy: Math.ceil(Buffer.byteLength(JSON.stringify(input)) / 4) } });
   session = save({ ...session, state: 'ACTING', activeAttempt: attempt, reasonCode: 'ATTEMPT_RESERVED' }, options, session);
   const executor = feedbackExecutor(session, before, attempt, options);
   let errorCode = null;
   try {
     executor.guard();
+    session = save({ ...session, state: 'ACTING', activeAttempt: attempt, reasonCode: 'ACTION_EXECUTING' }, options, session); executor.setCheckpoint(session);
     if (action.kind === 'REPLAN') executor.context.replan();
     else if (['EDIT', 'REVIEW', 'INSPECT'].includes(action.kind)) await options.act(executor.context);
     const afterAction = executor.guard();
@@ -141,9 +164,10 @@ function finishAttempt(session, before, attempt, executor, options, errorCode = 
     validationBefore: before.validation, validationAfter: after.validation });
   const execution = executor.result();
   const failed = errorCode || after.receipts.some((r) => execution.receiptIds.includes(r.receiptId) && r.result === 'FAIL');
-  attempt = sealFeedback({ ...attempt, ...execution, stateAfter: after.fingerprint, validationAfter: validationSummary(after),
+  attempt = sealFeedback({ ...attempt, ...execution, stateAfter: after.fingerprint, scopeAfter: execution.scopeAfter, validationAfter: validationSummary(after),
     completionAfter: after.assessment.assessmentId, progress, outcome: errorCode === 'CONCURRENT_CHANGE' ? 'INTERRUPTED' :
-      after.assessment.decision === 'ADMISSIBLE' ? 'SUCCEEDED' : failed ? 'ACTION_FAILED' : progress.regression ? 'REGRESSION' : progress.materialProgress ? 'PROGRESS' : 'SAME' });
+      after.assessment.decision === 'ADMISSIBLE' ? 'SUCCEEDED' : failed ? 'ACTION_FAILED' : progress.regression ? 'REGRESSION' : progress.materialProgress ? 'PROGRESS' : 'SAME',
+    lineage: failureLineage(before, after, { ...attempt, ...execution }) });
   persistFeedbackAttempt(attempt, after);
   let completed = { ...session, activeAttempt: null, attempts: [...session.attempts, attemptIndex(attempt)],
     currentAssessmentId: after.assessment.assessmentId, currentStateFingerprint: after.fingerprint, currentFailureSet: after.failures,
@@ -165,6 +189,17 @@ export async function recoverFeedbackSession(options) {
   if (!session.activeAttempt) {
     const current = resumeFeedbackSession(options);
     return current.status === 'CURRENT' || session.state === 'STALE' ? session : refused(session, current.reasonCode, options);
+  }
+  if (session.state === 'ACTING' || session.state === 'INTERRUPTED_UNKNOWN_OUTCOME') {
+    const reconciliation = reconcileFeedbackSession(options);
+    if (reconciliation.outcome !== 'ACTION_APPLIED') {
+      session = save({ ...session, state: 'INTERRUPTED_UNKNOWN_OUTCOME', reasonCode: reconciliation.outcome }, options, session);
+      return refused(session, reconciliation.outcome, options);
+    }
+    const activeAttempt = sealFeedback({ ...session.activeAttempt, receiptIds: reconciliation.receiptIds,
+      stateAfter: reconciliation.stateFingerprint, scopeAfter: feedbackActionScope(feedbackFacts(options), session.activeAttempt.action) });
+    session = save({ ...session, state: 'ACTION_COMPLETE', activeAttempt, currentStateFingerprint: reconciliation.stateFingerprint,
+      reasonCode: 'RECONCILED_ACTION_APPLIED' }, options, session);
   }
   const current = feedbackFacts(options);
   if (!['ACTION_COMPLETE', 'VALIDATING'].includes(session.state) || current.fingerprint !== session.currentStateFingerprint ||

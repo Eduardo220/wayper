@@ -4,8 +4,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { completionFixture, finding } from './completion-fixture.mjs';
-import { startFeedbackSession, runFeedbackIteration, resumeFeedbackSession, recoverFeedbackSession } from '../wayper-feedback.mjs';
-import { failureIdentity, compareFeedbackProgress } from '../wayper-feedback-policy.mjs';
+import { startFeedbackSession, runFeedbackIteration, resumeFeedbackSession, recoverFeedbackSession, reconcileFeedbackSession } from '../wayper-feedback.mjs';
+import { failureIdentity, compareFeedbackProgress, normalizeActionCommand, operationalActionFingerprint, actionFingerprint, failureLineage } from '../wayper-feedback-policy.mjs';
 import { readFeedbackSession, readFeedbackHistory, readFeedbackAttempt, appendFeedbackCheckpoint, feedbackTelemetry } from '../wayper-feedback-store.mjs';
 import { validateFeedbackSession, validateFeedbackAttempt, sealFeedback } from '../wayper-feedback-schema.mjs';
 import { readWorkingContext, ROOT } from '../wayper-context.mjs';
@@ -16,7 +16,7 @@ import { relevantQualityTests } from './check-completion-backstop.mjs';
 const options = (f, extra = {}) => ({ root: f.root, identity: f.identity, ...extra });
 const diagnose = ({ failure, evidenceRefs }) => ({ failureIds: [failure.failureId], causeClass: failure.failureClass,
   summary: 'Observed defect', hypothesis: 'Correct the observed source condition', confidence: 0.8,
-  affectedScope: { repository: failure.repository, paths: ['README.md'] }, proposedActionKind: 'EDIT', validationRequirementIds: [], evidenceRefs });
+  affectedScope: { repository: failure.repository, paths: ['README.md'] }, proposedActionKind: 'EDIT', validationRequirementIds: [], evidenceRefs, actionCommand: null });
 async function fixture(t, cross = false) {
   const f = completionFixture(t, cross); await f.ready();
   f.state.contextMap.findings = [finding()]; f.state.contextMap.capabilities.optional = ['test-build']; f.plan(); f.refresh(); return f;
@@ -85,7 +85,7 @@ test('real host interruption after action resumes validation without replay', as
       validate: async () => process.exit(23)});`;
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 20_000 });
   assert.equal(child.status, 23, child.stderr);
-  assert.equal(resumeFeedbackSession(o).status, 'INTERRUPTED');
+  assert.equal(resumeFeedbackSession(o).status, 'INTERRUPTED_UNKNOWN_OUTCOME');
   await assert.rejects(recoverFeedbackSession(o), /OWNER_STOP/);
   const recovered = await recoverFeedbackSession({ ...o, ownerStopped: true });
   assert.equal(recovered.attempts.length, 1); assert.notEqual(recovered.outcome, 'SUCCEEDED');
@@ -158,4 +158,68 @@ test('feedback storage refuses symlink and quality selection covers schema/polic
     assert.ok(relevantQualityTests([file]).includes('scripts/quality/check-feedback-adversarial.test.mjs'), file);
   }
   assert.equal(fs.existsSync(path.join(ROOT, 'scripts/quality/check-feedback-loop.test.mjs')), true);
+});
+
+const feedbackFacts = (failures, decision = 'NOT_ADMISSIBLE') => ({ failures, assessment: { decision, requirementState: [] } });
+const feedbackFailure = (id, severity = 'LOW', repository = 'wayper', sourceId = id) => ({ failureId: id, severity, repository, sourceId,
+  relatedReceiptIds: [], kind: 'FINDING', reasonCode: 'OPEN' });
+
+test('FH1/FH2/FH3/FH23 interrupted side effects reconcile without replay', async (t) => {
+  const f = await fixture(t); const s = startFeedbackSession(options(f)); const o = options(f, { feedbackId: s.feedbackId });
+  const interrupted = ({ failure, evidenceRefs }) => ({ failureIds: [failure.failureId], causeClass: failure.failureClass, summary: 'Interrupted inspection',
+    hypothesis: 'Inspect two bounded paths', confidence: 0.8, affectedScope: { repository: failure.repository, paths: ['README.md', 'other.md'] },
+    proposedActionKind: 'INSPECT', validationRequirementIds: [], evidenceRefs, actionCommand: null });
+  const script = `import fs from 'node:fs'; import {runFeedbackIteration} from ${JSON.stringify(new URL('../wayper-feedback.mjs', import.meta.url).href)};
+    await runFeedbackIteration({...${JSON.stringify(o)}, diagnose: ${interrupted.toString()}, act: async () => { fs.writeFileSync(${JSON.stringify(path.join(f.root, 'README.md'))}, 'partial side effect'); process.exit(23); }});`;
+  assert.equal(spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 20_000 }).status, 23);
+  const reconciliation = reconcileFeedbackSession(o);
+  assert.equal(reconciliation.outcome, 'ACTION_PARTIALLY_APPLIED');
+  const recovered = await recoverFeedbackSession({ ...o, ownerStopped: true });
+  assert.equal(recovered.outcome, 'REPLAN_REQUIRED');
+  assert.equal(fs.readFileSync(path.join(f.root, 'README.md'), 'utf8'), 'partial side effect');
+});
+
+test('FH4/FH18/FH19 completed checkpoint resumes validation only', async (t) => {
+  const f = await fixture(t); const s = startFeedbackSession(options(f)); const o = options(f, { feedbackId: s.feedbackId });
+  const script = `import {runFeedbackIteration} from ${JSON.stringify(new URL('../wayper-feedback.mjs', import.meta.url).href)};
+    await runFeedbackIteration({...${JSON.stringify(o)}, diagnose: ${diagnose.toString()}, act: async () => {}, validate: async () => process.exit(23)});`;
+  assert.equal(spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 20_000 }).status, 23);
+  const recovered = await recoverFeedbackSession({ ...o, ownerStopped: true });
+  assert.equal(recovered.attempts.length, 1); assert.notEqual(recovered.outcome, 'SUCCEEDED');
+});
+
+test('FH5/FH6/FH7/FH8 command identity is normalized and state/failure bound', () => {
+  const a = { kind: 'INSPECT', repository: 'wayper', paths: ['README.md'], validationRequirementIds: [],
+    command: normalizeActionCommand({ command: ' node ', args: ['--version'], cwd: './scripts/../.', environmentKeys: ['CI'] }) };
+  const b = { ...a, command: normalizeActionCommand({ argv: ['node', '--version'], cwd: '.', environmentKeys: ['CI'] }) };
+  assert.equal(operationalActionFingerprint(a), operationalActionFingerprint(b));
+  assert.notEqual(operationalActionFingerprint(a), operationalActionFingerprint({ ...a, command: normalizeActionCommand(['node', '-e', '0']) }));
+  assert.notEqual(actionFingerprint(a, 'FL-a', 'state-a'), actionFingerprint(b, 'FL-a', 'state-b'));
+  assert.notEqual(actionFingerprint(a, 'FL-a', 'state-a'), actionFingerprint(b, 'FL-b', 'state-a'));
+});
+
+test('FH9/FH10/FH15/FH16 material vector detects regression and progress', () => {
+  const low = feedbackFailure('FL-low', 'LOW'); const critical = feedbackFailure('FL-critical', 'CRITICAL');
+  const regression = compareFeedbackProgress(feedbackFacts([low]), feedbackFacts([critical]));
+  assert.equal(regression.regression, true); assert.equal(regression.materialProgress, false);
+  const progress = compareFeedbackProgress(feedbackFacts([critical]), feedbackFacts([], 'ADMISSIBLE'));
+  assert.equal(progress.regression, false); assert.equal(progress.materialProgress, true);
+});
+
+test('FH11/FH12/FH13/FH14 lineage stays factual and bounded', () => {
+  const old = feedbackFailure('FL-old', 'HIGH', 'wayper', 'source'); const same = feedbackFailure('FL-old', 'HIGH', 'wayper', 'source');
+  const superseding = feedbackFailure('FL-next', 'MEDIUM', 'wayper', 'source'); const independent = feedbackFailure('FL-site', 'LOW', 'wayper-site', 'other');
+  const caused = { ...feedbackFailure('FL-caused', 'HIGH', 'wayper', 'new'), relatedReceiptIds: ['ER-a'] };
+  const lines = failureLineage(feedbackFacts([old]), feedbackFacts([same, superseding, independent, caused]), { repository: 'wayper', receiptIds: ['ER-a'] });
+  assert.deepEqual(lines.map((x) => x.relation), ['SAME_ROOT', 'SUPERSEDES', 'INDEPENDENT', 'CAUSED_BY_ATTEMPT']);
+  assert.equal(failureLineage(feedbackFacts([]), feedbackFacts([feedbackFailure('FL-unknown')]), { repository: 'wayper', receiptIds: [] })[0].relation, 'UNKNOWN');
+});
+
+test('FH17/FH20/FH21/FH22/FH24/FH25 reuse bounded canonical paths', async (t) => {
+  const f = await fixture(t); let s = startFeedbackSession(options(f)); let calls = 0;
+  s = await runFeedbackIteration(options(f, { feedbackId: s.feedbackId, diagnose, act: async () => { calls++; } }));
+  const duplicate = await runFeedbackIteration(options(f, { feedbackId: s.feedbackId, diagnose, act: async () => { calls++; } }));
+  assert.equal(calls, 1); assert.equal(duplicate.outcome, 'NO_PROGRESS');
+  const index = readFeedbackSession(s.feedbackId, options(f));
+  assert.ok(index.attempts[0].hypothesisFingerprint); assert.equal(index.outcome, 'NO_PROGRESS');
 });

@@ -35,6 +35,18 @@ export function feedbackFacts(options) {
   const failures = classifyFeedbackFailures(assessment, current);
   return { ...current, assessment, validation, failures };
 }
+export function feedbackActionScope(current, action) {
+  const repository = current.repositories.find((r) => r.id === action.repository);
+  if (action.repository === null) return { repository: null, paths: action.paths.map((file) => ({ path: file, fingerprint: null })) };
+  if (!repository) throw new Error('FEEDBACK_REPOSITORY_SCOPE');
+  return { repository: action.repository, paths: action.paths.map((file) => {
+    const target = path.resolve(repository.root, file);
+    if (!target.startsWith(`${repository.root}${path.sep}`)) throw new Error('FEEDBACK_EDIT_SCOPE');
+    const stat = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (!stat || stat.isSymbolicLink() || !stat.isFile()) return { path: file, fingerprint: null };
+    return { path: file, fingerprint: digest(fs.readFileSync(target)) };
+  }) };
+}
 export function publishFeedbackContext(session, options) {
   const { state, repositories } = feedbackState(options);
   state.contextMap = recordContextEntry(state.contextMap, 'feedback', feedbackIndex(session), repositories, { root: options.root });
@@ -163,5 +175,6 @@ export function feedbackExecutor(session, initial, attempt, options) {
     },
   };
   return { context, guard, facts, setCheckpoint(s) { checkpoint = s.fingerprint; phase = s.state; },
-    result: () => ({ receiptIds: sorted(receiptIds), executionRefs: sorted(executionRefs), changedFiles: sorted([...changedFiles]) }) };
+    result: () => ({ receiptIds: sorted(receiptIds), executionRefs: sorted(executionRefs), changedFiles: sorted([...changedFiles]),
+      scopeAfter: feedbackActionScope(facts(), attempt.action) }) };
 }

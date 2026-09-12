@@ -178,3 +178,33 @@ Validação: FL1–FL28, FA1–FA8 e adversariais de journal, recovery em proces
 concorrência, Packet/Handoff, schemas e gate. Não requer aparelho físico nem Graphify.
 Rollback: reverter o commit; histórico ignored continua preservado. Contextos sem
 feedback permanecem legíveis como UNASSESSED. Sem bulk migration.
+
+## Hardening 5.1
+
+`ACTING` registra `ATTEMPT_RESERVED` e `ACTION_EXECUTING`. Em interrupção,
+`reconcileFeedbackSession()` é leitura apenas e compara identidade, fingerprint
+anterior, scope declarado, receipts do attempt, Validation e Completion. Retorna
+`ACTION_NOT_APPLIED`, `ACTION_APPLIED`, `ACTION_PARTIALLY_APPLIED`,
+`ACTION_OUTCOME_UNKNOWN` ou `EXTERNAL_CHANGE_DETECTED`. Somente checkpoint
+`ACTION_COMPLETE` consistente retoma Validation; parcial/desconhecido/external
+fica `REPLAN_REQUIRED`, sem replay automático. Reconciliação não faz rollback
+transacional nem prova autoria contra writer hostil.
+
+Action command opcional usa descriptor fechado normalizado (`argv`, cwd relativo
+canônico e somente nomes de variáveis de ambiente). O fingerprint junta semântica
+normalizada, failure e estado; label/whitespace não burlam duplicação. Shell e
+edits opacos permanecem `UNKNOWN` quando equivalência não é provável.
+
+O progresso persiste um vector factual: rank de Completion, blockers, critical/
+high, severidade máxima, Validation ausente, evidence stale e findings materiais.
+Piora em qualquer dimensão é `REGRESSION`, consome budget e exige reassessment.
+Cada attempt também grava lineage bounded: `SAME_ROOT`, `SUPERSEDES`,
+`CAUSED_BY_ATTEMPT`, `INDEPENDENT` ou `UNKNOWN`; assertions do modelo nunca
+promovem causalidade. Histórico de hipóteses mantém somente fingerprint, resumo,
+action, outcome, receipts e progresso.
+
+FH1–FH25 rodam em fixture temporária no `quality:feedback`, incluindo circuito
+Completion → Feedback → Evidence → Validation → Completion, false-green,
+interrupção parcial, recovery somente-validation, normalização de command,
+materialidade, lineage e Packet bounded. A própria missão não gerou uma falha
+operacional real do repositório; a prova integrada é de fixture isolada.

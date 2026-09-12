@@ -19,7 +19,7 @@ async function fixture(t, extra = {}, cross = false) {
 const diagnosis = (hypothesis = 'Fix the observed defect', kind = 'EDIT') => ({ failure, evidenceRefs }) => ({
   failureIds: [failure.failureId], causeClass: failure.failureClass, summary: 'Observed blocker remains',
   hypothesis, confidence: 0.8, affectedScope: { repository: failure.repository, paths: ['README.md'] },
-  proposedActionKind: kind, validationRequirementIds: [], evidenceRefs });
+  proposedActionKind: kind, validationRequirementIds: [], evidenceRefs, actionCommand: null });
 async function resolve(ctx, id = 'F-bug') {
   const proof = await ctx.observeQualityGate({ repository: ctx.failure.repository, target: `finding:${id}:RESOLVED`,
     command: 'node', args: ['-e', 'require("node:assert/strict").ok(require("node:fs").existsSync("README.md"))'] });

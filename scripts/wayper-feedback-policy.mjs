@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { digest, sorted } from './wayper-validation-policy.mjs';
 
 export const FEEDBACK_ID = /^FB-[a-f0-9]{64}$/;
@@ -10,8 +11,24 @@ export const ACTIONS = {
 };
 export const OUTCOMES = ['SUCCEEDED', 'EXHAUSTED', 'NO_PROGRESS', 'BLOCKED_EXTERNAL', 'HUMAN_REQUIRED',
   'REPLAN_REQUIRED', 'INVALID_STATE', 'CANCELLED'];
-export const STATES = ['READY', 'ACTING', 'ACTION_COMPLETE', 'VALIDATING', 'REASSESS_CAUSE', 'FINISHED', 'STALE'];
+export const STATES = ['READY', 'ACTING', 'INTERRUPTED_UNKNOWN_OUTCOME', 'ACTION_COMPLETE', 'VALIDATING', 'REASSESS_CAUSE', 'FINISHED', 'STALE'];
 export const hypothesisFingerprint = (text) => digest(text.trim().toLowerCase().replace(/\s+/g, ' '));
+
+// This is deliberately syntactic: equivalent commands are normalized only where
+// the runtime can prove it without interpreting shell syntax or secret values.
+export function normalizeActionCommand(value = null) {
+  if (value === null || value === undefined) return null;
+  const source = Array.isArray(value) ? { argv: value } : value;
+  const argv = source.argv ?? (typeof source.command === 'string' && Array.isArray(source.args) ? [source.command, ...source.args] : null);
+  if (!Array.isArray(argv) || !argv.length || argv.some((part) => typeof part !== 'string' || !part.length)) throw new Error('INVALID_ACTION_COMMAND');
+  const cwd = path.posix.normalize(source.cwd ?? '.').replace(/^\.\//, '') || '.';
+  if (path.posix.isAbsolute(cwd) || cwd === '..' || cwd.startsWith('../')) throw new Error('INVALID_ACTION_CWD');
+  const environmentKeys = [...new Set(source.environmentKeys ?? [])].sort();
+  if (environmentKeys.some((key) => !/^[A-Z][A-Z0-9_]{0,63}$/.test(key))) throw new Error('INVALID_ACTION_ENVIRONMENT');
+  return { argv: [argv[0].trim(), ...argv.slice(1)], cwd, environmentKeys };
+}
+export const operationalActionFingerprint = (action) => digest({ ...action, command: normalizeActionCommand(action.command) });
+export const actionFingerprint = (action, failureId, stateFingerprint) => digest({ action: operationalActionFingerprint(action), failureId, stateFingerprint });
 
 // Receipt IDs identify observations, not causes: replacing a receipt must not reset a failure budget.
 export function failureIdentity(f) {
@@ -81,13 +98,38 @@ export function compareFeedbackProgress(before, after, { previousNoProgress = 0,
     ...(v?.requirements ?? []).filter((r) => r.status === 'SATISFIED').map((r) => r.validationRequirementId)]);
   const oldSatisfied = satisfied(before, validationBefore);
   const satisfiedRequirementIds = satisfied(after, validationAfter).filter((id) => !oldSatisfied.includes(id));
-  const newCritical = after.failures.some((f) => added.includes(f.failureId) && f.severity === 'CRITICAL');
-  const severity = (f) => [null, 'INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].indexOf(f.severity);
-  const raisedSeverity = after.failures.some((f) => before.failures.some((old) => old.failureId === f.failureId && severity(f) > severity(old)));
-  const regression = relation === 'EXPANDED' || newCritical || raisedSeverity || newIds.length > oldIds.length;
-  const materialProgress = !regression && (relation === 'REDUCED' || after.assessment.decision === 'ADMISSIBLE' || satisfiedRequirementIds.length > 0);
-  return { relation, materialProgress, regression, removedFailureIds: removed, addedFailureIds: added, satisfiedRequirementIds,
+  const vector = (facts, validation) => {
+    const rank = { INVALID_STATE: 0, BLOCKED_EXTERNAL: 1, REPLAN_REQUIRED: 1, REVALIDATION_REQUIRED: 2, NOT_ADMISSIBLE: 3, ADMISSIBLE: 4 };
+    const failures = facts.failures ?? [];
+    const severity = { null: 0, INFO: 1, LOW: 2, MEDIUM: 3, HIGH: 4, CRITICAL: 5 };
+    return { completionRank: rank[facts.assessment?.decision] ?? 0, blockingFailures: failures.length,
+      criticalHighFailures: failures.filter((f) => ['CRITICAL', 'HIGH'].includes(f.severity)).length, maxSeverity: Math.max(0, ...failures.map((f) => severity[f.severity])),
+      missingValidation: (validation?.requirements ?? []).filter((r) => r.required && r.blocking && !['SATISFIED', 'NOT_APPLICABLE'].includes(r.status)).length,
+      staleEvidence: failures.filter((f) => f.kind === 'EVIDENCE' || /STALE/.test(f.reasonCode)).length,
+      materialFindings: failures.filter((f) => f.kind === 'FINDING' && ['CRITICAL', 'HIGH'].includes(f.severity)).length };
+  };
+  const beforeVector = vector(before, validationBefore); const afterVector = vector(after, validationAfter);
+  const worse = afterVector.completionRank < beforeVector.completionRank || ['blockingFailures', 'criticalHighFailures', 'maxSeverity', 'missingValidation', 'staleEvidence', 'materialFindings']
+    .some((key) => afterVector[key] > beforeVector[key]);
+  const better = afterVector.completionRank > beforeVector.completionRank || ['blockingFailures', 'criticalHighFailures', 'maxSeverity', 'missingValidation', 'staleEvidence', 'materialFindings']
+    .some((key) => afterVector[key] < beforeVector[key]);
+  const regression = worse;
+  const materialProgress = !regression && (better || after.assessment.decision === 'ADMISSIBLE' || satisfiedRequirementIds.length > 0);
+  return { relation, materialProgress, regression, removedFailureIds: removed, addedFailureIds: added, satisfiedRequirementIds, beforeVector, afterVector,
     consecutiveNoProgress: materialProgress ? 0 : previousNoProgress + 1 };
+}
+
+export function failureLineage(before, after, attempt) {
+  const old = new Map(before.failures.map((f) => [f.failureId, f]));
+  const ownReceipts = new Set(attempt.receiptIds);
+  return after.failures.map((failure) => {
+    const same = old.get(failure.failureId);
+    const predecessor = [...old.values()].find((f) => f.repository === failure.repository && f.sourceId === failure.sourceId);
+    const evidenceRefs = failure.relatedReceiptIds.filter((id) => ownReceipts.has(id));
+    const relation = same ? 'SAME_ROOT' : predecessor ? 'SUPERSEDES' : evidenceRefs.length ? 'CAUSED_BY_ATTEMPT' :
+      attempt.repository !== null && failure.repository !== attempt.repository ? 'INDEPENDENT' : 'UNKNOWN';
+    return { failureId: failure.failureId, relatedFailureId: same?.failureId ?? predecessor?.failureId ?? null, relation, evidenceRefs };
+  });
 }
 
 export const failureSetFingerprint = (failures) => digest(failures.map(({ failureId, failureClass, severity, dependencyIds }) =>
@@ -110,7 +152,8 @@ export function feedbackIndex(session) {
     attemptId: attempt?.attemptId ?? null, attemptNumber: attempt?.attemptNumber ?? 0,
     receiptIds: (attempt?.receiptIds ?? []).slice(-8), progress: session.progressState.relation, outcome: session.outcome,
     failedHypotheses: session.attempts.filter((a) => !a.progress.materialProgress).slice(-2).map((a) => ({ failureId: a.failureId,
-      repository: a.repository, hypothesis: a.hypothesis, actionFingerprint: a.actionFingerprint })),
+      repository: a.repository, hypothesisId: a.hypothesisFingerprint, hypothesis: a.hypothesis, actionFingerprint: a.actionFingerprint,
+      outcome: a.outcome, evidenceRefs: a.receiptIds.slice(-8), progress: a.progress.relation })),
     omitted: Math.max(0, session.currentFailureSet.length - 8) };
 }
 

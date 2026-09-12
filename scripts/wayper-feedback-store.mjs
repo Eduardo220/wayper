@@ -17,7 +17,8 @@ function read(file) { return JSON.parse(fs.readFileSync(file, 'utf8')); }
 function assertContinuation(s, previous) {
   if (!previous) return;
   const transitions = { READY: ['ACTING', 'FINISHED', 'STALE'], REASSESS_CAUSE: ['ACTING', 'FINISHED', 'STALE'],
-    ACTING: ['ACTION_COMPLETE', 'READY', 'REASSESS_CAUSE', 'FINISHED', 'STALE'], ACTION_COMPLETE: ['VALIDATING', 'FINISHED', 'STALE'],
+    ACTING: ['ACTING', 'INTERRUPTED_UNKNOWN_OUTCOME', 'ACTION_COMPLETE', 'READY', 'REASSESS_CAUSE', 'FINISHED', 'STALE'],
+    INTERRUPTED_UNKNOWN_OUTCOME: ['ACTION_COMPLETE', 'STALE'], ACTION_COMPLETE: ['VALIDATING', 'FINISHED', 'STALE'],
     VALIDATING: ['VALIDATING', 'READY', 'REASSESS_CAUSE', 'FINISHED', 'STALE'], FINISHED: ['STALE'], STALE: [] };
   if (!transitions[previous.state].includes(s.state) || stable(previous.baselineReference) !== stable(s.baselineReference) ||
     stable(previous.attemptBudget) !== stable(s.attemptBudget) || s.attempts.length < previous.attempts.length ||
