@@ -10,6 +10,7 @@ import { assertGoalExecution, assertSameExecution, invalidateMapProofs, reposito
 import { createContextValidationPlan, refreshContextValidationPlan } from './wayper-validation-store.mjs';
 import { completionMapFingerprint, validateCompletionLedger, ASSESSMENT_ID, COMPLETION_DECISIONS } from './wayper-completion-policy.mjs';
 import { validCompletionIndexReference } from './wayper-completion-store.mjs';
+import { validateFeedbackIndex } from './wayper-feedback-store.mjs';
 
 export { sourceFingerprint } from './wayper-evidence-receipts.mjs';
 
@@ -481,7 +482,12 @@ export function recordContextEntry(map, kind, input, repositoryDefinitions, opti
   const repos = definitions(repositoryDefinitions);
   const next = structuredClone(map);
   let id; let existed = false; let invalidated = [];
-  if (kind === 'finding' || kind === 'ambiguity') {
+  if (kind === 'feedback') {
+    if (!validateFeedbackIndex(input, { ...receiptOptions(next, [...repos.values()], options), identity: next.execution.identity })) throw new Error('Invalid feedback index');
+    // A cache index must not refresh evidence or change the material state it describes.
+    next.feedback = structuredClone(input);
+    return finalizeContextMap(next, options);
+  } else if (kind === 'finding' || kind === 'ambiguity') {
     const collection = kind === 'finding' ? 'findings' : 'ambiguities';
     const field = kind === 'finding' ? 'id' : 'code';
     next[collection] ??= [];
@@ -766,7 +772,7 @@ function rejectUnknownKeys(value, allowed, label, errors) {
 
 const MAP_KEYS = new Set(['schemaVersion', 'goalId', 'execution', 'taskClass', 'repositories', 'taskFingerprint',
   'routerFingerprint', 'registryFingerprint', 'repositoryState', 'capabilities', 'router', 'risks', 'evidence', 'dependencies',
-  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants', 'evidenceReceipts', 'validationPlan', 'findings', 'completion']);
+  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants', 'evidenceReceipts', 'validationPlan', 'findings', 'completion', 'feedback']);
 const REPOSITORY_KEYS = new Set(['repository', 'logicalRoot', 'relevantRefs', 'branch', 'head',
   'dirtyFingerprint', 'relevantDiffFingerprint', 'checkoutFingerprint', 'dirty', 'contentFingerprint']);
 const EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'symbol', 'range', 'sourceHash', 'sourceBytes',
@@ -796,6 +802,7 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
   }
   rejectUnknownKeys(map, MAP_KEYS, 'Context Map', errors);
   errors.push(...validateCompletionLedger(map));
+  if (map.feedback && !validateFeedbackIndex(map.feedback, { ...receiptOptions(map, [...repos.values()], {}), identity: map.execution.identity })) errors.push('invalid feedback index');
   if (map.completion) {
     rejectUnknownKeys(map.completion, new Set(['assessmentId', 'decision', 'mapFingerprint', 'stale', 'blockers', 'warnings', 'omitted']), 'completion index', errors);
     if (!ASSESSMENT_ID.test(map.completion.assessmentId) || !COMPLETION_DECISIONS.includes(map.completion.decision) ||

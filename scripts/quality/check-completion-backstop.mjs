@@ -16,6 +16,8 @@ const QUALITY_TESTS = {
   handoff: 'scripts/wayper-structured-handoff.test.mjs',
   evidence: 'scripts/quality/check-evidence-receipts.test.mjs',
   validation: 'scripts/quality/check-validation-planner.test.mjs',
+  feedback: 'scripts/quality/check-feedback-loop.test.mjs',
+  feedbackAdversarial: 'scripts/quality/check-feedback-adversarial.test.mjs',
   completion: 'scripts/quality/check-completion-boundary.test.mjs',
   adversarial: 'scripts/quality/check-completion-adversarial.test.mjs',
 };
@@ -62,6 +64,7 @@ function isQualityTooling(file) {
     || file.startsWith('scripts/wayper-structured-handoff')
     || file.startsWith('scripts/wayper-evidence')
     || file.startsWith('scripts/wayper-validation')
+    || file.startsWith('scripts/wayper-feedback')
     || file.startsWith('scripts/wayper-completion')
     || file.startsWith('scripts/quality/');
 }
@@ -98,6 +101,9 @@ export function relevantQualityTests(files) {
     if (file.includes('completion') || file.startsWith('scripts/wayper-context') ||
       file.startsWith('scripts/wayper-structured-handoff') || file === '.codex/hooks.json' || file === 'package.json') {
       tests.add(QUALITY_TESTS.completion); tests.add(QUALITY_TESTS.adversarial);
+    }
+    if (file.includes('feedback') || file.startsWith('scripts/wayper-context') || file.includes('structured-handoff') || file.includes('completion-store')) {
+      tests.add(QUALITY_TESTS.feedback); tests.add(QUALITY_TESTS.feedbackAdversarial);
     }
     if (isEvidence(file)) tests.add(QUALITY_TESTS.evidence);
     if (isValidation(file)) tests.add(QUALITY_TESTS.validation);
@@ -141,7 +147,7 @@ export function buildCheckPlan(scope, files) {
       id: 'quality-tests',
       command: process.execPath,
       args: ['--test', ...tests],
-      timeout: 60_000,
+      timeout: 180_000,
       retry: `node --test ${tests.join(' ')}`,
     });
   }
@@ -158,7 +164,7 @@ export function buildCheckPlan(scope, files) {
       id: 'quality',
       command: 'npm',
       args: ['run', '--silent', 'quality:gate', '--', '--json'],
-      timeout: 60_000,
+      timeout: 180_000,
       retry: 'npm run quality:gate -- --details',
     });
   }

@@ -14,6 +14,7 @@
     "quality:design": "node scripts/quality/check-design-routing.mjs",
     "quality:meta-goal": "node scripts/quality/check-meta-goal-completion.mjs",
     "quality:validation": "node --test scripts/quality/check-validation-planner.test.mjs",
+    "quality:feedback": "node --test scripts/quality/check-feedback-loop.test.mjs scripts/quality/check-feedback-adversarial.test.mjs",
     "quality:completion": "node --test scripts/quality/check-completion-boundary.test.mjs scripts/quality/check-completion-adversarial.test.mjs",
     "quality:evidence": "node --test scripts/quality/check-evidence-receipts.test.mjs",
     "evidence:observe": "node scripts/wayper-evidence-observer.mjs",

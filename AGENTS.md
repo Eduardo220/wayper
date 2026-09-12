@@ -54,6 +54,9 @@ o próprio escopo.
 - Workflow: `docs/14-instrucoes-para-ia.md`. Arquitetura do Harness:
   `docs/ai/harness-v1.md`.
 - META Goals usam evidence-gated completion; budgets são tetos, não quotas.
+- Completion rejeitado pode iniciar o [Feedback Loop V1](docs/ai/feedback-loop.md):
+  tentativas limitadas, receipts e reassessment canônico; external/human não recebem
+  retry cego. Execução de ações continua owner/callback-driven, sem dispatch global.
 - Prova material exige Evidence Receipt observado, íntegro e compatível;
   texto/shell direto/handoff assertion não bastam. Contrato: `docs/ai/evidence-receipts.md`.
 - Profundidade de validação deriva do Validation Planner V1 e seu registry;

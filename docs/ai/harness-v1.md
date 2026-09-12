@@ -60,7 +60,9 @@ acrescenta [Validation Planner V1](validation-planner.md): facts estruturados
 selecionam requisitos L0-L6 e receipts existentes produzem assessment. Planner
 não executa checks nem conclui Goals. A Fase 4 conecta
 [Completion Boundary V1](completion-boundary.md) aos owners e ao Stop vinculado.
-Feedback Loop e fases posteriores não estão ativados.
+A Fase 5 acrescenta [Feedback Loop V1](feedback-loop.md), executável via owner/adapters,
+com sessões/tentativas persistidas e budget. Dispatch global e fases posteriores
+continuam fora dessa cobertura.
 
 ## Recursos project-scoped
 

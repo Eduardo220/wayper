@@ -9,6 +9,7 @@ import { CONTEXT_MAP_SCHEMA_VERSION, capabilityRegistryFingerprint, validateCont
 import { loadCapabilityFiles, NATIVE_ROLES, validateRegistry } from './quality/check-capability-routing.mjs';
 import { packetValidationRequirements } from './wayper-validation-store.mjs';
 import { packetCompletionContext } from './wayper-completion-policy.mjs';
+import { packetFeedbackContext } from './wayper-feedback-policy.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const CONTEXT_PACKET_SCHEMA_VERSION = 1;
@@ -256,6 +257,7 @@ function buildContextPacketCandidate(contextMap, target, { registry, routerOutpu
     riskFlags: risks,
     invariants,
     evidenceRefs: [...selectedEvidence].sort(),
+    ...(contextMap.feedback ? { feedback: packetFeedbackContext(contextMap, normalized.repositories, [...paths]) } : {}),
     ...(contextMap.completion || contextMap.findings?.length ? { completion: packetCompletionContext(contextMap, normalized.repositories, [...paths]) } : {}),
     ...(contextMap.validationPlan ? { validationPlan: { planId: contextMap.validationPlan.planId,
       status: contextMap.validationPlan.status, requirements: validationRequirements } } : {}),
@@ -297,7 +299,7 @@ export function buildContextPacket(contextMap, target, options = {}) {
 
 const PACKET_KEYS = new Set(['schemaVersion', 'goalId', 'packetId', 'contextMapFingerprint', 'target', 'objective',
   'repositories', 'capabilities', 'scope', 'riskFlags', 'invariants', 'evidenceRefs', 'dependencyRefs', 'evidenceReceiptIds',
-  'knownGoodRefs', 'proofGapRefs', 'graphifyRefs', 'validationRefs', 'validationPlan', 'completion', 'exclusions', 'ambiguities', 'contextBudget', 'metrics']);
+  'knownGoodRefs', 'proofGapRefs', 'graphifyRefs', 'validationRefs', 'validationPlan', 'completion', 'feedback', 'exclusions', 'ambiguities', 'contextBudget', 'metrics']);
 const METRIC_KEYS = new Set(['packetBytes', 'packetTokenProxy', 'evidenceCount', 'dependencyCount', 'pathCount',
   'inlineBytes', 'sourceBytesReferenced', 'sourceBytesMaterialized', 'knownGoodRefCount', 'duplicateRefsAvoided']);
 const BUDGET_KEYS = new Set(['taskClass', 'targetType', 'tokenProxyCeiling', 'status', 'reason']);
@@ -318,6 +320,9 @@ function validateContextPacketUnsafe(packet, { contextMap, registry, repositoryD
     errors.push('receipt authority stale or unavailable');
   }
   rejectKeys(packet, PACKET_KEYS, 'packet', errors);
+  if (stable(packet.feedback) !== stable(packetFeedbackContext(contextMap, packet.repositories ?? [], packet.scope?.paths ?? []))) {
+    errors.push('invalid or omitted feedback context / repository leakage');
+  }
   const completion = contextMap.completion || contextMap.findings?.length ?
     packetCompletionContext(contextMap, packet.repositories ?? [], packet.scope?.paths ?? []) : undefined;
   if (stable(packet.completion) !== stable(completion) || (completion?.openFindings.length ?? 0) > 24) {

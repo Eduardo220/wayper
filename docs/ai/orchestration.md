@@ -293,6 +293,11 @@ Nenhum conflito é mesclado automaticamente sem entender o comportamento.
 
 ## Replanning, falha e stall
 
+Rejeições da Completion Boundary podem iniciar o [Feedback Loop V1](feedback-loop.md).
+Ele classifica blockers, limita tentativas e exige nova hipótese após ausência de
+progresso; não cria waves, agents ou writers paralelos. Callback/owner executa ações
+autorizadas. Handoff relacionado a feedback não avança a tentativa sozinho.
+
 Retorne `REPLAN_REQUIRED` ao descobrir novo arquivo central/owner/risco,
 migration, concurrency, API contract, writer concorrente ou dependência não
 prevista. O principal pausa a área, atualiza a DAG, recalcula waves e mantém

@@ -10,6 +10,11 @@
 
 ## Contrato
 
+Fase 5: [Feedback Loop V1](feedback-loop.md) é owner/adapters-driven. O Stop não
+inicia retries; consulta a mesma Completion Boundary. Mudanças no feedback
+selecionam `quality:feedback`. Timeout de checks: 180s; hook: 240s para as suítes
+conectadas. A proteção `stop_hook_active=true` permanece inalterada.
+
 A Fase 4 conecta este mesmo Stop à [Completion Boundary](completion-boundary.md)
 quando `completion-request` registra a identidade/revisão/baseline explícitas.
 Essa consulta ocorre mesmo com worktree limpa. Sem vínculo, o gate técnico não

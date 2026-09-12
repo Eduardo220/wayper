@@ -17,7 +17,7 @@ const keys = (o, allowed) => o && typeof o === 'object' && !Array.isArray(o) &&
 
 export function completionMapFingerprint(map) {
   const copy = structuredClone(map);
-  delete copy.completion; delete copy.metrics; delete copy.learningDelta;
+  delete copy.completion; delete copy.feedback; delete copy.metrics; delete copy.learningDelta;
   copy.validation = { checks: copy.validation?.checks ?? [] };
   return digest(copy);
 }

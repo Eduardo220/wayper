@@ -8,6 +8,13 @@
 
 ## Responsabilidade
 
+[Feedback Loop V1](feedback-loop.md) publica `contextMap.feedback`: índice bounded
+de sessão, falhas, tentativa, receipts, últimas hipóteses e outcome. `inspect`
+mostra freshness consultada no journal; sem índice, UNASSESSED. Amendment remove
+o índice ativo e mantém histórico. Packet filtra por repo; Handoff propõe diagnosis
+relacionada sem autoridade sobre a tentativa. Feedback não altera admissibilidade
+apenas por atualizar seu próprio índice.
+
 A conclusão conectada é definida em [Completion Boundary V1](completion-boundary.md).
 `completion`/`completion-request` usam a execução persistida e retornam decisão
 e blockers estruturados. `inspect` expõe completion e stale status. O índice

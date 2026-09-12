@@ -22,6 +22,7 @@ import { evaluateEvidenceRequirement } from './wayper-evidence-store.mjs';
 import { refreshContextValidationPlan } from './wayper-validation-store.mjs';
 import { completionDefinition, completionIndex, validateCompletionRequirements, completionRequirementPolicy } from './wayper-completion-policy.mjs';
 import { assessGoalCompletion } from './wayper-completion-boundary.mjs';
+import { feedbackIndex } from './wayper-feedback-policy.mjs';
 import { persistCompletionAssessment, recordCompletionAttempt, bindCompletionStop } from './wayper-completion-store.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -466,6 +467,7 @@ export function amendWorkingContext(options) {
       return `${artifact.repository}:${artifact.path}${artifact.start === null ? '' : `#L${artifact.start}-L${artifact.end}`}`;
     }) }, 'GOAL_AMENDED');
     map.execution = structuredClone(next.execution); map.goalId = next.goalId;
+    delete map.feedback; // Revision-scoped history remains in the feedback store.
     map.router = null; map.taskFingerprint = null; map.routerFingerprint = null;
     map.capabilities.knownGood = map.capabilities.knownGood.filter((id) => !affected.capabilities.includes(id));
     for (const item of map.knownGood) item.validatedAtGoal = next.goalId;
@@ -564,6 +566,12 @@ function writeState(file, state) {
   } finally {
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
   }
+}
+
+// Project-owned callers share the canonical writer and immutable revision checks.
+export function writeWorkingContext(state, { root, identity }) {
+  assertWorkingContext(state, identity);
+  writeState(contextStatePath(root, identity.goalRunId), state);
 }
 
 export function repositoryDefinitions(args, state) {
@@ -777,12 +785,15 @@ async function main() {
   }
   if (command === 'inspect') {
     const map = current.contextMap;
+    const feedback = map.feedback ? (await import('./wayper-feedback.mjs')).resumeFeedbackSession({ root: ROOT,
+      identity: current.execution.identity, feedbackId: map.feedback.feedbackId }) : null;
     console.log(JSON.stringify({ schemaVersion: map.schemaVersion, goalId: map.goalId,
       execution: current.execution, revisionHistory: current.revisionHistory,
       repositories: map.repositories, taskFingerprint: map.taskFingerprint,
       routerFingerprint: map.routerFingerprint, capabilities: map.capabilities,
       router: map.router, risks: map.risks, validation: map.validation, validationPlan: workingValidationStatus(current),
-      completion: workingCompletionStatus(current), metrics: map.metrics }, null, 2));
+      completion: workingCompletionStatus(current), feedback: feedback ? { ...feedbackIndex(feedback.session), freshness: feedback.status,
+        reasonCode: feedback.reasonCode } : { state: 'UNASSESSED' }, metrics: map.metrics }, null, 2));
     return;
   }
   if (command === 'stats') {

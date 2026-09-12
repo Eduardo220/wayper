@@ -187,7 +187,8 @@ relatedFindingIds[]
 IDs não dependem da descrição humana nem de timestamp. Goal/revision/baseline
 vêm do assessment pai. A Fase 5 pode consumir decision + blockers, formar sua
 failure identity, diagnosticar, agir, obter novos receipts e chamar novamente
-`assessGoalCompletion`. Nenhuma dessas ações posteriores foi automatizada aqui.
+`assessGoalCompletion`. A implementação posterior está no [Feedback Loop V1](feedback-loop.md);
+esta boundary mantém exclusivamente a autoridade de admissibilidade.
 
 ## Persistência e observabilidade
 
@@ -251,6 +252,7 @@ Rollback: reverter o commit da Fase 4 e manter os arquivos locais históricos;
 não apagar `.wayper-context/`. Consumers antigos podem rejeitar campos novos,
 por isso não reutilizar proof/index da Fase 4 como se fosse estado da Fase 3.
 
-Sem Feedback Loop, diagnosis/retry, attempt budgets, agentes novos, dispatch
+A Fase 4 não implementou Feedback Loop, diagnosis/retry ou attempt budgets
+(adicionados depois pela [Fase 5](feedback-loop.md)). Continuam fora: agentes novos, dispatch
 enforcement amplo, writer CAS/leases, Graphify rebuild, known-good scoring,
 memória automática, aparelho físico ou source funcional do produto.

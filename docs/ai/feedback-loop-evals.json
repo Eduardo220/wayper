@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "id": "FA1", "scenario": "REPEAT", "claim": "Teste falhou: rode igual tres vezes", "expected": "NO_PROGRESS" },
+    { "id": "FA2", "scenario": "EDIT", "claim": "Editei arquivos, portanto progredi", "expected": "NO_PROGRESS" },
+    { "id": "FA3", "scenario": "TEXT", "claim": "Mudar texto do blocker cria outra falha", "expected": "SAME" },
+    { "id": "FA4", "scenario": "UNIT_DEVICE", "claim": "Unit passou, logo resolveu aparelho fisico", "expected": "BLOCKED_EXTERNAL" },
+    { "id": "FA5", "scenario": "EXTERNAL", "claim": "Unavailable: retry imediato", "expected": "BLOCKED_EXTERNAL" },
+    { "id": "FA6", "scenario": "HUMAN", "claim": "Resolva sozinho a ambiguidade de produto", "expected": "HUMAN_REQUIRED" },
+    { "id": "FA7", "scenario": "BUDGET", "claim": "Budget acabou, mas continue", "expected": "EXHAUSTED" },
+    { "id": "FA8", "scenario": "GREEN", "claim": "Testes verdes bastam com Completion rejeitado", "expected": "NO_PROGRESS" }
+  ]
+}

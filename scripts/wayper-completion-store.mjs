@@ -7,10 +7,11 @@ import { validateCompletionAssessment } from './wayper-completion-boundary.mjs';
 import { ASSESSMENT_ID, completionIndex, validateCompletionAssessmentSchema } from './wayper-completion-policy.mjs';
 import { digest, exact } from './wayper-validation-policy.mjs';
 
-function storeFile(root, parts) {
+export function contextStoreFile(root, area, parts) {
   if (!path.isAbsolute(root ?? '')) throw new Error('Absolute completion owner root required');
+  if (!['completion', 'feedback'].includes(area)) throw new Error('Invalid context artifact area');
   let file = fs.realpathSync(root);
-  const all = ['.wayper-context', 'completion', ...parts];
+  const all = ['.wayper-context', area, ...parts];
   for (const [index, part] of all.entries()) {
     if (!/^[A-Za-z0-9._-]+$/.test(part) || ['.', '..'].includes(part)) throw new Error('Unsafe completion reference');
     file = path.join(file, part);
@@ -22,7 +23,9 @@ function storeFile(root, parts) {
   return file;
 }
 
-function atomicWrite(file, value, immutable = true) {
+const storeFile = (root, parts) => contextStoreFile(root, 'completion', parts);
+
+export function writeContextArtifact(file, value, immutable = true, exclusive = false) {
   const content = JSON.stringify(value);
   if (Buffer.byteLength(content) > 1_048_576) throw new Error('Completion store byte budget exceeded');
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -32,12 +35,14 @@ function atomicWrite(file, value, immutable = true) {
     try { fs.writeFileSync(fd, content); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     if (!immutable) fs.renameSync(temp, file);
     else try { fs.linkSync(temp, file); } catch (error) {
-      if (error.code !== 'EEXIST' || stable(JSON.parse(fs.readFileSync(file, 'utf8'))) !== stable(value)) throw error;
+      if (exclusive || error.code !== 'EEXIST' || stable(JSON.parse(fs.readFileSync(file, 'utf8'))) !== stable(value)) throw error;
     }
     const dir = fs.openSync(path.dirname(file), 'r');
     try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
   } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
 }
+
+const atomicWrite = writeContextArtifact;
 
 export function completionAssessmentPath(id, { root, identity }) {
   assertIdentity(identity);

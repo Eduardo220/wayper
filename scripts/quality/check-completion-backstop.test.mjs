@@ -86,6 +86,8 @@ test('HB4 quality tooling selects only directly associated tests', () => {
       'scripts/quality/check-completion-adversarial.test.mjs',
       'scripts/quality/check-completion-boundary.test.mjs',
       'scripts/quality/check-context-efficiency.test.mjs',
+      'scripts/quality/check-feedback-adversarial.test.mjs',
+      'scripts/quality/check-feedback-loop.test.mjs',
       'scripts/wayper-structured-handoff.test.mjs',
     ]
   );
@@ -95,12 +97,14 @@ test('HB4 quality tooling selects only directly associated tests', () => {
   );
   assert.deepEqual(
     relevantQualityTests(['scripts/quality/evaluate-structured-handoff-cases.mjs']),
-    ['scripts/wayper-structured-handoff.test.mjs']
+    ['scripts/quality/check-feedback-adversarial.test.mjs', 'scripts/quality/check-feedback-loop.test.mjs', 'scripts/wayper-structured-handoff.test.mjs']
   );
   assert.deepEqual(relevantQualityTests(['scripts/wayper-context-packet.mjs']), [
     'scripts/quality/check-completion-adversarial.test.mjs',
     'scripts/quality/check-completion-boundary.test.mjs',
     'scripts/quality/check-context-efficiency.test.mjs',
+    'scripts/quality/check-feedback-adversarial.test.mjs',
+    'scripts/quality/check-feedback-loop.test.mjs',
     'scripts/wayper-structured-handoff.test.mjs',
   ]);
   assert.deepEqual(relevantQualityTests(['package.json']), ['scripts/quality/check-completion-adversarial.test.mjs',

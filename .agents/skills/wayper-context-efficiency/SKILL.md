@@ -88,6 +88,9 @@ the current Goal/slice needs them.
    Follow [completion-boundary.md](../../../docs/ai/completion-boundary.md).
    Register material findings through the existing owner `record --kind finding`.
    Handoff DONE and STOP_WHEN_PROVEN never substitute for this assessment.
+   For rejected assessments, use the existing bounded [Feedback Loop](../../../docs/ai/feedback-loop.md)
+   with explicit Goal identity. Respect budget, REASSESS_CAUSE and external/human
+   outcomes; never repeat an interrupted action. Only Completion grants SUCCEEDED.
 7. Add only new compact map entries with `wayper-context.mjs record`; use
    `inspect`, `stats`, `evidence`, `gaps`, and `validate` read-only. Persist the
    router only through the explicit command. Trust specialist selection only

@@ -41,7 +41,7 @@ const NEW_EVIDENCE_ID = /^NE-[A-Za-z0-9._-]{1,80}$/;
 const FORBIDDEN_KEY = /transcript|chain.?of.?thought|source.?blob|raw.?graph|raw.?diff|tool.?diar|stdout|stderr|test.?log|packet.?content/i;
 const TOP_KEYS = new Set(['schemaVersion', 'goalId', 'taskId', 'agentId', 'packetId', 'status', 'confidence',
   'coverage', 'findings', 'evidenceRefs', 'newEvidence', 'risks', 'recommendations', 'filesRead', 'filesChanged',
-  'tests', 'proofGaps', 'ambiguities', 'blockers', 'metrics', 'existingEvidenceReceiptIds', 'validationFindings']);
+  'tests', 'proofGaps', 'ambiguities', 'blockers', 'metrics', 'existingEvidenceReceiptIds', 'validationFindings', 'feedback']);
 const FINDING_KEYS = new Set(['id', 'severity', 'category', 'claim', 'scenario', 'impact', 'safeguard',
   'confidence', 'evidenceRefs', 'proofGapRefs', 'affectedCapabilities']);
 const NEW_EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'range', 'symbol', 'sourceHash', 'category',
@@ -231,6 +231,13 @@ function validateStructuredHandoffUnsafe(handoff, { packet, contextMap, registry
   if (packetValidation.status !== 'VALID') return { status: 'INVALID_HANDOFF',
     errors: packetValidation.errors.map((item) => `packet: ${item}`) };
   rejectKeys(handoff, TOP_KEYS, 'handoff', errors);
+  if (handoff.feedback !== undefined) {
+    rejectKeys(handoff.feedback, new Set(['feedbackId', 'attemptId', 'failureId', 'diagnosisSummary']), 'feedback', errors);
+    const f = handoff.feedback;
+    if (!packet.feedback || f.feedbackId !== packet.feedback.feedbackId || !packet.feedback.attemptId ||
+      f.attemptId !== packet.feedback.attemptId || !packet.feedback.failures.some((x) => x.failureId === f.failureId) ||
+      !validText(f.diagnosisSummary, 240)) errors.push('invalid feedback proposal binding');
+  }
   rejectKeys(handoff?.metrics, METRIC_KEYS, 'metrics', errors);
   const arrays = ['coverage', 'findings', 'evidenceRefs', 'newEvidence', 'risks', 'recommendations', 'filesRead',
     'filesChanged', 'tests', 'proofGaps', 'ambiguities', 'blockers'];
@@ -395,6 +402,8 @@ export function planContextMapMerge(handoff, options = {}) {
   if (validation.status !== 'VALID') throw new Error(validation.errors.join('; '));
   return {
     completionAuthority: 'NONE',
+    ...(handoff.feedback ? { feedbackProposal: { ...handoff.feedback, origin: 'HANDOFF_ASSERTED',
+      ownerAction: 'FEEDBACK_OWNER_REVIEW_REQUIRED', attemptAuthority: 'NONE' } } : {}),
     findings: handoff.findings.flatMap((finding) => {
       const evidence = [...options.contextMap.evidence, ...handoff.newEvidence].filter((e) => finding.evidenceRefs.includes(e.id));
       const repositories = [...new Set(evidence.map((e) => e.repository))];

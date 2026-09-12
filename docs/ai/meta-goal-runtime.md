@@ -15,6 +15,9 @@ runtime de memória ou runtime JS. O Codex continua sendo executor e orquestrado
 ## Contrato da meta
 
 A Fase 4 conecta a elegibilidade à [Completion Boundary V1](completion-boundary.md).
+Rejeição pode ser tratada pelo [Feedback Loop V1](feedback-loop.md), usando a mesma
+identidade e evidência; budget limita tentativas, external/human exigem escalonamento.
+SUCCEEDED do feedback requer ADMISSIBLE e não substitui a transição do host.
 `assessGoalCompletion` lê Identity, Working Context/Map, Validation Planner e
 Evidence atuais; nenhum ledger textual ou booleano autoriza conclusão. O Meta
 evaluator conectado delega à API. Ledgers antigos seguem legíveis para diagnóstico
