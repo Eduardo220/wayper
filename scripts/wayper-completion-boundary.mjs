@@ -7,6 +7,7 @@ import { loadCapabilityFiles } from './quality/check-capability-routing.mjs';
 import { RECEIPT_ID, requirementPolicy } from './wayper-evidence-receipts.mjs';
 import { evaluateEvidenceRequirement } from './wayper-evidence-store.mjs';
 import { digest, sorted } from './wayper-validation-policy.mjs';
+import { ownershipSnapshot } from './wayper-ownership.mjs';
 import { completionDefinition, completionMapFingerprint, completionIssue, sealCompletionAssessment, completionRequirementPolicy,
   validateCompletionLedger, validateCompletionRequirements, validateCompletionAssessmentSchema } from './wayper-completion-policy.mjs';
 
@@ -54,6 +55,8 @@ export function assessGoalCompletion(request = {}) {
     }
     const { registry } = loadCapabilityFiles();
     options = { root, execution: state.execution, repositories };
+    const ownershipState = ownershipSnapshot({ root, identity }); const ownership = ownershipState.problems;
+    for (const problem of ownership) add('STATE', problem.reference, problem.reasonCode, { repository: problem.repository });
     const map = refreshContextMap(state.contextMap, { ...options, registry, goalId: state.goalId,
       taskClass: state.taskClass, tokenCeiling: state.budget.contextTokenCeiling,
       risks: state.riskFlags, invariants: state.invariants, validations: state.validations, workingArtifacts: state.artifacts });
@@ -153,8 +156,9 @@ export function assessGoalCompletion(request = {}) {
     }
     inputFingerprint = digest({ execution: state.execution, definition: completionDefinition(state),
       requirements, revisionHistory: state.revisionHistory, repositories: snapshots,
-      context: completionMapFingerprint(map), validation: v });
-    if (before !== fs.readFileSync(contextStatePath(root, identity.goalRunId), 'utf8') || stable(snapshots) !== stable(captureRepositories(repositories))) {
+      context: completionMapFingerprint(map), validation: v, ...(ownership.length ? { ownership } : {}) });
+    if (before !== fs.readFileSync(contextStatePath(root, identity.goalRunId), 'utf8') || stable(snapshots) !== stable(captureRepositories(repositories)) ||
+      ownershipState.fingerprint !== ownershipSnapshot({ root, identity }).fingerprint) {
       throw new Error('STATE_CHANGED_DURING_ASSESSMENT');
     }
   } catch (error) {

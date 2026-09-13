@@ -9,6 +9,7 @@ import { readFeedbackSession, appendFeedbackCheckpoint, persistFeedbackAttempt }
 import { readCompletionAssessment } from './wayper-completion-store.mjs';
 import { feedbackFacts, feedbackState, publishFeedbackContext, storeFeedbackAssessment, feedbackDiagnosisContext, feedbackExecutor,
   validationSummary, feedbackActionScope, recordFeedbackContextReuse } from './wayper-feedback-context.mjs';
+import { ownershipBlockers } from './wayper-ownership.mjs';
 
 const initialProgress = () => ({ relation: 'SAME', materialProgress: false, regression: false, removedFailureIds: [],
   addedFailureIds: [], satisfiedRequirementIds: [], beforeVector: { completionRank: 0, blockingFailures: 0, criticalHighFailures: 0, maxSeverity: 0, missingValidation: 0, staleEvidence: 0, materialFindings: 0 },
@@ -151,7 +152,8 @@ export async function runFeedbackIteration(options) {
     await executor.context.validate();
     executor.guard();
   } catch (error) {
-    errorCode = ['CONCURRENT_CHANGE', 'FEEDBACK_BUSY', 'CANCELLED', 'PLAN_INPUT_REVIEW_REQUIRED'].includes(error.message) ? error.message : 'EXECUTOR_FAILED';
+    errorCode = ['STATE_CHANGED', 'EXTERNAL_CHANGE_DETECTED', 'READ_ONLY_CONTRACT_VIOLATION'].includes(error.message) ? 'CONCURRENT_CHANGE' :
+      ['CONCURRENT_CHANGE', 'FEEDBACK_BUSY', 'CANCELLED', 'PLAN_INPUT_REVIEW_REQUIRED'].includes(error.message) ? error.message : 'EXECUTOR_FAILED';
     if (errorCode === 'FEEDBACK_BUSY') throw error;
   }
   return finishAttempt(session, before, attempt, executor, options, errorCode);
@@ -186,6 +188,7 @@ function finishAttempt(session, before, attempt, executor, options, errorCode = 
 // Only a durably completed action with unchanged state may proceed to validation.
 export async function recoverFeedbackSession(options) {
   if (options.ownerStopped !== true) throw new Error('OWNER_STOP_CONFIRMATION_REQUIRED');
+  if (ownershipBlockers(options).length) throw new Error('OWNERSHIP_RECONCILIATION_REQUIRED');
   let session = readFeedbackSession(options.feedbackId, options);
   if (!session.activeAttempt) {
     const current = resumeFeedbackSession(options);

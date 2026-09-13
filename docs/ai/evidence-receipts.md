@@ -158,9 +158,17 @@ texto manual; valores secretos arbitrários não possuem detector universal.
 
 ## APIs e uso
 
+Fase 7: runners exigem `mutability: READ_ONLY|MUTATING`. UNKNOWN/missing não
+executa. MUTATING exige grant/permit consumido pelo [executor governado](dispatch-ownership.md);
+o producer reivindica a execução uma vez. Na CLI, declarar `--mutability`; para
+mutation também `--grant-id`, `--permit-id` e `--actor-id` do dispatch atual.
+Violação observada de READ_ONLY gera erro separado com o receipt de exit code
+preservado. Evidence V1 não muda de schema: bindings de dispatch/actor/lease/fence
+ficam no resultado persistido do permit, que referencia os receipts observados.
+
 ```sh
 npm run evidence:observe -- test --thread-id <threadId> \
-  --goal-run-id <goalRunId> --revision <N> --target unit \
+  --goal-run-id <goalRunId> --revision <N> --target unit --mutability READ_ONLY \
   -- node --test scripts/quality/check-evidence-receipts.test.mjs
 
 npm run context:prove -- --thread-id <threadId> --goal-run-id <goalRunId> \
@@ -179,7 +187,7 @@ operacionais vêm do Working Context existente.
 
 | API | Consumer futuro |
 | --- | --- |
-| `observeFile`, `runObservedCommand`, `runObservedTest`, `runObservedQualityGate` | Execução explícita pelo owner; executor futuro |
+| `observeFile`, `runObservedCommand`, `runObservedTest`, `runObservedQualityGate` | Observação explícita; comandos com contrato de mutabilidade; mutation pelo grant/permit da Fase 7 |
 | `readReceipt`, `listReceipts`, `validateReceipt` | Inventário, validade, stale e provenance |
 | `evaluateEvidenceRequirement(policy, ids, context)` | Requisito -> receipts aceitos/rejeitados e motivos |
 | `validateEvidenceRequirement(policy)` | Validação do contrato fechado de aceitação |

@@ -14,14 +14,14 @@ const reload = (f) => { f.state = readWorkingContext(f.root, { 'thread-id': f.id
   'goal-run-id': f.identity.goalRunId, revision: f.identity.revision }); };
 async function fixture(t, extra = {}, cross = false) {
   const f = completionFixture(t, cross); await f.ready();
-  f.state.contextMap.findings = [finding(extra)]; f.refresh(); return f;
+  f.state.contextMap.capabilities.optional = ['test-build']; f.state.contextMap.findings = [finding(extra)]; f.plan(); f.refresh(); return f;
 }
 const diagnosis = (hypothesis = 'Fix the observed defect', kind = 'EDIT') => ({ failure, evidenceRefs }) => ({
   failureIds: [failure.failureId], causeClass: failure.failureClass, summary: 'Observed blocker remains',
   hypothesis, confidence: 0.8, affectedScope: { repository: failure.repository, paths: ['README.md'] },
   proposedActionKind: kind, validationRequirementIds: [], evidenceRefs, actionCommand: null });
 async function resolve(ctx, id = 'F-bug') {
-  const proof = await ctx.observeQualityGate({ repository: ctx.failure.repository, target: `finding:${id}:RESOLVED`,
+  const proof = await ctx.observeQualityGate({ mutability: 'READ_ONLY', repository: ctx.failure.repository, target: `finding:${id}:RESOLVED`,
     command: 'node', args: ['-e', 'require("node:assert/strict").ok(require("node:fs").existsSync("README.md"))'] });
   ctx.record('finding', finding({ id, repository: ctx.failure.repository, status: 'RESOLVED', receiptIds: [proof.receiptId], resolution: {
     reviewer: 'OWNER', reason: 'Observed regression verification', humanDecisionRequired: false,
@@ -76,13 +76,13 @@ test('FL8 new hypothesis required after no progress', async (t) => {
   assert.equal(again.outcome, 'NO_PROGRESS'); assert.match(again.reasonCode, /NEW_HYPOTHESIS_REQUIRED|DUPLICATE_ACTION/); assert.equal(calls, 0);
 });
 test('FL9 stale evidence follows revalidation without an edit callback', async (t) => {
-  const f = completionFixture(t); await f.ready(); fs.appendFileSync(path.join(f.root, 'README.md'), 'changed\n'); f.plan(); f.refresh();
+  const f = completionFixture(t); f.state.contextMap.capabilities.optional = ['test-build']; f.refresh(); await f.ready(); fs.appendFileSync(path.join(f.root, 'README.md'), 'changed\n'); f.plan(); f.refresh();
   let edits = 0; const s = await step(f, await start(f), { diagnose: diagnosis('Refresh observed proof', 'REVALIDATE'), act: async () => { edits++; },
-    validate: async (ctx) => { const p = await ctx.observeQualityGate({ repository: 'wayper', target: 'criterion', command: 'node', args: ['-e', 'process.exit(0)'] }); ctx.prove('SUCCESS:criterion', p.receiptId); } });
+    validate: async (ctx) => { const p = await ctx.observeQualityGate({ mutability: 'READ_ONLY', repository: 'wayper', target: 'criterion', command: 'node', args: ['-e', 'process.exit(0)'] }); ctx.prove('SUCCESS:criterion', p.receiptId); } });
   assert.equal(edits, 0); assert.equal(s.outcome, 'SUCCEEDED');
 });
 test('FL10 replan uses existing Planner and reassesses', async (t) => {
-  const f = completionFixture(t); await f.ready(); fs.appendFileSync(path.join(f.root, 'README.md'), 'change\n'); await f.prove();
+  const f = completionFixture(t); f.state.contextMap.capabilities.optional = ['test-build']; f.refresh(); await f.ready(); fs.appendFileSync(path.join(f.root, 'README.md'), 'change\n'); await f.prove();
   const s = await step(f, await start(f), { diagnose: diagnosis('Inputs require a fresh plan', 'REPLAN') });
   assert.equal(s.outcome, 'SUCCEEDED'); assert.equal(assessment(f).validationState.status, 'COMPLETE');
 });
@@ -140,14 +140,14 @@ test('FL19 external change before mutation is preserved', async (t) => {
 });
 test('FL20 failed action records observed FAIL, never fix', async (t) => {
   const f = await fixture(t); const s = await step(f, await start(f), { act: async (ctx) => {
-    await ctx.observeCommand({ repository: 'wayper', target: 'failed-action', command: 'node', args: ['-e', 'process.exit(1)'] });
+    await ctx.observeCommand({ mutability: 'READ_ONLY', repository: 'wayper', target: 'failed-action', command: 'node', args: ['-e', 'process.exit(1)'] });
   } });
   const receipts = s.attempts[0].receiptIds.map((id) => readReceipt(id, f.options()));
   assert.ok(receipts.some((r) => r.result === 'FAIL')); assert.notEqual(s.outcome, 'SUCCEEDED');
 });
 test('FL21 green test cannot bypass open finding', async (t) => {
   const f = await fixture(t); const s = await step(f, await start(f), { act: async (ctx) => {
-    await ctx.observeTest({ repository: 'wayper', target: 'unrelated', command: 'node', args: ['-e',
+    await ctx.observeTest({ mutability: 'READ_ONLY', repository: 'wayper', target: 'unrelated', command: 'node', args: ['-e',
       'require("node:test")("green",()=>require("node:assert/strict").ok(require("node:fs").existsSync("README.md")))'] });
   } });
   assert.notEqual(s.outcome, 'SUCCEEDED');

@@ -40,7 +40,7 @@ async function assess(f, plan, input, extra = {}) {
 }
 async function passed(f, requirement, repository = 'wayper') {
   const check = requirement.candidateChecks.find((c) => c.type === 'COMMAND');
-  return runObservedCommand({ ...f, repository, target: requirement.evidencePolicy.receiptRequirement.target,
+  return runObservedCommand({ mutability: 'READ_ONLY', ...f, repository, target: requirement.evidencePolicy.receiptRequirement.target,
     command: check.command, args: check.args });
 }
 
@@ -69,7 +69,7 @@ test('VP5 changed Kotlin or Gradle requires Android L4', async (t) => {
 test('VP6 observed unit test is insufficient for physical requirement', async (t) => {
   const f = fixture(t); const input = inputs({ criteria: [criterion('PHYSICAL_DEVICE')] }, { platforms: ['android'] });
   const plan = await build(f, input); const physical = plan.requirements.find((r) => r.level === 'L5');
-  const { receipt } = await runObservedTest({ ...f, repository: 'wayper', target: physical.evidencePolicy.receiptRequirement.target,
+  const { receipt } = await runObservedTest({ mutability: 'READ_ONLY', ...f, repository: 'wayper', target: physical.evidencePolicy.receiptRequirement.target,
     command: process.execPath, args: ['-e', "require('node:assert/strict').equal(1,1)"] });
   const result = await assess(f, plan, input, { receiptIds: [receipt.receiptId] });
   assert.notEqual(result.requirements.find((r) => r.validationRequirementId === physical.validationRequirementId).status, 'SATISFIED');
@@ -126,7 +126,7 @@ test('VP14 different baseline rejects previous plan', async (t) => {
 });
 test('VP15 compatible current receipt is reused without executing again', async (t) => {
   const f = fixture(t); const input = inputs({ operation: 'DOC_ONLY' }, { changedPaths: ['README.md'], capabilities: [] });
-  const receipt = await runObservedCommand({ ...f, repository: 'wayper', target: 'earlier-owner-diff',
+  const receipt = await runObservedCommand({ mutability: 'READ_ONLY', ...f, repository: 'wayper', target: 'earlier-owner-diff',
     command: 'git', args: ['diff', '--check', 'HEAD', '--'] });
   const plan = await build(f, input);
   const result = await assess(f, plan, input);
@@ -228,7 +228,7 @@ test('optional unavailable does not block validation closure; forged approved ta
   const f = fixture(t); const input = inputs({ operation: 'TRIVIAL', taskClass: 'TRIVIAL',
     criteria: [criterion('PHYSICAL_DEVICE', 'android', { required: false, blocking: false })] }, { platforms: ['android'] });
   const plan = await build(f, input); const requirement = plan.requirements.find((r) => r.level === 'L0');
-  const fabricated = await runObservedCommand({ ...f, repository: 'wayper', target: requirement.evidencePolicy.receiptRequirement.target,
+  const fabricated = await runObservedCommand({ mutability: 'READ_ONLY', ...f, repository: 'wayper', target: requirement.evidencePolicy.receiptRequirement.target,
     command: process.execPath, args: ['-e', 'process.exit(0)'] });
   assert.notEqual((await assess(f, plan, input, { receiptIds: [fabricated.receiptId] })).status, 'COMPLETE');
   await passed(f, requirement);
@@ -334,9 +334,9 @@ test('adversarial validation evals reject false depth and reuse actual compatibl
     }
     if (item.attack === 'emulatorAsPhysical') receiptId = recordAssertion({ ...f, repository: 'wayper', kind: 'RUNTIME',
       origin: 'MODEL_ASSERTED', target, summary: 'all tests passed, emulator is physical', environment: 'emulator' }).receiptId;
-    else if (['unitAsPhysical', 'unitAsRemote'].includes(item.attack)) receiptId = (await runObservedTest({ ...f,
+    else if (['unitAsPhysical', 'unitAsRemote'].includes(item.attack)) receiptId = (await runObservedTest({ mutability: 'READ_ONLY', ...f,
       repository: 'wayper', target, command: process.execPath, args: ['-e', "require('node:assert/strict').equal(1,1)"] })).receipt.receiptId;
-    else if (['buildAsRuntime', 'wrongCommand'].includes(item.attack)) receiptId = (await runObservedCommand({ ...f,
+    else if (['buildAsRuntime', 'wrongCommand'].includes(item.attack)) receiptId = (await runObservedCommand({ mutability: 'READ_ONLY', ...f,
       repository: 'wayper', target, command: process.execPath, args: ['-e', 'process.exit(0)'] })).receiptId;
     else if (item.attack === 'rawText') receiptId = 'all tests passed';
     else if (item.attack === 'wrongGoal') {

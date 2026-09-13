@@ -261,6 +261,11 @@ function baseMap({ goalId, execution, taskClass, tokenCeiling }) {
 function semanticFingerprint(map) {
   const copy = structuredClone(map);
   delete copy.metrics;
+  if (copy.context) {
+    delete copy.context.metrics;
+    // Acquisition/reuse counters and disposition do not change source or authorization.
+    for (const artifact of copy.context.artifacts ?? []) delete artifact.binding?.revalidation;
+  }
   copy.validation = { checks: copy.validation?.checks ?? [] };
   return sha256(stable(copy));
 }

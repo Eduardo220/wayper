@@ -62,6 +62,13 @@ VALIDATION COMPLETE != COMPLETION ADMISSIBLE != HOST DONE
 
 ## API canônica
 
+A Fase 7 integra `ownershipProblems` nesta mesma assessment. Lease aberta ou
+expirada e grants mutáveis ACTIVE/HANDED_OFF/ACTING/UNKNOWN_OUTCOME/PARTIAL
+bloqueiam. O caminho
+`requestGoalCompletion` de [Dispatch + Ownership](dispatch-ownership.md) reserva
+a requisição antes do callback suportado do host. Não existe DONE paralelo;
+`update_goal` nativo direto permanece bypass sem interceptação global provada.
+
 ```js
 assessGoalCompletion({ root, identity })
 assertGoalCompletionAdmissible({ root, identity })

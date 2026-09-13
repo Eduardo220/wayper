@@ -72,6 +72,11 @@
         "scripts/quality/check-goal-identity.test.mjs",
         "scripts/quality/check-evidence-receipts.test.mjs",
         "scripts/quality/check-validation-planner.test.mjs",
+        "scripts/quality/check-dispatch.test.mjs",
+        "scripts/quality/check-dispatch-spawn.test.mjs",
+        "scripts/quality/check-dispatch-circuit.test.mjs",
+        "scripts/quality/check-ownership.test.mjs",
+        "scripts/quality/check-ownership-concurrency.test.mjs",
         "scripts/wayper-context-packet.test.mjs",
         "scripts/wayper-structured-handoff.test.mjs"
       ]

@@ -87,6 +87,11 @@ function tapCounts(output) {
 }
 
 export async function runObservedCommand(options) {
+  if (!['READ_ONLY', 'MUTATING'].includes(options.mutability)) throw new Error('UNKNOWN_MUTABILITY');
+  if (options.mutability === 'MUTATING') {
+    const { claimObservedCommand } = await import('./wayper-dispatch-execution.mjs');
+    claimObservedCommand(options);
+  }
   const observed = context(options);
   const { command, args = [], cwd = '.', timeoutMs = 300_000 } = options;
   if (typeof command !== 'string' || !command || command.includes('\0') || !Array.isArray(args) || args.length > 256 ||
@@ -115,7 +120,7 @@ export async function runObservedCommand(options) {
   const finishedAt = now(); const out = stdout(); const err = stderr();
   const after = repositorySnapshot(observed.definition);
   const exitCode = executionError || outcome.exitCode < 0 ? null : outcome.exitCode;
-  return receipt(options, observed, { kind: 'COMMAND', origin: 'RUNNER_OBSERVED',
+  const produced = receipt(options, observed, { kind: 'COMMAND', origin: 'RUNNER_OBSERVED',
     result: exitCode === 0 && outcome.signal === null ? 'PASS' : 'FAIL',
     subject: { path: null, range: null, target, fingerprint: observed.snapshot.contentFingerprint },
     observation: { type: 'EXECUTION', executionId,
@@ -124,6 +129,10 @@ export async function runObservedCommand(options) {
       exitCode, signal: outcome.signal, stdoutFingerprint: out.fingerprint, stderrFingerprint: err.fingerprint,
       stdoutBytes: out.bytes, stderrBytes: err.bytes, outputPolicy: 'HASH_ONLY',
       stateBefore: observed.snapshot.contentFingerprint, stateAfter: after.contentFingerprint, counts: tapCounts(out.tail) } });
+  if (options.mutability === 'READ_ONLY' && after.contentFingerprint !== observed.snapshot.contentFingerprint) {
+    const error = new Error('READ_ONLY_CONTRACT_VIOLATION'); error.receipt = produced; throw error;
+  }
+  return produced;
 }
 
 async function runDerived(options, kind) {
@@ -195,7 +204,11 @@ async function main() {
   const state = readWorkingContext(ROOT, input);
   const options = { root: ROOT, execution: state.execution, repositories: repositoryDefinitions(input, state),
     repository: input['repository-id'] ?? 'wayper', target: input.target, path: input.path, range: input.range,
-    command: args[split + 1], args: args.slice(split + 2) };
+    command: args[split + 1], args: args.slice(split + 2), mutability: input.mutability };
+  if (input['grant-id'] && input['permit-id']) options.dispatchAuthorization = { grantId: input['grant-id'],
+    permitId: input['permit-id'], actorId: input['actor-id'], action: { kind: 'COMMAND', command: options.command,
+      args: options.args, target: options.target, mutability: options.mutability,
+      evidenceKind: { command: 'COMMAND', test: 'TEST', gate: 'QUALITY_GATE' }[mode] } };
   const execute = { source: observeFile, document: (o) => observeFile({ ...o, kind: 'DOCUMENT' }),
     command: runObservedCommand, test: runObservedTest, gate: runObservedQualityGate }[mode];
   if (!execute || ['command', 'test', 'gate'].includes(mode) && split < 0) throw new Error('Usage: observer source|document|command|test|gate --thread-id ID --goal-run-id ID --revision N ... [-- executable args]');

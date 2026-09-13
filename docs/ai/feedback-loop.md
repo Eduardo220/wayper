@@ -1,5 +1,10 @@
 # Bounded Feedback Loop V1
 
+Fase 7: [Dispatch + Ownership](dispatch-ownership.md) governa `edit` e comandos
+dos callbacks. Comandos exigem contrato explícito de mutabilidade; checks
+read-only não adquirem lease. Ownership in-flight/unknown/scope violation bloqueia
+completion e recovery até fechamento/reconciliation; não autoriza retry cego.
+
 Fase 5 do Harness V2. Feedback trabalha; a [Completion Boundary](completion-boundary.md)
 decide admissibilidade. `SUCCEEDED` exige um CompletionAssessment `ADMISSIBLE`;
 não significa host Goal DONE. Implementação: `scripts/wayper-feedback.mjs`.

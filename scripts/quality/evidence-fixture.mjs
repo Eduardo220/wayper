@@ -13,7 +13,7 @@ export function observedGate(options, target) {
   const code = `import fs from 'node:fs';
     import { runObservedQualityGate } from ${JSON.stringify(observer)};
     const options = JSON.parse(fs.readFileSync(0, 'utf8'));
-    const result = await runObservedQualityGate({ ...options, command: process.execPath,
+    const result = await runObservedQualityGate({ mutability: 'READ_ONLY', ...options, command: process.execPath,
       args: ['-e', "require('node:assert/strict').equal(1, 1)"] });
     process.stdout.write(JSON.stringify(result.receipt));`;
   return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', code], {

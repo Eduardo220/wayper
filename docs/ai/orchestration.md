@@ -1,5 +1,12 @@
 # Multi-Agent Orchestration — Wayper AI Harness V1
 
+Dispatch governado usa agora [Dispatch + Ownership V1](dispatch-ownership.md):
+o Decision Gate/router preserva seleção; grants/leases/permits autorizam execução.
+`dispatchSpawn` reserva slots e valida parent MAIN_OWNER/depth; handoff governado
+usa `consumeDispatchHandoff`. Preparar Packet não concede autoridade de spawn.
+O limite deve vir da interface atual do host (quatro slots nesta missão), sem
+assumir que números históricos abaixo valem em todo runtime.
+
 > **Status:** vigente<br>
 > **Escopo:** delegação e waves no repositório mobile<br>
 > **Owner:** [`docs/ai/harness-v1.md`](harness-v1.md)<br>

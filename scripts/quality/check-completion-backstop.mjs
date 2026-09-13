@@ -81,6 +81,8 @@ function isQualityTooling(file) {
     || file.startsWith('scripts/wayper-evidence')
     || file.startsWith('scripts/wayper-validation')
     || file.startsWith('scripts/wayper-feedback')
+    || file.startsWith('scripts/wayper-dispatch')
+    || file.startsWith('scripts/wayper-ownership')
     || file.startsWith('scripts/wayper-completion')
     || file.startsWith('scripts/wayper-graph')
     || file.startsWith('scripts/quality/');
@@ -115,6 +117,12 @@ export function classifyChangedScope(files) {
 export function relevantQualityTests(files) {
   const tests = new Set();
   for (const file of files) {
+    if (/dispatch|ownership/.test(file) || file === 'package.json') {
+      for (const name of ['check-dispatch', 'check-dispatch-spawn', 'check-dispatch-circuit', 'check-ownership', 'check-ownership-concurrency']) {
+        tests.add(`scripts/quality/${name}.test.mjs`);
+      }
+      tests.add(QUALITY_TESTS.completion); tests.add(QUALITY_TESTS.feedback); tests.add(QUALITY_TESTS.feedbackAdversarial);
+    }
     if (file.includes('completion') || file.startsWith('scripts/wayper-context') ||
       file.startsWith('scripts/wayper-structured-handoff') || file === '.codex/hooks.json' || file === 'package.json') {
       tests.add(QUALITY_TESTS.completion); tests.add(QUALITY_TESTS.adversarial);

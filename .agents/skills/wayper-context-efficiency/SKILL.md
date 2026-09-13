@@ -157,6 +157,13 @@ make the metric pass.
 
 ## Subagent package and routing
 
+For governed execution, compose the existing preparation with
+[`Dispatch + Ownership V1`](../../../docs/ai/dispatch-ownership.md): plan/grant,
+scoped Packet, dispatchSpawn and consumeDispatchHandoff. The parent main grant,
+current host slot limit and depth are required. A Packet or legacy validated
+handoff alone confers no mutation, spawn or completion authority. Main mutations
+through project-owned executors also require lease and single-use permit.
+
 No Goal implies delegation. Route proportionally:
 
 - `TRIVIAL`/`BOUNDED`: `S0`.

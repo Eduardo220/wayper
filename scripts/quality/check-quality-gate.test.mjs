@@ -59,6 +59,8 @@ function result(lintResult = lint(), overrides = {}) {
     ...(overrides.graph ? { graph: overrides.graph } : {}),
     ...(overrides.contextEconomy ? { contextEconomy: overrides.contextEconomy } : {}),
     completion: overrides.completion ?? PASS,
+    feedback: overrides.feedback ?? PASS,
+    dispatch: overrides.dispatch ?? PASS,
     diff: overrides.diff ?? PASS,
   });
 }
@@ -73,6 +75,11 @@ test('QG1 unchanged legacy warnings pass without becoming debt for the task', ()
 test('QG completion boundary regression blocks the aggregate gate', () => {
   const quality = result(lint(), { completion: { status: 'fail', detail: 'CB regression' } });
   assert.ok(quality.blocking.includes('COMPLETION_REGRESSION'));
+});
+
+test('QG Dispatch/Ownership regression blocks the aggregate gate', () => {
+  const quality = result(lint(), { dispatch: { status: 'fail', detail: 'fence regression' } });
+  assert.ok(quality.blocking.includes('DISPATCH_REGRESSION'));
 });
 
 test('QG graph and context economy regressions block the aggregate gate', () => {

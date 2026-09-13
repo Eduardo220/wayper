@@ -43,7 +43,8 @@ export function classifyFeedbackFailures(assessment, { state, plan, receipts = [
     const evidence = receipts.filter((r) => b.relatedReceiptIds.includes(r.receiptId));
     const requirement = state?.requirements?.find((r) => b.relatedRequirementIds.includes(`${r.kind}:${r.id}`));
     const human = requirement?.receiptRequirement?.kinds.includes('HUMAN_DECISION') || evidence.some((r) => r.kind === 'HUMAN_DECISION');
-    const failureClass = b.kind === 'STATE' || /WRONG_GOAL|WRONG_BASELINE|INVALID_SCHEMA/.test(b.reasonCode) ? 'INVALID_STATE' :
+    const failureClass = b.reasonCode === 'OWNERSHIP_IN_FLIGHT' ? 'EXTERNAL' : /^OWNERSHIP_/.test(b.reasonCode) ? 'HUMAN_DECISION' :
+      b.kind === 'STATE' || /WRONG_GOAL|WRONG_BASELINE|INVALID_SCHEMA/.test(b.reasonCode) ? 'INVALID_STATE' :
       b.kind === 'AMBIGUITY' || /HUMAN_DECISION/.test(b.reasonCode) || human ? 'HUMAN_DECISION' :
         /UNAVAILABLE|EXTERNAL/.test(b.reasonCode) ? 'EXTERNAL' :
           /REPLAN|VALIDATION_PLAN_MISSING/.test(b.reasonCode) ? 'REPLAN' :

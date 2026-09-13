@@ -87,6 +87,7 @@ basta.
 
 | Delta observado | Evidência adicional |
 | --- | --- |
+| Dispatch/actor/grant/scope/lease/fence/permit/spawn | `quality:dispatch` + `quality:ownership`; CAS real, zombie, crash, circuits e integrações; incluídos em gate/backstop |
 | Feedback schema/classifier/progress/lifecycle/evals | `npm run quality:feedback`; FL1–FL28, FA1–FA8, recovery/concurrency e contratos; incluído em `quality:gate` e seleção do backstop |
 | Validation registry/planner/schema/evals | `npm run quality:validation`; VP1-VP20, isolamento, stale, N/A/unavailable e falsa profundidade; incluído em `quality:gate` |
 | Evidence schema/producer/store/evals | `npm run quality:evidence`; false proof, integridade, identity/baseline, stale, parent, redaction e integração Map/Packet/Handoff; incluído em `quality:gate` |

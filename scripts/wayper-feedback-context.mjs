@@ -6,14 +6,15 @@ import { assessGoalCompletion } from './wayper-completion-boundary.mjs';
 import { completionMapFingerprint } from './wayper-completion-policy.mjs';
 import { persistCompletionAssessment } from './wayper-completion-store.mjs';
 import { readValidationPlan } from './wayper-validation-store.mjs';
-import { listReceipts } from './wayper-evidence-store.mjs';
+import { listReceipts, readReceipt } from './wayper-evidence-store.mjs';
 import { runObservedCommand, runObservedTest, runObservedQualityGate, observeFile } from './wayper-evidence-observer.mjs';
-import { recordContextEntry, finalizeContextMap } from './wayper-context-map.mjs';
+import { recordContextEntry, finalizeContextMap, refreshContextMap } from './wayper-context-map.mjs';
 import { loadCapabilityFiles } from './quality/check-capability-routing.mjs';
 import { digest, sorted } from './wayper-validation-policy.mjs';
 import { classifyFeedbackFailures, feedbackIndex } from './wayper-feedback-policy.mjs';
 import { readFeedbackSession } from './wayper-feedback-store.mjs';
 import { refreshContextArtifacts, validateArtifactRefs } from './wayper-context-artifacts.mjs';
+import { executeFeedbackEdit, executeFeedbackCommand } from './wayper-feedback-dispatch.mjs';
 
 export function feedbackState({ root, identity }) {
   const state = readWorkingContext(root, { 'thread-id': identity.threadId, 'goal-run-id': identity.goalRunId, revision: identity.revision });
@@ -111,11 +112,19 @@ export function feedbackExecutor(session, initial, attempt, options) {
   const inScope = (repository) => initial.repositories.some((r) => r.id === repository) &&
     (attempt.repository === null || attempt.repository === repository);
   const observed = async (producer, input) => {
+    // Refresh only the scoped Context Map after an authorized edit; Packet construction
+    // cannot silently rewrite Working Context requirement assertions.
+    mutate(current => ({ ...current.state, contextMap: refreshContextMap(current.state.contextMap, {
+      ...current, registry, goalId: current.state.goalId, taskClass: current.state.taskClass,
+      tokenCeiling: current.state.budget.contextTokenCeiling, workingArtifacts: current.state.artifacts,
+      risks: current.state.riskFlags, invariants: current.state.invariants, validations: current.state.validations,
+    }) }));
     const before = guard();
     if (!inScope(input.repository)) throw new Error('FEEDBACK_REPOSITORY_SCOPE');
-    const result = await producer({ ...input, ...before, repository: input.repository,
-      metadata: { taskId: session.feedbackId, attemptId: attempt.attemptId, failureId: attempt.failureId } });
-    const values = result.receipt ? [result.commandReceipt, result.receipt] : [result];
+    const kind = new Map([[runObservedCommand, 'COMMAND'], [runObservedTest, 'TEST'], [runObservedQualityGate, 'QUALITY_GATE']]).get(producer);
+    const values = kind ? (await executeFeedbackCommand({ current: before, session, attempt, input, evidenceKind: kind }))
+      .map(id => readReceipt(id, before)) : [await producer({ ...input, ...before, repository: input.repository,
+        metadata: { taskId: session.feedbackId, attemptId: attempt.attemptId, failureId: attempt.failureId } })];
     for (const receipt of values) {
       receiptIds.push(receipt.receiptId);
       if (receipt.kind === 'COMMAND') executionRefs.push(receipt.receiptId);
@@ -127,7 +136,7 @@ export function feedbackExecutor(session, initial, attempt, options) {
     }
     expected = after.fingerprint;
     if (readFeedbackSession(session.feedbackId, options).fingerprint !== checkpoint) throw new Error('FEEDBACK_BUSY');
-    return result.receipt ?? result;
+    return values.at(-1);
   };
   const mutate = (fn) => {
     const current = guard(); const next = fn(current);
@@ -161,10 +170,8 @@ export function feedbackExecutor(session, initial, attempt, options) {
         target = path.join(target, part);
         if (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error('FEEDBACK_EDIT_SYMLINK');
       }
-      const temporary = `${target}.${attempt.attemptId}.tmp`;
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      try { fs.writeFileSync(temporary, content, { flag: 'wx', mode: fs.statSync(target, { throwIfNoEntry: false })?.mode ?? 0o644 }); fs.renameSync(temporary, target); }
-      finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
+      const result = executeFeedbackEdit({ current: facts(), session, attempt, repository, file, content });
+      receiptIds.push(...result.result.receiptIds);
       changedFiles.add(`${repository}:${file}`); update();
     },
     record(kind, data) {
@@ -196,7 +203,8 @@ export function feedbackExecutor(session, initial, attempt, options) {
         const check = r.candidateChecks.find((c) => c.available && c.command);
         if (!check) continue; // Completion preserves unavailable as blocking; do not invent runtime proof.
         await context.observeQualityGate({ repository: r.repository, target: r.evidencePolicy.receiptRequirement.target,
-          command: check.command, args: check.args, cwd: r.evidencePolicy.cwd });
+          command: check.command, args: check.args, cwd: r.evidencePolicy.cwd,
+          mutability: check.command === 'git' && digest(check.args) === digest(['diff', '--check', 'HEAD', '--']) ? 'READ_ONLY' : options.checkMutability?.[check.id] });
       }
       mutate((c) => {
         let refreshed = refreshWorkingContext({ ...c, existing: c.state, taskClass: c.state.taskClass, registry });

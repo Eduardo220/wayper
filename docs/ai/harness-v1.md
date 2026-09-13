@@ -10,12 +10,18 @@
 > Reserve (`ACTIVE`) + Persistent Working Context + Context Efficiency +
 > Registry Schema V2 + Repository-scoped Graphify + Goal-scoped Context Map +
 > Packetized Specialist Dispatch + Structured Handoff + Selective Router +
-> V2 Fases 1–3 Goal Identity/Baseline + Evidence Receipts + Validation Planner, 2026-09-10<br>
+> V2 Fases 1–7 Goal Identity/Baseline + Evidence + Validation + Completion +
+> Feedback + Context Economy + Dispatch/Ownership, 2026-09-13<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
 
 ## Fonte de verdade
+
+A Fase 7 adiciona [Dispatch + Ownership V1](dispatch-ownership.md), sobre os
+owners atuais de Context Economy, Feedback, Evidence, Validation e Completion.
+Enforcement é project-owned; shell/write/spawn/completion diretos do host continuam
+com cobertura parcial. O contrato não cria runtime ou workflow engine paralelo.
 
 O único owner operacional do mobile é [`AGENTS.md`](../../AGENTS.md). Ele aponta
 para o catálogo de fontes; não replica estratégia, workflows de domínio ou

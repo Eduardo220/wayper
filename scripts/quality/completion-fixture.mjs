@@ -46,13 +46,13 @@ export function completionFixture(t, cross = false) {
       { ...f.options(), registry }); f.save();
   };
   f.prove = async (target = 'criterion', repository = 'wayper') => {
-    const { receipt } = await runObservedQualityGate({ ...f.options(), repository, target,
+    const { receipt } = await runObservedQualityGate({ mutability: 'READ_ONLY', ...f.options(), repository, target,
       command: process.execPath, args: ['-e', 'require("node:assert/strict").equal(1, 1)'] });
     if (target === 'criterion') Object.assign(f.state.requirements[0], { status: 'SATISFIED', evidence: [receipt.receiptId] });
     f.save(); return receipt;
   };
   f.validate = async () => {
-    for (const repository of repositories) await runObservedCommand({ ...f.options(), repository: repository.id,
+    for (const repository of repositories) await runObservedCommand({ mutability: 'READ_ONLY', ...f.options(), repository: repository.id,
       target: 'diff', command: 'git', args: ['diff', '--check', 'HEAD', '--'] });
     f.refresh();
   };

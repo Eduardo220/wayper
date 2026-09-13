@@ -41,7 +41,7 @@ const observer = () => import('../wayper-evidence-observer.mjs');
 const store = () => import('../wayper-evidence-store.mjs');
 const source = async (f, extra = {}) => (await observer()).observeFile({ ...f, repository: 'wayper',
   path: 'owner.js', ...extra });
-const runTest = async (f, fail = false) => (await observer()).runObservedTest({ ...f, repository: 'wayper',
+const runTest = async (f, fail = false) => (await observer()).runObservedTest({ mutability: 'READ_ONLY', ...f, repository: 'wayper',
   command: process.execPath, args: ['--test', fail ? 'fail.test.mjs' : 'pass.test.mjs'], target: 'unit' });
 
 for (const [id, mutation, reason] of [
@@ -66,7 +66,7 @@ test('ER6 tampering and closed schema are rejected', async (t) => {
 
 test('ER7 failed command remains observed FAIL', async (t) => {
   const f = fixture(t); const { runObservedCommand } = await observer();
-  const receipt = await runObservedCommand({ ...f, repository: 'wayper', command: process.execPath,
+  const receipt = await runObservedCommand({ mutability: 'READ_ONLY', ...f, repository: 'wayper', command: process.execPath,
     args: ['-e', 'process.exit(7)'], target: 'unit' });
   assert.equal(receipt.result, 'FAIL'); assert.equal(receipt.observation.exitCode, 7);
   const { validateReceipt, evaluateEvidenceRequirement } = await store();
@@ -114,7 +114,7 @@ test('ER13 legacy proofs stay readable but cannot stop', async (t) => {
 
 test('ER14 persisted execution with sensitive arguments/output contains no raw secret', async (t) => {
   const f = fixture(t); const sensitive = 'fixture-secret-987654321';
-  const receipt = await (await observer()).runObservedCommand({ ...f, repository: 'wayper',
+  const receipt = await (await observer()).runObservedCommand({ mutability: 'READ_ONLY', ...f, repository: 'wayper',
     command: process.execPath, args: ['-e', `console.log('Authorization: Bearer ${sensitive}'); console.error('password=${sensitive}')`],
     target: 'redaction' });
   const persisted = JSON.stringify((await store()).readReceipt(receipt.receiptId, f));
@@ -244,7 +244,7 @@ test('Evidence Receipt behavioral evals: happy path and adversarial inputs', asy
       repository: 'wayper', kind: 'TEST', origin: 'HANDOFF_ASSERTED', target: 'unit', summary: 'all tests passed' }).receiptId;
     else if (item.action === 'failedCommand') {
       policy.kinds = ['COMMAND'];
-      id = (await (await observer()).runObservedCommand({ ...f, repository: 'wayper', command: process.execPath,
+      id = (await (await observer()).runObservedCommand({ mutability: 'READ_ONLY', ...f, repository: 'wayper', command: process.execPath,
         args: ['-e', 'process.exit(9)'], target: 'unit' })).receiptId;
     } else {
       assert.ok(['pass', 'wrongGoal', 'wrongBaseline', 'stale', 'failedTest', 'wrongRepository', 'wrongTarget'].includes(item.action));
@@ -261,14 +261,17 @@ test('Evidence Receipt behavioral evals: happy path and adversarial inputs', asy
 
 test('runner errors, timeout and changes during execution cannot become passing current proof', async (t) => {
   const f = fixture(t); const { runObservedCommand } = await observer(); const { validateReceipt } = await store();
-  const missing = await runObservedCommand({ ...f, repository: 'wayper', command: path.join(f.root, 'missing'), target: 'missing' });
+  const missing = await runObservedCommand({ mutability: 'READ_ONLY', ...f, repository: 'wayper', command: path.join(f.root, 'missing'), target: 'missing' });
   assert.equal(missing.result, 'FAIL'); assert.equal(missing.observation.exitCode, null);
-  const timed = await runObservedCommand({ ...f, repository: 'wayper', command: process.execPath,
+  const timed = await runObservedCommand({ mutability: 'READ_ONLY', ...f, repository: 'wayper', command: process.execPath,
     args: ['-e', 'setInterval(() => {}, 1000)'], timeoutMs: 100, target: 'timeout' });
   assert.equal(timed.result, 'FAIL'); assert.equal(timed.observation.signal, 'SIGKILL');
-  const mutated = await runObservedCommand({ ...f, repository: 'wayper', command: process.execPath,
-    args: ['-e', "require('fs').appendFileSync('owner.js', '// mutation')"], target: 'mutation' });
-  assert.equal(mutated.result, 'PASS');
+  let mutated;
+  await assert.rejects(() => runObservedCommand({ mutability: 'READ_ONLY', ...f, repository: 'wayper', command: process.execPath,
+    args: ['-e', "require('fs').appendFileSync('owner.js', '// mutation')"], target: 'mutation' }), error => {
+    mutated = error.receipt; return error.message === 'READ_ONLY_CONTRACT_VIOLATION';
+  });
+  assert.equal(mutated.result, 'PASS'); // V1 records exit zero; the separate boundary rejects the mutation.
   assert.equal(validateReceipt(mutated, f).status, 'STALE');
 });
 

@@ -12,6 +12,8 @@ import { readWorkingContext, ROOT } from '../wayper-context.mjs';
 import { buildContextPacket, validateContextPacket } from '../wayper-context-packet.mjs';
 import { buildStructuredHandoff, validateStructuredHandoff, planContextMapMerge } from '../wayper-structured-handoff.mjs';
 import { relevantQualityTests } from './check-completion-backstop.mjs';
+import { readOwnership } from '../wayper-ownership.mjs';
+import { runObservedCommand } from '../wayper-evidence-observer.mjs';
 
 const options = (f, extra = {}) => ({ root: f.root, identity: f.identity, ...extra });
 const diagnose = ({ failure, evidenceRefs }) => ({ failureIds: [failure.failureId], causeClass: failure.failureClass,
@@ -41,7 +43,7 @@ for (const c of suite.cases) test(`${c.id} ${c.claim}`, async (t) => {
   let calls = 0;
   const act = async (ctx) => { calls++;
     if (c.scenario === 'EDIT') ctx.edit({ repository: 'wayper', file: 'README.md', content: '# More code, same bug\n' });
-    if (c.scenario === 'GREEN') await ctx.observeQualityGate({ repository: 'wayper', target: 'green', command: 'node', args: ['-e', 'process.exit(0)'] });
+    if (c.scenario === 'GREEN') await ctx.observeQualityGate({ mutability: 'READ_ONLY', repository: 'wayper', target: 'green', command: 'node', args: ['-e', 'process.exit(0)'] });
   };
   s = await runFeedbackIteration(options(f, { feedbackId: s.feedbackId, diagnose, act }));
   if (!s.outcome) {
@@ -77,11 +79,12 @@ test('simultaneous invocation cannot reserve a second mutation or interrupt the 
   assert.equal(calls, 1); assert.equal(readFeedbackSession(s.feedbackId, options(f)).attempts.length, 1);
 });
 
-test('real host interruption after action resumes validation without replay', async (t) => {
+test('DF3 real host interruption after governed edit resumes validation without replay', async (t) => {
   const f = await fixture(t); const s = startFeedbackSession(options(f)); const o = options(f, { feedbackId: s.feedbackId });
   const script = `import fs from 'node:fs'; import {runFeedbackIteration} from ${JSON.stringify(new URL('../wayper-feedback.mjs', import.meta.url).href)};
     await runFeedbackIteration({...${JSON.stringify(o)}, diagnose: ${diagnose.toString()},
-      act: async () => fs.appendFileSync(${JSON.stringify(path.join(f.root, '.wayper-context', 'calls'))}, ${JSON.stringify('action\n')}),
+      act: async (ctx) => { ctx.edit({repository:'wayper',file:'README.md',content:'# Interrupted governed edit\\n'});
+        fs.appendFileSync(${JSON.stringify(path.join(f.root, '.wayper-context', 'calls'))}, ${JSON.stringify('action\n')}); },
       validate: async () => process.exit(23)});`;
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 20_000 });
   assert.equal(child.status, 23, child.stderr);
@@ -90,9 +93,10 @@ test('real host interruption after action resumes validation without replay', as
   const recovered = await recoverFeedbackSession({ ...o, ownerStopped: true });
   assert.equal(recovered.attempts.length, 1); assert.notEqual(recovered.outcome, 'SUCCEEDED');
   assert.equal(fs.readFileSync(path.join(f.root, '.wayper-context', 'calls'), 'utf8'), 'action\n');
+  assert.match(fs.readFileSync(path.join(f.root, 'README.md'), 'utf8'), /Interrupted governed edit/);
 });
 
-test('mid-action concurrent WIP is detected before next edit and preserved', async (t) => {
+test('DF5 mid-action concurrent WIP is detected before next edit and preserved', async (t) => {
   const f = await fixture(t); const s = startFeedbackSession(options(f));
   const next = await runFeedbackIteration(options(f, { feedbackId: s.feedbackId, diagnose, act: async (ctx) => {
     fs.writeFileSync(path.join(f.root, 'README.md'), 'External WIP\n');
@@ -102,30 +106,43 @@ test('mid-action concurrent WIP is detected before next edit and preserved', asy
   assert.equal(fs.readFileSync(path.join(f.root, 'README.md'), 'utf8'), 'External WIP\n');
 });
 
-test('scoped edit, fresh receipts and owner resolution reach canonical admissibility', async (t) => {
+test('DF1 scoped governed edit, receipts and owner resolution reach canonical admissibility', async (t) => {
   const f = await fixture(t); const s = startFeedbackSession(options(f)); const baseline = s.baselineReference.fingerprint;
   const next = await runFeedbackIteration(options(f, { feedbackId: s.feedbackId, diagnose, act: async (ctx) => {
     ctx.edit({ repository: 'wayper', file: 'README.md', content: '# Corrected implementation\n' });
-    const { receiptId } = await ctx.observeQualityGate({ repository: 'wayper', target: 'finding:F-bug:RESOLVED', command: 'node',
+    const { receiptId } = await ctx.observeQualityGate({ mutability: 'READ_ONLY', repository: 'wayper', target: 'finding:F-bug:RESOLVED', command: 'node',
       args: ['-e', 'require("node:assert/strict").match(require("node:fs").readFileSync("README.md","utf8"),/Corrected/)'] });
     ctx.record('finding', finding({ status: 'RESOLVED', receiptIds: [receiptId], resolution: { reviewer: 'OWNER', reason: 'Observed corrected behavior',
       humanDecisionRequired: false, goalReference: ctx.identity, baselineFingerprint: baseline } }));
   }, validate: async (ctx) => {
-    const { receiptId } = await ctx.observeQualityGate({ repository: 'wayper', target: 'criterion', command: 'node',
+    const { receiptId } = await ctx.observeQualityGate({ mutability: 'READ_ONLY', repository: 'wayper', target: 'criterion', command: 'node',
       args: ['-e', 'require("node:assert/strict").match(require("node:fs").readFileSync("README.md","utf8"),/Corrected/)'] });
     ctx.prove('SUCCESS:criterion', receiptId);
   } }));
   assert.equal(next.outcome, 'SUCCEEDED'); assert.equal(next.baselineReference.fingerprint, baseline);
   const a = readFeedbackAttempt(next.feedbackId, next.attempts[0].attemptId, options(f));
   assert.deepEqual(a.changedFiles, ['wayper:README.md']); assert.notEqual(a.stateBefore, a.stateAfter);
+  const ownership = readOwnership(options(f));
+  assert.equal(ownership.metrics.ACQUIRED, 1); assert.equal(ownership.metrics.RELEASED, 1);
+  assert.equal(ownership.leases.filter(l => ['ACTIVE', 'EXPIRED'].includes(l.state)).length, 0);
 });
 
-test('revalidation rejects EDIT diagnosis and validation callbacks cannot edit', async (t) => {
+test('DF6 revalidation rejects EDIT diagnosis and avoids writer ownership', async (t) => {
   const f = await fixture(t); let s = startFeedbackSession(options(f));
   s = await runFeedbackIteration(options(f, { feedbackId: s.feedbackId, diagnose, act: async () => {}, validate: async (ctx) => {
     assert.throws(() => ctx.edit({ repository: 'wayper', file: 'README.md', content: 'bad' }), /EDIT_SCOPE/);
   } }));
   assert.equal(s.attempts[0].changedFiles, undefined); // Compact index omits detailed changed scope.
+  assert.match(fs.readFileSync(path.join(f.root, 'README.md'), 'utf8'), /Completion fixture/);
+  assert.equal(readOwnership(options(f)).leases.length, 0);
+});
+
+test('DF2 mutable observation without a Dispatch grant is rejected before execution', async t => {
+  const f = await fixture(t);
+  await assert.rejects(() => runObservedCommand({ mutability: 'MUTATING', ...f.options(), repository: 'wayper',
+    target: 'feedback-without-grant', command: process.execPath,
+    args: ['-e', 'require("node:fs").writeFileSync("README.md","forbidden")'],
+    metadata: { taskId: 'feedback', attemptId: 'attempt', failureId: 'failure' } }), /MUTATION_GRANT_REQUIRED/);
   assert.match(fs.readFileSync(path.join(f.root, 'README.md'), 'utf8'), /Completion fixture/);
 });
 
