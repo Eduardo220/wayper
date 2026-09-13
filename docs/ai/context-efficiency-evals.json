@@ -49,7 +49,7 @@
       },
       "after": {
         "artifacts": [
-          ".agents/skills/wayper-context-efficiency/SKILL.md",
+          ".agents/skills/wayper-context-efficiency/SKILL.md#L1-L156",
           "docs/ai/working-context.md",
           "docs/ai/harness-v1.md#L16-L42",
           "docs/ai/harness-v1.md#L101-L151",

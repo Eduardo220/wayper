@@ -8,11 +8,12 @@ import { persistCompletionAssessment } from './wayper-completion-store.mjs';
 import { readValidationPlan } from './wayper-validation-store.mjs';
 import { listReceipts } from './wayper-evidence-store.mjs';
 import { runObservedCommand, runObservedTest, runObservedQualityGate, observeFile } from './wayper-evidence-observer.mjs';
-import { recordContextEntry } from './wayper-context-map.mjs';
+import { recordContextEntry, finalizeContextMap } from './wayper-context-map.mjs';
 import { loadCapabilityFiles } from './quality/check-capability-routing.mjs';
 import { digest, sorted } from './wayper-validation-policy.mjs';
 import { classifyFeedbackFailures, feedbackIndex } from './wayper-feedback-policy.mjs';
 import { readFeedbackSession } from './wayper-feedback-store.mjs';
+import { refreshContextArtifacts, validateArtifactRefs } from './wayper-context-artifacts.mjs';
 
 export function feedbackState({ root, identity }) {
   const state = readWorkingContext(root, { 'thread-id': identity.threadId, 'goal-run-id': identity.goalRunId, revision: identity.revision });
@@ -63,10 +64,33 @@ export function feedbackDiagnosisContext(session, facts, failure) {
     e.repository === failure.repository).map((e) => e.id)]).slice(0, 16);
   return { feedbackId: session.feedbackId, goalReference: session.goalReference, failure,
     selectionReason: failure.dependencyIds.length ? 'DEPENDENCIES_FIRST' : `PRIORITY_${failure.priority}_DEPENDENCIES_SATISFIED`,
-    failedHypotheses, evidenceRefs, validation: validationSummary(facts), completion: {
+    failedHypotheses, evidenceRefs, ...feedbackDiscoveryContext(session, facts, failure), validation: validationSummary(facts), completion: {
       assessmentId: facts.assessment.assessmentId, decision: facts.assessment.decision },
     scope: facts.plan?.inputs.repositories.filter((r) => r.repository === failure.repository).map((r) => ({ repository: r.repository,
       changedPaths: r.changedPaths.slice(0, 24) })) ?? [] };
+}
+
+export function feedbackDiscoveryContext(session, facts, failure) {
+  const index = facts.state.contextMap.context;
+  if (!index) return {};
+  refreshContextArtifacts(index, facts);
+  const lineage = session.attempts.flatMap((a) => a.lineage ?? []).filter((l) => l.failureId === failure.failureId);
+  const sameRoot = new Set([failure.failureId, ...lineage.filter((l) => l.relation === 'SAME_ROOT').map((l) => l.relatedFailureId)]);
+  const paths = new Set(facts.state.contextMap.findings?.filter((f) => failure.relatedFindingIds.includes(f.id)).flatMap((f) => f.paths) ?? []);
+  // Only demonstrated SAME_ROOT inherits previous scope. INDEPENDENT/UNKNOWN need their own scope.
+  for (const a of session.attempts.filter((a) => sameRoot.has(a.failureId))) for (const p of a.action?.paths ?? a.scopeBefore?.paths?.map((p) => p.path) ?? []) paths.add(p);
+  const candidates = index.artifacts.filter((r) => r.repository === failure.repository && r.paths.some((p) => paths.has(p))).slice(0, 16);
+  const current = candidates.filter((r) => r.status === 'CURRENT' && validateArtifactRefs(facts.state.contextMap, [r.artifactId], facts));
+  const stale = candidates.filter((r) => r.status === 'STALE');
+  return { contextArtifactRefs: current.map((r) => r.artifactId), staleContextArtifactRefs: stale.map((r) => r.artifactId),
+    contextSelection: lineage.some((l) => l.relation === 'INDEPENDENT') ? 'INDEPENDENT_SCOPE' : sameRoot.size > 1 ? 'SAME_ROOT_REVALIDATED' : 'CURRENT_FAILURE_SCOPE' };
+}
+
+export function recordFeedbackContextReuse(facts, count) {
+  if (!facts.state.contextMap.context) return;
+  facts.state.contextMap.context.metrics.feedbackContextReuses += count;
+  facts.state.contextMap = finalizeContextMap(facts.state.contextMap);
+  writeWorkingContext(facts.state, facts);
 }
 
 export function feedbackExecutor(session, initial, attempt, options) {
@@ -114,6 +138,18 @@ export function feedbackExecutor(session, initial, attempt, options) {
     failure: structuredClone(initial.failures.find((f) => f.failureId === attempt.failureId)),
     guard, observeCommand: (input) => observed(runObservedCommand, input), observeTest: (input) => observed(runObservedTest, input),
     observeQualityGate: (input) => observed(runObservedQualityGate, input), observeSource: (input) => observed(observeFile, input),
+    async resolveContext(request) {
+      guard();
+      if (!inScope(request.repository)) throw new Error('FEEDBACK_REPOSITORY_SCOPE');
+      const { resolveContext } = await import('./wayper-context-economy.mjs');
+      const result = await resolveContext({ root: options.root, identity: initial.identity, request,
+        graphOptions: options.graphOptions });
+      if (result.disposition === 'ACQUIRED') mutate((current) => {
+        current.state.contextMap.context.metrics.feedbackContextReacquisitions++;
+        current.state.contextMap = finalizeContextMap(current.state.contextMap); return current.state;
+      });
+      update(); return result;
+    },
     edit({ repository, file, content }) {
       guard();
       if (phase !== 'ACTING' || attempt.action.kind !== 'EDIT' || !inScope(repository) || !attempt.action.paths.includes(file) ||

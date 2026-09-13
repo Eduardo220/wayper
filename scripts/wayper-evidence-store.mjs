@@ -3,6 +3,7 @@ import path from 'node:path';
 import { assertGoalExecution, repositorySnapshot, stable } from './wayper-context-identity.mjs';
 import { RECEIPT_ID, receiptIntegrityValid, validateEvidenceRequirement, canonicalEvidenceRange,
   sourceFingerprint, validateReceiptSchema } from './wayper-evidence-receipts.mjs';
+import { inspectGraphFreshness, freshGraph } from './wayper-graph.mjs';
 
 export function evidenceRepositories(options) {
   return options.repositories ?? options.repositoryDefinitions ?? [{ id: 'wayper', root: options.root }];
@@ -93,6 +94,13 @@ export function validateReceipt(receipt, options = {}) {
         const graph = sourceFingerprint(definition.root, o.graphPath);
         if (o.freshness === 'STALE' || !graph || graph.hash !== o.graphFingerprint ||
           current.contentFingerprint !== value.repositoryReference.contentFingerprint) fail('STALE_GRAPH');
+      } else if (o.type === 'GRAPH_QUERY_EXECUTION') {
+        const graph = sourceFingerprint(definition.root, o.graphPath);
+        if (!graph || graph.hash !== o.graphFingerprint) fail('STALE_GRAPH');
+        const snapshot = inspectGraphFreshness({ repository, root: definition.root,
+          peerDirectory: repository === 'wayper' ? 'wayper-site' : 'wayper', querySymbols: [] }, options.graphOptions);
+        if (!freshGraph(snapshot.status) || snapshot.corpus.corpusFingerprint !== o.corpusFingerprint ||
+          snapshot.corpus.scopeFingerprint !== o.scopeFingerprint) fail('STALE_GRAPH');
       }
     } catch { fail('OBSERVATION_UNAVAILABLE'); }
     if (['ASSERTION', 'GRAPH_REFERENCE'].includes(value.observation.type)) fail('UNVERIFIED_ORIGIN');

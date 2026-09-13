@@ -10,7 +10,6 @@ import {
   integrateRouterOutput,
   recordContextEntry,
   refreshContextMap,
-  sourceFingerprint,
   validateContextMap,
 } from '../wayper-context-map.mjs';
 import { routeTask } from '../wayper-agent-router.mjs';
@@ -22,8 +21,8 @@ import {
   validateContextPacket,
 } from '../wayper-context-packet.mjs';
 import { loadCapabilityFiles } from './check-capability-routing.mjs';
-import { fingerprintCorpus } from './check-graph-scopes.mjs';
 import { observedGate } from './evidence-fixture.mjs';
+import { writeVerifiedGraphFixture } from './verified-graph-fixture.mjs';
 
 const CEILINGS = { TRIVIAL: 1_500, BOUNDED: 4_000, BUG: 8_000, INVESTIGATION: 10_000,
   ARCHITECTURAL: 16_000, CRITICAL_RUNTIME: 24_000 };
@@ -48,19 +47,9 @@ function repository(id, files) {
 }
 
 function graphFixture(repo) {
-  const output = path.join(repo.root, 'graphify-out');
-  fs.mkdirSync(output, { recursive: true });
   const graph = { nodes: [{ id: 'owner' }, { id: 'dependency' }],
     edges: [{ source: 'owner', target: 'dependency', relation: 'imports' }] };
-  fs.writeFileSync(path.join(output, 'graph.json'), JSON.stringify(graph));
-  const sourceFingerprintValue = fingerprintCorpus({ repository: repo.id, root: repo.root,
-    peerDirectory: repo.id === 'wayper' ? 'wayper-site' : 'wayper', querySymbols: [] }).fingerprint;
-  const metadata = { repository: repo.id, root: fs.realpathSync(repo.root), scope: 'repository-code-only',
-    sourceFingerprint: sourceFingerprintValue,
-    graphSha256: sourceFingerprint(repo.root, 'graphify-out/graph.json').hash,
-    graphifyVersion: 'packet-eval-1' };
-  fs.writeFileSync(path.join(output, 'scope.json'), JSON.stringify(metadata));
-  return metadata;
+  return writeVerifiedGraphFixture(repo.root, repo.id, graph);
 }
 
 function fixtureFiles(item) {

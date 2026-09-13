@@ -106,11 +106,13 @@ make the range unsafe, track the containing symbol/file instead.
 Use this order and stop at the first level that proves the requirement:
 
 1. Working Context, `CONTEXT_MAP` refs, and their fingerprints (`reuse-before-read`).
-2. Current diff for changed tracked artifacts (`diff-before-file`).
-3. Symbol/heading plus failure path.
-4. Direct callers/consumers and causal tests.
-5. Domain docs/skill, memory lookup, or deeper dependency closure by routing.
-6. Targeted Graphify or specialist only for remaining structural/risk uncertainty.
+2. Goal Context Index/shared Context Artifacts revalidated by
+   [`context-economy.md`](../../../docs/ai/context-economy.md).
+3. Current diff for changed tracked artifacts (`diff-before-file`).
+4. Symbol/heading plus failure path.
+5. Direct callers/consumers and causal tests.
+6. Domain docs/skill, memory lookup, or deeper dependency closure by routing.
+7. Targeted Graphify broker or specialist only for remaining structural/risk uncertainty.
 
 Never exchange required reasoning, safety, validation, accessibility, privacy,
 or invariants for a budget. Budget pressure narrows optional discovery and
@@ -142,12 +144,12 @@ make the metric pass.
   repository first and run `npm run graphify:build -- mobile|site`. This creates
   a code-only/no-cluster cache only in that repository's ignored
   `graphify-out/`; never build or merge the workspace root graph.
-- If a graph exists, compare the tracked source fingerprints first. Reuse it
-  when the relevant scope is unchanged; run `npm run graphify:update --
-  mobile|site` only when tracked source changed.
-- Query only the unresolved symbol/path using `query --budget`, `path`,
-  `affected`, or `explain`. Do not dump the graph or traverse unrelated
-  communities.
+- If a graph exists, inspect its content-based corpus first. Reuse `FRESH`;
+  repair only metadata for `METADATA_DRIFT`; run `npm run graphify:update --
+  mobile|site` for `STALE_CONTENT|STALE_SCOPE` only after repository safety.
+- Query only the unresolved symbol/path through `queryGraph()` using `query`,
+  `path`, `affected`, or `explain`. It reuses the same canonical query only
+  against the same repo/scope/corpus and bounds output. Do not dump the graph.
 - Cross-repo Goals query both repo-scoped graphs separately and combine source
   evidence afterward; they never create a mixed dependency graph.
 - Confirm every material Graphify result in current source/callers/tests. Graph
@@ -208,7 +210,8 @@ PASS cannot cover unrelated assurances. Required Graphify must be `CURRENT`.
 
 ## Validation
 
-Run `npm run quality:context`, `wayper-context.mjs validate`, the affected Harness owner gate, and
+Run `npm run quality:context`, `npm run quality:graph` when graph owners change,
+`wayper-context.mjs validate`, the affected Harness owner gate, and
 `git diff --check`. The context gate must fail if a benchmark saves context by
 dropping any declared test, validation, risk flag, or invariant. Run
 `quality:capabilities` when registry/skill routing changes and

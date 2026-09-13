@@ -13,7 +13,7 @@ import {
   sourceFingerprint,
   validateContextMap,
 } from '../wayper-context-map.mjs';
-import { fingerprintCorpus } from './check-graph-scopes.mjs';
+import { writeVerifiedGraphFixture } from './verified-graph-fixture.mjs';
 
 const REQUIRED_FEATURES = new Set(['EVIDENCE', 'DEPENDENCY', 'RISK_LIFECYCLE', 'PERSISTENCE',
   'TERRITORY', 'MULTI_CAPABILITY', 'SITE_ONLY', 'CROSS_REPO', 'EVIDENCE_STALENESS',
@@ -71,21 +71,9 @@ function createRepositories(item, sourceRoot) {
 }
 
 function writeGraphFixture(repository) {
-  const directory = path.join(repository.root, 'graphify-out');
-  fs.mkdirSync(directory, { recursive: true });
   const graph = { nodes: [{ id: 'fixture_owner' }, { id: 'fixture_test' }],
     edges: [{ source: 'fixture_owner', target: 'fixture_test', relation: 'tests' }] };
-  const graphSource = JSON.stringify(graph);
-  fs.writeFileSync(path.join(directory, 'graph.json'), graphSource);
-  const metadata = { schemaVersion: 1, repository: repository.id,
-    root: fs.realpathSync(repository.root), branch: 'main', head: execFileSync('git', ['rev-parse', 'HEAD'],
-      { cwd: repository.root, encoding: 'utf8' }).trim(),
-    sourceFingerprint: fingerprintCorpus({ repository: repository.id, root: repository.root,
-      peerDirectory: repository.id === 'wayper' ? 'wayper-site' : 'wayper', querySymbols: [] }).fingerprint,
-    graphSha256: hash(graphSource), graphifyVersion: 'graphify eval-1',
-    builtAt: 'fixture', buildMode: 'full', scope: 'repository-code-only' };
-  fs.writeFileSync(path.join(directory, 'scope.json'), JSON.stringify(metadata));
-  return metadata;
+  return writeVerifiedGraphFixture(repository.root, repository.id, graph);
 }
 
 function routerOutput(item, features, decision, goalId) {

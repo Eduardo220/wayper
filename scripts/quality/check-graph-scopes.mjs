@@ -1,28 +1,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { inspectGraphFreshness, ensureGraphFresh, freshGraph } from '../wayper-graph.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const ROOT = path.resolve(path.dirname(SCRIPT_PATH), '../..');
 const WORKSPACE_ROOT = path.resolve(ROOT, '..');
-const GRAPHIFY = process.env.GRAPHIFY_BIN || 'graphify';
-const REQUIRED_IGNORES = [
-  'graphify-out/',
-  'node_modules/',
-  '.next/',
-  '.expo/',
-  'dist/',
-  'build/',
-  'coverage/',
-  'tmp/',
-  'temp/',
-  'backups/',
-  'backup/',
-  'clones/',
-  'debug-clones/',
-];
 const FORBIDDEN_DIRECTORIES = new Set(['backups', 'backup', 'clones', 'debug-clones']);
 const CODE_EXTENSIONS = new Set([
   '.c', '.cc', '.cpp', '.cs', '.cxx', '.go', '.h', '.hpp', '.java', '.js', '.jsx',
@@ -45,12 +30,6 @@ export const GRAPH_SPECS = {
   },
 };
 
-const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
-const sha256 = (value) => `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
-const graphPath = (root) => path.join(root, 'graphify-out/graph.json');
-const metadataPath = (root) => path.join(root, 'graphify-out/scope.json');
-const manifestPath = (root) => path.join(root, 'graphify-out/manifest.json');
-const git = (root, ...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 
 function normalizeSource(source, spec) {
   if (typeof source !== 'string' || !source || path.isAbsolute(source)) {
@@ -161,123 +140,12 @@ function graphMetrics(graph, spec) {
   };
 }
 
-function normalizeGeneratedGraph(spec) {
-  const file = graphPath(spec.root);
-  const graph = readJson(file);
-  const ids = new Set((graph.nodes ?? []).map((node) => node.id));
-  const key = Array.isArray(graph.links) ? 'links' : 'edges';
-  const links = graph[key] ?? [];
-  const validLinks = links.filter((link) => ids.has(link?.source) && ids.has(link?.target));
-  const prunedDanglingEdges = links.length - validLinks.length;
-  graph[key] = validLinks;
-  if (prunedDanglingEdges > 0) fs.writeFileSync(file, `${JSON.stringify(graph, null, 2)}\n`);
-  return { graph, prunedDanglingEdges };
-}
-
-function manifestFiles(root) {
-  const manifest = readJson(manifestPath(root));
-  return Object.keys(manifest).length;
-}
-
-function ignoredPaths(root) {
-  const file = path.join(root, '.graphifyignore');
-  if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) {
-    throw new Error(`Missing Graphify ignore file: ${file}`);
-  }
-  const entries = fs.readFileSync(file, 'utf8').split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'));
-  for (const required of REQUIRED_IGNORES) {
-    if (!entries.includes(required)) throw new Error(`Missing Graphify ignore rule: ${required}`);
-  }
-  return entries;
-}
-
-export function validateGraphScope(graph, spec) {
-  return graphMetrics(graph, spec);
-}
-
-function createMetadata(spec, graph, mode, prunedDanglingEdges) {
-  const metrics = graphMetrics(graph, spec);
-  const graphFile = graphPath(spec.root);
-  const corpus = fingerprintCorpus(spec);
-  return {
-    schemaVersion: 1,
-    repository: spec.repository,
-    root: spec.root,
-    branch: git(spec.root, 'branch', '--show-current'),
-    head: git(spec.root, 'rev-parse', 'HEAD'),
-    sourceFingerprint: corpus.fingerprint,
-    graphSha256: sha256(fs.readFileSync(graphFile)),
-    graphifyVersion: execFileSync(GRAPHIFY, ['--version'], { encoding: 'utf8' }).trim(),
-    builtAt: new Date().toISOString(),
-    buildMode: mode,
-    scope: 'repository-code-only',
-    ignoredPaths: ignoredPaths(spec.root),
-    corpusFiles: corpus.files.length,
-    manifestFiles: manifestFiles(spec.root),
-    files: metrics.files,
-    nodes: metrics.nodes,
-    edges: metrics.edges,
-    communities: metrics.communities,
-    normalization: { prunedDanglingEdges },
-  };
-}
+export function validateGraphScope(graph, spec) { return graphMetrics(graph, spec); }
 
 export function validateScope(spec) {
-  const graphFile = graphPath(spec.root);
-  const metaFile = metadataPath(spec.root);
-  const graph = readJson(graphFile);
-  const metadata = readJson(metaFile);
-  const metrics = graphMetrics(graph, spec);
-  const corpus = fingerprintCorpus(spec);
-  const expected = {
-    repository: spec.repository,
-    root: spec.root,
-    branch: git(spec.root, 'branch', '--show-current'),
-    head: git(spec.root, 'rev-parse', 'HEAD'),
-    sourceFingerprint: corpus.fingerprint,
-    graphSha256: sha256(fs.readFileSync(graphFile)),
-    graphifyVersion: execFileSync(GRAPHIFY, ['--version'], { encoding: 'utf8' }).trim(),
-    ignoredPaths: ignoredPaths(spec.root),
-    corpusFiles: corpus.files.length,
-    manifestFiles: manifestFiles(spec.root),
-  };
-  if (metadata.schemaVersion !== 1 || metadata.scope !== 'repository-code-only') {
-    throw new Error(`${spec.repository}: unsupported graph scope metadata`);
-  }
-  for (const [key, value] of Object.entries(expected)) {
-    if (JSON.stringify(metadata[key]) !== JSON.stringify(value)) {
-      throw new Error(`${spec.repository}: stale graph metadata: ${key}`);
-    }
-  }
-  if (!/^graphify \d+\.\d+\.\d+$/.test(metadata.graphifyVersion)) {
-    throw new Error(`${spec.repository}: invalid Graphify version metadata`);
-  }
-  if (!Number.isFinite(Date.parse(metadata.builtAt))) {
-    throw new Error(`${spec.repository}: invalid graph build timestamp`);
-  }
-  if (!Number.isInteger(metadata.normalization?.prunedDanglingEdges) ||
-    metadata.normalization.prunedDanglingEdges < 0) {
-    throw new Error(`${spec.repository}: invalid graph normalization metadata`);
-  }
-  for (const key of ['files', 'nodes', 'edges', 'communities']) {
-    if (metadata[key] !== metrics[key]) throw new Error(`${spec.repository}: stale graph metric: ${key}`);
-  }
-  return { ...metrics, ...metadata };
-}
-
-function graphify(spec, mode) {
-  const args = mode === 'build'
-    ? ['extract', spec.root, '--out', spec.root, '--code-only', '--no-cluster', '--force']
-    : ['extract', spec.root, '--out', spec.root, '--code-only', '--no-cluster'];
-  const result = spawnSync(GRAPHIFY, args, { cwd: spec.root, encoding: 'utf8', stdio: 'inherit' });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${spec.repository}: Graphify ${mode} failed`);
-  const { graph, prunedDanglingEdges } = normalizeGeneratedGraph(spec);
-  const metadata = createMetadata(spec, graph, mode, prunedDanglingEdges);
-  fs.writeFileSync(metadataPath(spec.root), `${JSON.stringify(metadata, null, 2)}\n`);
-  return validateScope(spec);
+  const result = inspectGraphFreshness(spec);
+  if (!freshGraph(result.status)) throw new Error(`${spec.repository}: ${result.status}: ${result.reason}`);
+  return { ...result.metrics, ...result.metadata, freshness: result.status };
 }
 
 function selectedSpecs(target = 'all') {
@@ -293,15 +161,31 @@ function validateNoMixedFallback() {
   }
 }
 
+function graphSummary(result) {
+  const paths = (name) => ({ count: result[name]?.length ?? 0, paths: (result[name] ?? []).slice(0, 24),
+    truncated: (result[name]?.length ?? 0) > 24 });
+  return { repository: result.repository, scope: result.scope, status: result.status, reason: result.reason,
+    action: result.action, head: result.head, branch: result.branch,
+    corpus: result.corpus && { files: result.corpus.files.length, corpusFingerprint: result.corpus.corpusFingerprint,
+      scopeFingerprint: result.corpus.scopeFingerprint, version: result.corpus.version, incremental: result.corpus.incremental },
+    graphFingerprint: result.graphFingerprint, missing: paths('missingPaths'), extra: paths('extraPaths'),
+    changed: paths('changedPaths'), metrics: result.metrics, metadata: result.metadata };
+}
+
 async function main() {
-  const [command = 'validate', target = 'all', ...rest] = process.argv.slice(2);
-  if (rest.length || !['build', 'update', 'validate', 'metrics'].includes(command)) {
+  const [command = 'validate', target = 'mobile', ...rest] = process.argv.slice(2);
+  if (rest.some((arg) => arg !== '--allow-dirty') || !['build', 'update', 'validate', 'metrics', 'inspect'].includes(command)) {
     throw new Error('Usage: check-graph-scopes.mjs <build|update|validate|metrics> [mobile|site|all]');
   }
   for (const spec of selectedSpecs(target)) {
     const result = command === 'build' || command === 'update'
-      ? graphify(spec, command)
-      : validateScope(spec);
+      ? ensureGraphFresh(spec, { allowDirty: rest.includes('--allow-dirty') })
+      : command === 'inspect' ? inspectGraphFreshness(spec) : validateScope(spec);
+    if (command === 'inspect' || command === 'build' || command === 'update') {
+      console.log(JSON.stringify(graphSummary(result), null, 2));
+      if (command !== 'inspect' && !freshGraph(result.status)) process.exitCode = 2;
+      continue;
+    }
     console.log(
       `GRAPH SCOPE ${spec.repository} PASS / ${result.files} files / ` +
       `${result.nodes} nodes / ${result.edges} edges / ${result.communities} communities`

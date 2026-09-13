@@ -4,13 +4,14 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { sourceFingerprint, RECEIPT_ID, EVIDENCE_KINDS, EVIDENCE_ORIGINS, validateEvidenceRequirement } from './wayper-evidence-receipts.mjs';
 import { readReceipt, receiptIndexEntry, evaluateEvidenceRequirement } from './wayper-evidence-store.mjs';
-import { fingerprintCorpus } from './quality/check-graph-scopes.mjs';
+import { inspectGraphFreshness, freshGraph } from './wayper-graph.mjs';
 import { validateRouterSelectionReceipt } from './wayper-agent-router.mjs';
 import { assertGoalExecution, assertSameExecution, invalidateMapProofs, repositorySnapshot } from './wayper-context-identity.mjs';
 import { createContextValidationPlan, refreshContextValidationPlan } from './wayper-validation-store.mjs';
 import { completionMapFingerprint, validateCompletionLedger, ASSESSMENT_ID, COMPLETION_DECISIONS } from './wayper-completion-policy.mjs';
 import { validCompletionIndexReference } from './wayper-completion-store.mjs';
 import { validateFeedbackIndex } from './wayper-feedback-store.mjs';
+import { refreshContextArtifacts, validateContextIndex } from './wayper-context-artifacts.mjs';
 
 export { sourceFingerprint } from './wayper-evidence-receipts.mjs';
 
@@ -92,21 +93,18 @@ function observedSourceFingerprint(root, relativePath, rangeValue = null) {
 }
 
 function graphifySnapshot(repository, repo) {
-  const metadata = JSON.parse(fs.readFileSync(repoFile(repo.root, 'graphify-out/scope.json'), 'utf8'));
-  const graphSource = fs.readFileSync(repoFile(repo.root, 'graphify-out/graph.json'));
-  const graph = JSON.parse(graphSource);
-  const corpus = fingerprintCorpus({ repository, root: repo.root,
+  repoFile(repo.root, 'graphify-out/graph.json');
+  const state = inspectGraphFreshness({ repository, root: repo.root,
     peerDirectory: repository === 'wayper' ? 'wayper-site' : 'wayper', querySymbols: [] });
-  if (metadata.repository !== repository || metadata.scope !== 'repository-code-only' ||
-    path.resolve(metadata.root) !== fs.realpathSync(repo.root) || !HASH.test(metadata.sourceFingerprint ?? '') ||
-    metadata.sourceFingerprint !== corpus.fingerprint ||
-    metadata.graphSha256 !== sha256(graphSource) || !metadata.graphifyVersion ||
-    !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+  if (!freshGraph(state.status)) {
     throw new Error(`Invalid repository-scoped Graphify metadata: ${repository}`);
   }
+  const metadata = state.metadata;
+  const graph = JSON.parse(fs.readFileSync(repoFile(repo.root, 'graphify-out/graph.json'), 'utf8'));
+  const edges = graph.edges ?? graph.links;
   return { metadata, graph,
     nodes: new Set(graph.nodes.map((item) => `${repository}:${item.id}`)),
-    edges: new Set(graph.edges.map((item) => `${repository}:${item.source}->${item.target}`)) };
+    edges: new Set(edges.map((item) => `${repository}:${item.source}->${item.target}`)) };
 }
 
 function reusableProofIds(map) {
@@ -118,7 +116,7 @@ function reusableProofIds(map) {
 
 function receiptOptions(map, repositories, options = {}) {
   return { root: options.root ?? repositories.find((repo) => repo.id === 'wayper')?.root ?? repositories[0]?.root,
-    execution: map.execution, repositories };
+    execution: map.execution, repositories, graphOptions: options.graphOptions };
 }
 
 function indexReceipt(map, id, repositories, options) {
@@ -315,6 +313,8 @@ export function refreshContextMap(existing, options) {
     throw new Error('Context Map baseline repository mismatch');
   }
   const map = existing ? structuredClone(existing) : baseMap(options);
+  if (map.context) refreshContextArtifacts(map.context, { root: options.root ?? repos.get('wayper')?.root ?? [...repos.values()][0].root,
+    repositories: [...repos.values()], graphOptions: options.graphOptions });
   if (map.goalId !== options.goalId) throw new Error('Context Map Goal mismatch');
   const nextRegistryFingerprint = capabilityRegistryFingerprint(options.registry);
   const registryChanged = Boolean(options.registry && map.registryFingerprint !== nextRegistryFingerprint);
@@ -772,7 +772,7 @@ function rejectUnknownKeys(value, allowed, label, errors) {
 
 const MAP_KEYS = new Set(['schemaVersion', 'goalId', 'execution', 'taskClass', 'repositories', 'taskFingerprint',
   'routerFingerprint', 'registryFingerprint', 'repositoryState', 'capabilities', 'router', 'risks', 'evidence', 'dependencies',
-  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants', 'evidenceReceipts', 'validationPlan', 'findings', 'completion', 'feedback']);
+  'knownGood', 'graphify', 'validation', 'learningDelta', 'ambiguities', 'proofGaps', 'metrics', 'invariants', 'evidenceReceipts', 'validationPlan', 'findings', 'completion', 'feedback', 'context']);
 const REPOSITORY_KEYS = new Set(['repository', 'logicalRoot', 'relevantRefs', 'branch', 'head',
   'dirtyFingerprint', 'relevantDiffFingerprint', 'checkoutFingerprint', 'dirty', 'contentFingerprint']);
 const EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'symbol', 'range', 'sourceHash', 'sourceBytes',
@@ -801,6 +801,7 @@ function validateContextMapUnsafe(map, { repositoryDefinitions = [], registry } 
     return { status: 'INVALID', errors: ['unsupported Context Map schema'] };
   }
   rejectUnknownKeys(map, MAP_KEYS, 'Context Map', errors);
+  if (map.context && !validateContextIndex(map.context, map.execution)) errors.push('invalid context artifact index');
   errors.push(...validateCompletionLedger(map));
   if (map.feedback && !validateFeedbackIndex(map.feedback, { ...receiptOptions(map, [...repos.values()], {}), identity: map.execution.identity })) errors.push('invalid feedback index');
   if (map.completion) {

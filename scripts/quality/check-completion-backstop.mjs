@@ -13,6 +13,9 @@ const QUALITY_TESTS = {
   gate: 'scripts/quality/check-quality-gate.test.mjs',
   backstop: 'scripts/quality/check-completion-backstop.test.mjs',
   context: 'scripts/quality/check-context-efficiency.test.mjs',
+  contextEconomy: 'scripts/quality/check-context-economy.test.mjs',
+  contextAdversarial: 'scripts/quality/check-context-adversarial.test.mjs',
+  graph: 'scripts/quality/check-graph-context.test.mjs',
   handoff: 'scripts/wayper-structured-handoff.test.mjs',
   evidence: 'scripts/quality/check-evidence-receipts.test.mjs',
   validation: 'scripts/quality/check-validation-planner.test.mjs',
@@ -36,10 +39,23 @@ function isValidation(file) {
 
 function isContextEfficiency(file) {
   return file.startsWith('scripts/wayper-context')
+    || file.startsWith('scripts/quality/check-context-economy')
+    || file.startsWith('scripts/quality/check-context-adversarial')
+    || file === 'scripts/quality/context-economy-fixture.mjs'
     || file === 'scripts/quality/evaluate-context-map-cases.mjs'
     || file === 'docs/ai/working-context.md'
+    || file === 'docs/ai/context-economy.md'
     || file === 'docs/ai/context-efficiency-evals.json'
     || file.startsWith('.agents/skills/wayper-context-efficiency/');
+}
+
+function isGraph(file) {
+  return file.startsWith('scripts/wayper-graph')
+    || file.startsWith('scripts/quality/check-graph-')
+    || file === 'scripts/quality/graph-context-fixture.mjs'
+    || file === 'scripts/quality/verified-graph-fixture.mjs'
+    || file === 'docs/ai/context-economy.md'
+    || file === '.graphifyignore';
 }
 
 function isHarness(file) {
@@ -66,6 +82,7 @@ function isQualityTooling(file) {
     || file.startsWith('scripts/wayper-validation')
     || file.startsWith('scripts/wayper-feedback')
     || file.startsWith('scripts/wayper-completion')
+    || file.startsWith('scripts/wayper-graph')
     || file.startsWith('scripts/quality/');
 }
 
@@ -109,8 +126,9 @@ export function relevantQualityTests(files) {
     if (isValidation(file)) tests.add(QUALITY_TESTS.validation);
     if (isStructuredHandoff(file)) tests.add(QUALITY_TESTS.handoff);
     if (isContextEfficiency(file) || file.includes('context-efficiency')) {
-      tests.add(QUALITY_TESTS.context);
+      tests.add(QUALITY_TESTS.context); tests.add(QUALITY_TESTS.contextEconomy); tests.add(QUALITY_TESTS.contextAdversarial);
     }
+    if (isGraph(file)) tests.add(QUALITY_TESTS.graph);
     if (file !== '.codex/hooks.json' && !isQualityTooling(file)) continue;
     if (file === '.codex/hooks.json' || file.includes('completion-backstop')) {
       tests.add(QUALITY_TESTS.backstop);

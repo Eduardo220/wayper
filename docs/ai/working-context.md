@@ -4,7 +4,8 @@
 > **Escopo:** contexto operacional persistente por Codex Goal<br>
 > **Owner:** [`harness-v1.md`](harness-v1.md)<br>
 > **Skill:** [`wayper-context-efficiency`](../../.agents/skills/wayper-context-efficiency/SKILL.md)<br>
-> **Helper:** [`scripts/wayper-context.mjs`](../../scripts/wayper-context.mjs)
+> **Helper:** [`scripts/wayper-context.mjs`](../../scripts/wayper-context.mjs)<br>
+> **Discovery/cache:** [Graph-aware Context Economy](context-economy.md)
 
 ## Responsabilidade
 
@@ -41,9 +42,10 @@ NATIVE GOAL
 ```
 
 O agente principal permanece o único orquestrador e writer da síntese. O helper
-não classifica linguagem, não escolhe domínio/skill/agent, não executa Graphify,
-não julga semântica, não executa teste e não marca Goal completo. Ele só confere
-metadata e refs de um cache Graphify já selecionado. Por isso não existe
+de Working Context não classifica linguagem, não escolhe domínio/skill/agent,
+não julga semântica, não executa teste e não marca Goal completo. O resolver
+project-owned pode adquirir source ou consultar Graphify sob pedido explícito e
+registra somente artifacts bounded no mesmo Context Map. Por isso não existe
 `wayper_context_manager`.
 
 ## Fonte de verdade
@@ -251,7 +253,7 @@ estado de Goal nunca vira repo memory automaticamente.
 schemaVersion | goalId | execution | taskClass | repositories
 taskFingerprint | routerFingerprint | registryFingerprint | repositoryState
 capabilities | router | risks | invariants | evidence | dependencies
-knownGood | graphify | validation | learningDelta
+knownGood | graphify | context | validation | learningDelta
 ambiguities | proofGaps | metrics
 ```
 
@@ -295,6 +297,10 @@ capability por heurística textual.
   no cache repo-scoped; queries são ordenadas por fingerprint e troca de graph
   invalida queries anteriores. Mudança posterior no estado do repository marca
   refs `STALE`; `NOT_NEEDED` com query e ref de outro repository falham.
+- `context` é o Goal Context Index v1: refs para Context Artifacts imutáveis,
+  binding Goal/revision/baseline, invalidations, freshness e métricas observadas.
+  Conteúdo fica no cache compartilhado ignorado e é revalidado antes de reuse.
+  O contrato completo está em [context-economy.md](context-economy.md).
 - `knownGood` exige fingerprint + proof refs. Source alterado vira `STALE`; uma
   Goal que questiona o comportamento marca `QUESTIONED` persistentemente e não
   reutiliza a prova. Artifact do site permanece no estado do site; arquivo
@@ -402,17 +408,19 @@ que implementação e entrega terminaram.
 
 ## Graphify e subagents
 
-Graphify é cache gerado separado. Fingerprints do source selecionam:
+Graphify é cache gerado separado. Corpus e content fingerprints selecionam:
 
-- relevant repository scope unchanged: reuse do graph existente;
-- relevant scope changed: `npm run graphify:update -- mobile|site`;
+- corpus e scope idênticos: reuse, mesmo com HEAD drift;
+- somente HEAD/branch divergente: metadata repair;
+- content ou scope alterado: refresh incremental comprovado ou rebuild scoped;
 - structural uncertainty ausente: Graphify não roda.
 
 Mobile e site nunca compartilham dependency graph. Goal cross-repo consulta os
 dois caches repo-scoped e combina evidence depois, sem merge. Metadata gerada
-registra root/repository, branch/HEAD, fingerprint, versão, timestamp, scope e
-ignores; `npm run quality:graph-scopes` valida integridade e contaminação.
-Queries usam budget e símbolo/path alvo. Resultado material volta ao source.
+registra root/repository, branch/HEAD, corpus/scope/graph fingerprints, versão,
+timestamp e dirty state; `npm run quality:graph` valida integridade, corpus e
+contaminação. Queries usam broker/cache bounded e símbolo/path alvo. Resultado
+material volta ao source/Evidence observer.
 Subagent, quando já autorizado pelo gate, recebe apenas outcome, scope,
 symbols/files, constraints, risk, evidence, validation e Learning Delta. Ele não
 recebe Working Context completo nem cria descendants; `max_depth=1` permanece.
@@ -424,6 +432,9 @@ legado e CLI, além de round-trip, invalidação localizada,
 range unchanged, stop-when-proven, path safety, schema/map validation,
 staleness, deduplicação, Graphify repo-scoped e compactness, além dos benchmarks em
 [`context-efficiency-evals.json`](context-efficiency-evals.json).
+
+O gate inclui GC1–GC10, QC1–QC8, CE1–CE20 e adversarial/full-circuit de
+[Context Economy](context-economy.md).
 
 Cada benchmark declara BEFORE/AFTER e os conjuntos de risk flags, invariants,
 validations e tests. O gate só passa se AFTER reduzir o token proxy, ficar no

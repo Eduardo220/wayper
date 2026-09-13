@@ -43,7 +43,7 @@ const TOP_KEYS = new Set(['schemaVersion', 'goalId', 'taskId', 'agentId', 'packe
   'coverage', 'findings', 'evidenceRefs', 'newEvidence', 'risks', 'recommendations', 'filesRead', 'filesChanged',
   'tests', 'proofGaps', 'ambiguities', 'blockers', 'metrics', 'existingEvidenceReceiptIds', 'validationFindings', 'feedback']);
 const FINDING_KEYS = new Set(['id', 'severity', 'category', 'claim', 'scenario', 'impact', 'safeguard',
-  'confidence', 'evidenceRefs', 'proofGapRefs', 'affectedCapabilities']);
+  'confidence', 'evidenceRefs', 'proofGapRefs', 'affectedCapabilities', 'contextArtifactRefs']);
 const NEW_EVIDENCE_KEYS = new Set(['id', 'repository', 'path', 'range', 'symbol', 'sourceHash', 'category',
   'claim', 'provenance', 'capabilityRefs']);
 const FILE_READ_KEYS = new Set(['repository', 'path', 'range', 'symbol', 'classification', 'reason']);
@@ -348,6 +348,8 @@ function validateStructuredHandoffUnsafe(handoff, { packet, contextMap, registry
   const findingIds = new Set(); const findingSubjects = new Set();
   for (const finding of handoff.findings) {
     rejectKeys(finding, FINDING_KEYS, 'finding', errors);
+    if (finding.contextArtifactRefs !== undefined && (!unique(finding.contextArtifactRefs) || finding.contextArtifactRefs.length > 16 ||
+      finding.contextArtifactRefs.some((id) => !(packet.contextArtifactRefs ?? []).includes(id)))) errors.push('invalid finding context artifacts');
     const subject = [finding?.category, finding?.claim, finding?.scenario].map(normalized).join('|');
     if (!/^F-[A-Za-z0-9._-]{1,80}$/.test(finding?.id ?? '') || findingIds.has(finding.id) || findingSubjects.has(subject) ||
       !SEVERITIES.has(finding?.severity) || !validText(finding?.category) || !validText(finding?.claim) ||

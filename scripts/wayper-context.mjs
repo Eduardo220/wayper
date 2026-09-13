@@ -283,6 +283,7 @@ export function refreshWorkingContext({
   invariants = [],
   validations = [],
   registry,
+  graphOptions,
 }) {
   assertWorkingContext(existing);
   assertSameIdentity(existing.execution.identity, identity);
@@ -354,7 +355,7 @@ export function refreshWorkingContext({
     item.status = 'REUSE_BEFORE_READ'; item.verification = 'REVALIDATION_REQUIRED';
   }
   if (state.contextMap) state.contextMap = refreshContextMap(state.contextMap, {
-    goalId: state.goalId, execution: state.execution, repositories, taskClass,
+    goalId: state.goalId, execution: state.execution, repositories, taskClass, graphOptions,
     tokenCeiling: state.budget.contextTokenCeiling, workingArtifacts: state.artifacts,
     risks: state.riskFlags, invariants: state.invariants, validations: state.validations,
     registry: registry ?? loadCapabilityFiles().registry,
@@ -468,6 +469,7 @@ export function amendWorkingContext(options) {
     }) }, 'GOAL_AMENDED');
     map.execution = structuredClone(next.execution); map.goalId = next.goalId;
     delete map.feedback; // Revision-scoped history remains in the feedback store.
+    delete map.context; // Shared immutable cache survives; the new revision must explicitly rebind.
     map.router = null; map.taskFingerprint = null; map.routerFingerprint = null;
     map.capabilities.knownGood = map.capabilities.knownGood.filter((id) => !affected.capabilities.includes(id));
     for (const item of map.knownGood) item.validatedAtGoal = next.goalId;

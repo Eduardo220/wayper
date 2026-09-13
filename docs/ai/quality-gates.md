@@ -99,6 +99,8 @@ basta.
 | capability registry/closure/external acquisition evals | `npm run quality:capabilities`; source evidence, provenance e custo permanente |
 | capability/profile router, fingerprint, receipt ou evals | `npm run quality:router`; determinismo, refs, policy, coverage, fallback e zero spawn |
 | Working Context/efficiency skill/helper/evals | `npm run quality:context`; isolamento por goalRunId/revision, baseline imutável, resume/amendment, legado sem herança, fingerprints, invalidation, budgets e preservação declarada de risk/invariants/validations/tests |
+| Graph registry/scope/freshness/query broker | `npm run quality:graph`; GC1–GC10, corpus content-aware, refresh verificado, repo isolation e graph real mobile current |
+| Context Artifact/cache/resolver/invalidation | `npm run quality:context-economy`; QC1–QC8, CE1–CE20, adversarial e full-circuit |
 | Context Packet schema/builder/evals | `npm run quality:packets` (também incluído em `quality:context`); determinism, stale/invalid refs, repository leakage, coverage, bloat e duplicate materialization |
 | Structured Handoff schema/validator/selected-specialist adapter | `npm run quality:handoffs`; identity/refs/hash, grounding, source expansion, read-only, selection boundary, fallback, budget, bloat, correction única e 20 evals |
 | design contract/registry/routing evals | `npm run quality:design`; ownership visual, links e zero load irrelevante |
@@ -162,6 +164,8 @@ FAST:
 - targeted tests quando houver relação confiável;
 - `git diff --check`;
 - `quality:context` somente quando a infraestrutura de Working Context muda.
+- `quality:graph` e `quality:context-economy` entram no gate/backstop quando seus
+  owners mudam; nenhum deles faz rebuild automático.
 - `quality:packets` quando packet schema/builder/evals ou refs capability-scoped mudam.
 - `quality:handoffs` quando schema/validator/adapter/evals de handoff mudam.
 

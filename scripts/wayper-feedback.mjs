@@ -8,7 +8,7 @@ import { sealFeedback, validateFeedbackDiagnosis, attemptIndex } from './wayper-
 import { readFeedbackSession, appendFeedbackCheckpoint, persistFeedbackAttempt } from './wayper-feedback-store.mjs';
 import { readCompletionAssessment } from './wayper-completion-store.mjs';
 import { feedbackFacts, feedbackState, publishFeedbackContext, storeFeedbackAssessment, feedbackDiagnosisContext, feedbackExecutor,
-  validationSummary, feedbackActionScope } from './wayper-feedback-context.mjs';
+  validationSummary, feedbackActionScope, recordFeedbackContextReuse } from './wayper-feedback-context.mjs';
 
 const initialProgress = () => ({ relation: 'SAME', materialProgress: false, regression: false, removedFailureIds: [],
   addedFailureIds: [], satisfiedRequirementIds: [], beforeVector: { completionRank: 0, blockingFailures: 0, criticalHighFailures: 0, maxSeverity: 0, missingValidation: 0, staleEvidence: 0, materialFindings: 0 },
@@ -104,6 +104,7 @@ export async function runFeedbackIteration(options) {
   const next = disposition(session, before);
   if (next.outcome) return save(next, options, session);
   const input = feedbackDiagnosisContext(session, before, failure);
+  recordFeedbackContextReuse(before, input.contextArtifactRefs?.length ?? 0);
   let diagnosis;
   try { diagnosis = await options.diagnose?.(structuredClone(input)); } catch { return refused(session, 'DIAGNOSIS_FAILED', options, 'INVALID_STATE'); }
   if (!validateFeedbackDiagnosis(diagnosis, input)) return refused(session, 'INVALID_DIAGNOSIS_OR_ACTION', options, 'INVALID_STATE');

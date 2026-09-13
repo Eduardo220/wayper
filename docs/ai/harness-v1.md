@@ -179,9 +179,11 @@ o agente seleciona um dos dois scopes code-only: `mobile` (`wayper`) ou `site`
 e metadata gerada; não existe dependency graph misto como autoridade. Uma Goal
 cross-repo consulta os dois graphs separadamente e só então combina evidence.
 `npm run graphify:build|graphify:update -- <scope>` mantém os caches e `npm run
-quality:graph-scopes` bloqueia contaminação, paths externos e edges inválidos.
-Working Context permite reuse apenas com fingerprint inalterado. Não há refresh
-automático por Git, e toda pista material é confirmada diretamente no source.
+quality:graph` bloqueia corpus divergente, contaminação, paths externos e edges
+inválidos. [Context Economy](context-economy.md) separa content freshness de
+HEAD drift, faz query-once por corpus válido e revalida artifacts compartilhados
+no Goal atual. Não há refresh automático por Git, e toda pista material é
+confirmada no source/observer correspondente.
 
 RTK é ferramenta global opcional. O projeto não inclui adapter, proxy ou segundo
 sistema de compressão e deve continuar operável com shell comum.

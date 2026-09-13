@@ -28,7 +28,7 @@ import {
 import { evaluateContextMapCases } from './evaluate-context-map-cases.mjs';
 import { routeTask } from '../wayper-agent-router.mjs';
 import { loadCapabilityFiles } from './check-capability-routing.mjs';
-import { fingerprintCorpus } from './check-graph-scopes.mjs';
+import { writeVerifiedGraphFixture } from './verified-graph-fixture.mjs';
 import { createGoalExecution, goalReference } from '../wayper-context-identity.mjs';
 
 function fixtureRoot() {
@@ -55,18 +55,9 @@ function gitFixture(name = 'wayper') {
 }
 
 function graphFixture(root, repository = 'wayper') {
-  const directory = path.join(root, 'graphify-out');
-  fs.mkdirSync(directory, { recursive: true });
   const graph = { nodes: [{ id: 'owner' }, { id: 'owner_test' }],
     edges: [{ source: 'owner', target: 'owner_test', relation: 'tests' }] };
-  fs.writeFileSync(path.join(directory, 'graph.json'), JSON.stringify(graph));
-  const metadata = { repository, root: fs.realpathSync(root), scope: 'repository-code-only',
-    sourceFingerprint: fingerprintCorpus({ repository, root,
-      peerDirectory: repository === 'wayper' ? 'wayper-site' : 'wayper', querySymbols: [] }).fingerprint,
-    graphSha256: sourceFingerprint(root, 'graphify-out/graph.json').hash,
-    graphifyVersion: 'graphify fixture-1' };
-  fs.writeFileSync(path.join(directory, 'scope.json'), JSON.stringify(metadata));
-  return metadata;
+  return writeVerifiedGraphFixture(root, repository, graph);
 }
 
 const repo = (id, root) => ({ id, root, logicalRoot: id === 'wayper' ? '.' : '../wayper-site' });

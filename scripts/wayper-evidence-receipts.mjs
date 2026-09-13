@@ -86,6 +86,13 @@ function validObservation(receipt) {
     receipt.kind === 'GRAPH' && receipt.origin === 'MODEL_ASSERTED' && receipt.result === 'UNKNOWN' &&
     safeEvidencePath(o.graphPath) && [o.corpusFingerprint, o.graphFingerprint, o.queryFingerprint, o.resultFingerprint]
       .every((v) => HASH.test(v)) && ['CURRENT', 'STALE', 'UNKNOWN'].includes(o.freshness);
+  if (o.type === 'GRAPH_QUERY_EXECUTION') return exact(o, 'type graphPath corpusFingerprint graphFingerprint scopeFingerprint executionId startedAt finishedAt exitCode queryFingerprint resultFingerprint stdoutBytes stderrFingerprint stderrBytes outputPolicy') &&
+    receipt.kind === 'GRAPH' && receipt.origin === 'RUNNER_OBSERVED' && receipt.result === 'PASS' &&
+    safeEvidencePath(o.graphPath) && [o.corpusFingerprint, o.graphFingerprint, o.scopeFingerprint, o.queryFingerprint,
+      o.resultFingerprint, o.stderrFingerprint].every((v) => HASH.test(v)) && /^[a-f0-9-]{36}$/.test(o.executionId) &&
+    date(o.startedAt) && date(o.finishedAt) && o.startedAt <= o.finishedAt && o.exitCode === 0 &&
+    integer(o.stdoutBytes) && integer(o.stderrBytes) && o.outputPolicy === 'BOUNDED_CACHE' &&
+    receipt.subject.path === o.graphPath && receipt.subject.fingerprint === o.graphFingerprint;
   return false;
 }
 

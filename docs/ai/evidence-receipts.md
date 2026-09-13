@@ -65,7 +65,7 @@ Objetos e observations rejeitam campos desconhecidos; payload máximo: 12 KiB.
 | `repositoryReference` | Snapshot observado: repositoryId, checkoutFingerprint, branch, HEAD, dirty, contentFingerprint |
 | `kind`, `origin` | Enums abaixo; combinações inválidas são rejeitadas |
 | `subject` | path/range opcionais, target, fingerprint do conteúdo ou estado testado |
-| `observation` | Union fechada: FILE, EXECUTION, DERIVATION, ASSERTION, GRAPH_REFERENCE |
+| `observation` | Union fechada: FILE, EXECUTION, DERIVATION, ASSERTION, GRAPH_REFERENCE, GRAPH_QUERY_EXECUTION |
 | `result` | OBSERVED, PASS, FAIL ou UNKNOWN, condicionado ao tipo de observation |
 | `producedAt`, `producer` | Timestamp ISO, nome/version do produtor |
 | `contentFingerprint` | SHA-256 do conteúdo canônico; keys ordenadas recursivamente, arrays preservados |
@@ -94,6 +94,10 @@ implementado. A schema não permite usar esse origin para inventar uma execuçã
 - GRAPH_REFERENCE conserva graph/corpus/query/result fingerprints e freshness.
   A consulta informada não é promovida a execução observada. Cache stale nunca
   vira source authority. Nenhum Graphify rebuild ocorre neste fluxo.
+- GRAPH_QUERY_EXECUTION é criado somente pelo broker após uma execução real e
+  registra graph/corpus/scope/query/result fingerprints, tempo, exit e bytes.
+  Prova a consulta correspondente; não prova correctness do source, runtime ou
+  um Context Artifact reutilizado por outro Goal.
 
 ## Trust boundaries e limites
 

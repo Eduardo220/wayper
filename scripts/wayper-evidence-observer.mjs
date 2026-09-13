@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { assertGoalExecution, repositorySnapshot, stable } from './wayper-context-identity.mjs';
 import { evidenceHash, evidenceText, safeEvidencePath, sealReceipt, sourceFingerprint, validateReceiptSchema, receiptIntegrityValid } from './wayper-evidence-receipts.mjs';
 import { evidenceRepositories, receiptPath, readReceipt } from './wayper-evidence-store.mjs';
-import { fingerprintCorpus } from './quality/check-graph-scopes.mjs';
+import { inspectGraphFreshness, freshGraph } from './wayper-graph.mjs';
 
 const producer = Object.freeze({ name: 'wayper-evidence-observer', version: 1 });
 const now = () => new Date().toISOString();
@@ -159,14 +159,29 @@ export function recordGraphReference(options) {
   const observed = context(options); const graphPath = options.graphPath ?? 'graphify-out/graph.json';
   const graph = sourceFingerprint(observed.definition.root, graphPath);
   if (!graph) throw new Error('Graph unavailable');
-  const corpus = fingerprintCorpus({ repository: options.repository, root: observed.definition.root,
-    peerDirectory: options.repository === 'wayper' ? 'wayper-site' : 'wayper', querySymbols: [] });
-  const freshness = corpus.fingerprint === options.corpusFingerprint ? 'CURRENT' : 'STALE';
+  const current = inspectGraphFreshness({ repository: options.repository, root: observed.definition.root,
+    peerDirectory: options.repository === 'wayper' ? 'wayper-site' : 'wayper', querySymbols: [] }, options.graphOptions);
+  const freshness = freshGraph(current.status) && current.corpus.corpusFingerprint === options.corpusFingerprint ? 'CURRENT' : 'STALE';
   return receipt(options, observed, { kind: 'GRAPH', origin: 'MODEL_ASSERTED', result: 'UNKNOWN',
     subject: { path: graphPath, range: null, target: evidenceText(options.target), fingerprint: graph.hash },
     observation: { type: 'GRAPH_REFERENCE', graphPath, corpusFingerprint: options.corpusFingerprint,
       graphFingerprint: graph.hash, queryFingerprint: evidenceHash(String(options.query)),
       resultFingerprint: evidenceHash(stable(options.queryResult)), freshness } });
+}
+
+export function recordGraphQueryExecution(options) {
+  const observed = context(options); const graphPath = options.graphPath ?? 'graphify-out/graph.json';
+  const current = inspectGraphFreshness({ repository: options.repository, root: observed.definition.root,
+    peerDirectory: options.repository === 'wayper' ? 'wayper-site' : 'wayper', querySymbols: [] }, options.graphOptions);
+  if (!freshGraph(current.status) || current.corpus.corpusFingerprint !== options.corpusFingerprint ||
+    current.graphFingerprint !== options.graphFingerprint || current.corpus.scopeFingerprint !== options.scopeFingerprint) {
+    throw new Error('Graph changed before execution receipt');
+  }
+  const execution = options.executionObservation;
+  return receipt(options, observed, { kind: 'GRAPH', origin: 'RUNNER_OBSERVED', result: 'PASS',
+    subject: { path: graphPath, range: null, target: evidenceText(options.target), fingerprint: current.graphFingerprint },
+    observation: { type: 'GRAPH_QUERY_EXECUTION', graphPath, corpusFingerprint: options.corpusFingerprint,
+      graphFingerprint: options.graphFingerprint, scopeFingerprint: options.scopeFingerprint, ...execution } });
 }
 
 async function main() {
