@@ -303,6 +303,38 @@
       "command": null,
       "args": [],
       "paths": []
+    },
+    {
+      "id": "harness-cross-repo",
+      "repository": "wayper",
+      "level": "L2",
+      "type": "COMMAND",
+      "platform": "shared",
+      "command": "npm",
+      "args": [
+        "run",
+        "quality:cross-repo"
+      ],
+      "paths": [
+        "scripts/wayper-cross-repo.mjs",
+        "scripts/quality/check-cross-repo.test.mjs"
+      ]
+    },
+    {
+      "id": "harness-memory",
+      "repository": "wayper",
+      "level": "L2",
+      "type": "COMMAND",
+      "platform": "shared",
+      "command": "npm",
+      "args": [
+        "run",
+        "quality:memory"
+      ],
+      "paths": [
+        "scripts/wayper-project-memory.mjs",
+        "scripts/quality/check-project-memory.test.mjs"
+      ]
     }
   ],
   "rules": [
@@ -754,6 +786,34 @@
         "mobile-runtime",
         "android-build",
         "ios-build"
+      ]
+    },
+    {
+      "id": "harness-cross-repo-contract",
+      "when": {
+        "pathPatterns": [
+          "^scripts/(?:wayper-cross-repo|quality/check-cross-repo)\\."
+        ]
+      },
+      "repositories": [
+        "wayper"
+      ],
+      "checks": [
+        "harness-cross-repo"
+      ]
+    },
+    {
+      "id": "harness-memory-contract",
+      "when": {
+        "pathPatterns": [
+          "^(?:scripts/(?:wayper-project-memory|quality/check-project-memory)\\.|docs/ai/memory/)"
+        ]
+      },
+      "repositories": [
+        "wayper"
+      ],
+      "checks": [
+        "harness-memory"
       ]
     }
   ]

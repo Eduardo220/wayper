@@ -209,13 +209,14 @@ quando excedido; não apaga ownership incerto para liberar espaço.
 | Native spawn fora do adapter | PARTIAL; não existe interceptação global provada nesta integração |
 | Native update_goal | PARTIAL; request project-owned governada, ferramenta nativa independente |
 | Stop | Reusa Completion; hook configurado não prova interceptação universal |
-| Cross-repo | IDs/scopes isolados no mesmo control-plane root; sem transação atômica entre repos |
+| Cross-repo | Fase 8 compõe tasks/assessment; grants, leases e receipts continuam isolados; sem transação atômica |
 
-Não há daemon, scheduler, fila, banco, router adicional, profile novo, alteração
-de host externo, Memory/Brain/promotion ou transação distribuída. Contratos podem
-ser compostos na Fase 8, mantendo snapshots/leases/receipts separados por repo.
-Artifacts de contexto são cache; candidatos futuros a memory exigem seleção,
-proveniência, owner review e política própria, que não são implementados aqui.
+Esta boundary não cria daemon, scheduler, fila, banco, router adicional, profile
+novo, alteração de host externo, Memory/Brain/promotion ou transação distribuída.
+A composição posterior pertence a
+[`cross-repo-coordination.md`](cross-repo-coordination.md); Durable Memory pertence
+a [`memory-policy.md`](memory-policy.md). Ambas preservam snapshots, leases,
+receipts e autoridade separados por repo.
 
 ## Validação e rollback
 

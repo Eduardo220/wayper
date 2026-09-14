@@ -61,6 +61,8 @@ function result(lintResult = lint(), overrides = {}) {
     completion: overrides.completion ?? PASS,
     feedback: overrides.feedback ?? PASS,
     dispatch: overrides.dispatch ?? PASS,
+    crossRepo: overrides.crossRepo ?? PASS,
+    memory: overrides.memory ?? PASS,
     diff: overrides.diff ?? PASS,
   });
 }
@@ -80,6 +82,11 @@ test('QG completion boundary regression blocks the aggregate gate', () => {
 test('QG Dispatch/Ownership regression blocks the aggregate gate', () => {
   const quality = result(lint(), { dispatch: { status: 'fail', detail: 'fence regression' } });
   assert.ok(quality.blocking.includes('DISPATCH_REGRESSION'));
+});
+
+test('QG Phase 8 regressions block the aggregate gate', () => {
+  assert.ok(result(lint(), { crossRepo: { status: 'fail', detail: 'cross repo regression' } }).blocking.includes('CROSSREPO_REGRESSION'));
+  assert.ok(result(lint(), { memory: { status: 'fail', detail: 'memory regression' } }).blocking.includes('MEMORY_REGRESSION'));
 });
 
 test('QG graph and context economy regressions block the aggregate gate', () => {

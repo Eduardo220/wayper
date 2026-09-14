@@ -10,8 +10,9 @@
 > Reserve (`ACTIVE`) + Persistent Working Context + Context Efficiency +
 > Registry Schema V2 + Repository-scoped Graphify + Goal-scoped Context Map +
 > Packetized Specialist Dispatch + Structured Handoff + Selective Router +
-> V2 Fases 1–7 Goal Identity/Baseline + Evidence + Validation + Completion +
-> Feedback + Context Economy + Dispatch/Ownership, 2026-09-13<br>
+> V2 Fases 1–8 Goal Identity/Baseline + Evidence + Validation + Completion +
+> Feedback + Context Economy + Dispatch/Ownership + Cross-Repo Coordination +
+> Durable Project Memory, 2026-09-14<br>
 > **Decisão relacionada:** `docs/08-decisoes-tecnicas.md`<br>
 > **Inventário de origem:**
 > [`docs/audits/2026-08-16-ai-harness-v1-foundation.md`](../audits/2026-08-16-ai-harness-v1-foundation.md)
@@ -22,6 +23,10 @@ A Fase 7 adiciona [Dispatch + Ownership V1](dispatch-ownership.md), sobre os
 owners atuais de Context Economy, Feedback, Evidence, Validation e Completion.
 Enforcement é project-owned; shell/write/spawn/completion diretos do host continuam
 com cobertura parcial. O contrato não cria runtime ou workflow engine paralelo.
+A Fase 8 compõe tasks por repository em
+[Cross-Repo Coordination V1](cross-repo-coordination.md) e promove somente
+candidates aprovadas por [Durable Project Memory V1](memory-policy.md). Memory
+permanece `CONTEXT_ONLY`; não concede Evidence, authorization ou Completion.
 
 O único owner operacional do mobile é [`AGENTS.md`](../../AGENTS.md). Ele aponta
 para o catálogo de fontes; não replica estratégia, workflows de domínio ou
@@ -44,7 +49,8 @@ AGENTS.md
               -> waves/read-only specialists quando necessário
                  -> execution + evidence + validation pelo agente principal
                     -> Completion Boundary conectado + final falsification
-                       -> Goal Execution Report
+                       -> Learning Candidate/Promotion quando houver lição durável
+                          -> Goal Execution Report
                           -> Stop vinculado consulta a mesma API / host terminal separado
 ```
 
@@ -107,9 +113,13 @@ continuam fora dessa cobertura.
 - `docs/ai/completion-boundary.md` e `scripts/wayper-completion-boundary.mjs`:
   admissibilidade canônica, conectada a Identity/Context/Evidence/Validation e
   findings/gaps; não realiza a transição terminal do host.
-- `docs/ai/memory-policy.md` e `docs/ai/memory/index.json`: promotion de
-  hard-earned learning e discovery por domínio/risco; index/topics nunca são
-  contexto permanente nem source of truth.
+- `docs/ai/cross-repo-coordination.md` e `scripts/wayper-cross-repo.mjs`:
+  plano/assessment determinísticos por Goal, task e repository; Completion
+  global sem grant, lease, rollback ou transação distribuída global.
+- `docs/ai/memory-policy.md`, `docs/ai/memory/index.json` e
+  `scripts/wayper-project-memory.mjs`: candidate, promotion, dependency
+  validation, supersession e retrieval bounded `CONTEXT_ONLY`; Markdown é
+  projeção one-way do JSON canônico.
 - `docs/ai/hooks-and-gates.md`: capability audit e completion backstop
   project-scoped; gates determinísticos e admissibilidade para Stop explicitamente vinculado.
 - `docs/ai/token-economy.md`: modos `COMPACT/CLEAR/EXACT`, leitura progressiva,
@@ -232,8 +242,8 @@ Não existe wave planner executável, custom orchestrator, adjudicator, agent
 genérico novo, benchmark automático de concorrência ou worktree permanente.
 Knowledge graph novo, memory runtime/search engine, billing/token middleware e
 framework/DSL de boundaries permanecem fora. O token proxy operacional é apenas
-`ceil(bytes/4)` no benchmark. A repo memory é somente política, índice pequeno
-e topics on-demand. Boundaries simples de import e o ratchet owner-specific
+`ceil(bytes/4)` no benchmark. A repo memory é um store Git pequeno com retrieval
+determinístico e topics projetados on-demand. Boundaries simples de import e o ratchet owner-specific
 estão implementados sem nova dependência.
 Context Efficiency acrescenta somente uma skill, Markdown por Goal e helpers
 determinístico de SHA-256/benchmark. Não cria compressor, hook de compaction,
@@ -263,7 +273,6 @@ usam os contratos de
 `wayper-brain` permanece somente no backup histórico, sem reativar código, agent
 ou configuração. Meta Goal e seu Completion Judge são contratos declarativos em
 [`meta-goal-runtime.md`](meta-goal-runtime.md), não runtime custom; o checker
-associado executa somente evals. Promotion e
-staleness de memória pertencem a
+associado executa somente evals. Promotion, staleness e supersession pertencem a
 [`memory-policy.md`](memory-policy.md); Learning Delta pode persistir no Working
-Context do Goal, mas não é promovido automaticamente a repo memory.
+Context do Goal, mas só vira repo memory após candidate e policy executável.

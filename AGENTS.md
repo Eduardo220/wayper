@@ -63,6 +63,15 @@ o próprio escopo.
   tentativas limitadas, receipts e reassessment canônico; external/human não recebem
   retry cego. Execução continua owner/callback-driven; mutation usa a boundary
   project-owned de Dispatch/Ownership, sem transformar o Feedback em dispatcher.
+- Project Goals multi-repo usam
+  [Cross-Repo Coordination V1](docs/ai/cross-repo-coordination.md): tasks,
+  baselines, Evidence e Validation permanecem repository-scoped; partial success
+  bloqueia Completion global sem rollback automático. Goal single-repo não cria
+  task artificial no site, e WIP externo dirty não concede ownership.
+- Conhecimento entre Goals passa por Learning Candidate e policy de
+  [Durable Project Memory V1](docs/ai/memory-policy.md). Memory é Git-versioned,
+  dependency-bound e `CONTEXT_ONLY`: nunca substitui source/Evidence, concede
+  authorization ou satisfaz Completion; Markdown/Obsidian é projeção one-way.
 - Prova material exige Evidence Receipt observado, íntegro e compatível;
   texto/shell direto/handoff assertion não bastam. Contrato: `docs/ai/evidence-receipts.md`.
 - Profundidade de validação deriva do Validation Planner V1 e seu registry;

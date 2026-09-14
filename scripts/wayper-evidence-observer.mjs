@@ -3,12 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { assertGoalExecution, repositorySnapshot, stable } from './wayper-context-identity.mjs';
+import { assertGoalExecution, contextStatePath, repositorySnapshot, stable } from './wayper-context-identity.mjs';
 import { evidenceHash, evidenceText, safeEvidencePath, sealReceipt, sourceFingerprint, validateReceiptSchema, receiptIntegrityValid } from './wayper-evidence-receipts.mjs';
 import { evidenceRepositories, receiptPath, readReceipt } from './wayper-evidence-store.mjs';
 import { inspectGraphFreshness, freshGraph } from './wayper-graph.mjs';
 
 const producer = Object.freeze({ name: 'wayper-evidence-observer', version: 1 });
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const PROJECT_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
 const now = () => new Date().toISOString();
 const sensitivePath = /(?:^|\/)(?:\.env(?:\.[^/]*)?|credentials[^/]*|id_rsa|id_ed25519|[^/]*\.(?:pem|key|p12))$/i;
 
@@ -110,12 +112,14 @@ export async function runObservedCommand(options) {
   const environment = { ...process.env };
   delete environment.NODE_TEST_CONTEXT;
   const child = spawn(command, args, { cwd: directory, env: environment, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
-  const timeout = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
-  timeout.unref();
-  const stdout = streamObservation(child.stdout); const stderr = streamObservation(child.stderr);
   let executionError = false;
-  child.on('error', () => { executionError = true; });
-  const outcome = await new Promise((resolve) => child.once('close', (exitCode, signal) => resolve({ exitCode, signal })));
+  const outcomePromise = new Promise((resolve) => {
+    child.once('error', () => { executionError = true; resolve({ exitCode: null, signal: null }); });
+    child.once('close', (exitCode, signal) => resolve({ exitCode, signal }));
+  });
+  const timeout = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+  const stdout = streamObservation(child.stdout); const stderr = streamObservation(child.stderr);
+  const outcome = await outcomePromise;
   clearTimeout(timeout);
   const finishedAt = now(); const out = stdout(); const err = stderr();
   const after = repositorySnapshot(observed.definition);
@@ -193,6 +197,20 @@ export function recordGraphQueryExecution(options) {
       graphFingerprint: options.graphFingerprint, scopeFingerprint: options.scopeFingerprint, ...execution } });
 }
 
+function observerContext(input) {
+  const source = fs.readFileSync(contextStatePath(PROJECT_ROOT, input['goal-run-id']), 'utf8');
+  const match = source.match(/<!-- wayper-context-json:start -->\s*```json\s*([\s\S]*?)\s*```\s*<!-- wayper-context-json:end -->/);
+  if (!match) throw new Error('Working Context JSON block missing');
+  const state = JSON.parse(match[1]);
+  assertGoalExecution(state.execution);
+  const requested = { schemaVersion: 1, threadId: input['thread-id'], goalRunId: input['goal-run-id'], revision: Number(input.revision) };
+  if (stable(requested) !== stable(state.execution.identity)) throw new Error('Goal execution identity mismatch');
+  const repositories = state.contextMap.repositories.map((id) => ({ id,
+    logicalRoot: state.contextMap.repositoryState[id].logicalRoot,
+    root: path.resolve(PROJECT_ROOT, state.contextMap.repositoryState[id].logicalRoot) }));
+  return { state, repositories };
+}
+
 async function main() {
   const [mode, ...args] = process.argv.slice(2); const split = args.indexOf('--');
   const flags = split < 0 ? args : args.slice(0, split); const input = {};
@@ -200,9 +218,8 @@ async function main() {
     if (!/^--[a-z-]+$/.test(flags[i]) || flags[i + 1] === undefined || input[flags[i].slice(2)] !== undefined) throw new Error('Invalid observer argument');
     input[flags[i].slice(2)] = flags[i + 1];
   }
-  const { readWorkingContext, repositoryDefinitions, ROOT } = await import('./wayper-context.mjs');
-  const state = readWorkingContext(ROOT, input);
-  const options = { root: ROOT, execution: state.execution, repositories: repositoryDefinitions(input, state),
+  const { state, repositories } = observerContext(input);
+  const options = { root: PROJECT_ROOT, execution: state.execution, repositories,
     repository: input['repository-id'] ?? 'wayper', target: input.target, path: input.path, range: input.range,
     command: args[split + 1], args: args.slice(split + 2), mutability: input.mutability };
   if (input['grant-id'] && input['permit-id']) options.dispatchAuthorization = { grantId: input['grant-id'],
@@ -218,4 +235,4 @@ async function main() {
   if (value.result === 'FAIL') process.exitCode = 1;
 }
 
-if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) await main();
+if (path.resolve(process.argv[1] ?? '') === SCRIPT_PATH) await main();

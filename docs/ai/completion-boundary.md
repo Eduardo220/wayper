@@ -81,6 +81,12 @@ por `state`, `plan`, `receipts`, `handoff` ou booleano de completion do chamador
 Avalia os snapshots atuais antes/depois e detecta mudança durante a avaliação.
 Não executa testes, edits, diagnósticos, retry, dispatch ou host completion.
 
+Quando existe `CrossRepoPlan` publicado para a execução atual, a Fase 8 inclui o
+`CrossRepoAssessment` no input fingerprint e transforma qualquer decisão diferente
+de `COMPLETE` em blocker. Sem plano publicado, Goals single-repo não recebem
+obrigação site artificial. A avaliação cross-repo compõe tarefas; esta boundary
+continua sendo a única autoridade global de admissibilidade.
+
 `workingCompletionStatus()` expõe decisão atual, blockers, assessment e stale
 status do assessment registrado. `evaluateCompletion()` de Meta delega quando
 há contexto conectado; os ledgers históricos continuam como diagnóstico

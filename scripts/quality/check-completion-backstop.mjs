@@ -23,6 +23,8 @@ const QUALITY_TESTS = {
   feedbackAdversarial: 'scripts/quality/check-feedback-adversarial.test.mjs',
   completion: 'scripts/quality/check-completion-boundary.test.mjs',
   adversarial: 'scripts/quality/check-completion-adversarial.test.mjs',
+  crossRepo: 'scripts/quality/check-cross-repo.test.mjs',
+  memory: 'scripts/quality/check-project-memory.test.mjs',
 };
 
 function isEvidence(file) {
@@ -85,6 +87,8 @@ function isQualityTooling(file) {
     || file.startsWith('scripts/wayper-ownership')
     || file.startsWith('scripts/wayper-completion')
     || file.startsWith('scripts/wayper-graph')
+    || file.startsWith('scripts/wayper-cross-repo')
+    || file.startsWith('scripts/wayper-project-memory')
     || file.startsWith('scripts/quality/');
 }
 
@@ -117,6 +121,12 @@ export function classifyChangedScope(files) {
 export function relevantQualityTests(files) {
   const tests = new Set();
   for (const file of files) {
+    if (file.includes('cross-repo') || file === 'package.json') {
+      tests.add(QUALITY_TESTS.crossRepo); tests.add(QUALITY_TESTS.completion);
+    }
+    if (file.includes('project-memory') || file.startsWith('docs/ai/memory/') || file === 'docs/ai/memory-policy.md' || file === 'package.json') {
+      tests.add(QUALITY_TESTS.memory);
+    }
     if (/dispatch|ownership/.test(file) || file === 'package.json') {
       for (const name of ['check-dispatch', 'check-dispatch-spawn', 'check-dispatch-circuit', 'check-ownership', 'check-ownership-concurrency']) {
         tests.add(`scripts/quality/${name}.test.mjs`);

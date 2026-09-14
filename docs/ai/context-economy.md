@@ -128,13 +128,13 @@ Packet refs/bytes e Feedback reuse/reacquisition. `tokenUsage`, `bytesRead` e
 `unobservedHostReads` ficam `UNKNOWN` porque o runtime não os observa. O proxy
 histórico de bytes da task não é token accounting.
 
-## Limites de fase
+## Limites da Fase 6
 
 Esta infraestrutura não implementa Dispatch/Ownership, leases/CAS, shell/spawn
 interception, writer authority, Memory/Brain ou promoção automática de cache.
-O cache é efêmero e reconstruível. Fase 7 pode consumir resolver, current refs,
-Packet e receipts; Fase 8 deverá definir lifecycle e curadoria próprios para
-memória durável.
+O cache é efêmero e reconstruível. As Fases 7 e 8 posteriores consomem resolver,
+current refs, Packet e receipts; Durable Memory possui lifecycle separado em
+[`memory-policy.md`](memory-policy.md) e nunca promove este cache automaticamente.
 
 Gates:
 

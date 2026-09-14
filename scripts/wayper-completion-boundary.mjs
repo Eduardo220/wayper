@@ -8,6 +8,7 @@ import { RECEIPT_ID, requirementPolicy } from './wayper-evidence-receipts.mjs';
 import { evaluateEvidenceRequirement } from './wayper-evidence-store.mjs';
 import { digest, sorted } from './wayper-validation-policy.mjs';
 import { ownershipSnapshot } from './wayper-ownership.mjs';
+import { readCurrentCrossRepoAssessment, validateCurrentCrossRepoState } from './wayper-cross-repo.mjs';
 import { completionDefinition, completionMapFingerprint, completionIssue, sealCompletionAssessment, completionRequirementPolicy,
   validateCompletionLedger, validateCompletionRequirements, validateCompletionAssessmentSchema } from './wayper-completion-policy.mjs';
 
@@ -18,6 +19,7 @@ export function assessGoalCompletion(request = {}) {
   const requirementState = []; const findingState = []; const proofGapState = [];
   const accepted = []; const rejected = [];
   let state; let snapshots = []; let inputFingerprint = digest(null);
+  let crossRepoState = null;
   let validationState = { planId: null, status: 'LEGACY_UNPLANNED' };
   let decision = 'NOT_ADMISSIBLE'; let invalid = false; let replan = false; let stale = false; let external = false;
   const add = (kind, id, reason, options = {}) => {
@@ -154,9 +156,22 @@ export function assessGoalCompletion(request = {}) {
         blocking: a.materiality === 'MATERIAL', repository: a.repository, relatedRequirementIds: a.relatedRequirementIds,
         relatedReceiptIds: a.receiptIds });
     }
+    crossRepoState = readCurrentCrossRepoAssessment({ root, identity });
+    const crossFreshness = crossRepoState && validateCurrentCrossRepoState(crossRepoState, repositories);
+    if (crossRepoState && (crossFreshness.status !== 'CURRENT' || crossRepoState.assessment.decision !== 'COMPLETE')) {
+      const cross = crossRepoState.assessment;
+      const issues = crossFreshness.status !== 'CURRENT' ? crossFreshness.affectedTaskIds.map((taskId) => ({
+        taskId, repository: cross.plan.tasks.find((task) => task.taskId === taskId)?.repository ?? null, reasonCode: crossFreshness.status,
+      })) : cross.blockers.length ? cross.blockers : [{ taskId: cross.planId, repository: null, reasonCode: cross.decision }];
+      for (const issue of issues) add('CROSS_REPO', issue.taskId, issue.reasonCode, { repository: issue.repository });
+      invalid ||= cross.decision === 'INVALID_STATE' || crossFreshness.status === 'INVALID_STATE';
+      replan ||= cross.decision === 'REPLAN_REQUIRED' || crossFreshness.status === 'REPLAN_REQUIRED';
+      external ||= cross.decision === 'BLOCKED' || crossFreshness.status === 'BLOCKED';
+    }
     inputFingerprint = digest({ execution: state.execution, definition: completionDefinition(state),
       requirements, revisionHistory: state.revisionHistory, repositories: snapshots,
-      context: completionMapFingerprint(map), validation: v, ...(ownership.length ? { ownership } : {}) });
+      context: completionMapFingerprint(map), validation: v, ...(ownership.length ? { ownership } : {}),
+      ...(crossRepoState ? { crossRepo: crossRepoState.assessment } : {}) });
     if (before !== fs.readFileSync(contextStatePath(root, identity.goalRunId), 'utf8') || stable(snapshots) !== stable(captureRepositories(repositories)) ||
       ownershipState.fingerprint !== ownershipSnapshot({ root, identity }).fingerprint) {
       throw new Error('STATE_CHANGED_DURING_ASSESSMENT');

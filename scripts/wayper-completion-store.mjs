@@ -9,7 +9,7 @@ import { digest, exact } from './wayper-validation-policy.mjs';
 
 export function contextStoreFile(root, area, parts) {
   if (!path.isAbsolute(root ?? '')) throw new Error('Absolute completion owner root required');
-  if (!['completion', 'feedback', 'ownership'].includes(area)) throw new Error('Invalid context artifact area');
+  if (!['completion', 'feedback', 'ownership', 'cross-repo'].includes(area)) throw new Error('Invalid context artifact area');
   let file = fs.realpathSync(root);
   const all = ['.wayper-context', area, ...parts];
   for (const [index, part] of all.entries()) {
