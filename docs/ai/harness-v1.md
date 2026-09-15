@@ -28,6 +28,12 @@ A Fase 8 compõe tasks por repository em
 candidates aprovadas por [Durable Project Memory V1](memory-policy.md). Memory
 permanece `CONTEXT_ONLY`; não concede Evidence, authorization ou Completion.
 
+A avaliação final V1 × V2 pertence à
+[`benchmarks/harness-v1-v2/suite.json`](benchmarks/harness-v1-v2/suite.json).
+Ela congela candidates, GroundTruth, modelo, ambiente e scoring antes dos
+trials. `quality:benchmark` valida apenas schema, isolamento e report sanity;
+os tiers agentic/adversarial caros permanecem comandos explícitos.
+
 O único owner operacional do mobile é [`AGENTS.md`](../../AGENTS.md). Ele aponta
 para o catálogo de fontes; não replica estratégia, workflows de domínio ou
 configuração de ferramentas.

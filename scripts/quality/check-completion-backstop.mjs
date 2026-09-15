@@ -25,7 +25,14 @@ const QUALITY_TESTS = {
   adversarial: 'scripts/quality/check-completion-adversarial.test.mjs',
   crossRepo: 'scripts/quality/check-cross-repo.test.mjs',
   memory: 'scripts/quality/check-project-memory.test.mjs',
+  benchmark: 'scripts/quality/check-harness-benchmark.test.mjs',
 };
+
+function isBenchmark(file) {
+  return file.startsWith('scripts/wayper-harness-benchmark')
+    || file === 'scripts/quality/check-harness-benchmark.test.mjs'
+    || file.startsWith('docs/ai/benchmarks/harness-v1-v2/');
+}
 
 function isEvidence(file) {
   return file.startsWith('scripts/wayper-evidence') || file.startsWith('scripts/quality/check-evidence') ||
@@ -89,6 +96,7 @@ function isQualityTooling(file) {
     || file.startsWith('scripts/wayper-graph')
     || file.startsWith('scripts/wayper-cross-repo')
     || file.startsWith('scripts/wayper-project-memory')
+    || file.startsWith('scripts/wayper-harness-benchmark')
     || file.startsWith('scripts/quality/');
 }
 
@@ -121,6 +129,7 @@ export function classifyChangedScope(files) {
 export function relevantQualityTests(files) {
   const tests = new Set();
   for (const file of files) {
+    if (isBenchmark(file) || file === 'package.json') tests.add(QUALITY_TESTS.benchmark);
     if (file.includes('cross-repo') || file === 'package.json') {
       tests.add(QUALITY_TESTS.crossRepo); tests.add(QUALITY_TESTS.completion);
     }

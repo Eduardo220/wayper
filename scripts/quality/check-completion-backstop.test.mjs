@@ -118,12 +118,16 @@ test('HB4 quality tooling selects only directly associated tests', () => {
     'scripts/quality/check-completion-boundary.test.mjs', 'scripts/quality/check-cross-repo.test.mjs'
   ]);
   assert.deepEqual(relevantQualityTests(['docs/ai/memory/index.json']), ['scripts/quality/check-project-memory.test.mjs']);
+  assert.deepEqual(relevantQualityTests(['docs/ai/benchmarks/harness-v1-v2/suite.json']), [
+    'scripts/quality/check-harness-benchmark.test.mjs'
+  ]);
   assert.deepEqual(relevantQualityTests(['package.json']), ['scripts/quality/check-completion-adversarial.test.mjs',
     'scripts/quality/check-completion-boundary.test.mjs', 'scripts/quality/check-cross-repo.test.mjs',
     'scripts/quality/check-dispatch-circuit.test.mjs',
     'scripts/quality/check-dispatch-spawn.test.mjs', 'scripts/quality/check-dispatch.test.mjs',
     'scripts/quality/check-evidence-receipts.test.mjs', 'scripts/quality/check-feedback-adversarial.test.mjs',
-    'scripts/quality/check-feedback-loop.test.mjs', 'scripts/quality/check-ownership-concurrency.test.mjs',
+    'scripts/quality/check-feedback-loop.test.mjs', 'scripts/quality/check-harness-benchmark.test.mjs',
+    'scripts/quality/check-ownership-concurrency.test.mjs',
     'scripts/quality/check-ownership.test.mjs', 'scripts/quality/check-project-memory.test.mjs', 'scripts/quality/check-validation-planner.test.mjs',
     'scripts/wayper-structured-handoff.test.mjs']);
 });
