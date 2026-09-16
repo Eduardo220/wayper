@@ -20,6 +20,7 @@ const median = (values) => { const numbers = numeric(values).sort((a, b) => a - 
 const range = (values) => { const numbers = numeric(values); return numbers.length ? `${Math.min(...numbers)}–${Math.max(...numbers)}` : UNKNOWN; };
 const fmt = (value) => Number.isFinite(value) ? Math.round(value).toLocaleString('en-US') : value;
 const ratio = (a, b) => Number.isFinite(a) && Number.isFinite(b) && b > 0 ? `${(a / b).toFixed(2)}x` : UNKNOWN;
+const evidence = (value) => typeof value === 'string' ? value : JSON.stringify(value);
 const scenario = (id) => Object.values(suite.scenarios).flat().find((item) => item.id === id);
 
 function load(tier) {
@@ -48,10 +49,10 @@ function bStats(rows, candidate) {
     necessaryEscalations: values.filter((item) => item.necessaryHumanInterventions).length,
     unnecessaryClarifications: values.filter((item) => item.unnecessaryClarifications).length,
     recoveries: UNKNOWN, attempts: UNKNOWN,
-    tokens: sum(values.map((item) => item.tokenMetrics.totalTokens)),
-    medianTokens: median(values.map((item) => item.tokenMetrics.totalTokens)),
-    contextBytes: UNKNOWN, medianTime: median(values.map((item) => item.timeMetrics.wallClockDurationMs)),
-    graphQueries: sum(values.map((item) => item.contextMetrics.graphQueries)),
+    tokens: sum(completed.map((item) => item.tokenMetrics.totalTokens)),
+    medianTokens: median(completed.map((item) => item.tokenMetrics.totalTokens)),
+    contextBytes: UNKNOWN, medianTime: median(completed.map((item) => item.timeMetrics.wallClockDurationMs)),
+    graphQueries: sum(completed.map((item) => item.contextMetrics.graphQueries)),
     cacheReuse: UNKNOWN };
 }
 
@@ -84,8 +85,8 @@ function register(rows, kind) {
 
 function riskRows(b) {
   return ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].map((risk) => {
-    const v1 = b.filter((item) => item.candidate === 'V1' && item.risk === risk);
-    const v2 = b.filter((item) => item.candidate === 'V2' && item.risk === risk);
+    const v1 = b.filter((item) => item.candidate === 'V1' && item.risk === risk && item.correct !== null);
+    const v2 = b.filter((item) => item.candidate === 'V2' && item.risk === risk && item.correct !== null);
     return [risk, `${v1.filter((item) => item.correct).length}/${v1.length}`, `${v2.filter((item) => item.correct).length}/${v2.length}`,
       ratio(median(v2.map((item) => item.tokenMetrics.totalTokens)), median(v1.map((item) => item.tokenMetrics.totalTokens))),
       ratio(median(v2.map((item) => item.timeMetrics.wallClockDurationMs)), median(v1.map((item) => item.timeMetrics.wallClockDurationMs)))];
@@ -102,6 +103,8 @@ export function generateReport() {
   const a = load('A'); const b = load('B'); const c = load('C'); const all = [...a, ...b, ...c];
   const verdict = classify(all); const v1 = aggregate(all, 'V1'); const v2 = aggregate(all, 'V2');
   const b1 = bStats(b, 'V1'); const b2 = bStats(b, 'V2');
+  const infraFailures = b.filter((item) => item.outcome === 'BENCHMARK_INFRA_FAILURE');
+  const completedB = b.filter((item) => item.correct !== null);
   const improvements = register(all, 'improvement'); const regressions = register(all, 'regression');
   const falseCompletions = all.filter((item) => item.safety.falseCompletion);
   const unsupported = all.filter((item) => item.outcome === 'UNSUPPORTED');
@@ -146,7 +149,9 @@ export function generateReport() {
     ]), '', 'UNKNOWN was not converted to zero. Token values are provider/runtime counts only when emitted by Codex JSONL; no chars/4 proxy is labeled as tokens.', '',
     '## 8. RISK PROPORTIONALITY', '', table(['Risk', 'V1 correct', 'V2 correct', 'Token overhead V2/V1', 'Time overhead V2/V1'], riskRows(b)), '',
     '## 9. TIER A RESULTS', '', table(['Scenario', 'V1', 'V2'], paired(a).map(({ V1, V2 }) => [V1.scenarioId, V1.outcome, V2.outcome])), '',
-    '## 10. TIER B RESULTS', '', table(['Scenario/trial', 'Risk', 'V1 outcome/correct', 'V2 outcome/correct'], paired(b).map(({ V1, V2 }) => [V1.trialId, V1.risk,
+    '## 10. TIER B RESULTS', '',
+    `${infraFailures.length}/${b.length} records were BENCHMARK_INFRA_FAILURE and are excluded from candidate correctness, cost medians and significance claims.`, '',
+    table(['Scenario/trial', 'Risk', 'V1 outcome/correct', 'V2 outcome/correct'], paired(b).map(({ V1, V2 }) => [V1.trialId, V1.risk,
       `${V1.outcome}/${V1.correct}`, `${V2.outcome}/${V2.correct}`])), '',
     '## 11. TIER C RESULTS', '', table(['Scenario', 'V1', 'V2'], paired(c).map(({ V1, V2 }) => [V1.scenarioId, V1.outcome, V2.outcome])), '',
     '## 12. FALSE COMPLETION ANALYSIS', '', falseCompletions.length ? falseCompletions.map((item) => `- ${item.candidate} ${item.trialId}: evidence ${item.evidenceRefs.join(', ')}`).join('\n') : '- Nenhuma false completion observada.', '',
@@ -162,7 +167,7 @@ export function generateReport() {
     '## 18. CROSS-REPO', '', table(['Class', 'V1 correct', 'V2 correct'], metricsByClass(all, ['CROSS_REPO'])), '',
     'O site real ficou fora dos trials; B10 e C11/C20 usam somente fixtures/worktrees isolados.', '',
     '## 19. MEMORY', '', table(['Scenario', 'V1', 'V2'], paired(c.filter((item) => ['C12','C13','C18','C19'].includes(item.scenarioId))).map(({ V1, V2 }) => [V1.scenarioId, V1.outcome, V2.outcome])), '',
-    `Scale: 60 synthetic entries. Concurrency: ${memoryConcurrency?.outcome ?? UNKNOWN}; ${(memoryConcurrency?.evidenceRefs ?? []).join(', ')}. Precision/recall detalhadas ficam no evidence ref estruturado quando disponíveis.`, '',
+    `Scale: 60 synthetic entries. Concurrency: ${memoryConcurrency?.outcome ?? UNKNOWN}; ${(memoryConcurrency?.evidenceRefs ?? []).map(evidence).join(', ')}. Precision/recall detalhadas ficam no evidence ref estruturado quando disponíveis.`, '',
     '## 20. OWNERSHIP', '', table(['Class', 'V1 correct', 'V2 correct'], metricsByClass(all, ['OWNERSHIP'])), '',
     'Conflitos, CAS/fences e scope violations foram exercitados em APIs project-owned.', '',
     '## 21. HOST BYPASS', '',
@@ -171,20 +176,23 @@ export function generateReport() {
     '## 22. V2 IMPROVEMENTS', '', improvements.length ? table(['Scenario','Impact','Severity','V1','V2','Subsystem'], improvements.map((item) => Object.values(item))) : 'Nenhuma melhoria pareada observada.', '',
     '## 23. V2 REGRESSIONS', '', regressions.length ? table(['Scenario','Impact','Severity','V1','V2','Likely subsystem'], regressions.map((item) => Object.values(item))) : 'Nenhuma regressão pareada observada.', '',
     `Limitações V2 sem equivalente suportado no V1: ${c.filter((item) => item.candidate === 'V2' && item.correct === false).map((item) => item.scenarioId).join(', ') || 'nenhuma'}.`, '',
-    '## 24. COST OF V2', '', `Tokens totais observados V2/V1: ${ratio(b2.tokens, b1.tokens)}. Mediana de tempo V2/V1: ${ratio(b2.medianTime, b1.medianTime)}. O overhead por risk class está na seção 8.`, '',
+    '## 24. COST OF V2', '', `Tokens totais observados V2/V1: ${ratio(b2.tokens, b1.tokens)}. Mediana de tempo V2/V1: ${ratio(b2.medianTime, b1.medianTime)}. Estes ratios usam somente ${completedB.length}/${b.length} records terminais não-infra; neste run, apenas B1, portanto não generalizam para outras risk classes.`, '',
     '## 25. ABLATION', '', 'Não executada: seria secundária e aumentaria custo após o corpus principal.', '',
     '## 26. STATISTICAL LIMITATIONS', '',
-    '- LOW/MEDIUM/HIGH não críticos têm n=1 por candidate/scenario; não há significance claim.',
-    '- Três Goals críticos têm n=3; estatística permanece descritiva, sem alegação robusta para população externa.',
+    `- Trials agentic válidos por risco/candidate: ${['LOW','MEDIUM','HIGH','CRITICAL'].map((risk) => `${risk} V1=${completedB.filter((item) => item.risk === risk && item.candidate === 'V1').length}, V2=${completedB.filter((item) => item.risk === risk && item.candidate === 'V2').length}`).join('; ')}.`,
+    '- Não há significance claim; resultados com n=1 são somente observações e falhas de infraestrutura não contam como amostra do candidate.',
     '- Seed e scheduling são estocásticos/não controlados.', '',
     '## 27. BENCHMARK LIMITATIONS', '',
     `- ${unsupported.length} resultados UNSUPPORTED, excluídos de pass/fail.`,
+    `- ${infraFailures.length} resultados BENCHMARK_INFRA_FAILURE, excluídos de pass/fail; os logs raw não foram preservados, então a causa específica permanece UNKNOWN.`,
     '- Sem Android/iOS físico, serviço externo real, coordenação distribuída ou interceptação host-global.',
     '- Context bytes, active execution duration, feedback attempts e direct host reads ficaram UNKNOWN quando não emitidos.', '',
     '## 28. FINAL RECOMMENDATION', '', `**${recommendation}**`, '',
     '## 29. TARGETED FOLLOWUPS', '',
-    memoryConcurrency?.correct === false ? '- P1: avaliar CAS/lock para promoções concorrentes de Memory; impacto esperado: evitar lost update.' : '- P0/P1/P2: nenhum follow-up obrigatório derivado.',
-    '- P2: ampliar repetições agentic apenas se a decisão exigir maior poder estatístico.', '',
+    '- P0: diagnosticar e tornar observável a falha de infraestrutura agentic antes de repetir o corpus; impacto esperado: evidência pareada válida.',
+    ...(regressions.some((item) => item.scenario === 'B1') ? ['- P1: investigar o false block e custo desproporcional do V2 em B1 LOW; não corrigir dentro deste benchmark.'] : []),
+    ...(memoryConcurrency?.correct === false ? ['- P1: avaliar CAS/lock para promoções concorrentes de Memory; impacto esperado: evitar lost update.'] : []),
+    '- P2: ampliar repetições agentic somente após resolver a infraestrutura e se a decisão exigir maior poder estatístico.', '',
     '## 30. COMMITS', '',
     `- Suite: ${suiteCommit} (test(harness): add frozen v1-v2 benchmark suite).`,
     '- Results/report: commit que contém este arquivo; resolva com `git log -1 --format=%H -- docs/ai/benchmarks/harness-v1-v2/report.md`.', '',
@@ -199,10 +207,10 @@ export function generateReport() {
     '- Suite/ground truth não foram alteradas após o primeiro trial.',
     '- Token UNKNOWN permaneceu UNKNOWN; regressões V2 não foram ocultadas.', '',
     '## Failure taxonomy records', '', table(['Candidate','Scenario','Trial','Classes','Severity','Evidence'], all.filter((item) => item.failureClasses.length)
-      .map((item) => [item.candidate,item.scenarioId,item.trialId,item.failureClasses.join(', '),item.risk,item.evidenceRefs.join(', ')])), '',
+      .map((item) => [item.candidate,item.scenarioId,item.trialId,item.failureClasses.join(', '),item.risk,item.evidenceRefs.map(evidence).join(', ')])), '',
     '## Reproduction', '', '```sh', 'npm run benchmark:tier-a', 'npm run benchmark:tier-b', 'npm run benchmark:tier-c', 'npm run benchmark:report', 'npm run benchmark:full', '```', '',
     'Tier A/C and report generation are deterministic for the frozen environment. Tier B is stochastic and only paired, not perfectly reproducible.', '',
-    `Descriptive time stats (Tier B): V1 mean/median/range ${fmt(mean(b.filter((x)=>x.candidate==='V1').map((x)=>x.timeMetrics.wallClockDurationMs)))}/${fmt(b1.medianTime)}/${range(b.filter((x)=>x.candidate==='V1').map((x)=>x.timeMetrics.wallClockDurationMs))}; V2 ${fmt(mean(b.filter((x)=>x.candidate==='V2').map((x)=>x.timeMetrics.wallClockDurationMs)))}/${fmt(b2.medianTime)}/${range(b.filter((x)=>x.candidate==='V2').map((x)=>x.timeMetrics.wallClockDurationMs))}.`,
+    `Descriptive time stats (Tier B, terminal non-infra only): V1 mean/median/range ${fmt(mean(completedB.filter((x)=>x.candidate==='V1').map((x)=>x.timeMetrics.wallClockDurationMs)))}/${fmt(b1.medianTime)}/${range(completedB.filter((x)=>x.candidate==='V1').map((x)=>x.timeMetrics.wallClockDurationMs))}; V2 ${fmt(mean(completedB.filter((x)=>x.candidate==='V2').map((x)=>x.timeMetrics.wallClockDurationMs)))}/${fmt(b2.medianTime)}/${range(completedB.filter((x)=>x.candidate==='V2').map((x)=>x.timeMetrics.wallClockDurationMs))}.`,
   ];
   return `${lines.join('\n')}\n`;
 }

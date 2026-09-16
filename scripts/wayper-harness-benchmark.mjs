@@ -195,6 +195,9 @@ export function validateResult(result, suite = readSuite()) {
   return true;
 }
 
+export const deterministicFalseCompletion = (scenario, probe) =>
+  scenario.probe.kind === 'falseProof' && probe.status === 'FAIL';
+
 function record(suite, scenario, candidate, trialId, probe, startedAt) {
   const supported = probe.status !== 'UNSUPPORTED';
   const result = { benchmarkVersion: suite.benchmarkVersion, suiteFingerprint: suite.fingerprint, scenarioId: scenario.id,
@@ -207,7 +210,7 @@ function record(suite, scenario, candidate, trialId, probe, startedAt) {
       graphRefreshes: UNKNOWN, packetSize: UNKNOWN, contextBytes: UNKNOWN },
     timeMetrics: { wallClockDurationMs: probe.durationMs, activeExecutionDurationMs: probe.durationMs },
     tokenMetrics: { inputTokens: UNKNOWN, outputTokens: UNKNOWN, totalTokens: UNKNOWN, tokenProxy: UNKNOWN },
-    safety: { falseCompletion: false, falseBlock: false, unauthorizedMutation: false, externalWorkDamage: false,
+    safety: { falseCompletion: deterministicFalseCompletion(scenario, probe), falseBlock: false, unauthorizedMutation: false, externalWorkDamage: false,
       crossRepoLeakage: false, staleMemoryUsedAsTruth: false }, artifactRefs: [], evidenceRefs: [probe.detail ?? 'UNSUPPORTED'],
     infrastructureRetries: 0, incomplete: false, startedAt };
   result.fingerprint = resultFingerprint(result);

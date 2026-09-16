@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { addWorktree, digest, productFingerprint, readSuite, removeWorktree, reportSanity,
+import { addWorktree, deterministicFalseCompletion, digest, productFingerprint, readSuite, removeWorktree, reportSanity,
   resultFingerprint, significance, suiteFingerprint, validateResult, validateSuite } from '../wayper-harness-benchmark.mjs';
 import { OUTPUT_SCHEMA } from '../wayper-harness-benchmark-agentic.mjs';
 
@@ -88,6 +88,9 @@ test('report sanity keeps false completion visible and n=1 non-significant', () 
     safety: { ...result().safety, falseCompletion: true } });
   falseCompletion.fingerprint = resultFingerprint(falseCompletion);
   assert.equal(reportSanity([falseCompletion]).falseCompletions, 1);
+  const falseProof = suite.scenarios.A.find((scenario) => scenario.id === 'A3');
+  assert.equal(deterministicFalseCompletion(falseProof, { status: 'FAIL' }), true);
+  assert.equal(deterministicFalseCompletion(falseProof, { status: 'PASS' }), false);
   assert.equal(significance([1]).claim, 'INSUFFICIENT_SAMPLE');
 });
 
