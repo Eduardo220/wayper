@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
 import { spawn, spawnSync } from 'node:child_process';
-import { addWorktree, digest, readSuite, removeWorktree, resultFingerprint, RESULTS_ROOT, ROOT, validateResult, validateSuite } from './wayper-harness-benchmark.mjs';
+import { addWorktree, digest, readProfileSuite, removeWorktree, resultFingerprint, RESULTS_ROOT, ROOT, validateResult, validateSuite } from './wayper-harness-benchmark.mjs';
 
 const UNKNOWN = 'UNKNOWN';
 const RAW_ROOT = path.join(ROOT, '.wayper-context', 'benchmark-runs');
@@ -103,17 +103,21 @@ export function runProcess(executable, args, { cwd, timeoutMs, stdoutPath, stder
   });
 }
 
-function usage(jsonl) {
-  let input = UNKNOWN; let output = UNKNOWN;
+export function usage(jsonl) {
+  let input = 0; let output = 0; let cached = 0; let cacheWrite = 0; let reasoning = 0; let observed = false;
   for (const line of jsonl.split('\n').filter(Boolean)) {
     try {
-      const event = JSON.parse(line); const text = JSON.stringify(event);
-      for (const match of text.matchAll(/"(?:input_tokens|inputTokens)":(\d+)/g)) input = Math.max(input === UNKNOWN ? 0 : input, Number(match[1]));
-      for (const match of text.matchAll(/"(?:output_tokens|outputTokens)":(\d+)/g)) output = Math.max(output === UNKNOWN ? 0 : output, Number(match[1]));
+      const event = JSON.parse(line); const value = event.type === 'turn.completed' ? event.usage : null;
+      if (!value || !Number.isSafeInteger(value.input_tokens) || !Number.isSafeInteger(value.output_tokens)) continue;
+      observed = true; input += value.input_tokens; output += value.output_tokens;
+      cached += value.cached_input_tokens ?? 0; cacheWrite += value.cache_write_input_tokens ?? 0;
+      reasoning += value.reasoning_output_tokens ?? 0;
     } catch { /* bounded non-JSON stderr is ignored */ }
   }
-  return { inputTokens: input, outputTokens: output,
-    totalTokens: Number.isFinite(input) && Number.isFinite(output) ? input + output : UNKNOWN, tokenProxy: UNKNOWN };
+  return { inputTokens: observed ? input : UNKNOWN, outputTokens: observed ? output : UNKNOWN,
+    totalTokens: observed ? input + output : UNKNOWN, cachedInputTokens: observed ? cached : UNKNOWN,
+    cacheWriteInputTokens: observed ? cacheWrite : UNKNOWN, reasoningOutputTokens: observed ? reasoning : UNKNOWN,
+    tokenProxy: UNKNOWN };
 }
 
 export function parseCandidateOutput(outputPath) {
@@ -245,17 +249,27 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
     const stdoutPath = path.join(attemptRoot, 'stdout.log'); const stderrPath = path.join(attemptRoot, 'stderr.log');
     fs.writeFileSync(stdoutPath, ''); fs.writeFileSync(stderrPath, '');
     let item; let run = { status: null, signal: null, error: null, stdout: '', stderr: '', timedOut: false, interrupted: false, durationMs: 0 };
-    let classification; let candidateOutput = null; let scored = null; let eventLog = '';
+    let classification; let candidateOutput = null; let scored = null; let eventLog = ''; let invocation = null;
     try {
       item = adapters.addWorktree(suite.candidates[candidate].sha, `${scenario.id.toLowerCase()}-${candidate.toLowerCase()}-${trialNumber}-${attempt}`);
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: item.directory, encoding: 'utf8' });
+      if (head.status !== 0 || head.stdout.trim() !== suite.candidates[candidate].sha) {
+        throw new Error(`CANDIDATE_SHA_MISMATCH: expected ${suite.candidates[candidate].sha}; observed ${head.stdout.trim() || head.stderr.trim()}`);
+      }
       const fixtureRoot = materialize(item.directory, scenario); const fixtureBefore = snapshot(fixtureRoot);
       const schemaPath = path.join(attemptRoot, 'output-schema.json'); const outputPath = path.join(attemptRoot, 'final.json');
       fs.writeFileSync(schemaPath, `${JSON.stringify(OUTPUT_SCHEMA)}\n`);
       const isolatedTemp = path.join(attemptRoot, 'tmp'); const isolatedCache = path.join(attemptRoot, 'cache');
       fs.mkdirSync(isolatedTemp); fs.mkdirSync(isolatedCache);
+      const cliVersion = spawnSync('codex', ['--version'], { cwd: item.directory, encoding: 'utf8' });
+      if (cliVersion.status !== 0 || cliVersion.stdout.trim() !== suite.model.runtime) {
+        throw new Error(`CODEX_RUNTIME_MISMATCH: expected ${suite.model.runtime}; observed ${cliVersion.stdout.trim() || cliVersion.error?.message || cliVersion.stderr.trim()}`);
+      }
       const args = ['exec', '--ignore-user-config', '--ephemeral', '--json', '--model', suite.model.name,
         '-c', `model_reasoning_effort=${JSON.stringify(suite.model.effort)}`, '--sandbox', 'workspace-write',
         '--output-schema', schemaPath, '--output-last-message', outputPath, '--cd', item.directory, prompt(scenario)];
+      invocation = { executable: 'codex', args: args.slice(0, -1), checkoutSha: head.stdout.trim(), promptHash: digest(args.at(-1)),
+        cliVersion: cliVersion.stdout.trim(), runtime: attemptRoot, temporaryDirectory: isolatedTemp, cacheDirectory: isolatedCache };
       run = await adapters.runProcess('codex', args, { cwd: item.directory,
         timeoutMs: suite.budgets.maxRuntimeSeconds * 1000, stdoutPath, stderrPath, signal: options.signal,
         env: { TMPDIR: isolatedTemp, XDG_CACHE_HOME: isolatedCache, WAYPER_BENCHMARK_RUNTIME: attemptRoot } });
@@ -274,7 +288,7 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
         run.error = error.message;
       }
     }
-    const attemptRecord = { attempt, startedAt, classification, process: { exitCode: run.status ?? null, signal: run.signal ?? null,
+    const attemptRecord = { attempt, startedAt, invocation, classification, process: { exitCode: run.status ?? null, signal: run.signal ?? null,
       timedOut: Boolean(run.timedOut), interrupted: Boolean(run.interrupted), durationMs: run.durationMs ?? 0 },
       diagnostic: diagnostic(classification, run, stdoutPath, stderrPath) };
     atomicWrite(path.join(attemptRoot, 'attempt.json'), attemptRecord);
@@ -284,10 +298,20 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
     infrastructureRetries++;
   }
   const { classification, candidateOutput, scored, run, eventLog, attemptRoot } = terminal;
+  const allEventLogs = fs.readdirSync(trialRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^attempt-\d+$/.test(entry.name))
+    .sort((a, b) => Number(a.name.slice(8)) - Number(b.name.slice(8)))
+    .map((entry) => { const file = path.join(trialRoot, entry.name, 'stdout.log'); return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''; }).join('\n');
+  const processWallMs = fs.readdirSync(trialRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^attempt-\d+$/.test(entry.name))
+    .map((entry) => path.join(trialRoot, entry.name, 'attempt.json'))
+    .filter((file) => fs.existsSync(file))
+    .reduce((total, file) => total + (JSON.parse(fs.readFileSync(file, 'utf8')).process?.durationMs ?? 0), 0);
   const incomplete = classification.outcome !== 'CANDIDATE_RESULT';
   const safeScored = scored ?? { necessaryHuman: false, unnecessaryHuman: false, validation: { status: 'NOT_APPLICABLE', hash: null },
     falseCompletion: false, falseBlock: false, unauthorized: [], changed: [], fileFailures: [] };
-    const result = { benchmarkVersion: suite.benchmarkVersion, suiteFingerprint: suite.fingerprint, scenarioId: scenario.id,
+    const result = { benchmarkVersion: suite.benchmarkVersion, ...(suite.profile ? { profile: suite.profile, codexRuntime: suite.model.runtime } : {}),
+      suiteFingerprint: suite.fingerprint, scenarioId: scenario.id,
       artifactId: digest(`${scenario.id}|${trialNumber}|${startedAt}`).slice(0, 27), candidate, candidateSha: suite.candidates[candidate].sha,
       trialId: `${scenario.id}-T${trialNumber}`, tier: 'B', risk: scenario.risk, model: suite.model.name, effort: suite.model.effort,
       outcome: incomplete ? classification.outcome : candidateOutput.outcome,
@@ -301,7 +325,8 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
         graphQueries: (eventLog.match(/graphify(?::|\s)+(?:query|path|explain)/gi) ?? []).length,
         graphQueryHits: UNKNOWN, graphRefreshes: (eventLog.match(/graphify(?::|\s)+(?:update|build)/gi) ?? []).length,
         packetSize: UNKNOWN, contextBytes: UNKNOWN },
-      timeMetrics: { wallClockDurationMs: run.durationMs, activeExecutionDurationMs: UNKNOWN }, tokenMetrics: usage(eventLog),
+      timeMetrics: { wallClockDurationMs: suite.profile === 'operational' ? processWallMs : run.durationMs,
+        activeExecutionDurationMs: UNKNOWN }, tokenMetrics: usage(allEventLogs),
       safety: { falseCompletion: incomplete ? false : safeScored.falseCompletion, falseBlock: incomplete ? false : safeScored.falseBlock,
         unauthorizedMutation: safeScored.unauthorized.length > 0, externalWorkDamage: false,
         crossRepoLeakage: safeScored.unauthorized.some((file) => file.includes('wayper-site')), staleMemoryUsedAsTruth: false },
@@ -314,22 +339,46 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
     return result;
 }
 
-export async function runAgentic({ persist = true, only = null, artifactsRoot = RAW_ROOT, resultFile = null, adapters, signal,
-  resumeRunId = null, trialRunner = singleTrial } = {}) {
-  const suite = readSuite(); validateSuite(suite);
+export async function runAgentic({ profile = 'operational', persist = true, only = null, artifactsRoot = null, resultFile = null, adapters, signal,
+  resumeRunId = null, extendSmoke = false, trialRunner = singleTrial } = {}) {
+  const suite = readProfileSuite(profile); validateSuite(suite);
+  artifactsRoot ??= profile === 'operational' ? path.join(RAW_ROOT, 'operational') : RAW_ROOT;
+  if (only && (!only.length || new Set(only).size !== only.length || only.some((id) => !suite.scenarios.B.some((item) => item.id === id)))) {
+    throw new Error('INVALID_SCENARIO_FILTER');
+  }
   let runId; let runRoot; let checkpoint; let results; let startedAt; let resumedAt = null;
   if (resumeRunId) {
     const resolvedArtifacts = path.resolve(artifactsRoot); runRoot = path.resolve(resolvedArtifacts, resumeRunId);
     if (path.dirname(runRoot) !== resolvedArtifacts || path.basename(runRoot) !== resumeRunId) throw new Error('INVALID_RESUME_RUN_ID');
     checkpoint = JSON.parse(fs.readFileSync(path.join(runRoot, 'checkpoint.json'), 'utf8'));
-    if (checkpoint.runId !== resumeRunId || checkpoint.suiteFingerprint !== suite.fingerprint) throw new Error('RESUME_CHECKPOINT_MISMATCH');
-    if (only && JSON.stringify(only) !== JSON.stringify(checkpoint.only)) throw new Error('RESUME_FILTER_MISMATCH');
-    only = checkpoint.only ?? null; runId = resumeRunId;
+    if (checkpoint.runId !== resumeRunId || checkpoint.suiteFingerprint !== suite.fingerprint ||
+      (checkpoint.profile ?? 'historical') !== profile) throw new Error('RESUME_CHECKPOINT_MISMATCH');
+    if (extendSmoke) {
+      const expected = new Set(['B1-T1-V1', 'B1-T1-V2', 'B2-T1-V1', 'B2-T1-V2']);
+      const actual = new Set(checkpoint.completed.map((row) => `${row.trialId}-${row.candidate}`));
+      if (profile !== 'operational' || checkpoint.status !== 'COMPLETE' ||
+        JSON.stringify(checkpoint.only) !== JSON.stringify(['B1', 'B2']) ||
+        checkpoint.completed.length !== expected.size || actual.size !== expected.size ||
+        [...expected].some((key) => !actual.has(key)) || checkpoint.completed.some((row) =>
+          row.outcome === 'BENCHMARK_INFRA_FAILURE' || !fs.existsSync(path.join(ROOT, row.rawArtifacts ?? '', 'attempt-1', 'stdout.log')) ||
+          !fs.existsSync(path.join(ROOT, row.rawArtifacts ?? '', 'attempt-1', 'stderr.log')))) {
+        throw new Error('SMOKE_NOT_PROMOTABLE');
+      }
+      atomicWrite(path.join(runRoot, 'smoke-checkpoint.json'), checkpoint);
+      atomicWrite(path.join(runRoot, 'smoke-results.json'), checkpoint.completed);
+      only = null;
+    } else {
+      if (only && JSON.stringify(only) !== JSON.stringify(checkpoint.only)) throw new Error('RESUME_FILTER_MISMATCH');
+      only = checkpoint.only ?? null;
+    }
+    runId = resumeRunId;
     startedAt = checkpoint.startedAt ?? checkpoint.completed?.[0]?.startedAt ?? new Date().toISOString();
     resumedAt = new Date().toISOString();
     results = checkpoint.completed.filter((result) => !isUsageLimit(result));
     results.forEach((result) => validateResult(result, suite));
-    if (results.length === checkpoint.completed.length && checkpoint.status === 'COMPLETE') throw new Error('BENCHMARK_RUN_ALREADY_COMPLETE');
+    if (!extendSmoke && results.length === checkpoint.completed.length && checkpoint.status === 'COMPLETE') {
+      throw new Error('BENCHMARK_RUN_ALREADY_COMPLETE');
+    }
   } else {
     runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
     runRoot = path.join(artifactsRoot, runId); fs.mkdirSync(runRoot, { recursive: true });
@@ -338,25 +387,26 @@ export async function runAgentic({ persist = true, only = null, artifactsRoot = 
   const scenarios = suite.scenarios.B.filter((item) => !only || only.includes(item.id));
   const checkpointPath = path.join(runRoot, 'checkpoint.json'); const rawResults = path.join(runRoot, 'results.json');
   const completed = new Set(results.map((result) => `${result.trialId}-${result.candidate}`));
-  atomicWrite(checkpointPath, { status: 'RUNNING', runId, suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt });
+  atomicWrite(checkpointPath, { status: 'RUNNING', runId, profile, suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt });
   for (let index = 0; index < scenarios.length; index++) {
     const scenario = scenarios[index];
     for (let trial = 1; trial <= scenario.repetitions; trial++) {
       const order = (index + trial) % 2 ? ['V1', 'V2'] : ['V2', 'V1'];
       for (const candidate of order) {
         if (completed.has(`${scenario.id}-T${trial}-${candidate}`)) continue;
-        atomicWrite(checkpointPath, { status: 'RUNNING', runId, suiteFingerprint: suite.fingerprint, only,
+        atomicWrite(checkpointPath, { status: 'RUNNING', runId, profile, suiteFingerprint: suite.fingerprint, only,
           current: { scenarioId: scenario.id, trial, candidate }, completed: results, startedAt, resumedAt, updatedAt: new Date().toISOString() });
         const result = await trialRunner(suite, scenario, candidate, trial, { runRoot, adapters, signal });
         if (isUsageLimit(result)) {
           atomicWrite(rawResults, [...results, result]);
-          atomicWrite(checkpointPath, { status: 'INFRASTRUCTURE_BLOCKED', runId, suiteFingerprint: suite.fingerprint, only,
+          atomicWrite(checkpointPath, { status: profile === 'operational' ? 'EXTERNAL_BLOCK' : 'INFRASTRUCTURE_BLOCKED',
+            runId, profile, suiteFingerprint: suite.fingerprint, only,
             current: { scenarioId: scenario.id, trial, candidate }, completed: results, blockedResult: result, startedAt, resumedAt,
             resultFile: rawResults, updatedAt: new Date().toISOString() });
           throw new Error(`CODEX_USAGE_LIMIT: resume with --resume=${runId}`);
         }
         results.push(result); completed.add(`${result.trialId}-${candidate}`);
-        atomicWrite(checkpointPath, { status: signal?.aborted ? 'INTERRUPTED' : 'RUNNING', runId,
+        atomicWrite(checkpointPath, { status: signal?.aborted ? 'INTERRUPTED' : 'RUNNING', runId, profile,
           suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt, updatedAt: new Date().toISOString() });
         console.log(`${result.trialId} ${candidate} ${result.outcome}`);
         if (signal?.aborted) break;
@@ -366,10 +416,14 @@ export async function runAgentic({ persist = true, only = null, artifactsRoot = 
     if (signal?.aborted) break;
   }
   if (results.length > suite.budgets.maxTrialCount) throw new Error('BENCHMARK_TRIAL_BUDGET_EXCEEDED');
-  const output = resultFile ?? (!only ? path.join(RESULTS_ROOT, 'tier-b.json') : path.join(runRoot, 'results.json'));
+  const output = resultFile ?? (!only ? path.join(RESULTS_ROOT, ...(profile === 'operational' ? ['operational'] : []), 'tier-b.json')
+    : path.join(runRoot, 'results.json'));
+  if (profile === 'operational' && path.resolve(output) === path.join(RESULTS_ROOT, 'tier-b.json')) {
+    throw new Error('HISTORICAL_RESULT_PATH_FORBIDDEN');
+  }
   atomicWrite(rawResults, results);
   if (persist) atomicWrite(output, results);
-  atomicWrite(checkpointPath, { status: signal?.aborted ? 'INTERRUPTED' : 'COMPLETE', runId,
+  atomicWrite(checkpointPath, { status: signal?.aborted ? 'INTERRUPTED' : 'COMPLETE', runId, profile,
     suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt, resultFile: output,
     updatedAt: new Date().toISOString() });
   return results;
@@ -380,13 +434,16 @@ if (path.resolve(process.argv[1] ?? '') === path.resolve(new URL(import.meta.url
   const artifactsArg = process.argv.find((arg) => arg.startsWith('--artifacts-dir='));
   const resultArg = process.argv.find((arg) => arg.startsWith('--result-file='));
   const resumeArg = process.argv.find((arg) => arg.startsWith('--resume='));
+  const extendArg = process.argv.find((arg) => arg.startsWith('--extend-smoke='));
+  const profileArg = process.argv.find((arg) => arg.startsWith('--profile='));
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
-  runAgentic({ only: onlyArg ? onlyArg.slice(7).split(',') : null,
-    artifactsRoot: artifactsArg ? path.resolve(artifactsArg.slice(16)) : RAW_ROOT,
+  runAgentic({ profile: profileArg ? profileArg.slice(10) : 'operational', only: onlyArg ? onlyArg.slice(7).split(',') : null,
+    artifactsRoot: artifactsArg ? path.resolve(artifactsArg.slice(16)) : null,
     resultFile: resultArg ? path.resolve(resultArg.slice(14)) : null,
-    resumeRunId: resumeArg ? resumeArg.slice(9) : null, signal: controller.signal })
+    resumeRunId: extendArg ? extendArg.slice(15) : resumeArg ? resumeArg.slice(9) : null,
+    extendSmoke: Boolean(extendArg), signal: controller.signal })
     .then((rows) => { console.log(`TIER B COMPLETE ${rows.length} records`); if (controller.signal.aborted) process.exitCode = 130; })
     .catch((error) => { console.error(error.stack ?? error.message); process.exitCode = 1; });
 }
