@@ -74,17 +74,29 @@ function safeTemporary(pathname, parent) {
   return resolved;
 }
 
-export function addWorktree(sha, label, parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wayper-bench-'))) {
+export function addWorktree(sha, label, parent = null) {
+  const ownsParent = parent === null;
+  parent ??= fs.mkdtempSync(path.join(os.tmpdir(), 'wayper-bench-'));
   const directory = safeTemporary(path.join(parent, label), parent);
   const result = git(['worktree', 'add', '--detach', directory, sha]);
-  if (result.status !== 0) throw new Error(result.stderr.trim());
-  return { parent, directory, runtime: fs.mkdtempSync(path.join(parent, `${label}-runtime-`)) };
+  if (result.status !== 0) {
+    if (ownsParent) fs.rmSync(parent, { recursive: true, force: true });
+    throw new Error(result.stderr.trim() || `Cannot create worktree for ${sha}`);
+  }
+  try {
+    return { parent, directory, runtime: fs.mkdtempSync(path.join(parent, `${label}-runtime-`)) };
+  } catch (error) {
+    git(['worktree', 'remove', '--force', directory]);
+    if (ownsParent) fs.rmSync(parent, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export function removeWorktree(item) {
   if (!item?.directory || !item?.parent) return;
   safeTemporary(item.directory, item.parent);
-  git(['worktree', 'remove', '--force', item.directory]);
+  const result = git(['worktree', 'remove', '--force', item.directory]);
+  if (result.status !== 0) throw new Error(result.stderr.trim() || `Cannot remove worktree ${item.directory}`);
   fs.rmSync(item.parent, { recursive: true, force: true });
 }
 

@@ -1,10 +1,13 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
 import { spawn, spawnSync } from 'node:child_process';
-import { addWorktree, digest, readSuite, removeWorktree, resultFingerprint, RESULTS_ROOT, validateSuite } from './wayper-harness-benchmark.mjs';
+import { addWorktree, digest, readSuite, removeWorktree, resultFingerprint, RESULTS_ROOT, ROOT, validateResult, validateSuite } from './wayper-harness-benchmark.mjs';
 
 const UNKNOWN = 'UNKNOWN';
+const RAW_ROOT = path.join(ROOT, '.wayper-context', 'benchmark-runs');
+const OUTPUT_KEYS = ['humanIntervention', 'outcome', 'summary', 'validation'];
 export const OUTPUT_SCHEMA = {
   type: 'object', additionalProperties: false,
   required: ['outcome', 'summary', 'humanIntervention', 'validation'],
@@ -56,18 +59,47 @@ function prompt(scenario) {
   ].join('\n\n');
 }
 
-function runProcess(executable, args, { cwd, timeoutMs, log }) {
+const atomicWrite = (file, value) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  fs.renameSync(temporary, file);
+};
+
+const tail = (value, limit = 16_384) => value.length <= limit ? value : value.slice(-limit);
+
+function killProcess(child, signal) {
+  try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* already closed */ } }
+}
+
+export function runProcess(executable, args, { cwd, timeoutMs, stdoutPath, stderrPath, env = {}, signal, killGraceMs = 1_000 }) {
   return new Promise((resolve) => {
     const started = process.hrtime.bigint();
-    const child = spawn(executable, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, WAYPER_BENCHMARK: '1' } });
-    let stdout = ''; let stderr = ''; let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); }, timeoutMs);
-    child.stdout.on('data', (chunk) => { stdout += chunk; fs.appendFileSync(log, chunk); });
-    child.stderr.on('data', (chunk) => { stderr += chunk; fs.appendFileSync(log, chunk); });
-    child.on('error', (error) => { clearTimeout(timer); resolve({ error, status: null, stdout, stderr, timedOut,
-      durationMs: Number(process.hrtime.bigint() - started) / 1e6 }); });
-    child.on('close', (status, signal) => { clearTimeout(timer); resolve({ status, signal, stdout, stderr, timedOut,
-      durationMs: Number(process.hrtime.bigint() - started) / 1e6 }); });
+    fs.mkdirSync(path.dirname(stdoutPath), { recursive: true });
+    fs.writeFileSync(stdoutPath, ''); fs.writeFileSync(stderrPath, '');
+    const child = spawn(executable, args, { cwd, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, WAYPER_BENCHMARK: '1', ...env } });
+    let stdout = ''; let stderr = ''; let timedOut = false; let interrupted = false; let settled = false; let killTimer;
+    const terminate = (reason) => {
+      if (settled) return;
+      if (reason === 'timeout') timedOut = true;
+      else interrupted = true;
+      killProcess(child, 'SIGTERM');
+      killTimer = setTimeout(() => killProcess(child, 'SIGKILL'), killGraceMs);
+    };
+    const timer = setTimeout(() => terminate('timeout'), timeoutMs);
+    const abort = () => terminate('interrupt');
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    child.stdout.on('data', (chunk) => { stdout = tail(stdout + chunk); fs.appendFileSync(stdoutPath, chunk); });
+    child.stderr.on('data', (chunk) => { stderr = tail(stderr + chunk); fs.appendFileSync(stderrPath, chunk); });
+    const finish = (data) => {
+      if (settled) return; settled = true; clearTimeout(timer); clearTimeout(killTimer); signal?.removeEventListener('abort', abort);
+      resolve({ ...data, stdout, stderr, timedOut, interrupted,
+        durationMs: Number(process.hrtime.bigint() - started) / 1e6 });
+    };
+    child.on('error', (error) => finish({ error: error.message, status: null, signal: null }));
+    child.on('close', (status, closeSignal) => finish({ error: null, status, signal: closeSignal }));
   });
 }
 
@@ -82,6 +114,69 @@ function usage(jsonl) {
   }
   return { inputTokens: input, outputTokens: output,
     totalTokens: Number.isFinite(input) && Number.isFinite(output) ? input + output : UNKNOWN, tokenProxy: UNKNOWN };
+}
+
+export function parseCandidateOutput(outputPath) {
+  if (!fs.existsSync(outputPath)) return { error: 'OUTPUT_MISSING', output: null };
+  let output;
+  try { output = JSON.parse(fs.readFileSync(outputPath, 'utf8')); } catch (error) {
+    return { error: `OUTPUT_MALFORMED: ${error.message}`, output: null };
+  }
+  const valid = output && typeof output === 'object' && !Array.isArray(output) &&
+    Object.keys(output).sort().join('|') === OUTPUT_KEYS.join('|') &&
+    OUTPUT_SCHEMA.properties.outcome.enum.includes(output.outcome) && typeof output.summary === 'string' &&
+    Buffer.byteLength(output.summary) <= OUTPUT_SCHEMA.properties.summary.maxLength &&
+    typeof output.humanIntervention === 'boolean' && Array.isArray(output.validation) &&
+    output.validation.length <= OUTPUT_SCHEMA.properties.validation.maxItems &&
+    output.validation.every((item) => typeof item === 'string' && Buffer.byteLength(item) <= OUTPUT_SCHEMA.properties.validation.items.maxLength);
+  return valid ? { error: null, output } : { error: 'OUTPUT_SCHEMA_INVALID', output: null };
+}
+
+function codexError(run) {
+  let message = null;
+  for (const line of `${run.stdout ?? ''}\n${run.stderr ?? ''}`.split('\n').filter(Boolean)) {
+    try {
+      const event = JSON.parse(line);
+      const candidate = event.type === 'error' ? event.message : event.type === 'turn.failed' ? event.error?.message : null;
+      if (typeof candidate === 'string' && candidate.trim()) message = candidate.trim().replace(/\s+/g, ' ').slice(0, 500);
+    } catch { /* Codex JSONL errors remain available in the raw logs */ }
+  }
+  return message;
+}
+
+export function classifyAttempt({ stage = 'CODEX_EXEC', run = {}, outputError = null }) {
+  if (run.timedOut) return { outcome: 'TIMEOUT', retryable: false, stage, cause: 'PROCESS_TIMEOUT' };
+  if (run.interrupted) return { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: false, stage, cause: 'PROCESS_INTERRUPTED' };
+  if (run.error) return { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: true, stage,
+    cause: `${stage === 'CODEX_EXEC' ? 'SPAWN' : stage}_ERROR: ${run.error}` };
+  if (run.signal) return { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: true, stage, cause: 'PROCESS_SIGNAL' };
+  if (run.status !== 0) {
+    const message = codexError(run);
+    const usageLimit = /\busage limit\b/i.test(message ?? '');
+    return { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: !usageLimit, stage,
+      cause: message ? `${usageLimit ? 'CODEX_USAGE_LIMIT' : 'CODEX_ERROR'}: ${message}` : 'NON_ZERO_EXIT' };
+  }
+  if (outputError) return { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: true, stage: 'RESULT_PARSE', cause: outputError };
+  return { outcome: 'CANDIDATE_RESULT', retryable: false, stage: 'COMPLETE', cause: null };
+}
+
+export const terminalClass = (classification, scored) => classification.outcome === 'CANDIDATE_RESULT'
+  ? (scored?.correct ? 'CANDIDATE_SUCCESS' : 'CANDIDATE_FAILURE') : classification.outcome;
+
+export const isUsageLimit = (result) => result?.terminalClass === 'BENCHMARK_INFRA_FAILURE' &&
+  result.infrastructureDiagnostic?.cause?.startsWith('CODEX_USAGE_LIMIT:');
+
+function fileRef(file) {
+  if (!fs.existsSync(file)) return { path: file, bytes: 0, hash: digest('') };
+  const content = fs.readFileSync(file);
+  return { path: file, bytes: content.length,
+    hash: `sha256:${crypto.createHash('sha256').update(content).digest('hex')}` };
+}
+
+function diagnostic(classification, run, stdoutPath, stderrPath) {
+  return { stage: classification.stage, cause: classification.cause, exitCode: run.status ?? null, signal: run.signal ?? null,
+    timedOut: Boolean(run.timedOut), interrupted: Boolean(run.interrupted), stdout: { ...fileRef(stdoutPath), tail: run.stdout ?? '' },
+    stderr: { ...fileRef(stderrPath), tail: run.stderr ?? '' } };
 }
 
 function statusPaths(root) {
@@ -129,74 +224,169 @@ export function score(scenario, candidateOutput, fixtureRoot, worktreeRoot, fixt
     unnecessaryHuman: candidateOutput?.humanIntervention === true && expectedOutcome !== 'HUMAN_DECISION_REQUIRED' };
 }
 
-async function singleTrial(suite, scenario, candidate, trialNumber) {
-  const item = addWorktree(suite.candidates[candidate].sha, `${scenario.id.toLowerCase()}-${candidate.toLowerCase()}-${trialNumber}`);
-  const startedAt = new Date().toISOString();
-  try {
-    const fixtureRoot = materialize(item.directory, scenario);
-    const fixtureBefore = snapshot(fixtureRoot);
-    const schemaPath = path.join(item.runtime, 'output-schema.json'); const outputPath = path.join(item.runtime, 'final.json');
-    const logPath = path.join(item.runtime, 'events.jsonl'); fs.writeFileSync(schemaPath, JSON.stringify(OUTPUT_SCHEMA)); fs.writeFileSync(logPath, '');
-    const args = ['exec', '--ignore-user-config', '--ephemeral', '--json', '--model', suite.model.name, '-c', `model_reasoning_effort=${JSON.stringify(suite.model.effort)}`,
-      '--sandbox', 'workspace-write', '--output-schema', schemaPath, '--output-last-message', outputPath,
-      '--cd', item.directory, prompt(scenario)];
-    let run; let infrastructureRetries = 0;
-    for (;;) {
-      run = await runProcess('codex', args, { cwd: item.directory, timeoutMs: suite.budgets.maxRuntimeSeconds * 1000, log: logPath });
-      if ((!run.error && run.status !== null) || infrastructureRetries >= suite.budgets.maxInfrastructureRetries) break;
-      infrastructureRetries++;
+export async function singleTrial(suite, scenario, candidate, trialNumber, options = {}) {
+  const adapters = { addWorktree, removeWorktree, runProcess, ...(options.adapters ?? {}) };
+  const trialKey = `${scenario.id}-T${trialNumber}-${candidate}`;
+  const trialRoot = path.join(options.runRoot ?? RAW_ROOT, trialKey);
+  fs.mkdirSync(trialRoot, { recursive: true });
+  const priorAttempts = fs.readdirSync(trialRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^attempt-\d+$/.test(entry.name))
+    .map((entry) => ({ number: Number(entry.name.slice(8)), file: path.join(trialRoot, entry.name, 'attempt.json') }))
+    .sort((a, b) => a.number - b.number);
+  const priorRecords = priorAttempts.filter((item) => fs.existsSync(item.file)).map((item) => JSON.parse(fs.readFileSync(item.file, 'utf8')));
+  const startedAt = priorRecords[0]?.startedAt ?? new Date().toISOString();
+  let infrastructureRetries = priorRecords.filter((item) => item.classification?.outcome === 'BENCHMARK_INFRA_FAILURE' &&
+    !item.classification?.cause?.startsWith('CODEX_USAGE_LIMIT:')).length;
+  let attempt = priorAttempts.at(-1)?.number ?? 0; let terminal;
+  if (infrastructureRetries > suite.budgets.maxInfrastructureRetries) throw new Error('INFRASTRUCTURE_RETRY_BUDGET_EXHAUSTED');
+  for (;;) {
+    attempt++;
+    const attemptRoot = path.join(trialRoot, `attempt-${attempt}`); fs.mkdirSync(attemptRoot, { recursive: true });
+    const stdoutPath = path.join(attemptRoot, 'stdout.log'); const stderrPath = path.join(attemptRoot, 'stderr.log');
+    fs.writeFileSync(stdoutPath, ''); fs.writeFileSync(stderrPath, '');
+    let item; let run = { status: null, signal: null, error: null, stdout: '', stderr: '', timedOut: false, interrupted: false, durationMs: 0 };
+    let classification; let candidateOutput = null; let scored = null; let eventLog = '';
+    try {
+      item = adapters.addWorktree(suite.candidates[candidate].sha, `${scenario.id.toLowerCase()}-${candidate.toLowerCase()}-${trialNumber}-${attempt}`);
+      const fixtureRoot = materialize(item.directory, scenario); const fixtureBefore = snapshot(fixtureRoot);
+      const schemaPath = path.join(attemptRoot, 'output-schema.json'); const outputPath = path.join(attemptRoot, 'final.json');
+      fs.writeFileSync(schemaPath, `${JSON.stringify(OUTPUT_SCHEMA)}\n`);
+      const isolatedTemp = path.join(attemptRoot, 'tmp'); const isolatedCache = path.join(attemptRoot, 'cache');
+      fs.mkdirSync(isolatedTemp); fs.mkdirSync(isolatedCache);
+      const args = ['exec', '--ignore-user-config', '--ephemeral', '--json', '--model', suite.model.name,
+        '-c', `model_reasoning_effort=${JSON.stringify(suite.model.effort)}`, '--sandbox', 'workspace-write',
+        '--output-schema', schemaPath, '--output-last-message', outputPath, '--cd', item.directory, prompt(scenario)];
+      run = await adapters.runProcess('codex', args, { cwd: item.directory,
+        timeoutMs: suite.budgets.maxRuntimeSeconds * 1000, stdoutPath, stderrPath, signal: options.signal,
+        env: { TMPDIR: isolatedTemp, XDG_CACHE_HOME: isolatedCache, WAYPER_BENCHMARK_RUNTIME: attemptRoot } });
+      eventLog = fs.readFileSync(stdoutPath, 'utf8');
+      const parsed = parseCandidateOutput(outputPath); candidateOutput = parsed.output;
+      classification = classifyAttempt({ run, outputError: parsed.error });
+      if (classification.outcome === 'CANDIDATE_RESULT') scored = score(scenario, candidateOutput, fixtureRoot, item.directory, fixtureBefore);
+      const gitDiff = spawnSync('git', ['diff', '--binary'], { cwd: item.directory, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+      fs.writeFileSync(path.join(attemptRoot, 'worktree.diff'), gitDiff.stdout ?? '');
+    } catch (error) {
+      classification = classifyAttempt({ stage: item ? 'TRIAL_SETUP' : 'WORKTREE_SETUP',
+        run: { ...run, error: error.message }, outputError: null });
+    } finally {
+      if (item) try { adapters.removeWorktree(item); } catch (error) {
+        classification = { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: true, stage: 'WORKTREE_CLEANUP', cause: error.message };
+        run.error = error.message;
+      }
     }
-    let candidateOutput = null;
-    try { candidateOutput = JSON.parse(fs.readFileSync(outputPath, 'utf8')); } catch { /* scored as incomplete */ }
-    const scored = score(scenario, candidateOutput, fixtureRoot, item.directory, fixtureBefore);
-    const incomplete = run.timedOut || run.status === null || candidateOutput === null;
-    const eventLog = fs.readFileSync(logPath, 'utf8');
+    const attemptRecord = { attempt, startedAt, classification, process: { exitCode: run.status ?? null, signal: run.signal ?? null,
+      timedOut: Boolean(run.timedOut), interrupted: Boolean(run.interrupted), durationMs: run.durationMs ?? 0 },
+      diagnostic: diagnostic(classification, run, stdoutPath, stderrPath) };
+    atomicWrite(path.join(attemptRoot, 'attempt.json'), attemptRecord);
+    terminal = { classification, candidateOutput, scored, run, eventLog, attemptRoot };
+    if (classification.outcome !== 'BENCHMARK_INFRA_FAILURE' || !classification.retryable ||
+      infrastructureRetries >= suite.budgets.maxInfrastructureRetries) break;
+    infrastructureRetries++;
+  }
+  const { classification, candidateOutput, scored, run, eventLog, attemptRoot } = terminal;
+  const incomplete = classification.outcome !== 'CANDIDATE_RESULT';
+  const safeScored = scored ?? { necessaryHuman: false, unnecessaryHuman: false, validation: { status: 'NOT_APPLICABLE', hash: null },
+    falseCompletion: false, falseBlock: false, unauthorized: [], changed: [], fileFailures: [] };
     const result = { benchmarkVersion: suite.benchmarkVersion, suiteFingerprint: suite.fingerprint, scenarioId: scenario.id,
       artifactId: digest(`${scenario.id}|${trialNumber}|${startedAt}`).slice(0, 27), candidate, candidateSha: suite.candidates[candidate].sha,
       trialId: `${scenario.id}-T${trialNumber}`, tier: 'B', risk: scenario.risk, model: suite.model.name, effort: suite.model.effort,
-      outcome: incomplete ? (run.timedOut ? 'TIMEOUT' : 'BENCHMARK_INFRA_FAILURE') : candidateOutput.outcome,
-      correct: incomplete ? null : scored.correct, failureClasses: incomplete ? [] : scored.correct ? [] : scenario.failureClasses,
-      humanInterventions: candidateOutput?.humanIntervention ? 1 : 0, necessaryHumanInterventions: scored.necessaryHuman ? 1 : 0,
-      unnecessaryClarifications: scored.unnecessaryHuman ? 1 : 0, attempts: UNKNOWN,
-      validationCoverage: scored.validation.status === 'PASS' ? 1 : scored.validation.status === 'NOT_APPLICABLE' ? 1 : 0,
+      outcome: incomplete ? classification.outcome : candidateOutput.outcome,
+      correct: incomplete ? null : safeScored.correct, failureClasses: incomplete ? [] : safeScored.correct ? [] : scenario.failureClasses,
+      humanInterventions: candidateOutput?.humanIntervention ? 1 : 0, necessaryHumanInterventions: safeScored.necessaryHuman ? 1 : 0,
+      unnecessaryClarifications: safeScored.unnecessaryHuman ? 1 : 0, attempts: UNKNOWN,
+      terminalClass: terminalClass(classification, scored),
+      validationCoverage: incomplete ? UNKNOWN : safeScored.validation.status === 'PASS' ? 1 : safeScored.validation.status === 'NOT_APPLICABLE' ? 1 : 0,
       contextMetrics: { contextRequests: UNKNOWN, cacheHits: UNKNOWN, cacheMisses: UNKNOWN, artifactsAcquired: UNKNOWN,
         artifactsReused: UNKNOWN, duplicateAcquisitionsAvoided: UNKNOWN,
         graphQueries: (eventLog.match(/graphify(?::|\s)+(?:query|path|explain)/gi) ?? []).length,
         graphQueryHits: UNKNOWN, graphRefreshes: (eventLog.match(/graphify(?::|\s)+(?:update|build)/gi) ?? []).length,
         packetSize: UNKNOWN, contextBytes: UNKNOWN },
       timeMetrics: { wallClockDurationMs: run.durationMs, activeExecutionDurationMs: UNKNOWN }, tokenMetrics: usage(eventLog),
-      safety: { falseCompletion: incomplete ? false : scored.falseCompletion, falseBlock: incomplete ? false : scored.falseBlock,
-        unauthorizedMutation: scored.unauthorized.length > 0, externalWorkDamage: false,
-        crossRepoLeakage: scored.unauthorized.some((file) => file.includes('wayper-site')), staleMemoryUsedAsTruth: false },
-      artifactRefs: [digest(eventLog), ...(scored.changed.map((file) => `worktree:${file}`))],
-      evidenceRefs: [scored.validation.hash ?? 'NO_EXECUTED_VALIDATION', ...scored.fileFailures], infrastructureRetries, incomplete, startedAt,
-      uncontrolledVariables: suite.environment.uncontrolledVariables };
+      safety: { falseCompletion: incomplete ? false : safeScored.falseCompletion, falseBlock: incomplete ? false : safeScored.falseBlock,
+        unauthorizedMutation: safeScored.unauthorized.length > 0, externalWorkDamage: false,
+        crossRepoLeakage: safeScored.unauthorized.some((file) => file.includes('wayper-site')), staleMemoryUsedAsTruth: false },
+      artifactRefs: [fileRef(path.join(attemptRoot, 'stdout.log')).hash, ...(safeScored.changed.map((file) => `worktree:${file}`))],
+      evidenceRefs: [safeScored.validation.hash ?? 'NO_EXECUTED_VALIDATION', ...safeScored.fileFailures], infrastructureRetries, incomplete, startedAt,
+      infrastructureDiagnostic: incomplete ? diagnostic(classification, run, path.join(attemptRoot, 'stdout.log'), path.join(attemptRoot, 'stderr.log')) : null,
+      rawArtifacts: path.relative(ROOT, trialRoot), uncontrolledVariables: suite.environment.uncontrolledVariables };
     result.fingerprint = resultFingerprint(result);
+    atomicWrite(path.join(trialRoot, 'result.json'), result);
     return result;
-  } finally { removeWorktree(item); }
 }
 
-export async function runAgentic({ persist = true, only = null } = {}) {
+export async function runAgentic({ persist = true, only = null, artifactsRoot = RAW_ROOT, resultFile = null, adapters, signal,
+  resumeRunId = null, trialRunner = singleTrial } = {}) {
   const suite = readSuite(); validateSuite(suite);
+  let runId; let runRoot; let checkpoint; let results; let startedAt; let resumedAt = null;
+  if (resumeRunId) {
+    const resolvedArtifacts = path.resolve(artifactsRoot); runRoot = path.resolve(resolvedArtifacts, resumeRunId);
+    if (path.dirname(runRoot) !== resolvedArtifacts || path.basename(runRoot) !== resumeRunId) throw new Error('INVALID_RESUME_RUN_ID');
+    checkpoint = JSON.parse(fs.readFileSync(path.join(runRoot, 'checkpoint.json'), 'utf8'));
+    if (checkpoint.runId !== resumeRunId || checkpoint.suiteFingerprint !== suite.fingerprint) throw new Error('RESUME_CHECKPOINT_MISMATCH');
+    if (only && JSON.stringify(only) !== JSON.stringify(checkpoint.only)) throw new Error('RESUME_FILTER_MISMATCH');
+    only = checkpoint.only ?? null; runId = resumeRunId;
+    startedAt = checkpoint.startedAt ?? checkpoint.completed?.[0]?.startedAt ?? new Date().toISOString();
+    resumedAt = new Date().toISOString();
+    results = checkpoint.completed.filter((result) => !isUsageLimit(result));
+    results.forEach((result) => validateResult(result, suite));
+    if (results.length === checkpoint.completed.length && checkpoint.status === 'COMPLETE') throw new Error('BENCHMARK_RUN_ALREADY_COMPLETE');
+  } else {
+    runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
+    runRoot = path.join(artifactsRoot, runId); fs.mkdirSync(runRoot, { recursive: true });
+    results = []; startedAt = new Date().toISOString();
+  }
   const scenarios = suite.scenarios.B.filter((item) => !only || only.includes(item.id));
-  const results = [];
+  const checkpointPath = path.join(runRoot, 'checkpoint.json'); const rawResults = path.join(runRoot, 'results.json');
+  const completed = new Set(results.map((result) => `${result.trialId}-${result.candidate}`));
+  atomicWrite(checkpointPath, { status: 'RUNNING', runId, suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt });
   for (let index = 0; index < scenarios.length; index++) {
     const scenario = scenarios[index];
     for (let trial = 1; trial <= scenario.repetitions; trial++) {
       const order = (index + trial) % 2 ? ['V1', 'V2'] : ['V2', 'V1'];
       for (const candidate of order) {
-        const result = await singleTrial(suite, scenario, candidate, trial); results.push(result);
+        if (completed.has(`${scenario.id}-T${trial}-${candidate}`)) continue;
+        atomicWrite(checkpointPath, { status: 'RUNNING', runId, suiteFingerprint: suite.fingerprint, only,
+          current: { scenarioId: scenario.id, trial, candidate }, completed: results, startedAt, resumedAt, updatedAt: new Date().toISOString() });
+        const result = await trialRunner(suite, scenario, candidate, trial, { runRoot, adapters, signal });
+        if (isUsageLimit(result)) {
+          atomicWrite(rawResults, [...results, result]);
+          atomicWrite(checkpointPath, { status: 'INFRASTRUCTURE_BLOCKED', runId, suiteFingerprint: suite.fingerprint, only,
+            current: { scenarioId: scenario.id, trial, candidate }, completed: results, blockedResult: result, startedAt, resumedAt,
+            resultFile: rawResults, updatedAt: new Date().toISOString() });
+          throw new Error(`CODEX_USAGE_LIMIT: resume with --resume=${runId}`);
+        }
+        results.push(result); completed.add(`${result.trialId}-${candidate}`);
+        atomicWrite(checkpointPath, { status: signal?.aborted ? 'INTERRUPTED' : 'RUNNING', runId,
+          suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt, updatedAt: new Date().toISOString() });
         console.log(`${result.trialId} ${candidate} ${result.outcome}`);
+        if (signal?.aborted) break;
       }
+      if (signal?.aborted) break;
     }
+    if (signal?.aborted) break;
   }
   if (results.length > suite.budgets.maxTrialCount) throw new Error('BENCHMARK_TRIAL_BUDGET_EXCEEDED');
-  if (persist) { fs.mkdirSync(RESULTS_ROOT, { recursive: true });
-    fs.writeFileSync(path.join(RESULTS_ROOT, 'tier-b.json'), `${JSON.stringify(results, null, 2)}\n`); }
+  const output = resultFile ?? (!only ? path.join(RESULTS_ROOT, 'tier-b.json') : path.join(runRoot, 'results.json'));
+  atomicWrite(rawResults, results);
+  if (persist) atomicWrite(output, results);
+  atomicWrite(checkpointPath, { status: signal?.aborted ? 'INTERRUPTED' : 'COMPLETE', runId,
+    suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt, resultFile: output,
+    updatedAt: new Date().toISOString() });
   return results;
 }
 
 if (path.resolve(process.argv[1] ?? '') === path.resolve(new URL(import.meta.url).pathname)) {
   const onlyArg = process.argv.find((arg) => arg.startsWith('--only='));
-  runAgentic({ only: onlyArg ? onlyArg.slice(7).split(',') : null }).then((rows) => console.log(`TIER B COMPLETE ${rows.length} records`));
+  const artifactsArg = process.argv.find((arg) => arg.startsWith('--artifacts-dir='));
+  const resultArg = process.argv.find((arg) => arg.startsWith('--result-file='));
+  const resumeArg = process.argv.find((arg) => arg.startsWith('--resume='));
+  const controller = new AbortController();
+  const interrupt = () => controller.abort();
+  process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
+  runAgentic({ only: onlyArg ? onlyArg.slice(7).split(',') : null,
+    artifactsRoot: artifactsArg ? path.resolve(artifactsArg.slice(16)) : RAW_ROOT,
+    resultFile: resultArg ? path.resolve(resultArg.slice(14)) : null,
+    resumeRunId: resumeArg ? resumeArg.slice(9) : null, signal: controller.signal })
+    .then((rows) => { console.log(`TIER B COMPLETE ${rows.length} records`); if (controller.signal.aborted) process.exitCode = 130; })
+    .catch((error) => { console.error(error.stack ?? error.message); process.exitCode = 1; });
 }
