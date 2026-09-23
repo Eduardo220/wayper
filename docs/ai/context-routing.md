@@ -33,6 +33,37 @@ subconjunto a abrir para a tarefa atual.
 10. usar Graphify ou specialist apenas quando incerteza/risco justificar;
 11. escalar ao encontrar risco novo; não rebaixar risco comprovado por padrão.
 
+`Goal` no texto de uma tarefa, um ID de thread ou a presença dos scripts do
+Harness não provam uma execução de Goal nativa. Sem identidade de execução
+fornecida/exposta pelo host, use `TASK_MODE` e a validação do diff; não crie
+Goal state apenas para obter `completion-request`. Em Goal nativo, a boundary
+de Completion continua obrigatória. Registre a razão antes de expandir contexto;
+reuse/current proof precede nova leitura, e `STOP_WHEN_PROVEN` encerra discovery
+quando o conjunto mínimo já responde ao pedido.
+
+## Proporcionalidade operacional
+
+Use o risco material do *efeito da mudança*, não uma palavra do pedido ou o
+risco geral do app. Os níveis abaixo orientam a primeira ação; o diff e os
+claims observados podem elevá-los. Em Goal nativo, os requirements declarados,
+Evidence, Validation Planner, Completion e ownership continuam mandatórios.
+
+| Efeito observado | Primeira rota | Escalar quando |
+| --- | --- | --- |
+| LOW, local e inequívoco | main/S0, menor source, prova exata, L0 e L1 se houver lógica | o diff revelar comportamento, outro owner ou requisito material |
+| MEDIUM, bounded | source e testes do owner, L0/L1, review nativo se útil | dependency confirmada, interface ou capability fora do main justificar L2/specialist |
+| HIGH | prova forte dos casos de falha, L2 se houver boundary/integration material, review dirigido | claim remoto, físico ou de segurança exigir observação correspondente |
+| CRITICAL | invariantes e failure modes, validation profunda, ownership/dispatch quando houver mutation project-owned | claim de device/serviço/cross-repo exigir sua evidence e blocker honestos |
+
+Não pedir intervenção humana para resolver uma incerteza técnica investigável.
+Classifique a próxima ação antes de bloquear: `NEEDS_DISCOVERY` para source não
+inspecionado, `NEEDS_VALIDATION` para check local faltante, `REPLAN_REQUIRED`
+para plano/scope desatualizado, `HUMAN_DECISION_REQUIRED` para decisão material
+que exige autoridade humana e `BLOCKED_EXTERNAL` somente para dependência real
+fora da boundary disponível. Não repetir validação ou ampliar Context Map sem
+hipótese nova/progresso observável. Cache/Graphify atuais ajudam a localizar;
+source e receipts válidos continuam decidindo Completion.
+
 Palavra não é gatilho: “corrida” em texto não implica `RUN_RUNTIME`; “mapa”
 visual não implica `TERRITORY_GEO`; “Firebase” em doc não chama reviewer de
 persistência; “teste” não cria agent tester; “meta” citada em copy/source/doc não
@@ -150,7 +181,7 @@ menor modo.
 | Evidência | Route |
 | --- | --- |
 | tarefa local/bounded sem especialização | `S0` |
-| um risco concreto casa com um specialist | `S1` |
+| capability e risco materiais casam com um specialist, e falta ao main informação necessária | `S1` |
 | investigações/reviews read-only independentes | `S2` |
 | writers independentes, DAG/arquivos/shared resources conhecidos | `S3`, somente com eligibility explícita |
 

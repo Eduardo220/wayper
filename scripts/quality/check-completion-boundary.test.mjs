@@ -26,6 +26,13 @@ test('CB3 blocking unavailable', async (t) => {
   f.input.repositories[0].platforms = ['android']; f.plan(); f.refresh();
   assert.equal((await assess(f)).decision, 'BLOCKED_EXTERNAL');
 });
+test('PT3 missing local approved check remains a validation gap', async (t) => {
+  const f = completionFixture(t); await f.ready();
+  f.input.operation = 'BUG_FIX'; f.input.repositories[0].capabilities = ['product-rules']; f.plan(); f.refresh();
+  const a = await assess(f);
+  assert.equal(a.decision, 'NOT_ADMISSIBLE');
+  assert.ok(a.blockers.some((b) => b.reasonCode === 'APPROVED_CHECK_UNAVAILABLE'));
+});
 test('CB4 validation complete is admissible, never host DONE', async (t) => {
   const f = completionFixture(t); await f.ready(); const a = await assess(f);
   assert.equal(a.validationState.status, 'COMPLETE'); assert.equal(a.decision, 'ADMISSIBLE'); assert.equal(Object.hasOwn(a, 'goalDone'), false);

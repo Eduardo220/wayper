@@ -34,3 +34,19 @@ the run needs to survive workspace deletion.
 remain explicit historical entrypoints, but are not part of the operational
 workflow. Do not run Astra/xhigh to compare with Sol/high: these are separate
 datasets.
+
+For Phase 9.3, `operational-tuned` derives the same frozen corpus and
+Sol/high/CLI runtime, but pins V2 to the committed tuning SHA. It runs V2 only;
+the persisted V1 and V2 baseline trials remain separate. Its profile and SHA
+change the suite/result fingerprint. The B1/B2 smoke can be extended without
+rerunning those trials; usage limits retain the checkpoint as `EXTERNAL_BLOCK`.
+
+```sh
+npm run benchmark:tier-b:tuned -- --tuned-sha=<V2_TUNED> --only=B1,B2
+npm run benchmark:tier-b:tuned -- --tuned-sha=<V2_TUNED> --extend-smoke=<run-id>
+npm run benchmark:tier-b:tuned -- --tuned-sha=<V2_TUNED> --resume=<run-id>
+```
+
+Raw logs use `.wayper-context/benchmark-runs/operational-tuned/<run-id>/`;
+completed results use `results/operational/tier-b-tuned.json`. Never point a
+tuned run at an existing baseline or historical result path.

@@ -114,12 +114,17 @@ novo assessment. Staging/commit alteram snapshots da Fase 1 e exigem nova prova.
 | NOT_ADMISSIBLE | Critério, validação blocking, finding, gap ou ambiguidade sem prova |
 | REPLAN_REQUIRED | Plano não corresponde a Goal/revisão/baseline/inputs/estado atuais |
 | REVALIDATION_REQUIRED | Prova material relacionada está stale |
-| BLOCKED_EXTERNAL | Validação blocking UNAVAILABLE, inclusive observer indisponível |
+| BLOCKED_EXTERNAL | Validação blocking indisponível por dependência externa real, inclusive observer indisponível |
 | INVALID_STATE | Identidade, owner, contrato ou captura inválida/inconsistente |
 
 Precedência nessa ordem: INVALID_STATE, REPLAN_REQUIRED,
 REVALIDATION_REQUIRED, BLOCKED_EXTERNAL, NOT_ADMISSIBLE, ADMISSIBLE. Todos os
 blockers permanecem disponíveis, mesmo quando outra decisão tem precedência.
+`APPROVED_CHECK_UNAVAILABLE` por check local ausente continua blocker de
+validação, mas retorna `NOT_ADMISSIBLE`: descobrir/adicionar o check ou replanejar
+o escopo é trabalho local. Não converter essa lacuna em decisão humana ou prova
+externa. `NO_DEVICE`, `NO_RUNTIME`, credenciais e observer realmente indisponíveis
+continuam podendo bloquear externamente quando o claim material os exige.
 Não é necessário persistir ASSESSING: UNASSESSED -> avaliação -> decisão.
 
 ## Requirements e materialidade

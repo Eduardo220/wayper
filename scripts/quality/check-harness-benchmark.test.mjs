@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { addWorktree, deterministicFalseCompletion, digest, productFingerprint, readProfileSuite, readSuite, removeWorktree, reportSanity, ROOT,
   resultFingerprint, significance, suiteFingerprint, validateResult, validateSuite } from '../wayper-harness-benchmark.mjs';
@@ -52,6 +53,41 @@ test('operational profile changes only execution identity and cannot validate as
   assert.equal(validateResult(row, operational), true);
   assert.throws(() => validateResult(row, suite));
   assert.throws(() => readProfileSuite('unknown'), /UNKNOWN_BENCHMARK_PROFILE/);
+});
+
+test('PT benchmark tuned profile freezes one V2 SHA and rejects baseline reuse', () => {
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const runtime = readProfileSuite('operational').model.runtime;
+  const tuned = readProfileSuite('operational-tuned', runtime, sha);
+  assert.equal(validateSuite(tuned).status, 'PASS');
+  assert.deepEqual(tuned.scenarios, suite.scenarios);
+  assert.deepEqual(tuned.groundTruthTemplates, suite.groundTruthTemplates);
+  assert.deepEqual(tuned.scoring, suite.scoring);
+  assert.equal(tuned.candidates.V2.sha, sha);
+  assert.notEqual(tuned.fingerprint, readProfileSuite('operational', runtime).fingerprint);
+  assert.throws(() => readProfileSuite('operational-tuned', runtime), /TUNED_CANDIDATE_SHA_REQUIRED/);
+});
+
+test('PT tuned runner executes V2 only and checkpoints the candidate fingerprint', async () => {
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const tuned = readProfileSuite('operational-tuned', null, sha);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wayper-tuned-runner-')); const calls = [];
+  try {
+    const rows = await runAgentic({ profile: 'operational-tuned', tunedSha: sha, persist: false, only: ['B1'], artifactsRoot: root,
+      trialRunner: async (_suite, scenario, candidate, trial) => {
+        calls.push(candidate);
+        const row = result({ profile: tuned.profile, codexRuntime: tuned.model.runtime, suiteFingerprint: tuned.fingerprint,
+          model: tuned.model.name, effort: tuned.model.effort, scenarioId: scenario.id, trialId: `${scenario.id}-T${trial}`,
+          tier: 'B', candidate, candidateSha: sha, outcome: 'COMPLETE', correct: true });
+        row.fingerprint = resultFingerprint(row); return row;
+      } });
+    assert.deepEqual(calls, ['V2']); assert.equal(rows.length, 1); assert.equal(validateResult(rows[0], tuned), true);
+    const [runId] = fs.readdirSync(root);
+    const checkpoint = JSON.parse(fs.readFileSync(path.join(root, runId, 'checkpoint.json'), 'utf8'));
+    assert.equal(checkpoint.suiteFingerprint, tuned.fingerprint);
+    await assert.rejects(runAgentic({ profile: 'operational', persist: false, artifactsRoot: root, resumeRunId: runId }),
+      /RESUME_CHECKPOINT_MISMATCH/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('BM5 candidate identity is exact and historical order is proven', () => {

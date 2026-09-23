@@ -13,6 +13,10 @@ and writer of Harness state.
 - Apply this skill at native Goal start/resume before loading task-specific
   context. It composes with `TASK_MODE` or `META_GOAL_MODE`; it does not decide
   which mode applies.
+- A task described as a "Goal", a thread ID, or available Harness scripts do
+  not establish a native Goal execution. Require the host's explicit execution
+  identity before starting Working Context or requiring `completion-request`.
+  Without it, use task-level proof and stop after sufficient targeted validation.
 - Do not create `wayper_context_manager`, a context agent, router, daemon, hook,
   memory store, vector DB, Obsidian dependency, or nested agent hierarchy.
 - Keep `S0` as default, one writer per file/wave, and subagent `max_depth=1`.

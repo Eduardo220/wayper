@@ -18,10 +18,11 @@ const stable = (value) => JSON.stringify(value, (_, item) => item && typeof item
   ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 export const digest = (value) => `sha256:${crypto.createHash('sha256').update(typeof value === 'string' ? value : stable(value)).digest('hex')}`;
 export const readSuite = () => JSON.parse(fs.readFileSync(SUITE_PATH, 'utf8'));
-export function readProfileSuite(profile = 'operational', runtime = null) {
+export function readProfileSuite(profile = 'operational', runtime = null, tunedSha = null) {
   const frozen = readSuite();
   if (profile === 'historical') return frozen;
-  if (profile !== 'operational') throw new Error(`UNKNOWN_BENCHMARK_PROFILE: ${profile}`);
+  if (!['operational', 'operational-tuned'].includes(profile)) throw new Error(`UNKNOWN_BENCHMARK_PROFILE: ${profile}`);
+  if (profile === 'operational-tuned' && !/^[a-f0-9]{40}$/.test(tunedSha ?? '')) throw new Error('TUNED_CANDIDATE_SHA_REQUIRED');
   if (runtime === null) {
     const cli = spawnSync('codex', ['--version'], { encoding: 'utf8' });
     if (cli.status !== 0) throw new Error(`CODEX_VERSION_UNAVAILABLE: ${cli.error?.message ?? cli.stderr.trim()}`);
@@ -29,7 +30,8 @@ export function readProfileSuite(profile = 'operational', runtime = null) {
   }
   if (!/^codex-cli \d+\.\d+\.\d+/.test(runtime)) throw new Error(`INVALID_CODEX_RUNTIME: ${runtime}`);
   const suite = { ...frozen, profile, historicalSuiteFingerprint: frozen.fingerprint,
-    model: { ...frozen.model, name: 'gpt-6-sol', effort: 'high', runtime } };
+    model: { ...frozen.model, name: 'gpt-6-sol', effort: 'high', runtime },
+    candidates: profile === 'operational-tuned' ? { ...frozen.candidates, V2: { ...frozen.candidates.V2, sha: tunedSha } } : frozen.candidates };
   suite.fingerprint = suiteFingerprint(suite);
   return suite;
 }
@@ -49,13 +51,11 @@ export function productFingerprint(sha) {
 }
 
 export function validateSuite(suite = readSuite()) {
-  if (suite.profile === 'operational') {
-    const frozen = readSuite();
+  if (['operational', 'operational-tuned'].includes(suite.profile)) {
     assert.match(suite.model.runtime, /^codex-cli \d+\.\d+\.\d+/);
-    const expected = { ...frozen, profile: 'operational', historicalSuiteFingerprint: frozen.fingerprint,
-      model: { ...frozen.model, name: 'gpt-6-sol', effort: 'high', runtime: suite.model.runtime } };
+    const expected = readProfileSuite(suite.profile, suite.model.runtime, suite.candidates.V2.sha);
     expected.fingerprint = suiteFingerprint(expected);
-    assert.deepEqual(suite, expected, 'operational profile must only change execution identity');
+    assert.deepEqual(suite, expected, 'operational profile must preserve the frozen corpus and execution identity');
   } else assert.equal(suite.profile, undefined, 'unknown benchmark profile');
   assert.equal(suite.schemaVersion, 1);
   assert.equal(suite.benchmarkVersion, 'BenchmarkSuite V1');
@@ -227,8 +227,8 @@ export function validateResult(result, suite = readSuite()) {
   assert.equal(result.suiteFingerprint, suite.fingerprint);
   assert.ok(Object.hasOwn(suite.candidates, result.candidate));
   assert.equal(result.candidateSha, suite.candidates[result.candidate].sha);
-  if (suite.profile === 'operational') {
-    assert.equal(result.profile, 'operational');
+  if (suite.profile) {
+    assert.equal(result.profile, suite.profile);
     assert.equal(result.suiteFingerprint, suite.fingerprint);
     assert.equal(result.model, suite.model.name);
     assert.equal(result.effort, suite.model.effort);

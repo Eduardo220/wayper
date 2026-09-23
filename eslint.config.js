@@ -51,6 +51,7 @@ export default defineConfig([
     'coverage/**',
     'dist/**',
     'graphify-out/**',
+    '.wayper-context/**',
     'node_modules/**',
     'web-build/**',
   ]),

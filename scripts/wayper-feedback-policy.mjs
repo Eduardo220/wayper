@@ -46,6 +46,7 @@ export function classifyFeedbackFailures(assessment, { state, plan, receipts = [
     const failureClass = b.reasonCode === 'OWNERSHIP_IN_FLIGHT' ? 'EXTERNAL' : /^OWNERSHIP_/.test(b.reasonCode) ? 'HUMAN_DECISION' :
       b.kind === 'STATE' || /WRONG_GOAL|WRONG_BASELINE|INVALID_SCHEMA/.test(b.reasonCode) ? 'INVALID_STATE' :
       b.kind === 'AMBIGUITY' || /HUMAN_DECISION/.test(b.reasonCode) || human ? 'HUMAN_DECISION' :
+        b.reasonCode === 'APPROVED_CHECK_UNAVAILABLE' ? 'REPLAN' :
         /UNAVAILABLE|EXTERNAL/.test(b.reasonCode) ? 'EXTERNAL' :
           /REPLAN|VALIDATION_PLAN_MISSING/.test(b.reasonCode) ? 'REPLAN' :
             b.kind === 'FINDING' && b.reasonCode === 'OPEN' || /FAILED|^FAIL$/.test(b.reasonCode) || evidence.some((r) => r.result === 'FAIL') ? 'FIXABLE' : 'REVALIDATE';

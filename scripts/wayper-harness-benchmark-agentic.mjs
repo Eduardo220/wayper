@@ -325,7 +325,7 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
         graphQueries: (eventLog.match(/graphify(?::|\s)+(?:query|path|explain)/gi) ?? []).length,
         graphQueryHits: UNKNOWN, graphRefreshes: (eventLog.match(/graphify(?::|\s)+(?:update|build)/gi) ?? []).length,
         packetSize: UNKNOWN, contextBytes: UNKNOWN },
-      timeMetrics: { wallClockDurationMs: suite.profile === 'operational' ? processWallMs : run.durationMs,
+      timeMetrics: { wallClockDurationMs: suite.profile ? processWallMs : run.durationMs,
         activeExecutionDurationMs: UNKNOWN }, tokenMetrics: usage(allEventLogs),
       safety: { falseCompletion: incomplete ? false : safeScored.falseCompletion, falseBlock: incomplete ? false : safeScored.falseBlock,
         unauthorizedMutation: safeScored.unauthorized.length > 0, externalWorkDamage: false,
@@ -339,10 +339,11 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
     return result;
 }
 
-export async function runAgentic({ profile = 'operational', persist = true, only = null, artifactsRoot = null, resultFile = null, adapters, signal,
+export async function runAgentic({ profile = 'operational', tunedSha = null, persist = true, only = null, artifactsRoot = null, resultFile = null, adapters, signal,
   resumeRunId = null, extendSmoke = false, trialRunner = singleTrial } = {}) {
-  const suite = readProfileSuite(profile); validateSuite(suite);
-  artifactsRoot ??= profile === 'operational' ? path.join(RAW_ROOT, 'operational') : RAW_ROOT;
+  const suite = readProfileSuite(profile, null, tunedSha); validateSuite(suite);
+  if (profile === 'operational-tuned' && resultFile) throw new Error('TUNED_RESULT_PATH_FIXED');
+  artifactsRoot ??= profile === 'historical' ? RAW_ROOT : path.join(RAW_ROOT, profile);
   if (only && (!only.length || new Set(only).size !== only.length || only.some((id) => !suite.scenarios.B.some((item) => item.id === id)))) {
     throw new Error('INVALID_SCENARIO_FILTER');
   }
@@ -354,9 +355,10 @@ export async function runAgentic({ profile = 'operational', persist = true, only
     if (checkpoint.runId !== resumeRunId || checkpoint.suiteFingerprint !== suite.fingerprint ||
       (checkpoint.profile ?? 'historical') !== profile) throw new Error('RESUME_CHECKPOINT_MISMATCH');
     if (extendSmoke) {
-      const expected = new Set(['B1-T1-V1', 'B1-T1-V2', 'B2-T1-V1', 'B2-T1-V2']);
+      const expected = new Set(profile === 'operational-tuned' ? ['B1-T1-V2', 'B2-T1-V2'] :
+        ['B1-T1-V1', 'B1-T1-V2', 'B2-T1-V1', 'B2-T1-V2']);
       const actual = new Set(checkpoint.completed.map((row) => `${row.trialId}-${row.candidate}`));
-      if (profile !== 'operational' || checkpoint.status !== 'COMPLETE' ||
+      if (profile === 'historical' || checkpoint.status !== 'COMPLETE' ||
         JSON.stringify(checkpoint.only) !== JSON.stringify(['B1', 'B2']) ||
         checkpoint.completed.length !== expected.size || actual.size !== expected.size ||
         [...expected].some((key) => !actual.has(key)) || checkpoint.completed.some((row) =>
@@ -391,7 +393,7 @@ export async function runAgentic({ profile = 'operational', persist = true, only
   for (let index = 0; index < scenarios.length; index++) {
     const scenario = scenarios[index];
     for (let trial = 1; trial <= scenario.repetitions; trial++) {
-      const order = (index + trial) % 2 ? ['V1', 'V2'] : ['V2', 'V1'];
+      const order = profile === 'operational-tuned' ? ['V2'] : (index + trial) % 2 ? ['V1', 'V2'] : ['V2', 'V1'];
       for (const candidate of order) {
         if (completed.has(`${scenario.id}-T${trial}-${candidate}`)) continue;
         atomicWrite(checkpointPath, { status: 'RUNNING', runId, profile, suiteFingerprint: suite.fingerprint, only,
@@ -399,7 +401,7 @@ export async function runAgentic({ profile = 'operational', persist = true, only
         const result = await trialRunner(suite, scenario, candidate, trial, { runRoot, adapters, signal });
         if (isUsageLimit(result)) {
           atomicWrite(rawResults, [...results, result]);
-          atomicWrite(checkpointPath, { status: profile === 'operational' ? 'EXTERNAL_BLOCK' : 'INFRASTRUCTURE_BLOCKED',
+          atomicWrite(checkpointPath, { status: profile === 'historical' ? 'INFRASTRUCTURE_BLOCKED' : 'EXTERNAL_BLOCK',
             runId, profile, suiteFingerprint: suite.fingerprint, only,
             current: { scenarioId: scenario.id, trial, candidate }, completed: results, blockedResult: result, startedAt, resumedAt,
             resultFile: rawResults, updatedAt: new Date().toISOString() });
@@ -416,9 +418,11 @@ export async function runAgentic({ profile = 'operational', persist = true, only
     if (signal?.aborted) break;
   }
   if (results.length > suite.budgets.maxTrialCount) throw new Error('BENCHMARK_TRIAL_BUDGET_EXCEEDED');
-  const output = resultFile ?? (!only ? path.join(RESULTS_ROOT, ...(profile === 'operational' ? ['operational'] : []), 'tier-b.json')
+  const output = resultFile ?? (!only ? path.join(RESULTS_ROOT, ...(profile === 'historical' ? [] : ['operational']),
+    profile === 'operational-tuned' ? 'tier-b-tuned.json' : 'tier-b.json')
     : path.join(runRoot, 'results.json'));
-  if (profile === 'operational' && path.resolve(output) === path.join(RESULTS_ROOT, 'tier-b.json')) {
+  if (profile !== 'historical' && (path.resolve(output) === path.join(RESULTS_ROOT, 'tier-b.json') ||
+    profile === 'operational-tuned' && path.resolve(output) === path.join(RESULTS_ROOT, 'operational/tier-b.json'))) {
     throw new Error('HISTORICAL_RESULT_PATH_FORBIDDEN');
   }
   atomicWrite(rawResults, results);
@@ -436,10 +440,12 @@ if (path.resolve(process.argv[1] ?? '') === path.resolve(new URL(import.meta.url
   const resumeArg = process.argv.find((arg) => arg.startsWith('--resume='));
   const extendArg = process.argv.find((arg) => arg.startsWith('--extend-smoke='));
   const profileArg = process.argv.find((arg) => arg.startsWith('--profile='));
+  const tunedShaArg = process.argv.find((arg) => arg.startsWith('--tuned-sha='));
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
-  runAgentic({ profile: profileArg ? profileArg.slice(10) : 'operational', only: onlyArg ? onlyArg.slice(7).split(',') : null,
+  runAgentic({ profile: profileArg ? profileArg.slice(10) : 'operational', tunedSha: tunedShaArg?.slice(12) ?? null,
+    only: onlyArg ? onlyArg.slice(7).split(',') : null,
     artifactsRoot: artifactsArg ? path.resolve(artifactsArg.slice(16)) : null,
     resultFile: resultArg ? path.resolve(resultArg.slice(14)) : null,
     resumeRunId: extendArg ? extendArg.slice(15) : resumeArg ? resumeArg.slice(9) : null,

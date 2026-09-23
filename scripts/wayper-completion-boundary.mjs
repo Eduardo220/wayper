@@ -73,10 +73,15 @@ export function assessGoalCompletion(request = {}) {
       accepted.push(...r.acceptedReceiptIds); rejected.push(...r.rejectedReceiptIds);
       if (['SATISFIED', 'NOT_APPLICABLE'].includes(r.status)) continue;
       const blocking = r.required && r.blocking;
-      const issue = add('VALIDATION', r.validationRequirementId, r.status, { repository: r.repository, blocking,
+      const reason = r.status === 'UNAVAILABLE' && !r.reasons.some((code) =>
+        ['VERIFIED_OBSERVER_UNAVAILABLE', 'NO_DEVICE', 'NO_RUNTIME', 'NO_CREDENTIALS', 'NO_TOOLCHAIN', 'CHECK_NOT_INSTALLED'].includes(code))
+        ? 'APPROVED_CHECK_UNAVAILABLE' : r.status;
+      const issue = add('VALIDATION', r.validationRequirementId, reason, { repository: r.repository, blocking,
         relatedRequirementIds: [r.validationRequirementId], relatedReceiptIds: r.rejectedReceiptIds });
       if (blocking && r.status === 'STALE') stale = true;
-      if (blocking && r.status === 'UNAVAILABLE') external = true;
+      // A missing approved local check needs validation/replan, not an external blocker.
+      if (blocking && r.status === 'UNAVAILABLE' && r.reasons.some((reason) =>
+        ['VERIFIED_OBSERVER_UNAVAILABLE', 'NO_DEVICE', 'NO_RUNTIME', 'NO_CREDENTIALS', 'NO_TOOLCHAIN', 'CHECK_NOT_INSTALLED'].includes(reason))) external = true;
       if (!blocking) acceptedUnknowns.push(issue);
     }
     if (v.status === 'BLOCKED' && !(v.requirements ?? []).length) add('VALIDATION', v.planId, v.reasons[0] ?? 'VALIDATION_BLOCKED');

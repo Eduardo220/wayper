@@ -85,6 +85,19 @@ o próprio escopo.
   contexto identificado só por thread é legado sem validade automática.
 - Goal nativo carrega `wayper-context-efficiency`; reuse/fingerprint nunca reduz
   evidence, risco, invariantes ou validação.
+- `Goal` escrito no pedido e `CODEX_THREAD_ID` sozinho não criam Goal nativo.
+  Só iniciar Working Context e exigir `completion-request` quando o host expuser
+  uma execução de Goal identificável. Tarefa pontual sem essa execução usa a
+  prova proporcional ao diff e conclui a tarefa sem inventar estado de Goal.
+- Comece pelo menor contexto, validação e modo de execução que o efeito real
+  permite; reutilize prova atual e pare discovery quando ela for suficiente.
+  Escale ao encontrar dependência, risco ou claim material. Specialist exige
+  capability relevante, risco material e lacuna que o main não resolve; profile
+  disponível não é motivo. Falta de discovery ou check local pede investigação,
+  validação ou replan, não `BLOCKED_EXTERNAL` nem decisão humana. Pergunte ao
+  humano só por ambiguidade material de produto, escolha externa irreversível ou
+  autoridade humana ausente. Prova física/remota continua obrigatória quando o
+  claim real depender dela.
 - Graphs, maps e caches nunca são verdade. RTK é ferramenta global opcional.
 
 ## Implementação e entrega
