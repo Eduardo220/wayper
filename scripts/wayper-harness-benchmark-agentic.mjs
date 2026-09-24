@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawn, spawnSync } from 'node:child_process';
 import { addWorktree, digest, readProfileSuite, removeWorktree, resultFingerprint, RESULTS_ROOT, ROOT, validateResult, validateSuite } from './wayper-harness-benchmark.mjs';
+import { makeTrace } from './wayper-harness-telemetry.mjs';
 
 const UNKNOWN = 'UNKNOWN';
 const RAW_ROOT = path.join(ROOT, '.wayper-context', 'benchmark-runs');
@@ -22,6 +23,8 @@ const HIDDEN_SOURCE = [
   'scripts/wayper-harness-benchmark-report.mjs',
   'scripts/wayper-harness-holdout.mjs',
   'scripts/wayper-harness-holdout-score.mjs',
+  'scripts/wayper-harness-telemetry.mjs',
+  'scripts/wayper-harness-diagnostic.mjs',
   'scripts/quality/check-harness-benchmark.test.mjs',
   'scripts/quality/check-holdout.test.mjs',
   'scripts/quality/check-proportionality.test.mjs',
@@ -166,18 +169,24 @@ export function runProcess(executable, args, { cwd, timeoutMs, stdoutPath, stder
 
 export function usage(jsonl) {
   let input = 0; let output = 0; let cached = 0; let cacheWrite = 0; let reasoning = 0; let observed = false;
+  let observedCached = true; let observedCacheWrite = true; let observedReasoning = true;
   for (const line of jsonl.split('\n').filter(Boolean)) {
     try {
       const event = JSON.parse(line); const value = event.type === 'turn.completed' ? event.usage : null;
       if (!value || !Number.isSafeInteger(value.input_tokens) || !Number.isSafeInteger(value.output_tokens)) continue;
       observed = true; input += value.input_tokens; output += value.output_tokens;
-      cached += value.cached_input_tokens ?? 0; cacheWrite += value.cache_write_input_tokens ?? 0;
-      reasoning += value.reasoning_output_tokens ?? 0;
+      observedCached &&= Number.isSafeInteger(value.cached_input_tokens);
+      observedCacheWrite &&= Number.isSafeInteger(value.cache_write_input_tokens);
+      observedReasoning &&= Number.isSafeInteger(value.reasoning_output_tokens);
+      if (observedCached) cached += value.cached_input_tokens;
+      if (observedCacheWrite) cacheWrite += value.cache_write_input_tokens;
+      if (observedReasoning) reasoning += value.reasoning_output_tokens;
     } catch { /* bounded non-JSON stderr is ignored */ }
   }
   return { inputTokens: observed ? input : UNKNOWN, outputTokens: observed ? output : UNKNOWN,
-    totalTokens: observed ? input + output : UNKNOWN, cachedInputTokens: observed ? cached : UNKNOWN,
-    cacheWriteInputTokens: observed ? cacheWrite : UNKNOWN, reasoningOutputTokens: observed ? reasoning : UNKNOWN,
+    totalTokens: observed ? input + output : UNKNOWN, cachedInputTokens: observed && observedCached ? cached : UNKNOWN,
+    cacheWriteInputTokens: observed && observedCacheWrite ? cacheWrite : UNKNOWN,
+    reasoningOutputTokens: observed && observedReasoning ? reasoning : UNKNOWN,
     tokenProxy: UNKNOWN };
 }
 
@@ -313,7 +322,7 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
     const stdoutPath = path.join(attemptRoot, 'stdout.log'); const stderrPath = path.join(attemptRoot, 'stderr.log');
     fs.writeFileSync(stdoutPath, ''); fs.writeFileSync(stderrPath, '');
     let item; let run = { status: null, signal: null, error: null, stdout: '', stderr: '', timedOut: false, interrupted: false, durationMs: 0 };
-    let classification; let candidateOutput = null; let scored = null; let eventLog = ''; let invocation = null;
+    let classification; let candidateOutput = null; let scored = null; let eventLog = ''; let invocation = null; let sourceProjection = [];
     try {
       item = adapters.addWorktree(suite.candidates[candidate].sha, `${scenario.id.toLowerCase()}-${candidate.toLowerCase()}-${trialNumber}-${attempt}`);
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: item.directory, encoding: 'utf8' });
@@ -322,6 +331,13 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
       }
       const workspace = prepareBlindWorkspace(item);
       const fixtureRoot = materialize(workspace, scenario); const fixtureBefore = snapshot(fixtureRoot);
+      sourceProjection = Object.entries(scenario.fixture.files).map(([source, content]) =>
+        ({ origin: 'SOURCE', source: `benchmark-fixture/${source}`, content }));
+      for (const [source, origin] of [['AGENTS.md', 'AGENTS'], ['docs/00-fontes-do-projeto.md', 'DOCUMENTATION'],
+        ['docs/ai/context-routing.md', 'DOCUMENTATION']]) {
+        const file = path.join(workspace, source);
+        if (fs.existsSync(file)) sourceProjection.push({ origin, source, content: fs.readFileSync(file, 'utf8') });
+      }
       const schemaPath = path.join(attemptRoot, 'output-schema.json'); const outputPath = path.join(attemptRoot, 'final.json');
       fs.writeFileSync(schemaPath, `${JSON.stringify(OUTPUT_SCHEMA)}\n`);
       const isolatedTemp = path.join(attemptRoot, 'tmp'); const isolatedCache = path.join(attemptRoot, 'cache');
@@ -331,9 +347,10 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
       if (cliVersion.status !== 0 || cliVersion.stdout.trim() !== suite.model.runtime) {
         throw new Error(`CODEX_RUNTIME_MISMATCH: expected ${suite.model.runtime}; observed ${cliVersion.stdout.trim() || cliVersion.error?.message || cliVersion.stderr.trim()}`);
       }
+      const candidatePrompt = prompt(scenario);
       const args = ['exec', '--ignore-user-config', '--ephemeral', '--json', '--model', suite.model.name,
         '-c', `model_reasoning_effort=${JSON.stringify(suite.model.effort)}`, '--sandbox', 'workspace-write',
-        '--output-schema', `${BLIND_RUNTIME}/output-schema.json`, '--output-last-message', `${BLIND_RUNTIME}/final.json`, '--cd', BLIND_WORKSPACE, prompt(scenario)];
+        '--output-schema', `${BLIND_RUNTIME}/output-schema.json`, '--output-last-message', `${BLIND_RUNTIME}/final.json`, '--cd', BLIND_WORKSPACE, candidatePrompt];
       invocation = { executable: 'codex', args: args.slice(0, -1), checkoutSha: head.stdout.trim(), promptHash: digest(args.at(-1)),
         cliVersion: cliVersion.stdout.trim(), runtime: attemptRoot, temporaryDirectory: isolatedTemp, cacheDirectory: isolatedCache,
         blindWorkspace: workspace, boundary: 'BWRAP_HOME_MASK_AND_CANDIDATE_PROJECTION' };
@@ -356,7 +373,14 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
         run.error = error.message;
       }
     }
-    const attemptRecord = { attempt, startedAt, invocation, classification, process: { exitCode: run.status ?? null, signal: run.signal ?? null,
+    const trace = makeTrace({ runId: path.basename(options.runRoot ?? RAW_ROOT), runKind: options.kind ?? 'BENCHMARK_TRIAL',
+      trialId: `${scenario.id}-T${trialNumber}`,
+      attemptId: `${trialKey}-attempt-${attempt}`, candidate, candidateSha: suite.candidates[candidate].sha,
+      goalId: scenario.id, risk: scenario.risk, model: suite.model.name, reasoningEffort: suite.model.effort,
+      cliVersion: invocation?.cliVersion ?? suite.model.runtime, prompt: prompt(scenario), sourceProjection,
+      jsonl: eventLog, complete: classification.outcome === 'CANDIDATE_RESULT' });
+    const tracePath = path.join(attemptRoot, 'trace.json'); atomicWrite(tracePath, trace);
+    const attemptRecord = { attempt, startedAt, invocation, classification, telemetryTrace: fileRef(tracePath), process: { exitCode: run.status ?? null, signal: run.signal ?? null,
       timedOut: Boolean(run.timedOut), interrupted: Boolean(run.interrupted), durationMs: run.durationMs ?? 0 },
       diagnostic: diagnostic(classification, run, stdoutPath, stderrPath) };
     atomicWrite(path.join(attemptRoot, 'attempt.json'), attemptRecord);
@@ -404,6 +428,12 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
       evidenceRefs: [safeScored.validation.hash ?? 'NO_EXECUTED_VALIDATION', ...safeScored.fileFailures], infrastructureRetries, incomplete, startedAt,
       infrastructureDiagnostic: incomplete ? diagnostic(classification, run, path.join(attemptRoot, 'stdout.log'), path.join(attemptRoot, 'stderr.log')) : null,
       rawArtifacts: path.relative(ROOT, trialRoot), uncontrolledVariables: suite.environment.uncontrolledVariables };
+    result.telemetry = { schemaVersion: 1, runKind: options.kind ?? 'BENCHMARK_TRIAL', tokenGranularity: 'TURN', modelCallCount: UNKNOWN,
+      attempts: fs.readdirSync(trialRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory() && /^attempt-\d+$/.test(entry.name))
+        .sort((a, b) => Number(a.name.slice(8)) - Number(b.name.slice(8))).map((entry) => {
+          const tracePath = path.join(trialRoot, entry.name, 'trace.json');
+          return fs.existsSync(tracePath) ? fileRef(tracePath) : { path: tracePath, bytes: UNKNOWN, hash: UNKNOWN };
+        }) };
     result.fingerprint = resultFingerprint(result);
     atomicWrite(path.join(trialRoot, 'result.json'), result);
     return result;
