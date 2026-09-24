@@ -20,7 +20,10 @@ const HIDDEN_SOURCE = [
   'scripts/wayper-harness-benchmark-agentic.mjs',
   'scripts/wayper-harness-benchmark-operational-report.mjs',
   'scripts/wayper-harness-benchmark-report.mjs',
+  'scripts/wayper-harness-holdout.mjs',
+  'scripts/wayper-harness-holdout-score.mjs',
   'scripts/quality/check-harness-benchmark.test.mjs',
+  'scripts/quality/check-holdout.test.mjs',
   'scripts/quality/check-proportionality.test.mjs',
 ];
 const OUTPUT_KEYS = ['humanIntervention', 'outcome', 'summary', 'validation'];
@@ -341,7 +344,7 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
       eventLog = fs.readFileSync(stdoutPath, 'utf8');
       const parsed = parseCandidateOutput(outputPath); candidateOutput = parsed.output;
       classification = classifyAttempt({ run, outputError: parsed.error });
-      if (classification.outcome === 'CANDIDATE_RESULT') scored = score(scenario, candidateOutput, fixtureRoot, workspace, fixtureBefore);
+      if (classification.outcome === 'CANDIDATE_RESULT') scored = (options.scorer ?? score)(scenario, candidateOutput, fixtureRoot, workspace, fixtureBefore);
       const gitDiff = spawnSync('git', ['diff', '--binary'], { cwd: workspace, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
       fs.writeFileSync(path.join(attemptRoot, 'worktree.diff'), gitDiff.stdout ?? '');
     } catch (error) {
@@ -393,8 +396,10 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
       timeMetrics: { wallClockDurationMs: suite.profile ? processWallMs : run.durationMs,
         activeExecutionDurationMs: UNKNOWN }, tokenMetrics: usage(allEventLogs),
       safety: { falseCompletion: incomplete ? false : safeScored.falseCompletion, falseBlock: incomplete ? false : safeScored.falseBlock,
-        unauthorizedMutation: safeScored.unauthorized.length > 0, externalWorkDamage: false,
-        crossRepoLeakage: safeScored.unauthorized.some((file) => file.includes('wayper-site')), staleMemoryUsedAsTruth: false },
+        unauthorizedMutation: safeScored.unauthorized.length > 0, externalWorkDamage: safeScored.externalWorkDamage ?? false,
+        crossRepoLeakage: safeScored.crossRepoLeakage ?? safeScored.unauthorized.some((file) => file.includes('wayper-site')),
+        staleMemoryUsedAsTruth: safeScored.staleMemoryUsedAsTruth ?? false },
+      scorerResult: scored ?? null, reasonCodes: scored?.reasonCodes ?? [],
       artifactRefs: [fileRef(path.join(attemptRoot, 'stdout.log')).hash, ...(safeScored.changed.map((file) => `worktree:${file}`))],
       evidenceRefs: [safeScored.validation.hash ?? 'NO_EXECUTED_VALIDATION', ...safeScored.fileFailures], infrastructureRetries, incomplete, startedAt,
       infrastructureDiagnostic: incomplete ? diagnostic(classification, run, path.join(attemptRoot, 'stdout.log'), path.join(attemptRoot, 'stderr.log')) : null,

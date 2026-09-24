@@ -18,7 +18,10 @@ test('blind candidate boundary', async (t) => {
       'docs/ai/benchmarks/harness-v1-v2/suite.json',
       'docs/ai/benchmarks/harness-v1-v2/report.md',
       'docs/ai/benchmarks/harness-v1-v2/results/operational/tier-b.json',
+      'docs/ai/benchmarks/harness-holdout/suite.json',
+      'docs/ai/benchmarks/harness-holdout/freeze.json',
       'scripts/wayper-harness-benchmark-agentic.mjs',
+      'scripts/wayper-harness-holdout-score.mjs',
     ];
     for (const relative of hidden) assert.equal(fs.existsSync(path.join(workspace, relative)), false);
     assert.equal(fs.existsSync(path.join(workspace, 'src')), true); // BI6
@@ -48,6 +51,7 @@ test('blind candidate boundary', async (t) => {
       check('ln -s /home/eduardo/Wayper/wayper/docs/ai/benchmarks/harness-v1-v2/suite.json /tmp/workspace/probe && test ! -e /tmp/workspace/probe && test ! -e /tmp/workspace/../../home/eduardo/Wayper/wayper/docs/ai/benchmarks/harness-v1-v2/suite.json');
       fs.unlinkSync(path.join(workspace, 'probe'));
     });
+    await t.test('BI11 holdout suite, scorer, report, results and raw trials hidden', () => check('test ! -e /tmp/workspace/docs/ai/benchmarks/harness-holdout/suite.json && test ! -e /tmp/workspace/scripts/wayper-harness-holdout-score.mjs && test ! -e /home/eduardo/Wayper/wayper/docs/ai/benchmarks/harness-holdout/report.md && test ! -e /home/eduardo/Wayper/wayper/docs/ai/benchmarks/harness-holdout/results.json && test ! -e /home/eduardo/Wayper/wayper/.wayper-context/benchmark-runs/holdout'));
     assert.equal(fs.readFileSync(path.join(item.parent, 'other-trial.log'), 'utf8'), 'OTHER_TRIAL_SECRET');
   } finally { removeWorktree(item); }
 });

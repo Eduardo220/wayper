@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "status": "FROZEN_BEFORE_TRIALS",
+  "frozenAt": "2026-09-24T13:40:35.450Z",
+  "suiteFingerprint": "sha256:005c5ed3455f769c76038d04b729182d23e78b9fc9b654ffb5822b2253abb411",
+  "suiteSha256": "3d8a67c1cb8dcdf49968222642ba92217d3ece4acef68c025c267f2831a5cdf0",
+  "scorerSha256": "20e9242f38a5101e66d97de5da212c3fa723d3ac52aac701850f219b8a686273",
+  "productFingerprint": "sha256:68a2e333f9d1c7354eb0180ad5d5d5d837cbc4d9352b611753bfbd7f5d334dea",
+  "candidates": {
+    "V1": "2db95d40567564cf3bb6727096b81d448b1dd765",
+    "V2": "7adb4f1e7970ff79a0848c763207109416c6db1d"
+  },
+  "model": "gpt-6-sol",
+  "effort": "high",
+  "runtime": "codex-cli 0.155.1",
+  "timeoutSeconds": 480,
+  "plannedTrials": 48
+}
