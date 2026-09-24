@@ -7,7 +7,8 @@ import { execFileSync } from 'node:child_process';
 import { startWorkingContext } from '../wayper-context.mjs';
 import {
   affectedTasksForAmendment, assessCrossRepoPlan, buildCrossRepoPlan, composeCrossRepoContext,
-  crossRepoFeedbackTargets, persistCrossRepoAssessment, persistCrossRepoPlan, validateCrossRepoHandoff, validateCrossRepoPlan,
+  crossRepoFeedbackTargets, persistCrossRepoAssessment, persistCrossRepoPlan, projectGoalReportOutcome,
+  validateCrossRepoHandoff, validateCrossRepoPlan,
   validateCurrentCrossRepoState,
 } from '../wayper-cross-repo.mjs';
 import { assessGoalCompletion } from '../wayper-completion-boundary.mjs';
@@ -175,6 +176,25 @@ test('CR19 unavailable repository yields BLOCKED, never false PASS', (t) => {
     site: { status: 'UNAVAILABLE', completionDecision: 'BLOCKED_EXTERNAL', validationStatus: 'BLOCKED', evidenceReceipts: [] },
   }), f);
   assert.equal(assessment.decision, 'BLOCKED');
+});
+
+test('RB1 RB2 RB5 RB6 terminal reporting preserves completed tasks and genuine external blocks', (t) => {
+  const f = fixture(t); const plan = multi(f);
+  const local = assessCrossRepoPlan(plan, results(plan, {
+    site: { status: 'FAILED', completionDecision: 'NOT_ADMISSIBLE', validationStatus: 'INCOMPLETE' },
+  }), f);
+  assert.equal(projectGoalReportOutcome(local), 'PARTIAL'); // RB1
+  const external = assessCrossRepoPlan(plan, results(plan, {
+    site: { status: 'UNAVAILABLE', completionDecision: 'BLOCKED_EXTERNAL', validationStatus: 'BLOCKED', evidenceReceipts: [] },
+  }), f);
+  assert.equal(external.blockers[0].reasonCode, 'REPOSITORY_UNAVAILABLE');
+  assert.equal(projectGoalReportOutcome(external), 'PARTIAL'); // RB6
+  assert.equal(external.taskStates.find((item) => item.taskId === 'mobile').retainedOnPeerFailure, true);
+  const whollyBlocked = assessCrossRepoPlan(plan, results(plan, {
+    mobile: { status: 'UNAVAILABLE', completionDecision: 'BLOCKED_EXTERNAL', validationStatus: 'BLOCKED', evidenceReceipts: [] },
+    site: { status: 'UNAVAILABLE', completionDecision: 'BLOCKED_EXTERNAL', validationStatus: 'BLOCKED', evidenceReceipts: [] },
+  }), f);
+  assert.equal(projectGoalReportOutcome(whollyBlocked), 'BLOCKED_EXTERNAL'); // RB2/RB5
 });
 
 test('CR20 cross-repo plan is deterministic', (t) => {

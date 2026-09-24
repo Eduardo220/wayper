@@ -7,6 +7,22 @@ import { addWorktree, digest, readProfileSuite, removeWorktree, resultFingerprin
 
 const UNKNOWN = 'UNKNOWN';
 const RAW_ROOT = path.join(ROOT, '.wayper-context', 'benchmark-runs');
+const BLIND_WORKSPACE = '/tmp/workspace';
+const BLIND_RUNTIME = '/tmp/runtime';
+function codexBinary(runtime) {
+  const version = /^codex-cli (\d+\.\d+\.\d+)$/.exec(runtime)?.[1];
+  if (!version) throw new Error(`INVALID_CODEX_RUNTIME: ${runtime}`);
+  return `/home/eduardo/.codex/packages/standalone/releases/${version}-x86_64-unknown-linux-musl/bin/codex`;
+}
+const HIDDEN_SOURCE = [
+  'docs/ai/benchmarks',
+  'scripts/wayper-harness-benchmark.mjs',
+  'scripts/wayper-harness-benchmark-agentic.mjs',
+  'scripts/wayper-harness-benchmark-operational-report.mjs',
+  'scripts/wayper-harness-benchmark-report.mjs',
+  'scripts/quality/check-harness-benchmark.test.mjs',
+  'scripts/quality/check-proportionality.test.mjs',
+];
 const OUTPUT_KEYS = ['humanIntervention', 'outcome', 'summary', 'validation'];
 export const OUTPUT_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -46,6 +62,48 @@ function materialize(root, scenario) {
     fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, content);
   }
   return fixtureRoot;
+}
+
+// The candidate sees a new repository with product source, never the original
+// Git object database or the benchmark controller's tracked evaluation files.
+export function prepareBlindWorkspace(item) {
+  const workspace = path.join(item.parent, 'blind-workspace');
+  fs.cpSync(item.directory, workspace, { recursive: true, filter: (source) => {
+    const relative = path.relative(item.directory, source).split(path.sep).join('/');
+    return relative !== '.git' && !HIDDEN_SOURCE.some((hidden) => relative === hidden || relative.startsWith(`${hidden}/`));
+  } });
+  const links = [];
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) links.push(file);
+      else if (entry.isDirectory()) visit(file);
+    }
+  };
+  visit(workspace);
+  for (const link of links) {
+    const resolved = fs.realpathSync(link);
+    if (!resolved.startsWith(`${workspace}${path.sep}`)) throw new Error(`BLIND_WORKSPACE_LINK_ESCAPE: ${link}`);
+  }
+  const git = (args) => {
+    const result = spawnSync('git', args, { cwd: workspace, encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(`BLIND_WORKSPACE_GIT: ${result.stderr.trim()}`);
+  };
+  git(['init', '-q']); git(['add', '-A']);
+  git(['-c', 'user.name=Benchmark', '-c', 'user.email=benchmark@localhost', 'commit', '-qm', 'Blind candidate source']);
+  return workspace;
+}
+
+export function blindInvocation(workspace, attemptRoot, binary, args) {
+  const auth = '/home/eduardo/.codex/auth.json';
+  return ['--ro-bind', '/', '/', '--tmpfs', '/home/eduardo', '--dir', '/home/eduardo/.codex',
+    '--ro-bind', auth, auth, '--tmpfs', '/tmp', '--tmpfs', '/var/tmp', '--tmpfs', '/run/user',
+    '--dir', BLIND_WORKSPACE, '--dir', BLIND_RUNTIME, '--bind', workspace, BLIND_WORKSPACE,
+    '--bind', attemptRoot, BLIND_RUNTIME, '--ro-bind', binary, '/tmp/codex',
+    ...(path.basename(binary) === 'codex' ? ['--ro-bind', path.join(path.dirname(binary), 'codex-code-mode-host'),
+      '/tmp/codex-code-mode-host'] : []),
+    '--dev-bind', '/dev', '/dev', '--proc', '/proc', '--unshare-pid', '--unshare-ipc', '--unshare-uts',
+    '--die-with-parent', '--chdir', BLIND_WORKSPACE, '--', '/tmp/codex', ...args];
 }
 
 function prompt(scenario) {
@@ -154,6 +212,9 @@ export function classifyAttempt({ stage = 'CODEX_EXEC', run = {}, outputError = 
   if (run.error) return { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: true, stage,
     cause: `${stage === 'CODEX_EXEC' ? 'SPAWN' : stage}_ERROR: ${run.error}` };
   if (run.signal) return { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: true, stage, cause: 'PROCESS_SIGNAL' };
+  if (/failed to spawn code-mode host/i.test(run.stderr ?? '')) {
+    return { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: false, stage, cause: 'CODE_MODE_HOST_UNAVAILABLE' };
+  }
   if (run.status !== 0) {
     const message = codexError(run);
     const usageLimit = /\busage limit\b/i.test(message ?? '');
@@ -256,28 +317,32 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
       if (head.status !== 0 || head.stdout.trim() !== suite.candidates[candidate].sha) {
         throw new Error(`CANDIDATE_SHA_MISMATCH: expected ${suite.candidates[candidate].sha}; observed ${head.stdout.trim() || head.stderr.trim()}`);
       }
-      const fixtureRoot = materialize(item.directory, scenario); const fixtureBefore = snapshot(fixtureRoot);
+      const workspace = prepareBlindWorkspace(item);
+      const fixtureRoot = materialize(workspace, scenario); const fixtureBefore = snapshot(fixtureRoot);
       const schemaPath = path.join(attemptRoot, 'output-schema.json'); const outputPath = path.join(attemptRoot, 'final.json');
       fs.writeFileSync(schemaPath, `${JSON.stringify(OUTPUT_SCHEMA)}\n`);
       const isolatedTemp = path.join(attemptRoot, 'tmp'); const isolatedCache = path.join(attemptRoot, 'cache');
       fs.mkdirSync(isolatedTemp); fs.mkdirSync(isolatedCache);
-      const cliVersion = spawnSync('codex', ['--version'], { cwd: item.directory, encoding: 'utf8' });
+      const binary = codexBinary(suite.model.runtime);
+      const cliVersion = spawnSync(binary, ['--version'], { cwd: workspace, encoding: 'utf8' });
       if (cliVersion.status !== 0 || cliVersion.stdout.trim() !== suite.model.runtime) {
         throw new Error(`CODEX_RUNTIME_MISMATCH: expected ${suite.model.runtime}; observed ${cliVersion.stdout.trim() || cliVersion.error?.message || cliVersion.stderr.trim()}`);
       }
       const args = ['exec', '--ignore-user-config', '--ephemeral', '--json', '--model', suite.model.name,
         '-c', `model_reasoning_effort=${JSON.stringify(suite.model.effort)}`, '--sandbox', 'workspace-write',
-        '--output-schema', schemaPath, '--output-last-message', outputPath, '--cd', item.directory, prompt(scenario)];
+        '--output-schema', `${BLIND_RUNTIME}/output-schema.json`, '--output-last-message', `${BLIND_RUNTIME}/final.json`, '--cd', BLIND_WORKSPACE, prompt(scenario)];
       invocation = { executable: 'codex', args: args.slice(0, -1), checkoutSha: head.stdout.trim(), promptHash: digest(args.at(-1)),
-        cliVersion: cliVersion.stdout.trim(), runtime: attemptRoot, temporaryDirectory: isolatedTemp, cacheDirectory: isolatedCache };
-      run = await adapters.runProcess('codex', args, { cwd: item.directory,
+        cliVersion: cliVersion.stdout.trim(), runtime: attemptRoot, temporaryDirectory: isolatedTemp, cacheDirectory: isolatedCache,
+        blindWorkspace: workspace, boundary: 'BWRAP_HOME_MASK_AND_CANDIDATE_PROJECTION' };
+      run = await adapters.runProcess('bwrap', blindInvocation(workspace, attemptRoot, binary, args), { cwd: workspace,
         timeoutMs: suite.budgets.maxRuntimeSeconds * 1000, stdoutPath, stderrPath, signal: options.signal,
-        env: { TMPDIR: isolatedTemp, XDG_CACHE_HOME: isolatedCache, WAYPER_BENCHMARK_RUNTIME: attemptRoot } });
+        env: { HOME: '/home/eduardo', CODEX_HOME: '/home/eduardo/.codex', TMPDIR: `${BLIND_RUNTIME}/tmp`,
+          XDG_CACHE_HOME: `${BLIND_RUNTIME}/cache`, WAYPER_BENCHMARK_RUNTIME: BLIND_RUNTIME } });
       eventLog = fs.readFileSync(stdoutPath, 'utf8');
       const parsed = parseCandidateOutput(outputPath); candidateOutput = parsed.output;
       classification = classifyAttempt({ run, outputError: parsed.error });
-      if (classification.outcome === 'CANDIDATE_RESULT') scored = score(scenario, candidateOutput, fixtureRoot, item.directory, fixtureBefore);
-      const gitDiff = spawnSync('git', ['diff', '--binary'], { cwd: item.directory, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+      if (classification.outcome === 'CANDIDATE_RESULT') scored = score(scenario, candidateOutput, fixtureRoot, workspace, fixtureBefore);
+      const gitDiff = spawnSync('git', ['diff', '--binary'], { cwd: workspace, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
       fs.writeFileSync(path.join(attemptRoot, 'worktree.diff'), gitDiff.stdout ?? '');
     } catch (error) {
       classification = classifyAttempt({ stage: item ? 'TRIAL_SETUP' : 'WORKTREE_SETUP',
@@ -339,7 +404,8 @@ export async function singleTrial(suite, scenario, candidate, trialNumber, optio
     return result;
 }
 
-export async function runAgentic({ profile = 'operational', tunedSha = null, persist = true, only = null, artifactsRoot = null, resultFile = null, adapters, signal,
+export async function runAgentic({ profile = 'operational', tunedSha = null, persist = true, only = null, trialId = null,
+  artifactsRoot = null, resultFile = null, adapters, signal,
   resumeRunId = null, extendSmoke = false, trialRunner = singleTrial } = {}) {
   const suite = readProfileSuite(profile, null, tunedSha); validateSuite(suite);
   if (profile === 'operational-tuned' && resultFile) throw new Error('TUNED_RESULT_PATH_FIXED');
@@ -347,12 +413,18 @@ export async function runAgentic({ profile = 'operational', tunedSha = null, per
   if (only && (!only.length || new Set(only).size !== only.length || only.some((id) => !suite.scenarios.B.some((item) => item.id === id)))) {
     throw new Error('INVALID_SCENARIO_FILTER');
   }
+  if (trialId && !suite.scenarios.B.some((scenario) => Array.from({ length: scenario.repetitions }, (_, index) =>
+    `${scenario.id}-T${index + 1}`).includes(trialId)) || trialId && only && !only.includes(trialId.split('-T')[0])) {
+    throw new Error('INVALID_TRIAL_FILTER');
+  }
+  if (trialId && !only) only = [trialId.split('-T')[0]];
   let runId; let runRoot; let checkpoint; let results; let startedAt; let resumedAt = null;
   if (resumeRunId) {
     const resolvedArtifacts = path.resolve(artifactsRoot); runRoot = path.resolve(resolvedArtifacts, resumeRunId);
     if (path.dirname(runRoot) !== resolvedArtifacts || path.basename(runRoot) !== resumeRunId) throw new Error('INVALID_RESUME_RUN_ID');
     checkpoint = JSON.parse(fs.readFileSync(path.join(runRoot, 'checkpoint.json'), 'utf8'));
     if (checkpoint.runId !== resumeRunId || checkpoint.suiteFingerprint !== suite.fingerprint ||
+      (checkpoint.trialId ?? null) !== trialId ||
       (checkpoint.profile ?? 'historical') !== profile) throw new Error('RESUME_CHECKPOINT_MISMATCH');
     if (extendSmoke) {
       const expected = new Set(profile === 'operational-tuned' ? ['B1-T1-V2', 'B2-T1-V2'] :
@@ -389,27 +461,29 @@ export async function runAgentic({ profile = 'operational', tunedSha = null, per
   const scenarios = suite.scenarios.B.filter((item) => !only || only.includes(item.id));
   const checkpointPath = path.join(runRoot, 'checkpoint.json'); const rawResults = path.join(runRoot, 'results.json');
   const completed = new Set(results.map((result) => `${result.trialId}-${result.candidate}`));
-  atomicWrite(checkpointPath, { status: 'RUNNING', runId, profile, suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt });
+  atomicWrite(checkpointPath, { status: 'RUNNING', runId, profile, suiteFingerprint: suite.fingerprint, only, trialId,
+    completed: results, startedAt, resumedAt });
   for (let index = 0; index < scenarios.length; index++) {
     const scenario = scenarios[index];
     for (let trial = 1; trial <= scenario.repetitions; trial++) {
+      if (trialId && trialId !== `${scenario.id}-T${trial}`) continue;
       const order = profile === 'operational-tuned' ? ['V2'] : (index + trial) % 2 ? ['V1', 'V2'] : ['V2', 'V1'];
       for (const candidate of order) {
         if (completed.has(`${scenario.id}-T${trial}-${candidate}`)) continue;
-        atomicWrite(checkpointPath, { status: 'RUNNING', runId, profile, suiteFingerprint: suite.fingerprint, only,
+        atomicWrite(checkpointPath, { status: 'RUNNING', runId, profile, suiteFingerprint: suite.fingerprint, only, trialId,
           current: { scenarioId: scenario.id, trial, candidate }, completed: results, startedAt, resumedAt, updatedAt: new Date().toISOString() });
         const result = await trialRunner(suite, scenario, candidate, trial, { runRoot, adapters, signal });
         if (isUsageLimit(result)) {
           atomicWrite(rawResults, [...results, result]);
           atomicWrite(checkpointPath, { status: profile === 'historical' ? 'INFRASTRUCTURE_BLOCKED' : 'EXTERNAL_BLOCK',
-            runId, profile, suiteFingerprint: suite.fingerprint, only,
+            runId, profile, suiteFingerprint: suite.fingerprint, only, trialId,
             current: { scenarioId: scenario.id, trial, candidate }, completed: results, blockedResult: result, startedAt, resumedAt,
             resultFile: rawResults, updatedAt: new Date().toISOString() });
           throw new Error(`CODEX_USAGE_LIMIT: resume with --resume=${runId}`);
         }
         results.push(result); completed.add(`${result.trialId}-${candidate}`);
         atomicWrite(checkpointPath, { status: signal?.aborted ? 'INTERRUPTED' : 'RUNNING', runId, profile,
-          suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt, updatedAt: new Date().toISOString() });
+          suiteFingerprint: suite.fingerprint, only, trialId, completed: results, startedAt, resumedAt, updatedAt: new Date().toISOString() });
         console.log(`${result.trialId} ${candidate} ${result.outcome}`);
         if (signal?.aborted) break;
       }
@@ -428,13 +502,14 @@ export async function runAgentic({ profile = 'operational', tunedSha = null, per
   atomicWrite(rawResults, results);
   if (persist) atomicWrite(output, results);
   atomicWrite(checkpointPath, { status: signal?.aborted ? 'INTERRUPTED' : 'COMPLETE', runId, profile,
-    suiteFingerprint: suite.fingerprint, only, completed: results, startedAt, resumedAt, resultFile: output,
+    suiteFingerprint: suite.fingerprint, only, trialId, completed: results, startedAt, resumedAt, resultFile: output,
     updatedAt: new Date().toISOString() });
   return results;
 }
 
 if (path.resolve(process.argv[1] ?? '') === path.resolve(new URL(import.meta.url).pathname)) {
   const onlyArg = process.argv.find((arg) => arg.startsWith('--only='));
+  const trialArg = process.argv.find((arg) => arg.startsWith('--trial='));
   const artifactsArg = process.argv.find((arg) => arg.startsWith('--artifacts-dir='));
   const resultArg = process.argv.find((arg) => arg.startsWith('--result-file='));
   const resumeArg = process.argv.find((arg) => arg.startsWith('--resume='));
@@ -445,7 +520,7 @@ if (path.resolve(process.argv[1] ?? '') === path.resolve(new URL(import.meta.url
   const interrupt = () => controller.abort();
   process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
   runAgentic({ profile: profileArg ? profileArg.slice(10) : 'operational', tunedSha: tunedShaArg?.slice(12) ?? null,
-    only: onlyArg ? onlyArg.slice(7).split(',') : null,
+    only: onlyArg ? onlyArg.slice(7).split(',') : null, trialId: trialArg?.slice(8) ?? null,
     artifactsRoot: artifactsArg ? path.resolve(artifactsArg.slice(16)) : null,
     resultFile: resultArg ? path.resolve(resultArg.slice(14)) : null,
     resumeRunId: extendArg ? extendArg.slice(15) : resumeArg ? resumeArg.slice(9) : null,

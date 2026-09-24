@@ -288,6 +288,18 @@ export function crossRepoFeedbackTargets(assessment) {
     .map((task) => ({ taskId: task.taskId, repository: task.repository, action: task.status === 'REVALIDATION_REQUIRED' ? 'REVALIDATE' : 'FEEDBACK' }));
 }
 
+// Completion remains blocked until every blocking task is proved. This is the
+// terminal report for work already retained, not a second Completion decision.
+export function projectGoalReportOutcome(assessment) {
+  if (assessment.decision === 'COMPLETE') return 'COMPLETE';
+  if (assessment.decision === 'INVALID_STATE') return 'FAILED';
+  if (assessment.taskStates.some((task) => task.status === 'COMPLETE')) return 'PARTIAL';
+  if (assessment.blockers.some((blocker) => ['REPOSITORY_UNAVAILABLE', 'EXTERNAL_CHANGE_PRESENT'].includes(blocker.reasonCode))) {
+    return 'BLOCKED_EXTERNAL';
+  }
+  return 'FAILED';
+}
+
 export function composeCrossRepoContext(plan, artifactRefs) {
   if (!Array.isArray(artifactRefs) || artifactRefs.length > 64 || artifactRefs.some((ref) =>
     !exact(ref, 'artifactId repository') || !plan.repositories.includes(ref.repository) || !bounded(ref.artifactId, 160))) {

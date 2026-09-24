@@ -70,6 +70,12 @@ test('PT9 local technical gap routes to replan, not human', () => {
     blocking: true, relatedRequirementIds: ['VR-local'], relatedReceiptIds: [], relatedFindingIds: [], blockerId: 'CB-local' };
   assert.equal(classifyFeedbackFailures({ blockers: [blocker] })[0].failureClass, 'REPLAN');
 });
+test('RB3 RB4 local validation and investigable technical gaps stay local', () => {
+  const blocker = (kind, reasonCode) => ({ kind, sourceId: 'local', reasonCode, repository: 'wayper',
+    blocking: true, relatedRequirementIds: [], relatedReceiptIds: [], relatedFindingIds: [], blockerId: 'CB-local' });
+  assert.equal(classifyFeedbackFailures({ blockers: [blocker('VALIDATION', 'APPROVED_CHECK_UNAVAILABLE')] })[0].failureClass, 'REPLAN');
+  assert.equal(classifyFeedbackFailures({ blockers: [blocker('PROOF_GAP', 'OPEN')] })[0].failureClass, 'REVALIDATE');
+});
 test('PT10 unchanged context uses cache', async (t) => {
   const f = contextFixture(t); await f.resolve(); const again = await f.resolve();
   assert.equal(again.disposition, 'REUSED'); assert.equal(contextEconomyAssessment(f.options).cacheHits, 1);

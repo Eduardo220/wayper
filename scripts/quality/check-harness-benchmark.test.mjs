@@ -90,6 +90,25 @@ test('PT tuned runner executes V2 only and checkpoints the candidate fingerprint
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('surgical trial filter runs exactly one requested repetition', async () => {
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wayper-benchmark-surgical-')); const calls = [];
+  try {
+    await runAgentic({ profile: 'operational-tuned', tunedSha: sha, persist: false, trialId: 'B7-T2', artifactsRoot: root,
+      trialRunner: async (_suite, scenario, candidate, trial) => {
+        calls.push(`${scenario.id}-T${trial}-${candidate}`);
+        return result({ profile: 'operational-tuned', candidate: 'V2', candidateSha: sha,
+          scenarioId: scenario.id, trialId: `${scenario.id}-T${trial}`, outcome: 'PARTIAL', correct: false });
+      } });
+    assert.deepEqual(calls, ['B7-T2-V2']);
+    const [runId] = fs.readdirSync(root);
+    const checkpoint = JSON.parse(fs.readFileSync(path.join(root, runId, 'checkpoint.json'), 'utf8'));
+    assert.equal(checkpoint.trialId, 'B7-T2');
+    await assert.rejects(runAgentic({ profile: 'operational-tuned', tunedSha: sha, persist: false,
+      trialId: 'B7-T1', artifactsRoot: root, resumeRunId: runId }), /RESUME_CHECKPOINT_MISMATCH/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('BM5 candidate identity is exact and historical order is proven', () => {
   const checked = validateSuite(suite);
   assert.match(suite.candidates.V1.sha, /^[a-f0-9]{40}$/);
@@ -194,6 +213,11 @@ test('agentic runner preserves Codex usage-limit cause without retrying it', () 
   assert.equal(isUsageLimit({ terminalClass: 'BENCHMARK_INFRA_FAILURE', infrastructureDiagnostic: classified }), true);
 });
 
+test('missing nested code-mode host is benchmark infrastructure, never a candidate result', () => {
+  assert.deepEqual(classifyAttempt({ run: { status: 0, stderr: 'failed to spawn code-mode host /tmp/codex-code-mode-host' } }),
+    { outcome: 'BENCHMARK_INFRA_FAILURE', retryable: false, stage: 'CODEX_EXEC', cause: 'CODE_MODE_HOST_UNAVAILABLE' });
+});
+
 test('operational token accounting uses completed turns, cache fields and all real usage', () => {
   const events = [
     { type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 40, cache_write_input_tokens: 10,
@@ -220,7 +244,7 @@ test('operational trials pin the same Sol/high CLI invocation with distinct runt
           fs.writeFileSync(options.stdoutPath, `${JSON.stringify({ type: 'turn.completed',
             usage: { input_tokens: 10, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 2 } })}\n`);
           fs.writeFileSync(options.stderrPath, 'fixture stderr');
-          fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], JSON.stringify({
+          fs.writeFileSync(path.join(path.dirname(options.stdoutPath), 'final.json'), JSON.stringify({
             outcome: 'FAILED', summary: 'fixture', humanIntervention: false, validation: [],
           }));
           return { status: 0, signal: null, error: null, stdout: '', stderr: 'fixture stderr',
@@ -234,10 +258,11 @@ test('operational trials pin the same Sol/high CLI invocation with distinct runt
       assert.equal(attempt.invocation.checkoutSha, operational.candidates[candidate].sha);
       assert.deepEqual(attempt.invocation.args.slice(0, 6), ['exec', '--ignore-user-config', '--ephemeral', '--json', '--model', 'gpt-6-sol']);
       assert.ok(attempt.invocation.args.includes('model_reasoning_effort="high"'));
+      assert.equal(invocations.at(-1).args[invocations.at(-1).args.indexOf('--') + 1], '/tmp/codex');
       assert.equal(fs.readFileSync(path.join(root, `B1-T1-${candidate}`, 'attempt-1', 'stderr.log'), 'utf8'), 'fixture stderr');
     }
-    assert.notEqual(invocations[0].env.TMPDIR, invocations[1].env.TMPDIR);
-    assert.notEqual(invocations[0].env.XDG_CACHE_HOME, invocations[1].env.XDG_CACHE_HOME);
+    assert.notEqual(invocations[0].args[invocations[0].args.indexOf('--bind') + 1],
+      invocations[1].args[invocations[1].args.indexOf('--bind') + 1]);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

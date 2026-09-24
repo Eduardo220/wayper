@@ -50,6 +50,14 @@ permanece completo, site bloqueia o Project Goal e Feedback recebe somente a
 task falha quando os edges permitem. Correção que altera dependency material
 exige revalidar apenas dependents declarados. Não há rollback automático.
 
+O relato terminal usa `projectGoalReportOutcome(assessment)`: qualquer task
+independente comprovadamente `COMPLETE` e retida, com outra pendente ou bloqueada,
+é `PARTIAL`, inclusive se o restante depende de serviço externo. `BLOCKED_EXTERNAL`
+descreve dependência externa comprovada que impediu todas as tasks; não apaga
+trabalho concluído. Falta de check local pede replan/revalidação, e dúvida técnica
+investigável pede discovery. O `CrossRepoAssessment` e a Completion Boundary
+continuam bloqueando a conclusão global até todas as tasks blocking passarem.
+
 ## Autoridade e isolamento
 
 - plano não concede grant, lease, fence, permit ou write;

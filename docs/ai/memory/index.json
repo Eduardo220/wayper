@@ -109,14 +109,14 @@
             "id": "cross-repo-contract",
             "repository": "wayper",
             "path": "docs/ai/cross-repo-coordination.md",
-            "fingerprint": "sha256:9d9a0e71fdb6b8ad1f8889f43c5f3303762a416a551b2dbb65fc34e6281d6ba9"
+            "fingerprint": "sha256:feb6ccc9decc9e9635d9093df114e8f9bf9d2fb055b5fa8a28e67ea6d070bcff"
           },
           {
             "kind": "SOURCE",
             "id": "cross-repo-owner-source",
             "repository": "wayper",
             "path": "scripts/wayper-cross-repo.mjs",
-            "fingerprint": "sha256:c0d07b80b5919362bc85545cd510155a8cd544fc0710123930a887b1689c185f"
+            "fingerprint": "sha256:c7db7cd26d9611822cf055a6c401ed80f376aae436479a2f49b42f5ced5a6e56"
           },
           {
             "kind": "VALIDATION",
@@ -141,24 +141,24 @@
         {
           "repository": "wayper",
           "path": "docs/ai/cross-repo-coordination.md",
-          "fingerprint": "sha256:9d9a0e71fdb6b8ad1f8889f43c5f3303762a416a551b2dbb65fc34e6281d6ba9"
+          "fingerprint": "sha256:feb6ccc9decc9e9635d9093df114e8f9bf9d2fb055b5fa8a28e67ea6d070bcff"
         },
         {
           "repository": "wayper",
           "path": "scripts/quality/check-cross-repo.test.mjs",
-          "fingerprint": "sha256:a188fadf1b4571a7171dbff553fca5040f141cc01d57df90c849427673b694d6"
+          "fingerprint": "sha256:0db9da4afc94e32afd08179129e8c72c2c417c0f58e9963d354b92ef18a36d42"
         },
         {
           "repository": "wayper",
           "path": "scripts/wayper-cross-repo.mjs",
-          "fingerprint": "sha256:c0d07b80b5919362bc85545cd510155a8cd544fc0710123930a887b1689c185f"
+          "fingerprint": "sha256:c7db7cd26d9611822cf055a6c401ed80f376aae436479a2f49b42f5ced5a6e56"
         }
       ],
       "createdAt": "2026-09-14T12:00:00.000Z",
-      "lastValidatedAt": "2026-09-14T12:00:00.000Z",
+      "lastValidatedAt": "2026-09-24T13:13:06.512Z",
       "supersedes": [],
       "supersededBy": [],
-      "fingerprint": "sha256:661ad778159b884b40eaa634a95a3f92baa5bcdbbf7b3bb2f5a27fca5c3d4368"
+      "fingerprint": "sha256:a8acbe96b568d64d0339c9bb35847ab96370b591b62f38fba210654a844584a5"
     }
   ]
 }
