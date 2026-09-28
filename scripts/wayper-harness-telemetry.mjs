@@ -101,7 +101,7 @@ export function makeTrace({ runId, trialId, attemptId, candidate, candidateSha, 
 
 export function validateTrace(trace) {
   if (trace?.schemaVersion !== TRACE_SCHEMA_VERSION || !['COMPLETE', 'INCOMPLETE'].includes(trace.status) ||
-    !['BENCHMARK_TRIAL', 'DIAGNOSTIC_REPLAY'].includes(trace.runKind) ||
+    !['BENCHMARK_TRIAL', 'DIAGNOSTIC_REPLAY', 'DIAGNOSTIC_EXEC_NATIVE_TELEMETRY'].includes(trace.runKind) ||
     trace.tokenGranularity !== 'TURN' || trace.modelCallCount !== UNKNOWN ||
     !Array.isArray(trace.events) || !Array.isArray(trace.context?.components) ||
     Object.keys(trace.mechanisms ?? {}).join('|') !== MECHANISMS.join('|')) throw new Error('INVALID_TRACE_SCHEMA');

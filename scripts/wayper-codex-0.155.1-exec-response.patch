@@ -1,0 +1,28 @@
+diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
+index 98bfa79..e149dd5 100644
+--- a/codex-rs/core/src/session/mod.rs
++++ b/codex-rs/core/src/session/mod.rs
+@@ -2188,0 +2189,14 @@ impl Session {
++        let compaction = match &msg {
++            EventMsg::ItemStarted(event) if matches!(&event.item, TurnItem::ContextCompaction(_)) => Some("started"),
++            EventMsg::ItemCompleted(event) if matches!(&event.item, TurnItem::ContextCompaction(_)) => Some("completed"),
++            _ => None,
++        };
++        if let Some(kind) = compaction {
++            let _ = std::io::Write::write_all(
++                &mut std::io::stderr().lock(),
++                format!("WAYPER_EXEC_NATIVE_TELEMETRY {}\n", serde_json::json!({
++                    "kind": "compaction", "phase": kind, "threadId": self.thread_id,
++                    "turnId": &turn_context.sub_id, "timestamp": chrono::Utc::now().to_rfc3339()
++                })).as_bytes(),
++            );
++        }
+@@ -4524,0 +4539,8 @@ impl Session {
++        let observation = serde_json::json!({"threadId": self.thread_id, "turnId": &turn_context.sub_id,
++            "responseId": response_id, "usage": usage,
++            "contextWindow": turn_context.model_context_window(),
++            "timestamp": chrono::Utc::now().to_rfc3339()});
++        let _ = std::io::Write::write_all(
++            &mut std::io::stderr().lock(),
++            format!("WAYPER_EXEC_NATIVE_TELEMETRY {observation}\n").as_bytes(),
++        );
