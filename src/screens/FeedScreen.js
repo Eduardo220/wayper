@@ -5,7 +5,6 @@ import {
   FlatList,
   StyleSheet,
   TouchableOpacity,
-  Image,
   ActivityIndicator,
   RefreshControl,
 } from "react-native";
@@ -21,9 +20,9 @@ import {
   getDoc,
   limit,
 } from "firebase/firestore";
+import HomeAvatar from "../components/Home/HomeAvatar";
 
 const WAYPER_GREEN = "#00e676";
-const DEFAULT_AVATAR = "https://i.pravatar.cc/150?u=wayper_feed";
 
 const chunk = (arr, size) => {
   const out = [];
@@ -109,7 +108,7 @@ export default function FeedScreen() {
             ...data,
             actorName: actor.name || actor.displayName || actor.username || "Usuario",
             actorUsername: actor.username || "",
-            actorAvatar: actor.avatar || actor.photoURL || DEFAULT_AVATAR,
+            actorAvatar: actor.avatar || actor.photoURL || null,
             actorIsPrivate: !!actor.isPrivate,
           });
         });
@@ -161,7 +160,7 @@ export default function FeedScreen() {
     return (
       <View style={styles.activityItem}>
         <View style={styles.userInfo}>
-          <Image source={{ uri: item.actorAvatar }} style={styles.userPhoto} />
+          <HomeAvatar uri={item.actorAvatar} name={item.actorName} size={48} style={styles.userPhoto} />
           <View style={{ flex: 1 }}>
             <Text style={styles.userName}>{item.actorName}</Text>
             <Text style={styles.userMeta}>@{item.actorUsername || "wayper"} • {formatDate(date)}</Text>

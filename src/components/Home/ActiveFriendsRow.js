@@ -4,13 +4,19 @@ import { Ionicons } from "@expo/vector-icons";
 import { WayperTheme } from "../../theme/wayperTheme";
 import HomeAvatar from "./HomeAvatar";
 
-function ActiveFriendsRow({ friends = [], onAddPress, onSeeAllPress }) {
+function ActiveFriendsRow({
+  friends = [],
+  onAddPress,
+  onSeeAllPress,
+  title = "Amigos recentes",
+  emptyText = "Sem dados de atividade de amigos ainda.",
+}) {
   const safeFriends = useMemo(() => (Array.isArray(friends) ? friends.slice(0, 12) : []), [friends]);
 
   return (
     <View style={styles.section}>
       <View style={styles.titleRow}>
-        <Text style={styles.title}>Seus amigos ativos</Text>
+        <Text style={styles.title}>{title}</Text>
         <Pressable accessibilityRole="button" onPress={onSeeAllPress} hitSlop={8}>
           <Text style={styles.seeAll}>Ver todos</Text>
         </Pressable>
@@ -32,11 +38,20 @@ function ActiveFriendsRow({ friends = [], onAddPress, onSeeAllPress }) {
           <Pressable key={friend.id || friend.friendUid || friend.name} style={styles.friendItem} onPress={onSeeAllPress}>
             <View>
               <HomeAvatar uri={friend.avatar || friend.photoURL} name={friend.name || friend.username} size={58} />
-              <View style={[styles.statusDot, friend.isActive ? styles.statusDotOn : styles.statusDotOff]} />
+              {friend.hasPresence ? (
+                <View style={[styles.statusDot, friend.isActive ? styles.statusDotOn : styles.statusDotOff]} />
+              ) : null}
             </View>
             <Text style={styles.friendName} numberOfLines={1}>{friend.name || friend.username || "Atleta"}</Text>
           </Pressable>
         ))}
+
+        {!safeFriends.length ? (
+          <View style={styles.emptyFriends}>
+            <Ionicons name="people-outline" size={20} color={WayperTheme.colors.textSubtle} />
+            <Text style={styles.emptyFriendsText}>{emptyText}</Text>
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -112,5 +127,24 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     textAlign: "center",
     marginTop: 8,
+  },
+  emptyFriends: {
+    minWidth: 194,
+    minHeight: 74,
+    borderRadius: WayperTheme.radius.xl,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.border,
+    paddingHorizontal: WayperTheme.spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.sm,
+  },
+  emptyFriendsText: {
+    flex: 1,
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "800",
   },
 });

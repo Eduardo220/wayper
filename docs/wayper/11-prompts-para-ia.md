@@ -1,8 +1,35 @@
 # Prompts para IA
 
+> **Status:** vigente como biblioteca de exemplos<br>
+> **Tipo:** referência operacional auxiliar<br>
+> **Escopo:** prompts temáticos para tarefas do Wayper<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`AGENTS.md`](../../AGENTS.md)
+
+Este arquivo não define regras próprias para agentes. Os prompts abaixo só
+acrescentam contexto temático ao núcleo permanente.
+
+## Entrada canônica para qualquer prompt
+
+Use uma referência curta, sem copiar outra versão das regras:
+
+```txt
+Siga AGENTS.md e o Context Gate de docs/14-instrucoes-para-ia.md.
+Use a matriz de docs/00-fontes-do-projeto.md para selecionar somente as fontes
+deste dominio. Consulte a direcao estrategica quando houver decisao de produto,
+arquitetura ou conflito de direcao.
+```
+
+`docs/24-resumo-rodada-local-first.md` é um snapshot datado e só deve ser lido
+quando a matriz ou o domínio da tarefa o exigir.
+
 ## Como usar
 
-Use estes prompts com Codex, Claude ou GPT quando precisar evoluir a Wayper. Antes de executar qualquer prompt, informe que `docs/wayper` é a fonte de verdade e peça para a IA ler [[00-index]].
+Use estes prompts com Codex, Claude ou GPT quando precisar evoluir a Wayper. Antes
+de executar qualquer prompt, carregue `AGENTS.md` e
+`docs/00-fontes-do-projeto.md`. As fontes citadas em cada exemplo são adicionais.
+O código de `develop` é a primeira fonte do
+comportamento implementado, não da direção estratégica.
 
 ## Revisar arquitetura
 
@@ -18,8 +45,8 @@ Explique impactos em GPS, mapa, Firestore, performance e experiência do usuári
 
 ```text
 Leia docs/wayper/00-index.md, docs/wayper/02-mvp.md e qualquer documento relacionado à feature.
-Implemente a feature seguindo o escopo do MVP.
-Se a feature estiver fora do MVP, explique a justificativa antes de implementar e registre proposta na documentação.
+Implemente a feature somente se estiver no escopo aprovado da tarefa.
+Se estiver fora do escopo aprovado ou for hipótese, registre a proposta e aguarde decisão explícita; não implemente.
 Não crie coleção nova no Firestore sem atualizar docs/wayper/08-firebase-firestore.md e docs/wayper/10-decisoes-do-projeto.md.
 Ao final, liste arquivos alterados e riscos restantes.
 ```
@@ -72,7 +99,7 @@ Leia docs/wayper/07-telas-e-fluxos.md e docs/wayper/02-mvp.md.
 Planeje a tela ou fluxo solicitado para React Native com Expo.
 Mantenha o foco no ciclo principal do MVP.
 Descreva estados vazios, carregamento, erro, permissão de GPS e ações principais.
-Não inclua features futuras como clans ou ranking global sem justificar.
+Não inclua features futuras como clans ou ranking global sem decisão aprovada.
 ```
 
 ## Criar proposta de decisão
@@ -83,4 +110,3 @@ Crie uma nova proposta de decisão sobre o tema informado usando o template do d
 Inclua impactos em GPS, mapa, Firestore, performance e experiência do usuário.
 Não mova a proposta para decisões aprovadas sem confirmação explícita.
 ```
-

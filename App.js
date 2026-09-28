@@ -7,7 +7,37 @@ import {
 } from "react-native-reanimated";
 
 import React, { useEffect, useState } from "react";
-import { LogBox, View, ActivityIndicator, Image, StyleSheet, Text } from "react-native";
+import { View, ActivityIndicator, Image, StyleSheet, Text, Linking } from "react-native";
+import ErrorBoundary from "./src/components/ErrorBoundary";
+import {
+  installGlobalRunErrorHandlers,
+  startActiveRunAutoCheckpointing,
+  stopActiveRunAutoCheckpointing,
+} from "./src/services/run/runAutoSaveService.js";
+import { installGlobalErrorReporter } from "./src/services/diagnostics/errorReporter.js";
+import {
+  startPerformanceDiagnostics,
+  stopPerformanceDiagnostics,
+} from "./src/services/diagnostics/performanceDiagnosticsService.js";
+import { initializeDiagnosticsPreferences } from "./src/services/diagnostics/diagnosticsPreferencesService.js";
+import {
+  finishAppStartSpan,
+  initializeMonitoring,
+  setMonitoringAuthState,
+  setMonitoringScreen,
+  setMonitoringUser,
+  wrapWithMonitoring,
+} from "./src/services/monitoring/sentryService.js";
+import logger, { LOG_CATEGORIES } from "./src/utils/logger.js";
+import {
+  startRunNotificationCoordinator,
+  stopRunNotificationCoordinator,
+} from "./src/services/run/runNotificationService.js";
+import {
+  flushPendingNavigation,
+  handleNavigationUrl,
+  navigationRef,
+} from "./src/navigation/rootNavigation.js";
 
 // ===============================
 // NAVIGATION
@@ -42,11 +72,11 @@ configureReanimatedLogger({
   strict: false,
 });
 
-LogBox.ignoreAllLogs();
-
 const Stack = createNativeStackNavigator();
 const USE_AUTH = true;
 const BRAND_LOGO = require("./assets/logo.png");
+
+initializeMonitoring();
 
 // ===============================
 // QUERY CLIENT
@@ -65,7 +95,7 @@ const queryClient = new QueryClient({
 // ===============================
 // APP
 // ===============================
-export default function App() {
+function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
 
@@ -82,17 +112,68 @@ export default function App() {
       auth,
       (firebaseUser) => {
         setUser(firebaseUser || null);
+        setMonitoringAuthState(firebaseUser ? "authenticated" : "anonymous");
+        setMonitoringUser(firebaseUser || null);
         setAuthChecked(true);
       },
       (error) => {
-        console.error("Auth error:", error);
+        logger.error(LOG_CATEGORIES.FIREBASE, "AUTH_STATE_ERROR", { error });
         setUser(null);
+        setMonitoringAuthState("anonymous");
+        setMonitoringUser(null);
         setAuthChecked(true);
       }
     );
 
     return unsub;
   }, []);
+
+  useEffect(() => {
+    initializeDiagnosticsPreferences().catch(() => false);
+    installGlobalRunErrorHandlers();
+    installGlobalErrorReporter();
+    startPerformanceDiagnostics();
+    startActiveRunAutoCheckpointing();
+    startRunNotificationCoordinator();
+    return () => {
+      stopRunNotificationCoordinator();
+      stopActiveRunAutoCheckpointing();
+      stopPerformanceDiagnostics();
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    Linking.getInitialURL()
+      .then((url) => {
+        if (mounted) handleNavigationUrl(url);
+      })
+      .catch(() => {});
+
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      handleNavigationUrl(url);
+    });
+
+    return () => {
+      mounted = false;
+      subscription?.remove?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authChecked || !user) return;
+    const handle = setTimeout(flushPendingNavigation, 0);
+    return () => clearTimeout(handle);
+  }, [authChecked, user]);
+
+  useEffect(() => {
+    if (authChecked) finishAppStartSpan("ready");
+  }, [authChecked]);
+
+  const syncMonitoringScreen = () => {
+    const route = navigationRef.getCurrentRoute?.();
+    if (route?.name) setMonitoringScreen(route.name);
+  };
 
   // ============================
   // SPLASH / LOADING
@@ -118,27 +199,38 @@ export default function App() {
   // ============================
   return (
     <QueryClientProvider client={queryClient}>
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          {!USE_AUTH && (
-            <Stack.Screen name="Main" component={MainNavigator} />
-          )}
+      <ErrorBoundary>
+        <NavigationContainer
+          ref={navigationRef}
+          onReady={() => {
+            flushPendingNavigation();
+            syncMonitoringScreen();
+          }}
+          onStateChange={syncMonitoringScreen}
+        >
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            {!USE_AUTH && (
+              <Stack.Screen name="Main" component={MainNavigator} />
+            )}
 
-          {USE_AUTH && user && (
-            <Stack.Screen name="Main" component={MainNavigator} />
-          )}
+            {USE_AUTH && user && (
+              <Stack.Screen name="Main" component={MainNavigator} />
+            )}
 
-          {USE_AUTH && !user && (
-            <>
-              <Stack.Screen name="Login" component={LoginScreen} />
-              <Stack.Screen name="Register" component={RegisterScreen} />
-            </>
-          )}
-        </Stack.Navigator>
-      </NavigationContainer>
+            {USE_AUTH && !user && (
+              <>
+                <Stack.Screen name="Login" component={LoginScreen} />
+                <Stack.Screen name="Register" component={RegisterScreen} />
+              </>
+            )}
+          </Stack.Navigator>
+        </NavigationContainer>
+      </ErrorBoundary>
     </QueryClientProvider>
   );
 }
+
+export default wrapWithMonitoring(App);
 
 const styles = StyleSheet.create({
   bootScreen: {

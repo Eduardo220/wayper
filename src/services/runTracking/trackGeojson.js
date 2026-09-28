@@ -1,9 +1,6 @@
 import { RUN_LINE_MODE } from "./trackTypes.js";
 import { normalizeTrackSegments, sanitizeRunPath } from "./trackSegments.js";
 
-const cache = new Map();
-const MAX_CACHE_SIZE = 80;
-
 function toLngLat(point) {
   const latitude = Number(point?.latitude ?? point?.lat);
   const longitude = Number(point?.longitude ?? point?.lng ?? point?.lon);
@@ -33,12 +30,6 @@ function normalizeInputSegments(input = [], mode = RUN_LINE_MODE.result) {
   return input.map((segment) => pointsForSegment(segment, mode));
 }
 
-function makeCacheKey(segments, mode) {
-  const counts = segments.map((segment) => segment.length).join(",");
-  const last = segments.flat().slice(-1)[0] || {};
-  return `${mode}:${segments.length}:${counts}:${last.latitude || ""}:${last.longitude || ""}:${last.timestamp || ""}`;
-}
-
 export function buildRunLineFeature(segments = [], mode = RUN_LINE_MODE.result, properties = {}) {
   const lines = normalizeInputSegments(segments, mode)
     .map((segment) => segment.map(toLngLat).filter(Boolean))
@@ -62,20 +53,11 @@ export function buildRunLineFeature(segments = [], mode = RUN_LINE_MODE.result, 
 
 export function buildRunLineGeoJson(segments = [], mode = RUN_LINE_MODE.result, properties = {}) {
   const normalizedSegments = normalizeInputSegments(segments, mode);
-  const key = makeCacheKey(normalizedSegments, mode);
-  if (cache.has(key)) return cache.get(key);
-
   const feature = buildRunLineFeature(normalizedSegments, mode, properties);
-  const collection = {
+  return {
     type: "FeatureCollection",
     features: feature ? [feature] : [],
   };
-
-  cache.set(key, collection);
-  if (cache.size > MAX_CACHE_SIZE) {
-    cache.delete(cache.keys().next().value);
-  }
-  return collection;
 }
 
 export default {

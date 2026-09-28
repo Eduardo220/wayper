@@ -53,7 +53,9 @@ Nenhuma tarefa registrada ainda.
 
 Status: Sugerida
 Prioridade: Média
-Motivo: A Wayper usa `docs/wayper` como fonte canônica e `/docs` como portal operacional; revisões periódicas reduzem divergência.
+Motivo: `develop` é a primeira fonte do comportamento; `docs/product` registra a
+direção e `docs/wayper` preserva detalhe/histórico. Revisões periódicas reduzem
+divergência.
 Impacto no MVP: Indireto, melhora alinhamento antes de mudanças em GPS, mapa, Firestore e regras.
 Documentos relacionados: [[00-fontes-do-projeto]], [[00-index]], [[15-workflow-obsidian-ia]]
 Precisa de aprovação humana: Não para revisão documental; sim para alterar decisões de produto.

@@ -1,5 +1,10 @@
 import { getTrackingPreset } from "./trackingConfig.js";
-import { TRACKING_FILTER_ACTION, TRACKING_POINT_SOURCE, TRACKING_REJECT_REASON } from "./trackingTypes.js";
+import {
+  TRACKING_FILTER_ACTION,
+  TRACKING_POINT_CLASSIFICATION,
+  TRACKING_POINT_SOURCE,
+  TRACKING_REJECT_REASON,
+} from "./trackingTypes.js";
 import {
   calculateBearing,
   calculateDistanceMeters,
@@ -15,14 +20,16 @@ const toNumber = (value, fallback = null) => {
 };
 
 const normalizeTimestamp = (value) => {
+  if (value == null || value === "") return null;
   const number = Number(value);
   if (Number.isFinite(number) && number > 0) return number;
   const date = new Date(value);
   if (!Number.isNaN(date.getTime())) return date.getTime();
-  return Date.now();
+  return null;
 };
 
 const normalizeOptionalNumber = (value) => {
+  if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -54,6 +61,9 @@ export function normalizeLocationPoint(location = {}) {
     heading: normalizeOptionalNumber(coords.heading ?? location.heading),
     timestamp: normalizeTimestamp(location.timestamp ?? coords.timestamp ?? location.time ?? location.t),
     source: normalizeSource(location),
+    originalSource: location.source || location.provider || null,
+    provider: location.provider || normalizeSource(location),
+    receivedAt: normalizeTimestamp(location.receivedAt) || Date.now(),
     mocked: Boolean(location.mocked ?? coords.mocked ?? location.isMocked),
   };
 
@@ -62,8 +72,8 @@ export function normalizeLocationPoint(location = {}) {
 }
 
 function qualityScoreForPoint(point, preset) {
-  const accuracy = Number(point?.accuracy);
-  if (!Number.isFinite(accuracy)) return 62;
+  const accuracy = normalizeOptionalNumber(point?.accuracy);
+  if (accuracy == null) return 62;
   if (accuracy <= preset.quality.excellentAccuracyMeters) return 98;
   if (accuracy <= preset.quality.goodAccuracyMeters) return 86;
   if (accuracy <= preset.quality.acceptableAccuracyMeters) return 68;
@@ -72,12 +82,19 @@ function qualityScoreForPoint(point, preset) {
 }
 
 function result(accepted, point, reason, qualityScore, action, extra = {}) {
+  const classification = accepted
+    ? qualityScore < 72 || extra.suspicious
+      ? TRACKING_POINT_CLASSIFICATION.suspicious
+      : TRACKING_POINT_CLASSIFICATION.accepted
+    : TRACKING_POINT_CLASSIFICATION.discarded;
+
   return {
     accepted,
     point: point || null,
     reason: reason || null,
     qualityScore: clamp(qualityScore, 0, 100),
     action,
+    classification,
     ...extra,
   };
 }
@@ -98,8 +115,8 @@ function isWarmupBadPoint(point, state, preset) {
   const startedAt = Number(state.startedAt || state.startedAtMs || 0);
   if (!startedAt || !point?.timestamp) return false;
   const ageMs = point.timestamp - startedAt;
-  const accuracy = Number(point.accuracy);
-  return ageMs >= 0 && ageMs <= 10000 && Number.isFinite(accuracy) && accuracy > preset.maxAccuracyMeters;
+  const accuracy = normalizeOptionalNumber(point.accuracy);
+  return ageMs >= 0 && ageMs <= 10000 && accuracy != null && accuracy > preset.maxAccuracyMeters;
 }
 
 function shouldRemovePreviousAsZigzag(path, next, preset) {
@@ -110,8 +127,8 @@ function shouldRemovePreviousAsZigzag(path, next, preset) {
   const ab = calculateDistanceMeters(a, b);
   const bc = calculateDistanceMeters(b, c);
   const angle = calculateTurnAngle(a, b, c);
-  const bAccuracy = Number.isFinite(Number(b.accuracy)) ? Number(b.accuracy) : preset.zigzagMinAccuracyPenaltyMeters;
-  const cAccuracy = Number.isFinite(Number(c.accuracy)) ? Number(c.accuracy) : preset.zigzagMinAccuracyPenaltyMeters;
+  const bAccuracy = normalizeOptionalNumber(b.accuracy) ?? preset.zigzagMinAccuracyPenaltyMeters;
+  const cAccuracy = normalizeOptionalNumber(c.accuracy) ?? preset.zigzagMinAccuracyPenaltyMeters;
 
   return (
     angle >= preset.zigzagAngleDegrees &&
@@ -129,7 +146,7 @@ function isShortZigzagCurrent(path, next, preset) {
   const ab = calculateDistanceMeters(a, b);
   const bc = calculateDistanceMeters(b, c);
   const angle = calculateTurnAngle(a, b, c);
-  const cAccuracy = Number.isFinite(Number(c.accuracy)) ? Number(c.accuracy) : preset.softMaxAccuracyMeters;
+  const cAccuracy = normalizeOptionalNumber(c.accuracy) ?? preset.softMaxAccuracyMeters;
   return (
     angle >= preset.zigzagAngleDegrees &&
     ab <= preset.zigzagMaxSegmentMeters &&
@@ -147,8 +164,24 @@ export function shouldAcceptPoint(rawPoint, state = {}, presetInput = "run") {
   }
 
   let qualityScore = qualityScoreForPoint(point, preset);
-  const accuracy = Number(point.accuracy);
-  const hasAccuracy = Number.isFinite(accuracy);
+  if (!Number.isFinite(Number(point.timestamp)) || Number(point.timestamp) <= 0) {
+    return result(false, point, TRACKING_REJECT_REASON.invalid_timestamp, qualityScore, TRACKING_FILTER_ACTION.reject);
+  }
+
+  const nowMs = Number.isFinite(Number(state.nowMs)) ? Number(state.nowMs) : Date.now();
+  const futureToleranceMs = Number(preset.futureTimestampToleranceMs || 120000);
+  if (Number.isFinite(nowMs) && point.timestamp > nowMs + futureToleranceMs) {
+    return result(false, point, TRACKING_REJECT_REASON.future_timestamp, qualityScore, TRACKING_FILTER_ACTION.reject);
+  }
+
+  const startedAt = Number(state.startedAt ?? state.startedAtMs ?? 0);
+  const stalePointThresholdMs = Number(preset.stalePointThresholdMs || 30000);
+  if (startedAt > 0 && point.timestamp < startedAt - stalePointThresholdMs) {
+    return result(false, point, TRACKING_REJECT_REASON.stale_point, qualityScore, TRACKING_FILTER_ACTION.reject);
+  }
+
+  const accuracy = normalizeOptionalNumber(point.accuracy);
+  const hasAccuracy = accuracy != null;
   const path = getAcceptedPath(state);
   const last = path[path.length - 1] || null;
   const prev = path[path.length - 2] || null;
@@ -176,7 +209,17 @@ export function shouldAcceptPoint(rawPoint, state = {}, presetInput = "run") {
   const distanceFromPreviousMeters = calculateDistanceMeters(last, point);
   const timeFromPreviousMs = point.timestamp - last.timestamp;
 
-  if (!Number.isFinite(timeFromPreviousMs) || timeFromPreviousMs < 0) {
+  if (!Number.isFinite(timeFromPreviousMs) || timeFromPreviousMs <= 0) {
+    if (isDuplicate(last, point, distanceFromPreviousMeters, timeFromPreviousMs)) {
+      return result(false, point, TRACKING_REJECT_REASON.duplicate_point, qualityScore, TRACKING_FILTER_ACTION.ignore, {
+        distanceFromPreviousMeters,
+        timeFromPreviousMs,
+        calculatedSpeedMps: 0,
+        bearingFromPrevious: null,
+        accelerationMps2: 0,
+      });
+    }
+
     return result(false, point, TRACKING_REJECT_REASON.out_of_order, qualityScore, TRACKING_FILTER_ACTION.reject, {
       distanceFromPreviousMeters,
       timeFromPreviousMs,
@@ -238,6 +281,7 @@ export function shouldAcceptPoint(rawPoint, state = {}, presetInput = "run") {
       return result(false, point, TRACKING_REJECT_REASON.too_fast, qualityScore, TRACKING_FILTER_ACTION.reject, meta);
     }
     qualityScore -= 14;
+    meta.suspicious = true;
   }
 
   if (acceleration > preset.maxAccelerationMps2 && distanceFromPreviousMeters > preset.minUsefulDistanceMeters * 2) {

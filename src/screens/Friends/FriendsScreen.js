@@ -4,7 +4,6 @@ import {
   Alert,
   Animated,
   FlatList,
-  Image,
   Keyboard,
   RefreshControl,
   StyleSheet,
@@ -33,8 +32,7 @@ import {
   rejectFriendRequest,
 } from "../../services/friends/friendsService";
 import { WayperTheme } from "../../theme/wayperTheme";
-
-const DEFAULT_AVATAR = "https://i.pravatar.cc/150?u=wayper_friend";
+import HomeAvatar from "../../components/Home/HomeAvatar";
 
 const safeNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -52,7 +50,7 @@ const formatArea = (m2 = 0) => {
 const normalizeUser = (id, data = {}) => ({
   id,
   uid: id,
-  avatar: data.avatar || data.photoURL || DEFAULT_AVATAR,
+  avatar: data.avatar || data.photoURL || null,
   name: data.name || data.displayName || data.username || "Atleta Wayper",
   username: data.username || data.email?.split("@")?.[0] || "wayper",
   bio: data.bio || "",
@@ -146,7 +144,7 @@ function ProfilePreviewCard({
       >
         <View style={styles.previewTop}>
           <View style={styles.avatarShell}>
-            <Image source={{ uri: user.avatar }} style={styles.avatar} />
+            <HomeAvatar uri={user.avatar} name={user.name} size={76} />
           </View>
 
           <View style={styles.previewIdentity}>

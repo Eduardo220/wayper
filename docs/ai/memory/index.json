@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "entries": [
+    {
+      "schemaVersion": 1,
+      "memoryId": "MM-38fb638e81431efff4b1bc8dc708ea416c17a9c3436298339e87d5bef5b0b31d",
+      "subject": "Completion is the sole project success authority",
+      "kind": "ARCHITECTURAL_INVARIANT",
+      "scope": {
+        "project": "Wayper",
+        "repository": null,
+        "paths": [
+          "scripts/wayper-completion-boundary.mjs"
+        ],
+        "capabilities": [
+          "harness-completion"
+        ],
+        "domains": [
+          "harness"
+        ]
+      },
+      "statement": "Only a current connected CompletionAssessment with decision ADMISSIBLE permits requesting host completion; a complete Validation Plan, Memory entry, Handoff, or clean worktree is insufficient.",
+      "provenance": {
+        "sourceRefs": [
+          {
+            "kind": "SOURCE",
+            "id": "completion-boundary-source",
+            "repository": "wayper",
+            "path": "scripts/wayper-completion-boundary.mjs",
+            "fingerprint": "sha256:182cba88246cb23007263cb563fc68ad58c0eb6bbe496caf46c815e4d7b5d6b8"
+          },
+          {
+            "kind": "DOCUMENT",
+            "id": "completion-boundary-contract",
+            "repository": "wayper",
+            "path": "docs/ai/completion-boundary.md",
+            "fingerprint": "sha256:3dee87fb24d3419254d800612b4ab98bbdb1cb5c7ab2e6c062935f2fe83129c7"
+          },
+          {
+            "kind": "VALIDATION",
+            "id": "quality:completion",
+            "repository": null,
+            "path": null,
+            "fingerprint": null
+          }
+        ],
+        "evidenceReceiptIds": [],
+        "findingIds": [],
+        "feedbackIds": [],
+        "completionAssessmentIds": []
+      },
+      "confidence": "VERIFIED",
+      "validity": {
+        "status": "VALIDATED",
+        "reasons": []
+      },
+      "status": "CURRENT",
+      "dependencies": [
+        {
+          "repository": "wayper",
+          "path": "scripts/wayper-completion-policy.mjs",
+          "fingerprint": "sha256:035d01926691456c9a7152e0b360598a62892d3b4f0f6a6efc9ca3d2fe3fc2a2"
+        },
+        {
+          "repository": "wayper",
+          "path": "scripts/quality/check-completion-boundary.test.mjs",
+          "fingerprint": "sha256:15aa17637e86a9aa7ab0d2ba7254fa96371dc3df07d9c4c9e2a6641b3fde4538"
+        },
+        {
+          "repository": "wayper",
+          "path": "scripts/wayper-completion-boundary.mjs",
+          "fingerprint": "sha256:182cba88246cb23007263cb563fc68ad58c0eb6bbe496caf46c815e4d7b5d6b8"
+        },
+        {
+          "repository": "wayper",
+          "path": "docs/ai/completion-boundary.md",
+          "fingerprint": "sha256:3dee87fb24d3419254d800612b4ab98bbdb1cb5c7ab2e6c062935f2fe83129c7"
+        }
+      ],
+      "createdAt": "2026-09-14T12:00:00.000Z",
+      "lastValidatedAt": "2026-09-23T21:33:47.174Z",
+      "supersedes": [],
+      "supersededBy": [],
+      "fingerprint": "sha256:836b9ee8ba364fa240086795bc2bb77055b63e01320f15f3bfcc69a398091de1"
+    },
+    {
+      "schemaVersion": 1,
+      "memoryId": "MM-5d48eebe5c89b493f49085c222b73fee310ebc0274c6c9afb3b80ec02570ac57",
+      "subject": "Repository authority remains isolated inside Project Goals",
+      "kind": "ARCHITECTURAL_INVARIANT",
+      "scope": {
+        "project": "Wayper",
+        "repository": null,
+        "paths": [
+          "scripts/wayper-cross-repo.mjs"
+        ],
+        "capabilities": [
+          "harness-orchestration"
+        ],
+        "domains": [
+          "harness"
+        ]
+      },
+      "statement": "Cross-repo coordination composes repository-scoped tasks, validation, Evidence, Dispatch, and Ownership; proof or authorization from one repository never proves or authorizes another.",
+      "provenance": {
+        "sourceRefs": [
+          {
+            "kind": "DOCUMENT",
+            "id": "cross-repo-contract",
+            "repository": "wayper",
+            "path": "docs/ai/cross-repo-coordination.md",
+            "fingerprint": "sha256:feb6ccc9decc9e9635d9093df114e8f9bf9d2fb055b5fa8a28e67ea6d070bcff"
+          },
+          {
+            "kind": "SOURCE",
+            "id": "cross-repo-owner-source",
+            "repository": "wayper",
+            "path": "scripts/wayper-cross-repo.mjs",
+            "fingerprint": "sha256:c7db7cd26d9611822cf055a6c401ed80f376aae436479a2f49b42f5ced5a6e56"
+          },
+          {
+            "kind": "VALIDATION",
+            "id": "quality:cross-repo",
+            "repository": null,
+            "path": null,
+            "fingerprint": null
+          }
+        ],
+        "evidenceReceiptIds": [],
+        "findingIds": [],
+        "feedbackIds": [],
+        "completionAssessmentIds": []
+      },
+      "confidence": "VERIFIED",
+      "validity": {
+        "status": "VALIDATED",
+        "reasons": []
+      },
+      "status": "CURRENT",
+      "dependencies": [
+        {
+          "repository": "wayper",
+          "path": "docs/ai/cross-repo-coordination.md",
+          "fingerprint": "sha256:feb6ccc9decc9e9635d9093df114e8f9bf9d2fb055b5fa8a28e67ea6d070bcff"
+        },
+        {
+          "repository": "wayper",
+          "path": "scripts/quality/check-cross-repo.test.mjs",
+          "fingerprint": "sha256:0db9da4afc94e32afd08179129e8c72c2c417c0f58e9963d354b92ef18a36d42"
+        },
+        {
+          "repository": "wayper",
+          "path": "scripts/wayper-cross-repo.mjs",
+          "fingerprint": "sha256:c7db7cd26d9611822cf055a6c401ed80f376aae436479a2f49b42f5ced5a6e56"
+        }
+      ],
+      "createdAt": "2026-09-14T12:00:00.000Z",
+      "lastValidatedAt": "2026-09-24T13:13:06.512Z",
+      "supersedes": [],
+      "supersededBy": [],
+      "fingerprint": "sha256:a8acbe96b568d64d0339c9bb35847ab96370b591b62f38fba210654a844584a5"
+    }
+  ]
+}

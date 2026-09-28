@@ -8,6 +8,7 @@ import {
 import { getCellIdsForGeometry } from "../territoryCellService.js";
 
 const fetchActiveTerritoriesNear = jest.fn(async () => []);
+const loadLocalTerritories = jest.fn(async () => []);
 const saveLocalTerritories = jest.fn(async (territories) => territories);
 const saveLocalTerritoryEvents = jest.fn(async (events) => events);
 const loadLocalTerritoryLeaderboards = jest.fn(async () => []);
@@ -21,6 +22,7 @@ jest.unstable_mockModule("../territoryStorageService.js", () => ({
   fetchActiveTerritoriesNear,
   fetchTerritoryLeaderboardByCellId,
   loadLocalTerritoryLeaderboards,
+  loadLocalTerritories,
   saveLocalTerritories,
   saveLocalTerritoryEvents,
   saveLocalTerritoryLeaderboards,
@@ -130,6 +132,7 @@ describe("territoryCaptureService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     fetchActiveTerritoriesNear.mockResolvedValue([]);
+    loadLocalTerritories.mockResolvedValue([]);
     loadLocalTerritoryLeaderboards.mockResolvedValue([]);
   });
 
@@ -380,6 +383,39 @@ describe("territoryCaptureService", () => {
       expect.arrayContaining([expect.objectContaining({ type: "capture" })]),
       expect.objectContaining({ preserveVersion: true })
     );
+  });
+
+  test("captura sem candidatos explicitos usa vizinhos locais offline", async () => {
+    const localEnemy = territoryFromBbox({
+      id: "local-enemy",
+      ownerId: "user-2",
+      ownerName: "Bruno",
+      bbox: [0.001, 0.001, 0.004, 0.004],
+    });
+    loadLocalTerritories.mockResolvedValue([localEnemy]);
+    fetchActiveTerritoriesNear.mockRejectedValueOnce(new Error("offline"));
+
+    const result = await processRunTerritoryCapture({
+      ...baseParams,
+      path: pathFromBbox([0, 0, 0.005, 0.005]),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.stolenAreaM2).toBeGreaterThan(0);
+  });
+
+  test("falha de storage nao confirma captura", async () => {
+    saveLocalTerritories.mockResolvedValueOnce([]);
+
+    const result = await processRunTerritoryCapture({
+      ...baseParams,
+      persist: true,
+      path: pathFromBbox([0, 0, 0.005, 0.005]),
+      existingTerritories: [],
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "storage_error" });
+    expect(scheduleTerritoriesSync).not.toHaveBeenCalled();
   });
 
   test("capturedTerritory contem bbox center cellIds e version", async () => {

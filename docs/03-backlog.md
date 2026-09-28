@@ -1,70 +1,93 @@
 # Backlog
 
-Backlog inicial de funcionalidades, melhorias e pendências. Use issues do GitHub para detalhar e acompanhar execução.
+> **Status:** vigente<br>
+> **Tipo:** planejamento priorizado<br>
+> **Escopo:** ações executáveis e gates pendentes<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`docs/02-roadmap.md`](02-roadmap.md)
+
+Backlog vivo de funcionalidades, melhorias e pendencias. Nao usar este arquivo para reabrir como "a fazer" algo que ja existe na branch `develop`; nesses casos, o trabalho e validacao, hardening ou desacoplamento incremental.
+
+## Fundação — prioridade máxima permanente
+
+Os itens abaixo formam um único gate e nunca são melhoria média ou opcional:
+
+- estabilidade da corrida e tracking/GPS confiáveis;
+- funcionamento com tela apagada e em background;
+- persistência local e modo offline;
+- recuperação de atividade interrompida;
+- finalização resiliente com save mínimo confirmado;
+- diagnóstico local e observabilidade segura;
+- validação em Android físico, incluindo notificação, kill/force-stop,
+  preview/release, corrida longa e economia de bateria.
+
+Relatório, retenção, planos, parceiros e pagamentos não podem reduzir a
+prioridade desse gate.
 
 ## Alta prioridade
 
-| Item | Tipo | Status | Observação |
+| Item | Tipo | Status | Observacao |
 | --- | --- | --- | --- |
-| Corrida com GPS confiável | Feature | A fazer | Base do produto. |
-| Histórico de corridas | Feature | A fazer | Necessário para progresso do usuário. |
-| Zonas no mapa | Feature | A fazer | Coração da gamificação. |
-| Ranking | Feature | A fazer | Competição básica; ranking global competitivo depende de decisão específica. |
-| Regras de segurança do Firestore | Segurança | A validar | Não brincar com dado de usuário, por favor. |
-| Tratamento de permissão de localização | UX | A fazer | Usuário nega permissão e o app não pode morrer dramaticamente. |
+| Concluir reteste de corrida/background/notificação | QA | Alta | A nova build aprovou pausa/retomada e finalização no app em ciclo curto; ainda é preciso repetir ações da notificação, tela bloqueada, recovery, offline e demais cenários. |
+| Validar finalização/reentrada em Android preview/release | QA/bug | Pendente | O Dev Client confirmou save mínimo/finalização no app; ainda falta confirmar histórico após reinício, lock, falha induzida e rota sem duplicação em preview/release. |
+| Modo foco da corrida | Produto/UX | Planejado | Tempo, distância, pace, estado, GPS crítico e controles; mapa opcional. |
+| Contrato do Relatório da Expedição | Produto/dados | Planejado | Reabrível, parcial e compatível com `RunSummaryModal`/`RunDetailScreen`. |
+| Assinatura Android release real | Build | Pendente | APK prod debug-signed nao e publicavel. |
+| Source maps/Sentry autenticado | Observabilidade | Pendente | Precisa credenciais e evidencia no painel. |
+| Feed/Friends/Groups local-first | Arquitetura | Pendente | Ainda ha chamadas Firestore-first em telas/services, incluindo grupos. |
+| Regras de seguranca do Firestore | Seguranca | A validar | Firestore segue remoto/best effort e precisa regras consistentes. |
+| Teste de volume AsyncStorage | Performance | Em validação | Caso real atingiu limite padrão; schema compacto v2 e limite Android de 32 MB precisam medição antes de decidir SQLite. |
 
-## Média prioridade
+## Media prioridade
 
-| Item | Tipo | Status | Observação |
+| Item | Tipo | Status | Observacao |
 | --- | --- | --- | --- |
-| Ranking semanal/mensal | Feature | A fazer | Ajuda retenção. |
-| Perfil de usuário | Feature | A fazer | Base social. |
-| Sistema de amigos | Feature | A fazer | Para competição entre conhecidos. |
-| Conquistas | Gamificação | A fazer | Metas e badges. |
-| Modo offline parcial | Técnica | A avaliar | Importante para corrida com internet ruim. |
-| Cache de mapa/dados | Técnica | A avaliar | Melhorar experiência. |
+| Sync remoto de stories | Social | Futuro | Hoje story local fica `PENDING_SYNC`. |
+| Sync remoto de XP/conquistas | Gamificacao | Futuro | Base local existe; contrato remoto ainda nao. |
+| Sync territorial remoto social/completo | Territorio | Futuro | Sync territorial continua separado do sync de runs. |
+| Ranking remoto robusto | Ranking | Parcial | Repository diferencia fontes; agregados remotos ainda precisam contrato. |
+| Amigos/grupos com cache/offline honesto | Social | Parcial | Nao mostrar demo/mock como dado real. |
+| Limpeza de `console.*` legado | Qualidade | Pendente | Priorizar fora de fluxos criticos ja cobertos por logger. |
+| Consolidar regras territoriais competitivas | Produto | Pendente | Código e documentação histórica divergem sobre disputa/posse. |
+| Feature flags centralizadas | Arquitetura | Planejado | Necessárias antes de relatório novo e integrações comerciais. |
 
 ## Baixa prioridade
 
-| Item | Tipo | Status | Observação |
+| Item | Tipo | Status | Observacao |
 | --- | --- | --- | --- |
-| Temas visuais | UI | Futuro | Depois que o essencial funcionar. |
-| Compartilhamento social | Feature | Futuro | Bom para divulgação. |
-| Integração com wearables | Feature | Futuro | Complexidade maior. |
-| iOS produção | Plataforma | Futuro | Depende de prioridade e recursos. |
+| Temas visuais | UI | Futuro | Depois dos fluxos reais. |
+| Wireframes futuros | Design | Futuro | Manter Home social e dashboard pessoal separados. |
+| Integracao com wearables | Feature | Futuro | Complexidade maior. |
+| iOS producao | Plataforma | Futuro | Depende de prioridade e recursos. |
+| Wayper Plus/entitlements | Negócio | Aprovado conceitualmente | Só depois da fundação, pipeline e relatório. |
+| Parceiros/desafios/eventos | Ecossistema | Aprovado conceitualmente | Fora da corrida e sem integração nesta fase. |
+| Ads/gateway/pagamentos | Monetização | Não autorizado agora | Exigem providers, política, consentimento, flags e decisão específica. |
 
-## Dívidas técnicas
+## Concluido/avancado e ainda monitorado
 
-- Padronizar estrutura de pastas se ainda estiver inconsistente.
-- Documentar variáveis de ambiente.
-- Criar testes para regras críticas de corrida e zona.
-- Revisar nomes de scripts para separar dev, rua, produção e build.
-- Criar ADRs para decisões importantes.
+| Item | Status | Observacao |
+| --- | --- | --- |
+| Corrida ativa local-first | Avancado | `wayper:activeRun:v2` canonico; recovery/autosave consolidados. |
+| GPS/path | Avancado | `rawPath`, `trustedPath`, `renderPath`, `segments`. |
+| Historico/detalhes offline | Avancado | Fonte `runs`. |
+| Sync idempotente de runs | Avancado | `sync.js`/`runSyncQueueService`. |
+| Territorios locais | Avancado | `wayper_territories_v1` e eventos/leaderboards locais. |
+| XP/conquistas locais | Inicial avancado | Sync remoto futuro. |
+| Perfil/ranking local/cache | Avancado | Origens explicitas. |
+| Home social inicial | Avancado | `socialHomeRepository`; sem dashboard pessoal na Home. |
+| Onboarding/permissoes/estados vazios | Avancado | Sem prompt infinito; estados compartilhados. |
+| Compartilhamento imagem/trace PNG/story local | Avancado | Sem copiar imagem ate suporte confiavel. |
+| Diagnostico local/export ZIP | Avancado | Funciona offline e mascara coordenadas por padrao. |
+| Contrato do salvamento mínimo | Implementado | `runFinalizationService` confirma `minimumSavedRunVersion=1` antes de limpar a sessão ativa. |
+| Orquestração de finalização fora da tela | Implementado | `MapScreen` comanda o serviço; lock/idempotência não dependem do componente. |
+| Núcleo do pipeline da Expedição | Implementado | A fila existente persiste resultado/status por módulo e reconcilia seeds pendentes no startup. |
 
 ## Como priorizar
 
-1. Primeiro, fazer o usuário correr e salvar dados corretamente.
-2. Depois, transformar corrida em território.
-3. Depois, ranquear e competir.
-4. Por último, enfeitar.
-
-## Fluxo de entrada com IA
-
-- Novas ideias sugeridas por IA devem primeiro ir para [[16-ideias-de-melhoria]].
-- Propostas concretas que precisam de aprovação devem ir para [[17-propostas-pendentes]].
-- Tarefas aprovadas podem entrar neste backlog principal quando fizerem parte da prioridade do produto.
-- Tarefas técnicas sugeridas pela IA podem ir para [[20-backlog-ia]] antes de virarem backlog principal.
-- Bugs e riscos técnicos devem ser registrados em [[13-bugs-conhecidos]].
-
-## Prioridade atual
-
-A prioridade atual continua sendo:
-
-1. Corrida com GPS confiável.
-2. Histórico de corridas.
-3. Zonas no mapa.
-4. Ranking.
-5. Segurança do Firestore.
-6. UX de permissão de localização.
-
-Não mude essa prioridade principal sem registrar decisão humana em [[08-decisoes-tecnicas]] quando for decisão técnica, e em [[10-decisoes-do-projeto]] quando afetar produto ou MVP.
+1. Primeiro, validar em aparelho real que corrida ativa, GPS, background, notificacao, recovery e finalizacao preservam dados.
+2. Depois, validar e endurecer a finalização mínima e o pipeline já extraídos.
+3. Depois, entregar o Relatório da Expedição e modo foco por rollout reversível.
+4. Em paralelo apenas quando não aumentar risco, fechar build, Sentry e assinatura.
+5. Depois, desacoplar social/grupos e ampliar retenção.
+6. Só então implementar entitlements/Plus.
+7. Parceiros, anúncios e pagamentos exigem fases próprias e autorização explícita.

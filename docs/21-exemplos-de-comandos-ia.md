@@ -1,6 +1,17 @@
 # Exemplos de Comandos para IA
 
+> **Status:** vigente como exemplos<br>
+> **Tipo:** referência operacional auxiliar<br>
+> **Escopo:** modelos de solicitação e registro<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`docs/14-instrucoes-para-ia.md`](14-instrucoes-para-ia.md)
+
 Use estes exemplos no Codex quando quiser transformar uma mensagem em entrada formal da Wayper.
+
+Estes exemplos não são instruções canônicas. Carregue `AGENTS.md` e
+`docs/00-fontes-do-projeto.md`; trate a lista de cada exemplo como sugestão
+adicional sujeita à matriz atual. Em divergência, o catálogo define a fonte
+correta para estado, direção ou planejamento.
 
 ## 1. Ideia Wayper
 

@@ -28,6 +28,7 @@ const {
   filterTerritoryEventsByPrivacy,
   loadLocalTerritoryFeed,
   mergeRunsZonesAndTerritoryEvents,
+  normalizeRunForFeed,
   normalizeTerritoryEventForFeed,
 } = await import("../territoryFeedService.js");
 
@@ -84,6 +85,34 @@ describe("territoryFeedService", () => {
     expect(free).toHaveLength(1);
     expect(free[0].__type).toBe("run");
     expect(free[0].areaM2).toBe(0);
+  });
+
+  test("corrida local-first preserva ids de sync e usa renderPath no preview", () => {
+    const item = normalizeRunForFeed({
+      id: "local-run",
+      localRunId: "local-run",
+      remoteRunId: "remote-run",
+      syncStatus: "FAILED",
+      offlineStatus: "SYNC_FAILED",
+      mode: "free",
+      trustedPath: [{ latitude: -23.56, longitude: -46.64 }],
+      renderPath: [
+        { latitude: -23.56, longitude: -46.64 },
+        { latitude: -23.561, longitude: -46.641 },
+      ],
+      segments: [{ index: 0, trustedPath: [{ latitude: -23.56, longitude: -46.64 }] }],
+    });
+
+    expect(item).toMatchObject({
+      id: "local-run",
+      localRunId: "local-run",
+      remoteRunId: "remote-run",
+      syncStatus: "FAILED",
+      offlineStatus: "SYNC_FAILED",
+      pendingSync: true,
+    });
+    expect(item.path).toHaveLength(2);
+    expect(item.routeSegments).toHaveLength(1);
   });
 
   test("CorridasScreen ainda mostra zona legada", () => {

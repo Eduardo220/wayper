@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 const { spawnSync } = require("node:child_process");
+const path = require("node:path");
+const { inferEnvironmentFromArgs, loadWayperEnv } = require("./env-loader.cjs");
 
 function commandName(command) {
   if (process.platform !== "win32") {
@@ -136,6 +138,17 @@ function pickDevice(devices, target) {
 }
 
 const { target, expoArgs } = parseArgs(process.argv.slice(2));
+const inferredEnvironment = process.env.WAYPER_ENV || inferEnvironmentFromArgs(expoArgs);
+
+if (inferredEnvironment) {
+  try {
+    loadWayperEnv(inferredEnvironment, { rootDir: path.resolve(__dirname, "..") });
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+}
+
 const adb = run("adb", ["devices"]);
 
 if (adb.status !== 0) {

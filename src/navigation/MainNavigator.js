@@ -1,6 +1,6 @@
 // MAIN NAVIGATOR — WAYPER (STABLE, OFFLINE-SAFE)
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, ActivityIndicator, Image, StyleSheet, Text, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -9,8 +9,7 @@ import { createDrawerNavigator } from "@react-navigation/drawer";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 // FIREBASE
-import { auth, db } from "../firebaseConfig";
-import { doc, onSnapshot } from "firebase/firestore";
+import { auth } from "../firebaseConfig";
 import { signOut } from "firebase/auth";
 
 // SCREENS
@@ -18,6 +17,8 @@ import MapScreen from "../screens/MapScreen";
 import HomeScreen from "../screens/HomeScreen";
 import RankingScreen from "../screens/RankingScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import DiagnosticsScreen from "../screens/DiagnosticsScreen";
+import SettingsScreen from "../screens/SettingsScreen";
 
 // FRIENDS
 import FriendsScreen from "../screens/Friends/FriendsScreen";
@@ -34,13 +35,23 @@ import CorridasScreen from "../screens/Runs/CorridasScreen";
 import RunDetailScreen from "../screens/Runs/RunDetailScreen";
 import ZoneDetailScreen from "../screens/Runs/ZoneDetailScreen";
 import DashboardScreen from "../screens/Runs/DashboardScreen";
+import OnboardingScreen from "../screens/OnboardingScreen";
 
 // UI
 import CustomDrawer from "../components/CustomDrawer";
 import { WayperTheme } from "../theme/wayperTheme";
-
-// SYNC
-import * as sync from "../utils/sync";
+import activeRunTrackingService from "../services/runTracking/activeRunTrackingService";
+import {
+  findRecoverableRunForUser,
+  isLiveRecovery,
+} from "../services/run/runRecoveryService.js";
+import logger, { LOG_CATEGORIES } from "../utils/logger.js";
+import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
+import { subscribeCurrentUserProfile } from "../repositories/userProfileRepository.js";
+import { runLocalMigrationsOnce } from "../services/storage/storageMigrationService.js";
+import runDeferredTaskQueueRepository from "../repositories/runDeferredTaskQueueRepository.js";
+import runSyncQueueRepository from "../repositories/runSyncQueueRepository.js";
+import { hasCompletedOnboarding } from "../services/onboarding/onboardingService.js";
 
 const Drawer = createDrawerNavigator();
 const Stack = createNativeStackNavigator();
@@ -54,6 +65,83 @@ function HeaderTitle({ title }) {
       <View style={styles.headerDivider} />
       <Text style={styles.headerText}>{title}</Text>
     </View>
+  );
+}
+
+function getDrawerStatusFromNavigation(navigation) {
+  const state = navigation?.getState?.();
+  const history = Array.isArray(state?.history) ? state.history : [];
+  const drawerEntry = [...history].reverse().find((entry) => entry?.type === "drawer");
+  return drawerEntry?.status || null;
+}
+
+function HeaderMenuButton({ navigation }) {
+  const openTimeoutRef = useRef(null);
+
+  const clearOpenTimeout = useCallback(() => {
+    if (openTimeoutRef.current) {
+      clearTimeout(openTimeoutRef.current);
+      openTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const unsubscribeOpen = navigation?.addListener?.("drawerOpen", () => {
+      clearOpenTimeout();
+      recordRunEvent("RUN_DRAWER_OPENED", {
+        source: "header_menu",
+        screen: "MainNavigator",
+      });
+    });
+    const unsubscribeClose = navigation?.addListener?.("drawerClose", clearOpenTimeout);
+    return () => {
+      clearOpenTimeout();
+      unsubscribeOpen?.();
+      unsubscribeClose?.();
+    };
+  }, [clearOpenTimeout, navigation]);
+
+  const handlePress = useCallback(() => {
+    recordRunEvent("RUN_DRAWER_OPEN_REQUESTED", {
+      source: "header_menu",
+      screen: "MainNavigator",
+    });
+    try {
+      navigation?.openDrawer?.();
+    } catch (error) {
+      recordRunEvent("RUN_DRAWER_OPEN_TIMEOUT", {
+        source: "header_menu",
+        reason: "openDrawer_threw",
+        error,
+        screen: "MainNavigator",
+      });
+      return;
+    }
+
+    clearOpenTimeout();
+    openTimeoutRef.current = setTimeout(() => {
+      const status = getDrawerStatusFromNavigation(navigation);
+      if (status === "open") return;
+      recordRunEvent("RUN_DRAWER_OPEN_TIMEOUT", {
+        source: "header_menu",
+        observedStatus: status || "unknown",
+        timeoutMs: 900,
+        screen: "MainNavigator",
+      });
+    }, 900);
+  }, [clearOpenTimeout, navigation]);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Abrir menu"
+      hitSlop={12}
+      style={styles.headerMenu}
+      onPress={handlePress}
+      testID="drawer-menu-button"
+    >
+      <Ionicons name="menu" size={28} color={WayperTheme.colors.text} />
+    </Pressable>
   );
 }
 
@@ -143,12 +231,30 @@ function HomeStack() {
   );
 }
 
+function SettingsStack() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: WayperTheme.colors.background },
+        headerTintColor: WayperTheme.colors.text,
+        headerTitleStyle: { fontWeight: "900", fontSize: 20 },
+      }}
+    >
+      <Stack.Screen name="SettingsHome" component={SettingsScreen} options={{ title: "Configuracoes" }} />
+      <Stack.Screen name="Diagnostico" component={DiagnosticsScreen} options={{ title: "Diagnostico" }} />
+    </Stack.Navigator>
+  );
+}
+
 /* ===========================
    MAIN NAVIGATOR
    =========================== */
 export default function MainNavigator() {
   const [userData, setUserData] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
+  const [initialRouteName, setInitialRouteName] = useState(null);
+  const [checkingOnboarding, setCheckingOnboarding] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   // ===========================
   // LOAD USER DATA (SAFE)
@@ -161,23 +267,75 @@ export default function MainNavigator() {
       return undefined;
     }
 
-    const unsubscribe = onSnapshot(
-      doc(db, "users", uid),
-      (snap) => {
-        setUserData(snap.exists() ? snap.data() : null);
-        setLoadingUser(false);
-      },
-      (err) => {
-        const code = String(err?.code || "");
+    const unsubscribe = subscribeCurrentUserProfile((result) => {
+      setUserData(result.data?.userDoc || result.data?.profile || null);
+      setLoadingUser(false);
+
+      if (result.error) {
+        const code = String(result.error?.code || "");
         if (code !== "unavailable") {
-          console.warn("Erro ao carregar usuario:", err);
+          logger.warn(LOG_CATEGORIES.FIREBASE, "USER_PROFILE_LOAD_FAILED", {
+            code,
+            error: result.error,
+          });
         }
-        setUserData(null);
-        setLoadingUser(false);
       }
-    );
+    });
 
     return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    runLocalMigrationsOnce().catch((error) => {
+      if (!mounted) return;
+      logger.warn(LOG_CATEGORIES.STORAGE || LOG_CATEGORIES.SYNC, "LOCAL_STORAGE_MIGRATION_FAILED", {
+        error,
+      });
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const uid = auth.currentUser?.uid || "offline";
+    Promise.all([
+      activeRunTrackingService.hasActiveRunSnapshot?.().catch(() => false),
+      findRecoverableRunForUser(uid, { reason: "initial_route" }).catch(() => null),
+    ])
+      .then(([hasActiveRun, recovery]) => {
+        const hasLiveRecovery = recovery?.recoverable && isLiveRecovery(recovery);
+        if (mounted) setInitialRouteName(hasActiveRun || hasLiveRecovery ? "Mapa" : "Inicio");
+      })
+      .catch(() => {
+        if (mounted) setInitialRouteName("Inicio");
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    hasCompletedOnboarding()
+      .then((completed) => {
+        if (!mounted) return;
+        setShowOnboarding(!completed);
+      })
+      .catch(() => {
+        if (mounted) setShowOnboarding(false);
+      })
+      .finally(() => {
+        if (mounted) setCheckingOnboarding(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // ===========================
@@ -186,13 +344,16 @@ export default function MainNavigator() {
   useEffect(() => {
     if (!userData) return;
 
-    try {
-      if (typeof sync.startAutoSync === "function") {
-        sync.startAutoSync();
+    runSyncQueueRepository.startAutoSync?.().catch((e) => {
+      logger.warn(LOG_CATEGORIES.SYNC, "START_AUTO_SYNC_FAILED", { error: e });
+    });
+    runDeferredTaskQueueRepository.startAutoProcessing?.().then((result) => {
+      if (result?.error) {
+        logger.warn(LOG_CATEGORIES.RUN_SESSION, "START_RUN_DEFERRED_QUEUE_FAILED", { error: result.error });
       }
-    } catch (e) {
-      console.warn("startAutoSync failed:", e);
-    }
+    }).catch((e) => {
+      logger.warn(LOG_CATEGORIES.RUN_SESSION, "START_RUN_DEFERRED_QUEUE_FAILED", { error: e });
+    });
   }, [userData]);
 
   // ===========================
@@ -202,14 +363,14 @@ export default function MainNavigator() {
     try {
       await signOut(auth);
     } catch (e) {
-      console.log("Erro ao deslogar:", e);
+      logger.warn(LOG_CATEGORIES.FIREBASE, "SIGN_OUT_FAILED", { error: e });
     }
   }
 
   // ===========================
   // LOADING
   // ===========================
-  if (loadingUser) {
+  if (loadingUser || !initialRouteName || checkingOnboarding) {
     return (
       <View style={styles.loadingScreen}>
         <LinearGradient
@@ -240,12 +401,16 @@ export default function MainNavigator() {
     );
   }
 
+  if (showOnboarding && initialRouteName !== "Mapa") {
+    return <OnboardingScreen onComplete={() => setShowOnboarding(false)} />;
+  }
+
   // ===========================
   // UI
   // ===========================
   return (
     <Drawer.Navigator
-      initialRouteName="Inicio"
+      initialRouteName={initialRouteName}
       screenOptions={({ navigation }) => ({
         headerShown: true,
         headerStyle: { backgroundColor: WayperTheme.colors.background, height: 102 },
@@ -259,11 +424,7 @@ export default function MainNavigator() {
         headerTintColor: WayperTheme.colors.text,
         headerLeftContainerStyle: { paddingLeft: 10 },
         headerTitleContainerStyle: { marginLeft: 18 },
-        headerLeft: () => (
-          <Pressable style={styles.headerMenu} onPress={() => navigation.openDrawer()}>
-            <Ionicons name="menu" size={28} color={WayperTheme.colors.text} />
-          </Pressable>
-        ),
+        headerLeft: () => <HeaderMenuButton navigation={navigation} />,
         headerTitle: ({ children }) => <HeaderTitle title={children} />,
         headerTitleStyle: { fontWeight: "900", fontSize: 22 },
         drawerStyle: { backgroundColor: WayperTheme.colors.background, width: 315 },
@@ -285,6 +446,7 @@ export default function MainNavigator() {
       <Drawer.Screen name="Ranking" component={RankingScreen} options={{ title: "Ranking" }} />
       <Drawer.Screen name="Amigos" component={FriendsStack} options={{ title: "Amigos" }} />
       <Drawer.Screen name="Grupos" component={GroupStack} options={{ title: "Grupos" }} />
+      <Drawer.Screen name="Configuracoes" component={SettingsStack} options={{ title: "Configuracoes" }} />
     </Drawer.Navigator>
   );
 }

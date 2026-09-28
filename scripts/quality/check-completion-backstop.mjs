@@ -1,0 +1,420 @@
+import { execFileSync, spawnSync } from 'node:child_process';
+import path from 'node:path';
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
+import { assessGoalCompletion } from '../wayper-completion-boundary.mjs';
+import { completionStopBinding, persistCompletionAssessment, recordCompletionAttempt } from '../wayper-completion-store.mjs';
+
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+
+const QUALITY_TESTS = {
+  size: 'scripts/quality/check-code-size.test.mjs',
+  architecture: 'scripts/quality/check-architecture.test.mjs',
+  gate: 'scripts/quality/check-quality-gate.test.mjs',
+  backstop: 'scripts/quality/check-completion-backstop.test.mjs',
+  context: 'scripts/quality/check-context-efficiency.test.mjs',
+  contextEconomy: 'scripts/quality/check-context-economy.test.mjs',
+  contextAdversarial: 'scripts/quality/check-context-adversarial.test.mjs',
+  graph: 'scripts/quality/check-graph-context.test.mjs',
+  handoff: 'scripts/wayper-structured-handoff.test.mjs',
+  evidence: 'scripts/quality/check-evidence-receipts.test.mjs',
+  validation: 'scripts/quality/check-validation-planner.test.mjs',
+  feedback: 'scripts/quality/check-feedback-loop.test.mjs',
+  feedbackAdversarial: 'scripts/quality/check-feedback-adversarial.test.mjs',
+  completion: 'scripts/quality/check-completion-boundary.test.mjs',
+  adversarial: 'scripts/quality/check-completion-adversarial.test.mjs',
+  crossRepo: 'scripts/quality/check-cross-repo.test.mjs',
+  memory: 'scripts/quality/check-project-memory.test.mjs',
+  benchmark: 'scripts/quality/check-harness-benchmark.test.mjs',
+};
+
+function isBenchmark(file) {
+  return file.startsWith('scripts/wayper-harness-benchmark')
+    || file === 'scripts/quality/check-harness-benchmark.test.mjs'
+    || file.startsWith('docs/ai/benchmarks/harness-v1-v2/');
+}
+
+function isEvidence(file) {
+  return file.startsWith('scripts/wayper-evidence') || file.startsWith('scripts/quality/check-evidence') ||
+    file === 'scripts/quality/evidence-fixture.mjs' || file.startsWith('docs/ai/evidence-receipt') ||
+    file === 'package.json';
+}
+
+function isValidation(file) {
+  return file.startsWith('scripts/wayper-validation') || file.startsWith('scripts/quality/check-validation') ||
+    file.startsWith('docs/ai/validation-') || file === 'docs/ai/capability-registry.json' ||
+    file === 'docs/ai/task-classification.md' || file === 'package.json';
+}
+
+function isContextEfficiency(file) {
+  return file.startsWith('scripts/wayper-context')
+    || file.startsWith('scripts/quality/check-context-economy')
+    || file.startsWith('scripts/quality/check-context-adversarial')
+    || file === 'scripts/quality/context-economy-fixture.mjs'
+    || file === 'scripts/quality/evaluate-context-map-cases.mjs'
+    || file === 'docs/ai/working-context.md'
+    || file === 'docs/ai/context-economy.md'
+    || file === 'docs/ai/context-efficiency-evals.json'
+    || file.startsWith('.agents/skills/wayper-context-efficiency/');
+}
+
+function isGraph(file) {
+  return file.startsWith('scripts/wayper-graph')
+    || file.startsWith('scripts/quality/check-graph-')
+    || file === 'scripts/quality/graph-context-fixture.mjs'
+    || file === 'scripts/quality/verified-graph-fixture.mjs'
+    || file === 'docs/ai/context-economy.md'
+    || file === '.graphifyignore';
+}
+
+function isHarness(file) {
+  return file === 'AGENTS.md'
+    || file.startsWith('.agents/')
+    || file.startsWith('.codex/')
+    || file.startsWith('docs/ai/');
+}
+
+function isStructuredHandoff(file) {
+  return file.startsWith('scripts/wayper-structured-handoff')
+    || file.startsWith('scripts/wayper-context-map')
+    || file.startsWith('scripts/wayper-context-packet')
+    || file === 'scripts/quality/evaluate-structured-handoff-cases.mjs'
+    || file === 'docs/ai/structured-handoff-evals.json'
+    || file === 'package.json';
+}
+
+function isQualityTooling(file) {
+  return file === 'eslint.config.js'
+    || file.startsWith('scripts/wayper-context')
+    || file.startsWith('scripts/wayper-structured-handoff')
+    || file.startsWith('scripts/wayper-evidence')
+    || file.startsWith('scripts/wayper-validation')
+    || file.startsWith('scripts/wayper-feedback')
+    || file.startsWith('scripts/wayper-dispatch')
+    || file.startsWith('scripts/wayper-ownership')
+    || file.startsWith('scripts/wayper-completion')
+    || file.startsWith('scripts/wayper-graph')
+    || file.startsWith('scripts/wayper-cross-repo')
+    || file.startsWith('scripts/wayper-project-memory')
+    || file.startsWith('scripts/wayper-harness-benchmark')
+    || file.startsWith('scripts/quality/');
+}
+
+function isPackageConfig(file) {
+  return /^(package(?:-lock)?\.json|app\.json|eas\.json|babel\.config\.[cm]?js|metro\.config\.[cm]?js)$/.test(file);
+}
+
+function isTest(file) {
+  return file.includes('/__tests__/')
+    || file.startsWith('__tests__/')
+    || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file);
+}
+
+function fileScope(file) {
+  if (isQualityTooling(file)) return 'QUALITY_TOOLING';
+  if (isHarness(file)) return 'HARNESS_ONLY';
+  if (file.startsWith('android/')) return 'NATIVE_ANDROID';
+  if (isPackageConfig(file)) return 'PACKAGE_CONFIG';
+  if (isTest(file)) return 'TESTS';
+  if (file.endsWith('.md')) return 'DOCS_ONLY';
+  return 'PRODUCT_SOURCE';
+}
+
+export function classifyChangedScope(files) {
+  if (!files.length) return 'NO_CHANGES';
+  const scopes = new Set(files.map(fileScope));
+  return scopes.size === 1 ? [...scopes][0] : 'MIXED';
+}
+
+export function relevantQualityTests(files) {
+  const tests = new Set();
+  for (const file of files) {
+    if (isBenchmark(file) || file === 'package.json') tests.add(QUALITY_TESTS.benchmark);
+    if (file.includes('cross-repo') || file === 'package.json') {
+      tests.add(QUALITY_TESTS.crossRepo); tests.add(QUALITY_TESTS.completion);
+    }
+    if (file.includes('project-memory') || file.startsWith('docs/ai/memory/') || file === 'docs/ai/memory-policy.md' || file === 'package.json') {
+      tests.add(QUALITY_TESTS.memory);
+    }
+    if (/dispatch|ownership/.test(file) || file === 'package.json') {
+      for (const name of ['check-dispatch', 'check-dispatch-spawn', 'check-dispatch-circuit', 'check-ownership', 'check-ownership-concurrency']) {
+        tests.add(`scripts/quality/${name}.test.mjs`);
+      }
+      tests.add(QUALITY_TESTS.completion); tests.add(QUALITY_TESTS.feedback); tests.add(QUALITY_TESTS.feedbackAdversarial);
+    }
+    if (file.includes('completion') || file.startsWith('scripts/wayper-context') ||
+      file.startsWith('scripts/wayper-structured-handoff') || file === '.codex/hooks.json' || file === 'package.json') {
+      tests.add(QUALITY_TESTS.completion); tests.add(QUALITY_TESTS.adversarial);
+    }
+    if (file.includes('feedback') || file.startsWith('scripts/wayper-context') || file.includes('structured-handoff') || file.includes('completion-store')) {
+      tests.add(QUALITY_TESTS.feedback); tests.add(QUALITY_TESTS.feedbackAdversarial);
+    }
+    if (isEvidence(file)) tests.add(QUALITY_TESTS.evidence);
+    if (isValidation(file)) tests.add(QUALITY_TESTS.validation);
+    if (isStructuredHandoff(file)) tests.add(QUALITY_TESTS.handoff);
+    if (isContextEfficiency(file) || file.includes('context-efficiency')) {
+      tests.add(QUALITY_TESTS.context); tests.add(QUALITY_TESTS.contextEconomy); tests.add(QUALITY_TESTS.contextAdversarial);
+    }
+    if (isGraph(file)) tests.add(QUALITY_TESTS.graph);
+    if (file !== '.codex/hooks.json' && !isQualityTooling(file)) continue;
+    if (file === '.codex/hooks.json' || file.includes('completion-backstop')) {
+      tests.add(QUALITY_TESTS.backstop);
+    }
+    if (file.includes('code-size') || file.endsWith('code-size-baseline.json')) {
+      tests.add(QUALITY_TESTS.size);
+    }
+    if (file.includes('architecture') || file.endsWith('architecture-baseline.json')) {
+      tests.add(QUALITY_TESTS.architecture);
+    }
+    if (
+      file.includes('quality-gate')
+      || file.endsWith('lint-baseline.json')
+      || file === 'eslint.config.js'
+    ) {
+      tests.add(QUALITY_TESTS.gate);
+    }
+  }
+  return [...tests].sort();
+}
+
+export function buildCheckPlan(scope, files) {
+  if (scope === 'NO_CHANGES') return [];
+  const checks = [{
+    id: 'untracked-diff',
+    command: 'git',
+    args: [],
+    timeout: 10_000,
+    retry: 'git status --short && git diff --check',
+  }];
+  const tests = relevantQualityTests(files);
+  if (tests.length) {
+    checks.push({
+      id: 'quality-tests',
+      command: process.execPath,
+      args: ['--test', ...tests],
+      timeout: 180_000,
+      retry: `node --test ${tests.join(' ')}`,
+    });
+  }
+  if (scope === 'DOCS_ONLY' || scope === 'HARNESS_ONLY') {
+    checks.push({
+      id: 'diff',
+      command: 'git',
+      args: ['diff', '--check', 'HEAD', '--'],
+      timeout: 10_000,
+      retry: 'git diff --check',
+    });
+  } else {
+    checks.push({
+      id: 'quality',
+      command: 'npm',
+      args: ['run', '--silent', 'quality:gate', '--', '--json'],
+      timeout: 180_000,
+      retry: 'npm run quality:gate -- --details',
+    });
+  }
+  return checks;
+}
+
+function gitRoot(cwd = process.cwd()) {
+  return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 5_000,
+  }).trim();
+}
+
+function changedFiles(root) {
+  const tracked = execFileSync(
+    'git',
+    ['diff', '--name-only', '--no-renames', 'HEAD', '--'],
+    { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5_000 }
+  );
+  const untracked = execFileSync(
+    'git',
+    ['ls-files', '--others', '--exclude-standard'],
+    { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5_000 }
+  );
+  return [...new Set(`${tracked}\n${untracked}`.split('\n').filter(Boolean))].sort();
+}
+
+function defaultRunner(check, root) {
+  if (check.id === 'untracked-diff') return checkUntrackedFiles(root, check.timeout);
+  return spawnSync(check.command, check.args, {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: check.timeout,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+}
+
+export function checkUntrackedFiles(root, timeout) {
+  let files;
+  try {
+    files = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout,
+    }).split('\n').filter(Boolean);
+  } catch (error) {
+    return { error, status: null, signal: null, stdout: '', stderr: '' };
+  }
+  for (const file of files) {
+    const run = spawnSync(
+      'git',
+      [
+        'diff',
+        '--no-index',
+        '--check',
+        '--',
+        process.platform === 'win32' ? 'NUL' : '/dev/null',
+        file,
+      ],
+      { cwd: root, encoding: 'utf8', timeout }
+    );
+    if (run.error || run.signal || run.status === null) return run;
+    if (run.status > 1) return { ...run, status: 1 };
+  }
+  return { status: 0, signal: null, stdout: '', stderr: '' };
+}
+
+function qualityOutcome(run, check) {
+  let report;
+  try {
+    report = JSON.parse(run.stdout.trim());
+  } catch {
+    return {
+      status: 'TOOLING_ERROR',
+      detail: 'quality gate returned malformed JSON',
+      retry: check.retry,
+    };
+  }
+  if (report.status === 'FAIL') {
+    return {
+      status: 'FAIL',
+      detail: report.blocking?.[0] ?? 'quality gate failed',
+      retry: check.retry,
+    };
+  }
+  if (report.status === 'INCONCLUSIVE') {
+    const tooling = report.type === 'TOOL_FAILURE' || report.toolFailures?.length;
+    return {
+      status: tooling ? 'TOOLING_ERROR' : 'FAIL',
+      detail: tooling ? 'quality gate tooling failure' : 'quality evidence is inconclusive',
+      retry: check.retry,
+    };
+  }
+  if (!['PASS', 'PASS_WITH_DEBT'].includes(report.status)) {
+    return {
+      status: 'TOOLING_ERROR',
+      detail: 'quality gate returned an unknown status',
+      retry: check.retry,
+    };
+  }
+  if (run.status !== 0) {
+    return {
+      status: 'TOOLING_ERROR',
+      detail: `quality gate exited ${run.status} after reporting ${report.status}`,
+      retry: check.retry,
+    };
+  }
+  return { status: 'PASS' };
+}
+
+function checkOutcome(run, check) {
+  if (run.error || run.signal || run.status === null) {
+    return {
+      status: 'TOOLING_ERROR',
+      detail: run.error?.message ?? run.signal ?? `${check.id} returned no status`,
+      retry: check.retry,
+    };
+  }
+  if (check.id === 'quality') return qualityOutcome(run, check);
+  if (run.status !== 0) {
+    return { status: 'FAIL', detail: `${check.id} failed`, retry: check.retry };
+  }
+  return { status: 'PASS' };
+}
+
+export function runBackstop({ root, files, runner = defaultRunner, completionIdentity, observeCompletion = false }) {
+  const scope = classifyChangedScope(files);
+  if (completionIdentity) {
+    const assessment = assessGoalCompletion({ root, identity: completionIdentity });
+    if (observeCompletion) {
+      const options = { root, identity: completionIdentity };
+      persistCompletionAssessment(assessment, options);
+      recordCompletionAttempt(assessment, options);
+    }
+    if (assessment.decision !== 'ADMISSIBLE') return { status: 'FAIL', scope, assessment,
+      detail: `COMPLETION ${assessment.decision}: ${assessment.blockers.slice(0, 3).map((b) => `${b.sourceId} ${b.reasonCode}`).join('; ')}`,
+      retry: 'node scripts/wayper-context.mjs completion --thread-id <thread> --goal-run-id <run> --revision <revision>' };
+  }
+  const plan = buildCheckPlan(scope, files);
+  if (!plan.length) return { status: 'SKIP', scope };
+  for (const check of plan) {
+    const outcome = checkOutcome(runner(check, root), check);
+    if (outcome.status !== 'PASS') return { ...outcome, scope };
+  }
+  return { status: 'PASS', scope };
+}
+
+export function formatBackstop(result) {
+  if (result.status === 'PASS') return `QUALITY BACKSTOP PASS\nscope: ${result.scope}`;
+  if (result.status === 'SKIP') return 'QUALITY BACKSTOP SKIP';
+  const detail = String(result.detail ?? 'unknown failure')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120);
+  return [
+    `QUALITY BACKSTOP ${result.status}`,
+    detail,
+    `run: ${result.retry}`,
+  ].join('\n');
+}
+
+export function hookResponse(result, stopHookActive = false) {
+  if (stopHookActive || ['PASS', 'SKIP'].includes(result.status)) return '';
+  return JSON.stringify({ decision: 'block', reason: formatBackstop(result) });
+}
+
+function readStdin() {
+  return new Promise((resolve) => {
+    let input = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { input += chunk; });
+    process.stdin.on('end', () => resolve(input));
+  });
+}
+
+async function main() {
+  const hookMode = process.argv.includes('--hook');
+  let payload = {};
+  try {
+    if (hookMode) payload = JSON.parse(await readStdin());
+    if (payload.stop_hook_active) return;
+    const root = gitRoot(payload.cwd);
+    const binding = completionStopBinding(root, payload);
+    const result = runBackstop({ root, files: changedFiles(root), completionIdentity: binding.identity,
+      observeCompletion: Boolean(binding.identity) });
+    if (hookMode) {
+      process.stdout.write(hookResponse(result));
+    } else {
+      console.log(formatBackstop(result));
+      process.exitCode = result.status === 'FAIL' ? 1 : result.status === 'TOOLING_ERROR' ? 2 : 0;
+    }
+  } catch (error) {
+    const result = {
+      status: 'TOOLING_ERROR',
+      detail: error.message,
+      retry: 'npm run quality:backstop',
+    };
+    if (hookMode) process.stdout.write(hookResponse(result, payload.stop_hook_active));
+    else {
+      console.log(formatBackstop(result));
+      process.exitCode = 2;
+    }
+  }
+}
+
+if (path.resolve(process.argv[1] ?? '') === SCRIPT_PATH) await main();

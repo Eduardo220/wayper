@@ -5,7 +5,8 @@ import { Ionicons } from "@expo/vector-icons";
 import WayperMapLibre, { WAYPER_FALLBACK_COORD } from "../../components/Map/WayperMapLibre";
 import TerritoryEventCard from "../../components/Territory/TerritoryEventCard";
 import TerritoryFeedFilter from "../../components/Territory/TerritoryFeedFilter";
-import { WPButton, WPCard, WPScreen, WPSectionTitle } from "../../components/ui";
+import { WPCard, WPScreen, WPSectionTitle } from "../../components/ui";
+import { EmptyState } from "../../components/states";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { auth } from "../../firebaseConfig";
 import {
@@ -15,8 +16,10 @@ import {
   loadLocalTerritoryFeed,
   mergeRunsZonesAndTerritoryEvents,
 } from "../../services/territory";
-import { getRunBoundaryPoints } from "../../services/runTracking";
-import sync from "../../utils/sync";
+import runRepository from "../../repositories/runRepository";
+import runSyncQueueRepository from "../../repositories/runSyncQueueRepository";
+import territoryRepository from "../../repositories/territoryRepository";
+import { getRenderablePathForRun, getRenderableSegmentsForRun } from "../../services/runTracking";
 
 const safeDate = (d) => {
   try {
@@ -39,6 +42,14 @@ const formatDuration = (seconds) => {
   const s = total % 60;
   if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
   return `${m}m ${String(s).padStart(2, "0")}s`;
+};
+
+const getRunSyncBadge = (run = {}) => {
+  const status = run.syncStatus || (run.synced ? "SYNCED" : "PENDING");
+  if (status === "SYNCED") return null;
+  if (status === "SYNCING") return { label: "Sincronizando", icon: "sync-outline", accent: "cyan" };
+  if (status === "FAILED") return { label: "Falha no sync", icon: "warning-outline", accent: "danger" };
+  return { label: "Pendente de sync", icon: "cloud-upload-outline", accent: "green" };
 };
 
 const getZoneCoords = (item = {}) => {
@@ -72,14 +83,14 @@ function CorridasScreen({ navigation }) {
     try {
       const currentUserId = auth?.currentUser?.uid ?? null;
       const [rRaw, zRaw, localEventsRaw, remoteEventsRaw] = await Promise.allSettled([
-        sync.loadLocalRuns(),
-        sync.loadLocalZones(),
+        runRepository.list(),
+        territoryRepository.listLegacyZones(),
         loadLocalTerritoryFeed({ currentUserId }),
         fetchTerritoryFeed({ scope: "public", userId: currentUserId, limitTo: 60 }),
       ]);
 
-      const r = rRaw.status === "fulfilled" && Array.isArray(rRaw.value) ? rRaw.value : [];
-      const z = zRaw.status === "fulfilled" && Array.isArray(zRaw.value) ? zRaw.value : [];
+      const r = rRaw.status === "fulfilled" && Array.isArray(rRaw.value?.data) ? rRaw.value.data : [];
+      const z = zRaw.status === "fulfilled" && Array.isArray(zRaw.value?.data) ? zRaw.value.data : [];
       const localEvents = localEventsRaw.status === "fulfilled" && Array.isArray(localEventsRaw.value) ? localEventsRaw.value : [];
       const remoteEvents = remoteEventsRaw.status === "fulfilled" && Array.isArray(remoteEventsRaw.value) ? remoteEventsRaw.value : [];
       const eventMap = new Map();
@@ -113,7 +124,7 @@ function CorridasScreen({ navigation }) {
         if (!mounted) return;
         await loadAll();
         try {
-          sync.startAutoSync?.();
+          await runSyncQueueRepository.startAutoSync?.();
         } catch (e) {
           console.warn("startAutoSync failed", e);
         }
@@ -121,7 +132,7 @@ function CorridasScreen({ navigation }) {
       return () => {
         mounted = false;
         try {
-          sync.stopAutoSync?.();
+          runSyncQueueRepository.stopAutoSync?.();
         } catch {}
       };
     }, [loadAll])
@@ -132,7 +143,12 @@ function CorridasScreen({ navigation }) {
     return filterCompetitiveFeedItems(items, filter);
   }, [runs, zones, territoryEvents, filter]);
 
-  const goToRun = useCallback((item) => navigation.navigate("RunDetail", { run: item }), [navigation]);
+  const goToRun = useCallback((item) => navigation.navigate("RunDetail", {
+    run: item,
+    runId: item?.id || item?.localRunId || item?.remoteRunId,
+    localRunId: item?.localRunId || null,
+    remoteRunId: item?.remoteRunId || null,
+  }), [navigation]);
   const goToZone = useCallback((item) => navigation.navigate("ZoneDetail", { zone: item }), [navigation]);
   const goToMap = useCallback((item = null) => {
     const params = item ? buildTerritoryMapParams(item) : null;
@@ -146,19 +162,22 @@ function CorridasScreen({ navigation }) {
   const RenderRun = useCallback(
     ({ item }) => {
       const raw = item.raw || item;
-      const path = Array.isArray(item.path) && item.path.length > 0 ? item.path : (Array.isArray(raw.path) ? raw.path : []);
+      const path = getRenderablePathForRun(raw);
+      const routeSegments = getRenderableSegmentsForRun(raw).filter((segment) => Array.isArray(segment) && segment.length > 1);
+      const fallbackPath = Array.isArray(item.path) && item.path.length > 0 ? item.path : (Array.isArray(raw.path) ? raw.path : []);
+      const previewPath = path.length > 1 ? path : fallbackPath;
       const zoneCoords = getZoneCoords(item);
       const zoneActivity = isZoneActivityRun(item);
-      const center = (zoneActivity && zoneCoords[0]) || path[0] || WAYPER_FALLBACK_COORD;
+      const center = (zoneActivity && zoneCoords[0]) || previewPath[0] || WAYPER_FALLBACK_COORD;
       const area = Math.round(safeNumber(item.areaM2 ?? raw.areaM2 ?? raw.area));
       const distance = item.distance ?? raw.distance ?? raw.totalMeters ?? 0;
       const duration = item.duration ?? raw.duration ?? 0;
       const title = item.title || raw.name || (zoneActivity ? "Captura por zonas" : "Corrida");
-      const routeBoundary = getRunBoundaryPoints(path);
+      const syncBadge = getRunSyncBadge(raw);
 
       return (
         <Pressable onPress={() => goToRun(raw)} style={styles.cardPressable}>
-          <WPCard style={styles.card} accent={zoneActivity ? "cyan" : "green"} glow={path.length > 1 || zoneCoords.length >= 3}>
+          <WPCard style={styles.card} accent={zoneActivity ? "cyan" : "green"} glow={previewPath.length > 1 || zoneCoords.length >= 3}>
             <View style={styles.cardHeader}>
               <View style={[styles.runIcon, zoneActivity && styles.zoneIcon]}>
                 <Ionicons name={zoneActivity ? "map-outline" : "walk-outline"} size={21} color={WayperTheme.colors.textInverse} />
@@ -170,19 +189,17 @@ function CorridasScreen({ navigation }) {
               <Ionicons name="chevron-forward" size={22} color={WayperTheme.colors.textSubtle} />
             </View>
 
-            {(zoneActivity && zoneCoords.length >= 3) || path.length > 1 ? (
+            {(zoneActivity && zoneCoords.length >= 3) || previewPath.length > 1 ? (
               <View pointerEvents="none" style={styles.preview}>
                 <WayperMapLibre
                   style={styles.previewMap}
-                  routePath={zoneActivity && zoneCoords.length >= 3 ? [] : path}
+                  routePath={zoneActivity && zoneCoords.length >= 3 ? [] : previewPath}
+                  routeSegments={zoneActivity && zoneCoords.length >= 3 ? [] : routeSegments}
                   routeMode="history"
                   zones={zoneActivity && zoneCoords.length >= 3 ? [{ coords: zoneCoords, area }] : []}
                   showZones={zoneActivity && zoneCoords.length >= 3}
                   centerCoordinate={center}
                   showUserLocation={false}
-                  showRouteEndpoints={routeBoundary.hasStart}
-                  routeStartCoordinate={routeBoundary.start}
-                  routeEndCoordinate={routeBoundary.finishCandidate}
                   interactive={false}
                   fitToContent
                   contentPadding={{ top: 40, right: 40, bottom: 40, left: 40 }}
@@ -205,7 +222,29 @@ function CorridasScreen({ navigation }) {
 
             <View style={styles.footerRow}>
               <Text style={styles.tagText}>{zoneActivity ? `${zoneCoords.length || 0} pontos capturados` : raw.tags?.slice(0, 2).join(", ") || "Sem tags"}</Text>
-              <Ionicons name="arrow-forward-circle" size={24} color={zoneActivity ? WayperTheme.colors.cyan : WayperTheme.colors.primary} />
+              <View style={styles.footerActions}>
+                {syncBadge ? (
+                  <View style={[
+                    styles.syncBadge,
+                    syncBadge.accent === "danger" && styles.syncBadgeDanger,
+                    syncBadge.accent === "cyan" && styles.syncBadgeCyan,
+                  ]}>
+                    <Ionicons
+                      name={syncBadge.icon}
+                      size={13}
+                      color={syncBadge.accent === "danger" ? WayperTheme.colors.danger : syncBadge.accent === "cyan" ? WayperTheme.colors.cyan : WayperTheme.colors.primary}
+                    />
+                    <Text style={[
+                      styles.syncBadgeText,
+                      syncBadge.accent === "danger" && styles.syncBadgeTextDanger,
+                      syncBadge.accent === "cyan" && styles.syncBadgeTextCyan,
+                    ]}>
+                      {syncBadge.label}
+                    </Text>
+                  </View>
+                ) : null}
+                <Ionicons name="arrow-forward-circle" size={24} color={zoneActivity ? WayperTheme.colors.cyan : WayperTheme.colors.primary} />
+              </View>
             </View>
           </WPCard>
         </Pressable>
@@ -274,7 +313,7 @@ function CorridasScreen({ navigation }) {
     <WPScreen safe={false}>
       <FlatList
         data={merged}
-        keyExtractor={(item) => item?.id || `${item?.__type || "item"}_${String(item?.date || Date.now())}`}
+        keyExtractor={(item) => item?.localRunId || item?.remoteRunId || item?.id || `${item?.__type || "item"}_${String(item?.date || Date.now())}`}
         renderItem={renderItem}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadAll} tintColor={WayperTheme.colors.primary} />}
         contentContainerStyle={styles.listContent}
@@ -285,10 +324,13 @@ function CorridasScreen({ navigation }) {
           </View>
         }
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>Nenhuma atividade encontrada.</Text>
-            <WPButton title="Ir para o mapa" compact onPress={() => goToMap()} style={styles.emptyButton} />
-          </View>
+          <EmptyState
+            title="Suas corridas aparecem aqui"
+            description="Quando voce finalizar uma corrida, ela fica salva no aparelho e sincroniza depois se precisar."
+            actionLabel="Ir para o mapa"
+            onAction={() => goToMap()}
+            style={styles.empty}
+          />
         }
       />
     </WPScreen>
@@ -400,10 +442,47 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginTop: WayperTheme.spacing.lg,
+    gap: WayperTheme.spacing.sm,
+  },
+  footerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.sm,
   },
   tagText: {
     ...WayperTheme.typography.caption,
     color: WayperTheme.colors.textMuted,
+    flex: 1,
+  },
+  syncBadge: {
+    minHeight: 28,
+    borderRadius: WayperTheme.radius.pill,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    backgroundColor: WayperTheme.colors.primarySoft,
+    paddingHorizontal: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  syncBadgeCyan: {
+    borderColor: WayperTheme.colors.cyanBorder,
+    backgroundColor: "rgba(56, 217, 255, 0.10)",
+  },
+  syncBadgeDanger: {
+    borderColor: WayperTheme.colors.dangerBorder,
+    backgroundColor: WayperTheme.colors.dangerSoft,
+  },
+  syncBadgeText: {
+    color: WayperTheme.colors.primary,
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  syncBadgeTextCyan: {
+    color: WayperTheme.colors.cyan,
+  },
+  syncBadgeTextDanger: {
+    color: WayperTheme.colors.danger,
   },
   empty: {
     padding: WayperTheme.spacing.xxl,

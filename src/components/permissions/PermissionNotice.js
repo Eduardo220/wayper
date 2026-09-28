@@ -15,7 +15,13 @@ export default function PermissionNotice({
   compact = false,
   style,
 }) {
-  const iconName = permissionType === "location" ? "location-outline" : "image-outline";
+  const iconName = permissionType === "notification"
+    ? "notifications-outline"
+    : permissionType === "background"
+      ? "phone-portrait-outline"
+      : permissionType === "location"
+        ? "location-outline"
+        : "image-outline";
 
   return (
     <View style={[styles.card, required && styles.requiredCard, compact && styles.compactCard, style]}>

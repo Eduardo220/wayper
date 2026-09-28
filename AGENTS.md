@@ -1,115 +1,113 @@
-# Instruções para agentes Codex
+# Wayper mobile
 
-## Fonte de verdade
+Entrada operacional canônica do app. Regras em subdiretórios apenas especializam
+o próprio escopo.
 
-- Antes de qualquer alteração no código, consulte a documentação da Wayper.
-- Leia `docs/wayper/00-index.md` antes de mexer no projeto quando a tarefa envolver comportamento do app, produto, regras, arquitetura, GPS, mapa, Firestore, XP, ranking ou território.
-- A documentação em `docs/wayper` é a fonte de verdade canônica de produto e regras da Wayper.
-- A documentação em `docs` funciona como portal operacional, memória de IA, backlog, changelog, revisões e comunicação com o humano.
-- Se houver conflito entre código, conversa e documentação, trate `docs/wayper` como referência principal e registre a divergência antes de alterar comportamento.
-- Se `docs/wayper` não existir na branch atual, pare e avise ou sincronize apenas os arquivos de documentação necessários antes de implementar.
-- Arquivos `.obsidian` não substituem a documentação Markdown e não devem orientar decisões de produto.
+## Fontes
 
-## Ordem de leitura obrigatória
+- App gamificado de exercício em Expo/React Native. `develop` é ativa; `main`,
+  referência estável. Prioridade: estabilidade da corrida.
+- Leia este arquivo e `docs/00-fontes-do-projeto.md`; use a matriz por domínio.
+  Não carregue `docs/` inteiro.
+- Estado atual vem de código, testes, manifests, configuração e comportamento da
+  branch de trabalho. Direção vem da estratégia, decisões e ADRs quando o domínio
+  ou dúvida de produto/arquitetura exigir.
+- README é visão rápida; roadmap, backlog, hipótese e ideia não autorizam código.
+  Conflito entre decisões aprovadas exige revisão humana.
 
-Antes de sugerir ou implementar mudança, leia nesta ordem:
+## Antes de alterar
 
-1. `docs/00-fontes-do-projeto.md`
-2. `docs/01-visao-do-produto.md`
-3. `docs/02-roadmap.md`
-4. `docs/03-backlog.md`
-5. `docs/04-arquitetura.md`
-6. `docs/10-regras-de-negocio.md`
-7. `docs/14-instrucoes-para-ia.md`
-8. `docs/15-workflow-obsidian-ia.md`
+- Confirme branch e `git status --short`; preserve WIP.
+- Use Graphify para localização estrutural ampla quando útil, mas confirme no
+  source, callers e testes atuais. Procure implementação semelhante e bugs.
+- Defina escopo, validação e rollback. Consolide o caminho existente; não crie
+  service, hook, repository, store, contexto ou componente paralelo.
 
-Quando a mudança afetar domínio central, consulte também:
+## Invariantes da corrida
 
-- Território: `docs/wayper/03-mecanica-territorios.md`.
-- Atividade, caminhada ou corrida: `docs/wayper/04-regras-corrida.md`.
-- GPS: `docs/wayper/05-gps-e-validacao.md`.
-- XP, nível ou ranking: `docs/wayper/06-xp-nivel-ranking.md`.
-- Firestore: `docs/wayper/08-firebase-firestore.md`.
-- Arquitetura técnica: `docs/wayper/09-arquitetura-tecnica.md`.
-- Decisões de produto: `docs/wayper/10-decisoes-do-projeto.md`.
+- **A corrida é a ação; o pós-corrida é o jogo.**
+- Corrida ativa prioriza estabilidade; o usuário deve correr sem olhar o celular.
+- Tracking suporta offline, background e tela apagada dentro dos limites reais.
+  UI montada nunca é estado canônico.
+- Firestore não é necessário para iniciar, acompanhar, finalizar, salvar ou
+  recuperar atividade.
+- Save mínimo local precede derivados. Territórios, XP, ranking, recompensas,
+  replay, exportação, compartilhamento e sync remoto não bloqueiam o save.
+- Nada pesado entra no caminho crítico do GPS; lógica crítica independe de tela.
 
-## Gatilhos formais do projeto
+## Progressive disclosure
 
-Trate mensagens que começam com estes gatilhos como entradas formais da Wayper:
+- Antes de aprofundar, classifique tarefa/flags e use
+  `docs/ai/context-routing.md`; carregue o mínimo e escale por risco.
+- Skill/especialista só por gatilho/risco; nativos cobrem o genérico.
+- Multi-agent é opt-in; prefira leitura paralela. Escrita paralela exige escopo
+  disjunto conhecido. Protocolo: `docs/ai/orchestration.md`.
+- `HARNESS_SPECIALIST_DISPATCH_V1`: depois que o Decision Gate definir `S1/S2`
+  read-only, o router pode escolher um specialist catalogado somente com receipt
+  `ROUTER_SELECTED` de coverage completa e sem ambiguidade; qualquer residual
+  retorna `BEHAVIORAL_FALLBACK`. Todo dispatch pertencente ao Harness usa
+  obrigatoriamente `Context Packet -> fork_turns=none -> Structured Handoff`
+  validado e o model/reasoning retornado pelo adapter. Packet/handoff inválido
+  ou indisponível usa somente o fallback bounded controlado. O router nunca
+  muda `S0-S3`, cria wave ou chama agent. Invocação manual externa é
+  `OUT_OF_BAND_UNENFORCEABLE` enquanto o runtime não expuser interceptação.
+- Workflow: `docs/14-instrucoes-para-ia.md`. Arquitetura do Harness:
+  `docs/ai/harness-v1.md`.
+- META Goals usam evidence-gated completion; budgets são tetos, não quotas.
+- Dispatch/Ownership V1: mutations project-owned do main/writer exigem grant,
+  lease e permit; specialists usam dispatchSpawn com parent/Packet/slot/depth
+  válidos e handoff bound. Contrato: [dispatch-ownership](docs/ai/dispatch-ownership.md).
+  Packet não concede write. Ownership pendente bloqueia Completion; host direto
+  permanece bypass parcial, sem alegar interceptação universal.
+- Completion rejeitado pode iniciar o [Feedback Loop V1](docs/ai/feedback-loop.md):
+  tentativas limitadas, receipts e reassessment canônico; external/human não recebem
+  retry cego. Execução continua owner/callback-driven; mutation usa a boundary
+  project-owned de Dispatch/Ownership, sem transformar o Feedback em dispatcher.
+- Project Goals multi-repo usam
+  [Cross-Repo Coordination V1](docs/ai/cross-repo-coordination.md): tasks,
+  baselines, Evidence e Validation permanecem repository-scoped; partial success
+  bloqueia Completion global sem rollback automático. Goal single-repo não cria
+  task artificial no site, e WIP externo dirty não concede ownership.
+- Conhecimento entre Goals passa por Learning Candidate e policy de
+  [Durable Project Memory V1](docs/ai/memory-policy.md). Memory é Git-versioned,
+  dependency-bound e `CONTEXT_ONLY`: nunca substitui source/Evidence, concede
+  authorization ou satisfaz Completion; Markdown/Obsidian é projeção one-way.
+- Prova material exige Evidence Receipt observado, íntegro e compatível;
+  texto/shell direto/handoff assertion não bastam. Contrato: `docs/ai/evidence-receipts.md`.
+- Profundidade de validação deriva do Validation Planner V1 e seu registry;
+  plano COMPLETE não é Goal DONE. Contrato: `docs/ai/validation-planner.md`.
+- Antes de concluir Goal, consultar `assessGoalCompletion`/`completion-request`
+  pelo seletor explícito atual; somente ADMISSIBLE permite solicitar host DONE.
+  Stop vinculado reutiliza a API, sem interceptação universal do host.
+  Contrato: `docs/ai/completion-boundary.md`.
+- Working Context usa `threadId + goalRunId + revision`; novo Goal exige `start`,
+  amendment material exige `amend`. Baseline histórica não muda no refresh;
+  contexto identificado só por thread é legado sem validade automática.
+- Goal nativo carrega `wayper-context-efficiency`; reuse/fingerprint nunca reduz
+  evidence, risco, invariantes ou validação.
+- `Goal` escrito no pedido e `CODEX_THREAD_ID` sozinho não criam Goal nativo.
+  Só iniciar Working Context e exigir `completion-request` quando o host expuser
+  uma execução de Goal identificável. Tarefa pontual sem essa execução usa a
+  prova proporcional ao diff e conclui a tarefa sem inventar estado de Goal.
+- Comece pelo menor contexto, validação e modo de execução que o efeito real
+  permite; reutilize prova atual e pare discovery quando ela for suficiente.
+  Escale ao encontrar dependência, risco ou claim material. Specialist exige
+  capability relevante, risco material e lacuna que o main não resolve; profile
+  disponível não é motivo. Falta de discovery ou check local pede investigação,
+  validação ou replan, não `BLOCKED_EXTERNAL` nem decisão humana. Pergunte ao
+  humano só por ambiguidade material de produto, escolha externa irreversível ou
+  autoridade humana ausente. Prova física/remota continua obrigatória quando o
+  claim real depender dela.
+- Graphs, maps e caches nunca são verdade. RTK é ferramenta global opcional.
 
-- `Ideia Wayper:`
-- `Melhoria Wayper:`
-- `Problema Wayper:`
-- `Feature Wayper:`
-- `Revisão Wayper:`
-- `Implementar Wayper:`
-- `Sincronizar Wayper:`
+## Implementação e entrega
 
-Para qualquer gatilho, primeiro analise e documente. Só implemente depois que a documentação estiver alinhada e houver aprovação humana explícita quando a entrada for uma proposta nova.
-
-## Regras de aprovação
-
-- Nunca implemente uma proposta nova sem aprovação humana explícita.
-- Proposta não é decisão.
-- Ideia aprovada precisa estar registrada.
-- Ideia rejeitada ou adiada também precisa estar registrada.
-- Mudança fora do MVP exige justificativa e registro.
-- Não implemente posse competitiva de território, clans ou ranking global como parte do MVP sem nova decisão aprovada.
-
-## Registro obrigatório
-
-- Toda mudança no código deve atualizar a documentação relacionada.
-- Toda ideia nova deve ser registrada em `docs/16-ideias-de-melhoria.md` ou `docs/17-propostas-pendentes.md`.
-- Toda decisão técnica importante deve ser registrada em `docs/08-decisoes-tecnicas.md`.
-- Todo bug ou risco técnico deve ser registrado em `docs/13-bugs-conhecidos.md` ou `docs/wayper/13-problemas-conhecidos.md`, conforme o escopo.
-- Toda implementação deve atualizar `docs/18-changelog-produto.md`.
-- Toda implementação deve atualizar `docs/19-revisoes-de-implementacao.md`.
-- Mudanças no Firestore exigem atualização de `docs/wayper/08-firebase-firestore.md` e registro de decisão relevante.
-
-## Impactos obrigatórios
-
-Ao propor, revisar ou implementar mudanças relevantes, avalie impacto em:
-
-- Produto.
-- MVP.
-- GPS.
-- Mapa.
-- Firestore.
-- Performance.
-- UX.
-- Arquitetura.
-- Custo.
-- Segurança.
-- Risco de complexidade.
-
-## Classificação obrigatória de ideias
-
-Classifique cada ideia como uma destas opções:
-
-- Alinhada com o MVP.
-- Alinhada com a visão, mas fora do MVP.
-- Ideia futura.
-- Melhoria técnica.
-- Bug/problema.
-- Ideia desalinhada.
-- Precisa de decisão humana.
-
-## Formato obrigatório de resposta
-
-Para gatilhos formais da Wayper, responda sempre com:
-
-- Documentos consultados.
-- Resumo da ideia.
-- Análise de alinhamento.
-- Impacto técnico.
-- Riscos.
-- Documentação atualizada.
-- Recomendação da IA.
-- Próximo passo sugerido.
-
-## Escopo de implementação
-
-- Não implemente feature fora do MVP sem justificar.
-- Consulte `docs/wayper/02-mvp.md` antes de ampliar escopo.
-- Se uma regra estiver ausente, crie proposta na documentação antes de implementar.
-- Não transforme proposta em decisão oficial sem atualizar `docs/wayper/10-decisoes-do-projeto.md`.
+- Aplique Ponytail FULL: menor código correto, preservando validação, segurança,
+  compatibilidade, acessibilidade, erros e proteção de dados.
+- Novo source busca ~350 linhas; legado não cresce sem justificativa.
+- Não amplie escopo nem remova consumidores sem evidência. Atualize testes e a
+  documentação dona da decisão.
+- Trabalhe em fases verificáveis e reversíveis. Commit só quando autorizado;
+  nunca alegue validação não executada.
+- Divergência separa estado de direção e registra evidência, risco, migração e
+  rollback. A entrega informa mudanças, testes, riscos, commits e próximo passo.

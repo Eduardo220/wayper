@@ -1,66 +1,71 @@
-# 🏃‍♂️ Wayper – Corra, Conquiste e Domine Territórios Reais
+# Wayper — exercício real, aventura contínua
 
-### Transforme suas corridas em uma experiência estratégica e competitiva.
+> A Wayper transforma exercício físico em uma aventura contínua. Durante a
+> atividade, o usuário apenas corre. Depois da atividade, descobre tudo o que
+> conquistou.
 
-O **Wayper** é um app de corrida gamificado que leva sua experiência além do cronômetro. Enquanto você corre, o Wayper registra sua rota, identifica sua área de atuação e transforma seu trajeto em **zonas conquistadas dentro do mapa real da sua cidade**.
+**A corrida é a ação. O pós-corrida é o jogo.**
 
-Cada corrida se torna uma oportunidade de expandir seu território, disputar espaço com outros corredores e evoluir no ranking geral.
+A Wayper é uma plataforma mobile de exercício físico gamificada. Ela registra a
+atividade com prioridade em segurança, background, recuperação e funcionamento
+offline. Depois do salvamento, transforma os dados em descoberta: desempenho,
+trajeto, territórios, progressão, competição, replay e recompensas futuras.
 
-A missão é simples: **correr, competir e se divertir dominando o maior território possível.**
+Durante a atividade, a experiência deve ser mínima e não exigir atenção ao mapa.
+Territórios são consequência do movimento real, não uma obrigação visual.
 
----
+## Pilares
 
-## 🎯 Objetivo Principal
-Tornar a corrida uma experiência mais envolvente por meio de **estratégia**, **competição saudável**, **exploração urbana** e **conquista de áreas reais**, incentivando os usuários a correr mais e explorar novos lugares.
+- tracking confiável, local-first e recuperável;
+- atividade segura com tela apagada e em background;
+- Relatório da Expedição como experiência pós-corrida principal;
+- território, progressão, competição e exploração urbana;
+- experiência gratuita respeitosa e assinatura baseada em valor;
+- ecossistema futuro de desafios, comunidades e parceiros sem interromper o
+  corredor.
 
----
+## Estado do produto
 
-## 👥 Público-Alvo
-- Corredores de todos os níveis que buscam motivação  
-- Pessoas que adoram competições e desafios  
-- Atletas casuais atrás de metas mais divertidas  
-- Exploradores urbanos em busca de novos trajetos  
-- Usuários que gostam de apps interativos e gamificados  
+Em `develop`, tracking canônico, checkpoints, recuperação, salvamento local,
+sincronização posterior, territórios, XP, ranking, replay e compartilhamento
+existem em níveis diferentes de maturidade. O Relatório da Expedição, planos,
+entitlements, parceiros, anúncios e pagamentos ainda não estão implementados como
+domínios completos.
 
----
+A prioridade atual é concluir a fundação confiável da corrida antes de antecipar
+gamificação ou monetização futura.
 
-## 🧩 Principais Funcionalidades
+## Contexto canônico
 
-### 📍 Conquista de Zonas
-- Rastreamento via GPS durante a corrida  
-- Cada trajeto percorrido gera uma nova zona no mapa  
-- Expansão contínua de território conforme você explora novos caminhos  
-
-### 🏆 Ranking Competitivo
-1. Ranking interno com:
-   - Maior número de zonas conquistadas  
-   - Maior área total dominada (em m²)  
-2. Atualização em tempo real conforme os usuários correm
-
-### 📊 Estatísticas Detalhadas
-- Distância, tempo, velocidade e ritmo  
-- Histórico de corridas e evolução de território  
-- Comparativos pessoais e progresso ao longo do tempo  
-
-### 🌍 Mapa Interativo
-- Visualização nítida das suas zonas  
-- Exibição de áreas de outros usuários  
-- Possibilidade de explorar novas regiões para expansão  
-
-### 🎮 Gamificação Inteligente
-- Metas de corrida e objetivos personalizados  
-- Sistema de conquistas baseado em desempenho e exploração  
-- Competição saudável incentivando treino e diversão  
-
----
+- [AGENTS.md](AGENTS.md): regras obrigatórias para agentes;
+- [fontes do projeto](docs/00-fontes-do-projeto.md): hierarquia e matriz de
+  leitura;
+- [direção estratégica completa](docs/product/direcao-estrategica-completa.md):
+  fonte normativa de direção e restrições;
+- [índice de produto](docs/product/README.md): recortes temáticos;
+- [auditoria de 2026-07-24](docs/audits/2026-07-24-direcao-oficial-produto.md):
+  evidência histórica de aderência, não inventário permanente.
 
 ## 🛠️ Tecnologias Utilizadas
 
 **Frontend:** React Native  
-**Backend:** Node.js / Firebase  
-**Banco de Dados:** Firestore  
+**Backend remoto atual:** Firebase
+
+**Persistência:** local-first com sincronização posterior para Firestore
 **Mapas & Localização:** MapLibre + OpenFreeMap  
 **Autenticação:** Firebase Auth  
+
+## Monitoramento com Sentry
+
+O Sentry e opcional em development e ativo em staging/production quando `EXPO_PUBLIC_SENTRY_DSN` esta configurado. Use as chaves documentadas em `.env.example` no ambiente local/EAS apropriado.
+
+```bash
+npm run sentry:check
+npm test
+npm run eas:preview
+```
+
+O token de upload de source maps deve ser armazenado como `SENTRY_AUTH_TOKEN` em secret de CI/EAS. O Sentry nao substitui os diagnosticos NDJSON/ZIP e nao recebe coordenadas ou rotas cruas.
 
 ---
 
@@ -98,14 +103,3 @@ npm install
 # Inicie o app
 npm start
 ```
-
----
-
-## Configuracao de ambiente
-
-O Wayper usa variaveis `EXPO_PUBLIC_*` para configuracoes consumidas pelo app Expo. O arquivo `.env.example` e o modelo versionado; o `.env` real fica local e nao deve entrar no git.
-
-Configuracoes principais:
-- `EXPO_PUBLIC_FIREBASE_*`: Firebase client config usada por `src/firebaseConfig.js`.
-- `EXPO_PUBLIC_GOOGLE_*_CLIENT_ID`: client IDs opcionais para login com Google.
-- `WAYPER_ANDROID_DEVICE`, `ANDROID_SERIAL`, `WAYPER_EMULATOR_LAT`, `WAYPER_EMULATOR_LNG`: ajustes locais dos scripts Android/emulador.

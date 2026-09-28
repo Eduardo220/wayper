@@ -14,6 +14,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { WayperTheme } from "../theme/wayperTheme";
+import HomeAvatar from "./Home/HomeAvatar";
 
 const BRAND_LOGO = require("../../assets/logo.png");
 
@@ -26,6 +27,7 @@ const DRAWER_ICONS = {
   Ranking: "podium-outline",
   Amigos: "people-outline",
   Grupos: "chatbubbles-outline",
+  Configuracoes: "settings-outline",
 };
 
 export default memo(function CustomDrawer(props) {
@@ -41,7 +43,7 @@ export default memo(function CustomDrawer(props) {
   const avatar =
     user.photoURL ||
     user.avatar ||
-    "https://i.pravatar.cc/150?u=wayper_default";
+    null;
 
   const level = Number(user.level) || 1;
   const xp = Number(user.xp) || 0;
@@ -64,7 +66,7 @@ export default memo(function CustomDrawer(props) {
         
         {/* AVATAR */}
         <View>
-          <Image source={{ uri: avatar }} style={styles.avatar} />
+          <HomeAvatar uri={avatar} name={name} size={95} style={styles.avatar} />
         </View>
 
         {/* NOME */}

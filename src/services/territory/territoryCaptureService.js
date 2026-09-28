@@ -12,10 +12,9 @@ import {
 } from "./territoryGeometryService.js";
 import { getCellIdsForGeometry } from "./territoryCellService.js";
 import {
-  fetchActiveTerritoriesNear,
-  saveLocalTerritories,
-  saveLocalTerritoryEvents,
-} from "./territoryStorageService.js";
+  loadTerritoryCaptureCandidates,
+  persistTerritoryCapture,
+} from "./territoryCapturePersistence.js";
 import { recalculateLeaderboardsForCells } from "./territoryLeaderboardService.js";
 import { applyTerritoryCaptureStats } from "./territoryStatsService.js";
 import { createTerritoryEvent } from "./territoryEventsService.js";
@@ -178,7 +177,7 @@ async function scheduleTerritorySync() {
 
 async function getCandidateTerritories({ existingTerritories, bbox, cellIds }) {
   if (Array.isArray(existingTerritories)) return existingTerritories;
-  return fetchActiveTerritoriesNear({ bbox, cellIds, limitTo: 100 });
+  return loadTerritoryCaptureCandidates({ bbox, cellIds });
 }
 
 export async function processRunTerritoryCapture({
@@ -198,6 +197,7 @@ export async function processRunTerritoryCapture({
   createdAt = new Date().toISOString(),
   existingTerritories = null,
   persist = true,
+  persistRemote = true,
 } = {}) {
   const runContext = createRunContext({
     userId,
@@ -224,6 +224,7 @@ export async function processRunTerritoryCapture({
     const antiFraud = validateRunForTerritoryCapture(capturePath, {
       distanceMeters,
       durationSeconds,
+      segments: routeSegments,
     });
     if (!antiFraud.ok) {
       return {
@@ -497,6 +498,7 @@ export async function processRunTerritoryCapture({
       const leaderboardResult = await recalculateLeaderboardsForCells(impactedCellIds, {
         territories: leaderboardTerritories,
         persist,
+        persistRemote,
         updatedAt: createdAt,
       });
       localLeaderboardUpdates = leaderboardResult.updates || [];
@@ -565,7 +567,7 @@ export async function processRunTerritoryCapture({
         conqueredTerritories,
         becameLeaderInCells,
         distanceMeters,
-        persist,
+        persist: persist && persistRemote,
         updatedAt: createdAt,
       });
     } catch (statsError) {
@@ -583,13 +585,10 @@ export async function processRunTerritoryCapture({
     ];
 
     if (persist) {
-      await saveLocalTerritories(territoriesToPersist, {
-        preserveTimestamps: true,
-        preserveVersion: true,
-      });
-      await saveLocalTerritoryEvents(events, {
-        preserveTimestamps: true,
-        preserveVersion: true,
+      await persistTerritoryCapture({
+        capturedTerritoryId: capturedTerritory.id,
+        events,
+        territories: territoriesToPersist,
       });
       scheduleTerritorySync();
     }
@@ -634,7 +633,9 @@ export async function processRunTerritoryCapture({
   } catch (error) {
     return {
       ok: false,
-      reason: TERRITORY_CAPTURE_FAILURE.turf_error,
+      reason: error?.code === "territory_storage_failed"
+        ? TERRITORY_CAPTURE_FAILURE.storage_error
+        : TERRITORY_CAPTURE_FAILURE.turf_error,
       details: {
         error: error?.message || String(error),
       },

@@ -1,0 +1,25 @@
+# Generated, dependency, build, cache, test, and stale-copy scopes.
+graphify-out/
+node_modules/
+.next/
+.expo/
+dist/
+build/
+coverage/
+tmp/
+temp/
+backups/
+backup/
+clones/
+debug-clones/
+# Local credentials/configuration are outside the architecture corpus.
+.env*
+google-services.json
+GoogleService-Info.plist
+credentials*.json
+secrets*.json
+# Project metadata and documentation are inspected directly, not graph nodes.
+.codex/
+docs/
+eas.json
+scripts/quality/*-baseline.json

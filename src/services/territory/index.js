@@ -98,9 +98,12 @@ export {
 } from "./territoryStatsService.js";
 export {
   WAYPER_CURRENT_USER_COLOR,
+  buildTerritoryBbox,
   buildTerritoryMapProps,
   getOwnerColor,
   leaderCellsToFeatureCollection,
+  mergeTerritoriesForMap,
+  normalizeTerritoryBbox,
   normalizeTerritoryForMap,
   territoriesToFeatureCollection,
 } from "./territoryMapService.js";

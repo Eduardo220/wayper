@@ -1,5 +1,28 @@
 # Mecânica de territórios
 
+**Aviso de divergência (2026-07-24):** este documento descreve a intenção original
+de território individual, mas `territoryCaptureService` já implementa conquista,
+defesa, roubo e líderes em alguma medida. O comportamento existe, porém a regra
+competitiva final continua pendente. Não expandir nem remover sem inventário,
+decisão, migração e rollback.
+
+Pela direção oficial, território é processado silenciosamente como consequência e
+apresentado principalmente no Relatório da Expedição. O usuário não precisa caçar
+áreas olhando a tela durante a corrida.
+
+## Nota local-first atual
+
+Desde 2026-06-06, a captura territorial por zonas funciona localmente antes do Firestore:
+
+- Territorios atuais ficam em `wayper_territories_v1`.
+- Eventos territoriais ficam em `wayper_territory_events_v1`.
+- Leaderboards/cache territorial ficam em `wayper_territory_leaderboards_v1`.
+- `TerritoryRepository` e a facade preferencial para ler/salvar/atualizar territorios locais.
+- `zones` e `@wayper_zones` sao legado e so entram por migracao/compatibilidade explicita.
+- Corrida por zonas deve preservar `area`, `areaM2`, `zoneCoords`, `geometry`, `routeGeometry`, `territorySummary`, `territoryEvents` e `capturedCells`.
+- Corrida livre nao deve gerar nem preservar territorio falso.
+- Firestore e destino posterior de sync; falha remota nao deve apagar territorio local nem esconder corrida do historico.
+
 ## Ideia central
 
 A mecânica de territórios transforma deslocamentos reais em conquista no mapa. O usuário caminha ou corre com GPS ativo, e a Wayper converte partes válidas da rota em progresso territorial.
@@ -12,11 +35,13 @@ No MVP, a conquista deve seguir uma regra simples:
 
 1. O usuário inicia uma atividade de caminhada ou corrida.
 2. O app coleta pontos GPS válidos durante a atividade.
-3. Ao finalizar, a rota é processada.
-4. O sistema identifica trechos válidos da rota.
-5. Esses trechos geram território conquistado ou progresso territorial.
-6. O resumo mostra distância, duração, XP e conquista.
-7. O Firestore salva a atividade e os dados derivados necessários.
+3. Ao finalizar, o app bloqueia concorrência e congela o snapshot canônico.
+4. A atividade mínima é persistida e confirmada localmente.
+5. O app marca a corrida finalizada e libera a confirmação para a UI.
+6. Uma tarefa persistente identifica os trechos válidos da rota.
+7. Esses trechos geram território ou progresso territorial sem bloquear o save.
+8. O relatório mostra resultados prontos e pendências honestas.
+9. O sync remoto ocorre quando possível.
 
 No MVP, esse território deve representar progresso individual do usuário. Ele não deve definir posse global, disputa contra outros usuários ou controle compartilhado de áreas.
 
@@ -26,7 +51,8 @@ No MVP, esse território deve representar progresso individual do usuário. Ele 
 - Pontos GPS inválidos não devem contar para território.
 - Trechos com precisão ruim devem ser ignorados ou marcados como suspeitos.
 - Território deve estar ligado à rota real, não apenas à distância total.
-- A conquista deve ser calculada no encerramento da atividade no MVP.
+- A conquista deve ser calculada no processamento pós-corrida, depois do save
+  mínimo confirmado.
 - O usuário deve conseguir ver o resultado da conquista no mapa ou no resumo.
 - A regra inicial deve evitar disputa direta entre usuários até que ranking e anti-cheat estejam mais maduros.
 - Nenhum usuário deve perder território no MVP.
@@ -39,13 +65,13 @@ Para o MVP, existem duas abordagens possíveis:
 - Conquista por células de mapa: dividir o mapa em pequenas zonas e marcar células visitadas.
 - Conquista por buffer de rota: criar uma área ao redor da linha percorrida usando uma biblioteca geográfica.
 
-A decisão ainda precisa ser validada. Para implementação inicial, a abordagem deve priorizar simplicidade, custo baixo no Firestore e renderização rápida no mapa.
+A decisão final de disputa/social ainda precisa ser validada. Para implementação inicial, a abordagem deve priorizar simplicidade, persistencia local, custo remoto baixo e renderização rápida no mapa.
 
 ## Contenção para o MVP
 
 Até decisão humana sobre a estratégia final, a implementação deve tratar território como métrica individual derivada da rota validada. A versão inicial pode mostrar progresso territorial no resumo e no mapa, mas não deve criar mecânica de posse pública, disputa em tempo real, clans ou ranking territorial competitivo.
 
-Se a estratégia escolhida exigir entidades persistidas de território, a modelagem deve ser atualizada em [[08-firebase-firestore]] antes da implementação.
+Se a estratégia escolhida exigir novas entidades persistidas de território, a modelagem local e remota deve ser atualizada antes da implementação.
 
 ## Pontos em aberto
 
@@ -96,7 +122,6 @@ Disputa por território entre usuários deve ficar fora do MVP, conforme [[02-mv
 
 ## Conexões com Firestore
 
-Firestore deve salvar somente o necessário para reconstruir histórico, perfil e território. A modelagem inicial está em [[08-firebase-firestore]].
+Firestore deve salvar somente o necessario para remoto/sync, depois que o dado local estiver preservado. A modelagem inicial esta em [[08-firebase-firestore]].
 
 O app deve evitar gravar um documento por ponto GPS se isso gerar custo excessivo. Rotas longas podem exigir compactação, simplificação ou armazenamento agregado.
-

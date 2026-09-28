@@ -1,0 +1,2 @@
+export const RUN_START_COUNTDOWN_SECONDS = 1;
+export const RUN_START_COUNTDOWN_TICK_MS = 1000;

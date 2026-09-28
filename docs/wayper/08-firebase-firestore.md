@@ -110,6 +110,101 @@ Alerta:
 
 Criar um documento por ponto GPS pode ficar caro. Antes de implementar, avaliar frequência de coleta, duração média das atividades e limites do Firestore.
 
+## Sincronização offline de atividades
+
+Durante a corrida ativa, Firestore não é fonte de verdade. O app salva estado e pontos localmente e só tenta gravar remoto depois que a corrida é finalizada e confirmada no histórico local.
+
+Campos locais adicionados ao registro de corrida:
+
+- `syncStatus`: `PENDING`, `SYNCING`, `SYNCED` ou `FAILED`.
+- `offlineStatus`: estado visual/local como `PENDING_SYNC`, `SYNCING`, `SYNCED` ou `SYNC_FAILED`.
+- `localRunId`: identificador local usado antes/depois do envio remoto.
+- `remoteRunId`: identificador remoto quando a sincronização conclui.
+- `syncAttempts`.
+- `lastSyncError`.
+- `lastSyncedAt`.
+- `schemaVersion`.
+
+No Firestore, a corrida sincronizada continua usando `runs/{runId}`, `users/{userId}/runs/{runId}` e `activities/{activityId}`. Status locais de sincronização não devem substituir o status remoto de atividade concluída.
+
+Diretrizes:
+
+- Não gravar ponto a ponto no Firestore durante a corrida ativa.
+- Manter rota e resumo no histórico local até sincronizar.
+- Listar historico e abrir detalhes por `sync.loadLocalRunHistory()` / `sync.findLocalRunById()` antes de qualquer dependencia remota.
+- Deduplicar corridas por `id`, `localRunId`, `remoteRunId`, `runId` e `legacyId`.
+- Preservar `trustedPath`, `renderPath`, `rawPath`, `segments`, `syncStatus` e `offlineStatus` na copia local mesmo apos sync.
+- Tentar sincronização automática quando a conexão voltar.
+- Tratar escrita remota como idempotente para permitir retry.
+
+Regra atual da fila de runs:
+
+- A fila local parte da chave `runs` e nao de uma colecao paralela.
+- `remoteRunId` e usado como id do documento quando existir.
+- Sem `remoteRunId`, o app tenta localizar `runs` por `localRunId`; se nao encontrar, usa `localRunId` como id remoto deterministico.
+- O payload remoto inclui `localRunId` e `remoteRunId` para dedupe futuro.
+- O app escreve `runs/{remoteRunId}`, `users/{uid}/runs/{remoteRunId}` e `activities/run_{uid}_{remoteRunId}`.
+- `PENDING`, `PENDING_SYNC`, `LOCAL_ONLY`, `FAILED`, `SYNC_FAILED` e `SYNCING` podem entrar na fila; `SYNCED` sem `pendingSync` nao entra.
+- Falha de Firestore marca a copia local como `SYNC_FAILED`, registra `syncError`/`syncErrorType` e nao remove a corrida do historico.
+- O payload remoto remove `undefined`/funcoes antes da escrita.
+- Corrida livre nao envia territorio falso; corrida por zonas envia area/geometria/coords somente quando ja existem localmente.
+- Arrays de rota enviados ao Firestore podem ser limitados por `ROUTE_CAP`; a copia local permanece completa e o payload remoto registra `remoteRouteLimits`.
+
+## Camada local-first antes do Firestore
+
+Firestore e destino remoto ou fonte remota cacheavel, nao dependencia obrigatoria para os fluxos adaptados nesta etapa.
+
+Repositories atuais:
+
+- `RunRepository`: le/escreve historico local por `sync.js`; Firestore so entra no sync posterior.
+- `RunSyncQueueRepository`: agenda/processa fila oficial de runs por `runSyncQueueService`/`sync.js`.
+- `TerritoryRepository`: le/escreve storage local atual de territorios e separa zonas legadas de territorios atuais.
+- `profileStats`: consolida estatisticas locais de perfil por `RunRepository`, `TerritoryRepository`, `ProgressionRepository` e `AchievementRepository`.
+- `UserProfileRepository`: retorna perfil local/cacheado quando remoto falha, mescla estatisticas locais reais e tenta Firestore/Storage como melhor esforco.
+- `RankingRepository`: retorna ranking remoto quando existir, cache quando disponivel, local quando aplicavel ou estado vazio identificado; mock/demo nao pode ser apresentado como ranking real.
+- `ProgressionRepository` e `AchievementRepository`: mantem XP/conquistas locais; sync remoto ainda e futuro.
+- `socialHomeRepository`: compoe Home social com feed/cache/stories locais sem Firestore direto na tela.
+
+Chamadas Firestore ainda existentes devem ficar em services/repositories ate serem desacopladas:
+
+- sync de runs e territorios;
+- perfil publico/avatar;
+- ranking remoto;
+- feed, amigos e grupos, ainda com partes Firestore-first;
+- notificacoes;
+- XP/agregados quando o service exigir remoto.
+- upload/sync futuro de stories.
+
+Regra de falha:
+
+- Falha de Firestore nao deve apagar dado local nem impedir leitura de historico/detalhe.
+- Erro remoto em perfil/ranking deve virar cache, local limitado, vazio controlado ou erro de repository identificado.
+- Story local em `wayper_run_stories_v1` continua `PENDING_SYNC` ate existir publicacao remota real.
+- XP/conquistas locais continuam validos mesmo sem sync remoto.
+- Mocks e demos precisam carregar `source: "demo"` ou equivalente, nunca serem tratados como dado real.
+- Cache de ranking precisa carregar `updatedAt`/`cachedAt`.
+- Upload de avatar por Storage e melhor esforco; falha nao deve apagar avatar local/cacheado nem gravar `file://` como avatar remoto.
+
+## Territorios antes do Firestore
+
+A fonte local oficial de territorio atual fica fora do Firestore:
+
+| Dado | Storage local | Acesso oficial |
+| --- | --- | --- |
+| Territorios atuais | `wayper_territories_v1` | `TerritoryRepository` / `territoryStorageService` |
+| Eventos territoriais | `wayper_territory_events_v1` | `TerritoryRepository` / `territoryStorageService` |
+| Leaderboards/cache territoriais | `wayper_territory_leaderboards_v1` | `TerritoryRepository` / services de territorio |
+| Zonas legadas | `zones`, `@wayper_zones` | Somente migracao/compatibilidade explicita |
+
+Diretrizes:
+
+- Corrida por zonas conclui localmente mesmo offline.
+- A corrida finalizada preserva `area`, `areaM2`, `zoneCoords`, `geometry`, `routeGeometry`, `territorySummary`, `territoryEvents` e `capturedCells` quando a captura local existe.
+- Corrida livre nao envia nem preserva territorio falso.
+- `syncTerritoriesToFirestore()` e `syncTerritoryEventsToFirestore()` sao filas separadas do sync de runs.
+- Falha remota de territorio nao remove territorio local nem bloqueia historico/detalhe de corrida.
+- Feed/mapa/leaderboards territoriais devem usar local/cache/vazio controlado quando Firestore falhar.
+
 ## Coleção `territoryClaims`
 
 Proposta opcional, caso a estratégia territorial do MVP exija registro separado de conquistas:

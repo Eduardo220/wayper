@@ -1,5 +1,10 @@
 # Corrida por zonas
 
+Pela direção vigente desde 2026-07-24, a zona é consequência da atividade. A
+captura definitiva acontece depois do salvamento mínimo e sua descoberta é
+primariamente pós-corrida. Preview/mapa durante a atividade é opcional e não pode
+exigir que o usuário procure territórios na tela.
+
 A captura de zonas parte dos pontos aceitos pelo tracking, ja filtrados por precisao, saltos de GPS, velocidade impossivel e pausas. Pausas viram segmentos separados; a rota visual salva usa `LineString` ou `MultiLineString` para nao desenhar uma ponte falsa entre trechos.
 
 ## Como a rota vira zona
@@ -29,9 +34,13 @@ A simplificacao usa tolerancia baixa e serve para reduzir peso de renderizacao/s
 
 ## Persistencia e ranking
 
-Territorios capturados sao salvos localmente em `territories` e sincronizados para `territories/{id}`. O sync tambem espelha o documento em `zones/{id}` com `geometry`, `routeGeometry`, `areaM2`, `color`, `strokeColor`, `fillOpacity`, `bbox`, `center`, `stats` e `source: "zoneRun"`.
+Territorios capturados sao salvos localmente em `wayper_territories_v1` via `territoryStorageService`/`TerritoryRepository`. Eventos territoriais usam `wayper_territory_events_v1`; leaderboards territoriais usam `wayper_territory_leaderboards_v1` como cache/local.
 
-O ranking usa os agregados de `users` e `user_territory_stats`; ao capturar uma zona, o app atualiza area total, total de zonas, corridas e distancia. O painel "Ver zonas" no mapa carrega zonas do usuario atual, zonas completas no viewport e zonas do usuario escolhido no ranking sem buscar o mundo inteiro.
+O sync remoto de territorio continua posterior e separado do sync de runs. `syncTerritoriesToFirestore()` e `syncTerritoryEventsToFirestore()` podem gravar em Firestore quando houver conexao, mas Firestore nao e necessario para concluir a UX local da captura por zonas. O espelho remoto em `zones/{id}` ainda pode existir por compatibilidade, mas `zones` e `@wayper_zones` nao sao storage local novo.
+
+Ao finalizar corrida por zonas com captura valida, a corrida local deve preservar `area`, `areaM2`, `zoneCoords`, `geometry`, `routeGeometry`, `territorySummary`, `territoryEvents` e `capturedCells`. Corrida livre deve salvar historico normalmente e nao deve receber campo territorial falso.
+
+O painel "Ver zonas", mapa, dashboard e feed devem preferir territorios locais/cacheados e tratar Firestore indisponivel como vazio controlado. Leaderboard territorial local/cacheado precisa ter origem clara e nao deve ser apresentado como ranking remoto real quando for apenas cache/demo.
 
 ## Limitacoes
 

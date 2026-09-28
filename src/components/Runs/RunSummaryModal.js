@@ -5,7 +5,6 @@ import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { WPBottomSheet, WPChip, WPInput } from "../ui";
-import { RunFinishMarker } from "../Map/RunRouteMarkers";
 import { WayperTheme } from "../../theme/wayperTheme";
 import { computeTerritoryXP } from "../../services/xp/territoryXp.js";
 import { openAppSettings, requestImageLibraryPermission } from "../../services/permissions";
@@ -83,6 +82,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
   const runData = useMemo(() => baseRunData || {}, [baseRunData]);
   const isZoneRun = runData.mode === "zones" || Number(runData.area || 0) > 0 || !!runData.zoneId;
   const isEditing = mode === "edit";
+  const hasMinimumSave = Number(runData.minimumSavedRunVersion || 0) > 0;
   const [name, setName] = useState("Minha Corrida");
   const [effort, setEffort] = useState(5);
   const [notes, setNotes] = useState("");
@@ -90,6 +90,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
   const [photoUri, setPhotoUri] = useState(null);
   const [zoneColor, setZoneColor] = useState(WayperTheme.colors.primary);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const effortPulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -102,6 +103,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
     setPhotoUri(runData.photoUri || null);
     setZoneColor(runData.color || runData.zoneColor || WayperTheme.colors.primary);
     setSaving(false);
+    setSaveError(null);
   }, [visible, runData, isZoneRun]);
 
   useEffect(() => {
@@ -176,6 +178,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
   async function handleSave() {
     if (saving) return;
     setSaving(true);
+    setSaveError(null);
 
     const payload = {
       ...runData,
@@ -194,6 +197,7 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
       await onSave(payload);
     } catch (e) {
       console.warn("RunSummaryModal.onSave failed", e);
+      setSaveError("A corrida continua preservada. Revise o armazenamento e tente salvar novamente.");
       setSaving(false);
       return;
     }
@@ -208,14 +212,14 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
           <View style={styles.finishBadgeOuter}>
             <View style={styles.finishBadgeMid}>
               <View style={styles.finishBadgeInner}>
-                <RunFinishMarker />
+                <Ionicons name="flag" size={32} color={WayperTheme.colors.primary} />
               </View>
             </View>
           </View>
 
           <View style={styles.heroText}>
             <Text style={styles.title}>
-              {isEditing ? "Editar" : "Finalizar"} <Text style={styles.titleAccent}>{isZoneRun ? "Zonas" : "Corrida"}</Text>
+              {isEditing ? "Editar" : hasMinimumSave ? "Detalhes da" : "Finalizar"} <Text style={styles.titleAccent}>{isZoneRun ? "Zonas" : "Corrida"}</Text>
             </Text>
             <View style={styles.metricsRow}>
               <MetricPill icon="location-outline" value={metrics.distance} label="Distância" />
@@ -422,6 +426,13 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
           )}
         </View>
 
+        {saveError ? (
+          <View style={styles.saveError}>
+            <Ionicons name="alert-circle-outline" size={20} color={WayperTheme.colors.danger} />
+            <Text style={styles.saveErrorText}>{saveError}</Text>
+          </View>
+        ) : null}
+
         <TouchableOpacity activeOpacity={0.9} onPress={handleSave} disabled={saving} style={[styles.saveTouchable, saving && styles.saveDisabled]}>
           <LinearGradient
             colors={[WayperTheme.colors.primaryLight, WayperTheme.colors.primary, WayperTheme.colors.primaryDark]}
@@ -432,7 +443,15 @@ export default function RunSummaryModal({ visible, onClose, onSave, baseRunData 
             <View pointerEvents="none" style={styles.saveOrb} />
             <Ionicons name="save-outline" size={28} color={WayperTheme.colors.textInverse} />
             <Text style={styles.saveText}>
-              {saving ? "Salvando..." : isEditing ? "Salvar alteracoes" : isZoneRun ? "Salvar zonas" : "Salvar corrida"}
+              {saving
+                ? "Salvando..."
+                : isEditing
+                  ? "Salvar alteracoes"
+                  : hasMinimumSave
+                    ? "Salvar detalhes"
+                    : isZoneRun
+                      ? "Salvar zonas"
+                      : "Salvar corrida"}
             </Text>
           </LinearGradient>
         </TouchableOpacity>
@@ -819,6 +838,24 @@ const styles = StyleSheet.create({
   },
   saveDisabled: {
     opacity: 0.68,
+  },
+  saveError: {
+    marginTop: WayperTheme.spacing.xl,
+    padding: WayperTheme.spacing.lg,
+    borderRadius: WayperTheme.radius.lg,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.dangerBorder,
+    backgroundColor: WayperTheme.colors.dangerSoft,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WayperTheme.spacing.sm,
+  },
+  saveErrorText: {
+    flex: 1,
+    color: WayperTheme.colors.text,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
   },
   saveButton: {
     minHeight: 78,

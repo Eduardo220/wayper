@@ -164,6 +164,24 @@ describe("territoryLeaderboardService", () => {
     );
   });
 
+  test("nao atribui area a celula sem intersecao", async () => {
+    const outside = territory({
+      id: "outside",
+      ownerId: "user-1",
+      ownerName: "Ana",
+      bbox: [1, 1, 1.002, 1.002],
+    });
+    outside.cellIds = [cellId];
+
+    const result = await recalculateLeaderboardsForCells([cellId], {
+      territories: [outside],
+      persist: false,
+    });
+
+    expect(result.leaderboards[0].users).toEqual({});
+    expect(result.leaderboards[0].totalAreaM2).toBe(0);
+  });
+
   test("calcula getAreaNeededToLead", async () => {
     localLeaderboards = [{
       cellId,

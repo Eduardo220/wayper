@@ -14,6 +14,18 @@ import {
   savePngToGallery as savePngFileToGallery,
   sharePngFile,
 } from "../shareImage";
+import {
+  assertTraceHasEnoughPoints,
+  getRenderableTraceSource,
+  normalizeRunPath,
+} from "./runTraceSource.js";
+import logger, { LOG_CATEGORIES } from "../logger.js";
+
+export {
+  assertTraceHasEnoughPoints,
+  getRenderableTraceSource,
+  normalizeRunPath,
+} from "./runTraceSource.js";
 
 export const SHARE_DIR = WAYPER_SHARE_DIR || "";
 export const WAYPER_SHARE_ALBUM = "Wayper";
@@ -30,6 +42,10 @@ export class WayperShareError extends Error {
 }
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function basenameFromUri(uri = "") {
+  return String(uri || "").split(/[\\/]/).filter(Boolean).pop() || null;
+}
 
 export function normalizeFileUri(uri) {
   return normalizeLegacyFileUri(uri);
@@ -119,18 +135,16 @@ export async function captureRunShareImage(ref, options = {}) {
 
   try {
     const savedUri = await saveTempImageAsync(capturedUri, sanitizeShareFilename(filename));
-    if (typeof __DEV__ !== "undefined" && __DEV__) {
-      const info = await assertFileExists(savedUri);
-      console.log("[Wayper Share] capture generated file:", {
-        platform: Platform.OS,
-        method: result === "base64" ? "captureRef/base64" : "captureRef/tmpfile",
-        uri: info.uri,
-        exists: info.exists,
-        size: info.size,
-        width,
-        height,
-      });
-    }
+    const info = await assertFileExists(savedUri);
+    logger.info(LOG_CATEGORIES.SHARE, "SHARE_CAPTURE_GENERATED", {
+      platform: Platform.OS,
+      method: result === "base64" ? "captureRef/base64" : "captureRef/tmpfile",
+      generatedFilename: basenameFromUri(info.uri),
+      exists: info.exists,
+      fileSize: info.size,
+      width,
+      height,
+    }, { forcePersist: true });
     return savedUri;
   } catch (error) {
     throw new WayperShareError(
@@ -139,99 +153,6 @@ export async function captureRunShareImage(ref, options = {}) {
       error
     );
   }
-}
-
-export function normalizeRunPath(path = []) {
-  return (Array.isArray(path) ? path : [])
-    .map((point) => {
-      let latitude;
-      let longitude;
-
-      if (Array.isArray(point)) {
-        latitude = Number(point[0]);
-        longitude = Number(point[1]);
-
-        if (Math.abs(latitude) > 90 && Math.abs(longitude) <= 90) {
-          const temp = latitude;
-          latitude = longitude;
-          longitude = temp;
-        }
-      } else {
-        latitude = Number(point?.latitude ?? point?.lat ?? point?.coords?.latitude);
-        longitude = Number(point?.longitude ?? point?.lon ?? point?.lng ?? point?.coords?.longitude);
-      }
-
-      if (
-        !Number.isFinite(latitude) ||
-        !Number.isFinite(longitude) ||
-        Math.abs(latitude) > 90 ||
-        Math.abs(longitude) > 180
-      ) {
-        return null;
-      }
-
-      return { latitude, longitude, timestamp: point?.timestamp ?? point?.time ?? null };
-    })
-    .filter(Boolean);
-}
-
-function normalizeTraceSegments(segments = []) {
-  return (Array.isArray(segments) ? segments : [])
-    .map((segment) =>
-      normalizeRunPath(
-        Array.isArray(segment)
-          ? segment
-          : segment?.displayPoints ||
-              segment?.summaryRenderPath ||
-              segment?.renderPath ||
-              segment?.displayPath ||
-              segment?.filteredPoints ||
-              segment?.trustedPath ||
-              []
-      )
-    )
-    .filter((segment) => segment.length >= 2);
-}
-
-export function getRenderableTraceSource({ path = [], segments = [], zoneCoords = [], isZone = false } = {}) {
-  const normalizedPath = normalizeRunPath(path);
-  const normalizedSegments = normalizeTraceSegments(segments);
-  const normalizedZone = normalizeRunPath(zoneCoords);
-
-  if (isZone && normalizedZone.length >= 3) {
-    return { points: normalizedZone, segments: [], type: "zone" };
-  }
-
-  if (isZone && normalizedPath.length >= 3) {
-    return { points: normalizedPath, segments: [], type: "zone" };
-  }
-
-  if (!isZone && normalizedSegments.length > 0) {
-    return { points: normalizedSegments.flat(), segments: normalizedSegments, type: "route" };
-  }
-
-  if (normalizedPath.length >= 2) {
-    return { points: normalizedPath, segments: [], type: "route" };
-  }
-
-  return { points: normalizedPath, segments: [], type: isZone ? "zone" : "route" };
-}
-
-export function assertTraceHasEnoughPoints({ path = [], segments = [], zoneCoords = [], isZone = false } = {}) {
-  const source = getRenderableTraceSource({ path, segments, zoneCoords, isZone });
-  const minPoints = source.type === "zone" ? 3 : 2;
-
-  if (source.points.length < minPoints) {
-    if (typeof __DEV__ !== "undefined" && __DEV__) {
-      console.log("[Wayper Share] trace fallback:", {
-        type: source.type,
-        points: source.points.length,
-        minPoints,
-      });
-    }
-  }
-
-  return source;
 }
 
 export async function generateTracePngFromPath(path = [], options = {}) {
@@ -333,18 +254,13 @@ export async function cleanupOldShareFiles(maxAgeMs = 1000 * 60 * 60 * 24) {
       })
     );
   } catch (error) {
-    if (typeof __DEV__ !== "undefined" && __DEV__) {
-      console.warn("[WayperShare:cleanup]", {
-        message: error?.message,
-        stack: error?.stack,
-      });
-    }
+    logger.warn(LOG_CATEGORIES.SHARE, "SHARE_CLEANUP_FAILED", {
+      error,
+    }, { forcePersist: true });
   }
 }
 
 export async function logShareDiagnostics(action, data = {}) {
-  if (typeof __DEV__ === "undefined" || !__DEV__) return;
-
   let generatedFileInfo = null;
   if (data.generatedUri) {
     try {
@@ -361,28 +277,36 @@ export async function logShareDiagnostics(action, data = {}) {
     sharingAvailable = false;
   }
 
-  console.log("[WayperShare] diagnostics", {
+  logger.info(LOG_CATEGORIES.SHARE, "SHARE_EXPORT_DIAGNOSTICS", {
     action,
     platform: Platform.OS,
     sharingAvailable,
-    generatedUri: data.generatedUri,
-    fileInfo: generatedFileInfo,
+    generatedFilename: basenameFromUri(data.generatedUri),
+    fileInfo: generatedFileInfo
+      ? {
+          exists: generatedFileInfo.exists,
+          size: generatedFileInfo.size,
+        }
+      : null,
     pathLength: normalizeRunPath(data.path || []).length,
     runId: data.runId,
     extra: data.extra,
-  });
+  }, { forcePersist: true });
 }
 
 export function logShareError(context, error, extra = {}) {
-  if (typeof __DEV__ === "undefined" || !__DEV__) return;
-
-  console.log(`[WayperShare:${context}]`, {
+  const safeSummary = {
     code: error?.code,
-    message: error?.message,
-    stack: error?.stack,
-    cause: error?.cause?.message || error?.cause,
-    extra,
-  });
+    error,
+    runId: extra.runId || extra.localRunId || null,
+    isZone: Boolean(extra.isZone),
+    pathPointsCount: Array.isArray(extra.path) ? extra.path.length : 0,
+    segmentsCount: Array.isArray(extra.segments) ? extra.segments.length : 0,
+    zonePointsCount: Array.isArray(extra.zoneCoords) ? extra.zoneCoords.length : 0,
+    distanceKm: Number(extra.distanceKm || 0),
+    durationSeconds: Number(extra.durationSeconds || 0),
+  };
+  logger.error(LOG_CATEGORIES.SHARE, `SHARE_${String(context || "UNKNOWN").toUpperCase()}`, safeSummary);
 }
 
 export function showShareError(message, error) {

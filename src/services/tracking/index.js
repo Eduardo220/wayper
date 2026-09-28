@@ -8,6 +8,7 @@ export {
 } from "./trackingConfig.js";
 export {
   TRACKING_FILTER_ACTION,
+  TRACKING_POINT_CLASSIFICATION,
   TRACKING_POINT_SOURCE,
   TRACKING_REJECT_REASON,
 } from "./trackingTypes.js";
@@ -47,8 +48,10 @@ export {
   smoothPathMovingAverage,
 } from "./trackingSmoothing.js";
 export {
+  TRACKING_RENDER_PATH_CACHE_MAX_ENTRIES,
   buildLiveRenderPath,
   buildSummaryRenderPath,
+  clearTrackingRenderPathCache,
   getBestRenderPathForRun,
   getRenderableSegmentsForRun,
   removeDuplicateVisualPoints,

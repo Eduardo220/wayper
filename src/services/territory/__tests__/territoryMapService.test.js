@@ -1,7 +1,10 @@
 import { describe, expect, test } from "@jest/globals";
 import {
+  buildTerritoryBbox,
   getOwnerColor,
   leaderCellsToFeatureCollection,
+  mergeTerritoriesForMap,
+  normalizeTerritoryBbox,
   normalizeTerritoryForMap,
   territoriesToFeatureCollection,
   WAYPER_CURRENT_USER_COLOR,
@@ -37,6 +40,38 @@ const multiPolygon = {
 };
 
 describe("territoryMapService", () => {
+  test("normaliza bbox e cria viewport ao redor da localizacao", () => {
+    expect(normalizeTerritoryBbox([-50, -29, -51, -30])).toEqual([-51, -30, -50, -29]);
+    expect(buildTerritoryBbox({ latitude: -30, longitude: -51 }, 0.01)).toEqual([
+      -51.01,
+      -30.01,
+      -50.99,
+      -29.99,
+    ]);
+  });
+
+  test("merge preserva a versao local mais nova contra resposta remota atrasada", () => {
+    const local = {
+      id: "t1",
+      version: 3,
+      updatedAt: "2026-08-24T12:00:00.000Z",
+    };
+    const remote = {
+      id: "t1",
+      version: 2,
+      updatedAt: "2026-08-24T13:00:00.000Z",
+    };
+
+    expect(mergeTerritoriesForMap([local], [remote])).toEqual([local]);
+  });
+
+  test("merge aceita versao remota realmente mais nova", () => {
+    const local = { id: "t1", version: 2 };
+    const remote = { id: "t1", version: 3 };
+
+    expect(mergeTerritoriesForMap([local], [remote])).toEqual([remote]);
+  });
+
   test("converte Polygon em FeatureCollection", () => {
     const collection = territoriesToFeatureCollection([
       { id: "t1", ownerId: "user-1", geometry: polygon },

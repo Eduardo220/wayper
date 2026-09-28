@@ -1,8 +1,6 @@
 import { collection, getDocs, limit, query } from "firebase/firestore";
 import { db } from "../../firebaseConfig.js";
 
-const DEFAULT_AVATAR = "https://i.pravatar.cc/150?u=wayper";
-
 const safeNumber = (value, fallback = 0) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -15,7 +13,7 @@ const getUserName = (profile = {}, fallback = "Atleta") =>
   profile.userName || profile.name || profile.displayName || profile.username || fallback;
 
 const getUserAvatar = (profile = {}, userId = "wayper") =>
-  profile.avatar || profile.photoURL || profile.userAvatar || `${DEFAULT_AVATAR}-${userId}`;
+  profile.avatar || profile.photoURL || profile.userAvatar || null;
 
 function getUsersFromLeaderboard(leaderboard = {}) {
   if (leaderboard.users && typeof leaderboard.users === "object" && !Array.isArray(leaderboard.users)) {

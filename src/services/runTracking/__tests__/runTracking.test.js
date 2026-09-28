@@ -1,6 +1,7 @@
 import { describe, expect, test } from "@jest/globals";
 import {
   buildSummaryRenderPath,
+  buildRunLineGeoJson,
   calculateDistanceMeters,
   calculatePathDistanceMeters,
   calculateTurnAngle,
@@ -90,6 +91,39 @@ describe("runTracking central pipeline", () => {
     const finish = session.finishTrackingSession({ durationMs: 42000 });
     const segments = getDisplaySegmentsForRun(finish, "result");
     expect(segments).toHaveLength(2);
+  });
+
+  test("GeoJSON de rota usa MultiLineString para segmentos separados", () => {
+    const session = createTrackingSession({ mode: "run", startedAt: BASE_TIME });
+    const { first, second } = pauseAndResumeFarAway();
+    first.forEach((point) => session.processLocationPoint(point));
+    session.pause({ endedAt: BASE_TIME + 8000 });
+    session.resume({ startedAt: BASE_TIME + 12000 });
+    second.forEach((point) => session.processLocationPoint(point));
+
+    const finish = session.finishTrackingSession({ durationMs: 42000 });
+    const geojson = buildRunLineGeoJson(finish.routeSegments, "result");
+
+    expect(geojson.features).toHaveLength(1);
+    expect(geojson.features[0].geometry.type).toBe("MultiLineString");
+    expect(geojson.features[0].geometry.coordinates).toHaveLength(2);
+  });
+
+  test("GeoJSON reflete ponto intermediario e properties em chamadas sucessivas", () => {
+    const first = [
+      { latitude: -23.56, longitude: -46.64, timestamp: 1 },
+      { latitude: -23.561, longitude: -46.641, timestamp: 2 },
+      { latitude: -23.562, longitude: -46.642, timestamp: 3 },
+    ];
+    const second = [first[0], { ...first[1], longitude: -46.651 }, first[2]];
+
+    const before = buildRunLineGeoJson(first, "result", { revision: 1 });
+    const after = buildRunLineGeoJson(second, "result", { revision: 2 });
+
+    expect(after.features[0].geometry.coordinates[1]).not.toEqual(
+      before.features[0].geometry.coordinates[1]
+    );
+    expect(after.features[0].properties.revision).toBe(2);
   });
 
   test("nao conecta segmentos apos gap de GPS", () => {

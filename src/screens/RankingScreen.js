@@ -4,7 +4,6 @@ import {
   Alert,
   Animated,
   FlatList,
-  Image,
   RefreshControl,
   StyleSheet,
   Text,
@@ -14,35 +13,16 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { auth, db } from "../firebaseConfig";
-import { fetchAllRanking, fetchLocalLeadersRanking, fetchMonthlyRanking } from "../services/ranking";
+import { auth } from "../firebaseConfig";
 import { getMonthlyMedalForRank, getRankingMonthKey } from "../services/ranking/constants";
+import {
+  RANKING_SOURCE,
+  listRanking,
+  persistMyMonthlyPreview as persistMonthlyPreview,
+} from "../repositories/rankingRepository";
+import { EmptyState, OfflineState } from "../components/states";
+import HomeAvatar from "../components/Home/HomeAvatar";
 import { WayperTheme } from "../theme/wayperTheme";
-
-const DEFAULT_AVATAR = "https://i.pravatar.cc/150?u=wayper";
-
-const makeMockRanking = (city = "Santa Maria", count = 40) =>
-  Array.from({ length: count }, (_, index) => {
-    const distance = Math.round((Math.random() * 220 + 5) * 1000);
-    const area = Math.round(Math.random() * 2_500_000 + 20_000);
-    return {
-      id: `mock-${index + 1}`,
-      name: `Atleta ${index + 1}`,
-      avatar: `https://i.pravatar.cc/150?img=${(index % 70) + 1}`,
-      city,
-      area,
-      distance,
-      monthlyArea: area * 0.35,
-      monthlyDistance: distance * 0.35,
-      totalRuns: Math.floor(Math.random() * 70),
-      level: Math.floor(Math.random() * 40) + 1,
-      xp: Math.floor(Math.random() * 25000),
-      totalStolenAreaM2: Math.round(Math.random() * 450000),
-      cellsLedCount: Math.floor(Math.random() * 12),
-      leaderAreaM2: Math.round(Math.random() * 600000),
-    };
-  });
 
 const safeNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -70,6 +50,12 @@ const getMetricValue = (item, mode, period) => {
   if (mode === "distance") {
     return safeNumber(period === "monthly" ? item.monthlyDistance ?? item.distance : item.distance);
   }
+  if (mode === "xp") {
+    return safeNumber(item.totalXp ?? item.xp);
+  }
+  if (mode === "runs") {
+    return safeNumber(item.totalRuns);
+  }
   return safeNumber(period === "monthly" ? item.monthlyArea ?? item.area : item.area);
 };
 
@@ -77,6 +63,8 @@ const getMetricLabel = (item, mode, period) => {
   const value = getMetricValue(item, mode, period);
   if (mode === "localLeaders" || mode === "cellsLed") return `${Math.round(value)} regioes`;
   if (mode === "stolenArea") return formatArea(value);
+  if (mode === "xp") return `${Math.round(value)} XP`;
+  if (mode === "runs") return `${Math.round(value)} corridas`;
   return mode === "distance" ? formatKm(value) : formatArea(value);
 };
 
@@ -85,6 +73,8 @@ const getMetricTitle = (mode) => {
   if (mode === "localLeaders") return "Lideres locais";
   if (mode === "stolenArea") return "Area retomada";
   if (mode === "cellsLed") return "Regioes lideradas";
+  if (mode === "xp") return "XP total";
+  if (mode === "runs") return "Corridas";
   return "Area capturada";
 };
 
@@ -101,7 +91,7 @@ const normalizeRanking = (list, mode, period) =>
   (Array.isArray(list) ? list : [])
     .map((item) => ({
       ...item,
-      avatar: item.avatar || item.photoURL || DEFAULT_AVATAR,
+      avatar: item.avatar || item.photoURL || null,
       name: item.name || item.displayName || item.username || "Atleta",
     }))
     .sort((a, b) => getMetricValue(b, mode, period) - getMetricValue(a, mode, period))
@@ -149,7 +139,7 @@ function RankItem({ item, mode, period, maxValue, isMe }) {
       </View>
 
       <View style={styles.avatarWrap}>
-        <Image source={{ uri: item.avatar }} style={styles.avatar} />
+        <HomeAvatar uri={item.avatar} name={item.name} size={58} />
         {isMe ? (
           <View style={styles.meDot}>
             <Ionicons name="person" size={10} color={WayperTheme.colors.textInverse} />
@@ -206,32 +196,19 @@ export default function RankingScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState([]);
+  const [rankingSource, setRankingSource] = useState(RANKING_SOURCE.EMPTY);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(18)).current;
 
   const persistMyMonthlyPreview = useCallback(
     async (ranking) => {
-      const uid = auth.currentUser?.uid;
-      if (!uid || period !== "monthly" || !["area", "distance"].includes(mode)) return;
-
-      const me = ranking.find((item) => item.id === uid);
-      if (!me?.rank) return;
-
-      const field = mode === "distance" ? "bestMonthlyRankDistance" : "bestMonthlyRankArea";
-      try {
-        await setDoc(
-          doc(db, "users", uid),
-          {
-            monthlyRankPreview: me.rank,
-            [field]: me.rank,
-            bestMonthlyRank: me.rank,
-            rankingMonth: getRankingMonthKey(),
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-      } catch (error) {
-        console.warn("Ranking preview persist failed:", error);
+      const result = await persistMonthlyPreview(ranking, {
+        uid: auth.currentUser?.uid,
+        period,
+        mode,
+      });
+      if (result.error) {
+        console.warn("Ranking preview persist failed:", result.error);
       }
     },
     [mode, period]
@@ -248,25 +225,26 @@ export default function RankingScreen({ route, navigation }) {
           limitTo: 300,
         };
 
-        const territoryAggregateMode = mode === "stolenArea" || mode === "cellsLed";
-        const remote = mode === "localLeaders"
-          ? await fetchLocalLeadersRanking({ limitTo: 300 })
-          : period === "monthly" && !territoryAggregateMode
-            ? await fetchMonthlyRanking(args)
-            : await fetchAllRanking(args);
-
-        const source = Array.isArray(remote) && remote.length
-          ? remote
-          : mode === "localLeaders"
-            ? []
-            : makeMockRanking(city);
-        const normalized = normalizeRanking(source, mode, period);
+        const result = await listRanking({
+          ...args,
+          mode,
+          period,
+          allowCache: true,
+        });
+        const normalized = normalizeRanking(result.data || [], mode, period);
+        setRankingSource(result.source || RANKING_SOURCE.EMPTY);
         setData(normalized);
-        persistMyMonthlyPreview(normalized);
+        if (result.source !== RANKING_SOURCE.DEMO && normalized.length > 0) {
+          persistMyMonthlyPreview(normalized);
+        }
+        if (result.error) {
+          console.warn("Ranking load fallback:", result.error);
+        }
       } catch (error) {
         console.warn("Ranking load error:", error);
-        setData(mode === "localLeaders" ? [] : normalizeRanking(makeMockRanking(city), mode, period));
-        Alert.alert("Ranking", mode === "localLeaders" ? "Nao foi possivel carregar lideres locais agora." : "Usando dados locais de exemplo porque o ranking remoto falhou.");
+        setRankingSource(RANKING_SOURCE.EMPTY);
+        setData([]);
+        Alert.alert("Ranking", "Nao foi possivel carregar o ranking agora.");
       } finally {
         setLoading(false);
       }
@@ -328,7 +306,16 @@ export default function RankingScreen({ route, navigation }) {
   const myRank = useMemo(() => filtered.find((item) => item.id === currentUid) || null, [currentUid, filtered]);
   const maxValue = useMemo(() => Math.max(...filtered.map((item) => getMetricValue(item, mode, period)), 1), [filtered, mode, period]);
   const monthLabel = getRankingMonthKey();
-  const subtitle = `${period === "monthly" ? `Mensal ${monthLabel}` : "Geral"} • ${scope === "regional" ? city : "Global"}`;
+  const sourceLabel = rankingSource === RANKING_SOURCE.CACHE
+    ? "cache"
+    : rankingSource === RANKING_SOURCE.LOCAL
+      ? "local"
+      : rankingSource === RANKING_SOURCE.DEMO
+        ? "demo"
+        : rankingSource === RANKING_SOURCE.EMPTY
+          ? "vazio"
+          : null;
+  const subtitle = `${period === "monthly" ? `Mensal ${monthLabel}` : "Geral"} - ${scope === "regional" ? city : "Global"}${sourceLabel ? ` - ${sourceLabel}` : ""}`;
 
   const Header = useCallback(
     () => (
@@ -367,7 +354,7 @@ export default function RankingScreen({ route, navigation }) {
           {leader ? (
             <View style={styles.leaderPanel}>
               <View style={styles.leaderAvatarShell}>
-                <Image source={{ uri: leader.avatar }} style={styles.leaderAvatar} />
+                <HomeAvatar uri={leader.avatar} name={leader.name} size={58} />
               </View>
               <View style={styles.leaderBody}>
                 <Text style={styles.leaderLabel}>Lider atual</Text>
@@ -420,6 +407,17 @@ export default function RankingScreen({ route, navigation }) {
             <TouchableOpacity activeOpacity={0.86} onPress={() => setMode("cellsLed")} style={[styles.modeButton, mode === "cellsLed" && styles.modeButtonActive]}>
               <Ionicons name="podium-outline" size={18} color={mode === "cellsLed" ? WayperTheme.colors.textInverse : WayperTheme.colors.primary} />
               <Text style={[styles.modeText, mode === "cellsLed" && styles.modeTextActive]}>Regioes</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.modeRow}>
+            <TouchableOpacity activeOpacity={0.86} onPress={() => setMode("xp")} style={[styles.modeButton, mode === "xp" && styles.modeButtonActive]}>
+              <Ionicons name="sparkles-outline" size={18} color={mode === "xp" ? WayperTheme.colors.textInverse : WayperTheme.colors.primary} />
+              <Text style={[styles.modeText, mode === "xp" && styles.modeTextActive]}>XP</Text>
+            </TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.86} onPress={() => setMode("runs")} style={[styles.modeButton, mode === "runs" && styles.modeButtonActiveCyan]}>
+              <Ionicons name="walk-outline" size={18} color={mode === "runs" ? WayperTheme.colors.textInverse : WayperTheme.colors.cyan} />
+              <Text style={[styles.modeText, mode === "runs" && styles.modeTextActive]}>Corridas</Text>
             </TouchableOpacity>
           </View>
 
@@ -506,7 +504,7 @@ export default function RankingScreen({ route, navigation }) {
           )}
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={<Header />}
-          ListEmptyComponent={<EmptyRanking />}
+          ListEmptyComponent={<EmptyRanking source={rankingSource} />}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -521,13 +519,25 @@ export default function RankingScreen({ route, navigation }) {
   );
 }
 
-function EmptyRanking() {
+function EmptyRanking({ source }) {
+  if (source === RANKING_SOURCE.CACHE || source === RANKING_SOURCE.LOCAL) {
+    return (
+      <OfflineState
+        title={source === RANKING_SOURCE.LOCAL ? "Ranking local limitado" : "Ranking em cache"}
+        description={source === RANKING_SOURCE.LOCAL
+          ? "Mostrando apenas dados reais deste aparelho. Nenhum atleta foi inventado para preencher a lista."
+          : "Voce esta vendo dados salvos localmente enquanto o ranking remoto nao responde."}
+        style={styles.emptyCard}
+      />
+    );
+  }
+
   return (
-    <View style={styles.emptyCard}>
-      <Ionicons name="search-outline" size={26} color={WayperTheme.colors.textSubtle} />
-      <Text style={styles.emptyTitle}>Sem resultados</Text>
-      <Text style={styles.emptyText}>Tente mudar os filtros ou atualizar o ranking.</Text>
-    </View>
+    <EmptyState
+      title="Sem ranking real ainda"
+      description="Finalize corridas ou troque o criterio. O Wayper nao usa demo como fallback silencioso."
+      style={styles.emptyCard}
+    />
   );
 }
 

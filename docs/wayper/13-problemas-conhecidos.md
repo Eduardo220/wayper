@@ -1,8 +1,31 @@
 # Problemas conhecidos e riscos técnicos
 
+> **Status:** histórico<br>
+> **Tipo:** referência técnica complementar<br>
+> **Escopo:** riscos gerais preservados da documentação inicial<br>
+> **Última revisão:** 2026-08-01<br>
+> **Fonte principal relacionada:** [`docs/13-bugs-conhecidos.md`](../13-bugs-conhecidos.md)
+
+Use `docs/13-bugs-conhecidos.md` para bugs e riscos vigentes. Este arquivo
+preserva contexto geral e não deve reabrir item encerrado nem prevalecer sobre o
+registro principal.
+
 ## Objetivo
 
 Este arquivo registra riscos, problemas técnicos e limitações conhecidas. Itens daqui devem ser revisados antes de features que dependam de GPS, mapa, Firestore, território, XP ou ranking.
+
+## Riscos atuais da rodada local-first
+
+- Background/tela bloqueada ainda exige validacao fisica Android em build dev e release.
+- Fabricantes com economia agressiva de bateria podem matar processo mesmo com foreground service.
+- Feed/Friends/Groups ainda possuem trechos Firestore-first; novas alteracoes devem desacoplar por repositories/fallbacks locais.
+- Stories locais ficam `PENDING_SYNC`; upload/sync remoto ainda e futuro.
+- XP/conquistas locais nao possuem sync remoto completo.
+- Sync territorial remoto/social completo ainda e futuro e segue separado do sync de runs.
+- AsyncStorage pode pesar com historicos e rotas muito longos; SQLite depende de medicao real.
+- `runService.js`, `locationService`, `zonesStorage`, `zoneService`, `xpService` e `MedalsWidget` seguem legados e nao devem ser reativados como fonte oficial.
+- `console.*` legado ainda existe fora de fluxos criticos; migrar gradualmente para `logger.js`.
+- Source maps/Sentry autenticado e assinatura release real seguem pendentes antes de tratar release como publicavel.
 
 ## GPS impreciso
 
@@ -142,6 +165,26 @@ Mitigação inicial:
 - Informar limitações ao usuário.
 - Testar em Android e iOS antes de tratar como estável.
 
+## Persistência local de corridas longas
+
+Risco:
+
+- A camada offline inicial usa AsyncStorage, que já é o padrão atual do projeto, mas pode ficar pesada se atividades longas acumularem muitos pontos GPS.
+
+Impactos:
+
+- Tempo de escrita local.
+- Uso de memória ao serializar a rota.
+- Recuperação de atividade ativa.
+- Histórico local.
+
+Mitigação inicial:
+
+- Limitar o volume de pontos persistidos na corrida ativa.
+- Manter rota final com caps já usados pelo app.
+- Adiar escrita remota para a fila de sincronização.
+- Migrar `runOfflineStorageService` para SQLite/Expo SQLite se testes de rua mostrarem volume alto ou escrita lenta.
+
 ## Privacidade de localização
 
 Risco:
@@ -157,7 +200,8 @@ Impactos:
 
 Mitigação inicial:
 
-- Evitar feed social no MVP.
+- Manter a Home social sem publicar rota ou localização detalhada por padrão;
+  feed não transforma dado local, cache ou demo em exposição pública.
 - Não tornar rotas públicas por padrão.
 - Planejar modo privado antes de recursos sociais.
 
@@ -167,4 +211,3 @@ Mitigação inicial:
 - [[05-gps-e-validacao]]
 - [[08-firebase-firestore]]
 - [[09-arquitetura-tecnica]]
-

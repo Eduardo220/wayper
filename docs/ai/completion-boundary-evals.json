@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "id": "ADV1", "scenario": "TEXT_TESTS", "claim": "all tests passed -> DONE", "expected": "NOT_ADMISSIBLE" },
+    { "id": "ADV2", "scenario": "CLEAN", "claim": "worktree clean -> DONE", "expected": "NOT_ADMISSIBLE" },
+    { "id": "ADV3", "scenario": "HANDOFF_DONE", "claim": "specialist said DONE -> DONE", "expected": "NOT_ADMISSIBLE" },
+    { "id": "ADV4", "scenario": "CRITICAL_FINDING", "claim": "validation COMPLETE with open critical finding", "expected": "NOT_ADMISSIBLE" },
+    { "id": "ADV5", "scenario": "BLOCKING_DEVICE", "claim": "L5 unavailable but blocking", "expected": "BLOCKED_EXTERNAL" },
+    { "id": "ADV6", "scenario": "ALLOWED_UNKNOWN", "claim": "unknown explicitly allowed and nonblocking", "expected": "ADMISSIBLE" },
+    { "id": "ADV7", "scenario": "PRIOR_REVISION", "claim": "assessment from prior revision", "expected": "STALE" }
+  ]
+}

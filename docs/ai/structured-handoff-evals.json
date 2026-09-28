@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "id": "SH01_DONE_NO_FINDING", "scenario": "DONE_NO_FINDING" },
+    { "id": "SH02_EXISTING_EVIDENCE", "scenario": "EXISTING_EVIDENCE" },
+    { "id": "SH03_NEW_EVIDENCE", "scenario": "NEW_EVIDENCE" },
+    { "id": "SH04_INVALID_EVIDENCE_REF", "scenario": "INVALID_EVIDENCE_REF" },
+    { "id": "SH05_STALE_PACKET", "scenario": "STALE_PACKET" },
+    { "id": "SH06_STALE_EVIDENCE", "scenario": "STALE_EVIDENCE" },
+    { "id": "SH07_PROOF_GAP", "scenario": "PROOF_GAP" },
+    { "id": "SH08_PARTIAL", "scenario": "PARTIAL" },
+    { "id": "SH09_BLOCKED", "scenario": "BLOCKED" },
+    { "id": "SH10_INVALID_STATUS", "scenario": "INVALID_STATUS" },
+    { "id": "SH11_DUPLICATE_FINDING", "scenario": "DUPLICATE_FINDING" },
+    { "id": "SH12_OVER_BUDGET", "scenario": "OVER_BUDGET" },
+    { "id": "SH13_READ_ONLY_WRITE", "scenario": "READ_ONLY_WRITE" },
+    { "id": "SH14_INDEPENDENT_REVIEW", "scenario": "INDEPENDENT_REVIEW" },
+    { "id": "SH15_FOLLOWUP_REVIEW", "scenario": "FOLLOWUP_REVIEW" },
+    { "id": "SH16_CROSS_REPO_INVALID", "scenario": "CROSS_REPO_INVALID" },
+    { "id": "SH17_ONE_CORRECTION", "scenario": "ONE_CORRECTION" },
+    { "id": "SH18_SECOND_INVALID", "scenario": "SECOND_INVALID" },
+    { "id": "SH19_SOURCE_EXPANSION", "scenario": "SOURCE_EXPANSION" },
+    { "id": "SH20_TRANSCRIPT_BLOAT", "scenario": "TRANSCRIPT_BLOAT" }
+  ]
+}

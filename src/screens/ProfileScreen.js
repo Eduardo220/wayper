@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Image,
   RefreshControl,
   ScrollView,
   Share,
@@ -18,38 +17,31 @@ import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import ViewShot from "react-native-view-shot";
-import { auth, db, storage } from "../firebaseConfig";
-import { doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
-import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
-import MedalsWidget from "../components/MedalsWidget";
+import { auth } from "../firebaseConfig";
 import { WayperTheme } from "../theme/wayperTheme";
+import { DEFAULT_PROFILE } from "../services/profile/profileService";
+import { listAchievements } from "../repositories/achievementRepository";
 import {
-  DEFAULT_PROFILE,
-  fetchRemoteProfile,
-  loadProfile,
-  saveProfile,
-} from "../services/profile/profileService";
+  loadCurrentProfile,
+  subscribeCurrentUserProfile,
+  syncCurrentProfile,
+  updateCurrentUserProfile,
+  updatePrivacy as updateProfilePrivacy,
+  uploadAvatarImage,
+} from "../repositories/userProfileRepository";
 import { saveTempImageAsync } from "../utils/fileSystemLegacy";
 import { formatPaceFromSeconds } from "../utils/pace";
 import { sharePngFile } from "../utils/shareImage";
 import { openAppSettings, requestImageLibraryPermission } from "../services/permissions";
+import { EmptyState, OfflineState } from "../components/states";
+import HomeAvatar from "../components/Home/HomeAvatar";
 
-const DEFAULT_AVATAR = "https://i.pravatar.cc/300?u=wayper_default_profile";
 const WAYPER_GREEN = WayperTheme.colors.primary;
 const SHARE_CAPTURE_OPTIONS = {
   format: "png",
   quality: 1,
   result: "tmpfile",
 };
-
-async function uploadImageToFirebase(uri, storagePath) {
-  if (!uri) throw new Error("missing_image_uri");
-  const response = await fetch(uri);
-  const blob = await response.blob();
-  const ref = storageRef(storage, storagePath);
-  const snap = await uploadBytes(ref, blob, { contentType: blob.type || "image/jpeg" });
-  return getDownloadURL(snap.ref);
-}
 
 const safeNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -102,6 +94,7 @@ export default function ProfileScreen() {
   const [isPrivate, setIsPrivate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [achievements, setAchievements] = useState([]);
 
   const mountedRef = useRef(true);
   const unsubscribeRef = useRef(null);
@@ -112,10 +105,15 @@ export default function ProfileScreen() {
   const loadAll = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const localProfile = await loadProfile();
+      const result = await loadCurrentProfile();
+      const localProfile = result.data?.profile || DEFAULT_PROFILE;
+      const remoteDoc = result.data?.userDoc || null;
+      const current = auth.currentUser;
+      const loadedAchievements = await listAchievements({
+        userId: current?.uid || localProfile?.uid || "offline",
+      });
       if (mountedRef.current) setProfile(localProfile);
 
-      const current = auth.currentUser;
       if (!current) {
         if (mountedRef.current) {
           setUserDoc(null);
@@ -123,22 +121,28 @@ export default function ProfileScreen() {
           setBio("");
           setAvatarUri(null);
           setIsPrivate(false);
+          setAchievements(loadedAchievements);
         }
         return;
       }
 
-      const snap = await getDoc(doc(db, "users", current.uid));
-      if (snap.exists() && mountedRef.current) {
-        const data = snap.data();
-        setUserDoc(data);
-        setName(data.name || "");
-        setBio(data.bio || "");
-        setAvatarUri(data.avatar || null);
-        setIsPrivate(!!data.isPrivate || data.profileVisibility === "private");
+      if (mountedRef.current) {
+        setUserDoc(remoteDoc);
+        setName(remoteDoc?.name || localProfile?.displayName || "");
+        setBio(remoteDoc?.bio || localProfile?.bio || "");
+        setAvatarUri(remoteDoc?.avatar || localProfile?.avatar || null);
+        setIsPrivate(!!remoteDoc?.isPrivate || remoteDoc?.profileVisibility === "private" || !!localProfile?.isPrivate);
+        setAchievements(loadedAchievements);
+      }
+
+      if (result.error) {
+        console.warn("[Profile] remote profile unavailable; using local cache", result.error);
       }
     } catch (error) {
       console.warn("[Profile] loadAll failed", error);
-      Alert.alert("Erro", "Falha ao carregar perfil.");
+      if (mountedRef.current) {
+        setProfile(DEFAULT_PROFILE);
+      }
     } finally {
       if (mountedRef.current) {
         setLoading(false);
@@ -152,17 +156,27 @@ export default function ProfileScreen() {
     const uid = auth.currentUser?.uid;
 
     if (uid) {
-      unsubscribeRef.current = onSnapshot(doc(db, "users", uid), async (snap) => {
-        if (!mountedRef.current || !snap.exists()) return;
-        const data = snap.data();
+      unsubscribeRef.current = subscribeCurrentUserProfile((result) => {
+        if (!mountedRef.current) return;
+        const localProfile = result.data?.profile || DEFAULT_PROFILE;
+        const data = result.data?.userDoc || null;
+        setProfile(localProfile);
         setUserDoc(data);
-        setName(data.name || "");
-        setBio(data.bio || "");
-        setAvatarUri(data.avatar || null);
-        setIsPrivate(!!data.isPrivate || data.profileVisibility === "private");
+        setName(data?.name || localProfile?.displayName || "");
+        setBio(data?.bio || localProfile?.bio || "");
+        setAvatarUri(data?.avatar || localProfile?.avatar || null);
+        setIsPrivate(!!data?.isPrivate || data?.profileVisibility === "private" || !!localProfile?.isPrivate);
+        listAchievements({ userId: uid || localProfile?.uid || "offline" })
+          .then((items) => {
+            if (mountedRef.current) setAchievements(items);
+          })
+          .catch((error) => {
+            console.warn("[Profile] achievements load failed", error);
+          });
 
-        const localProfile = await loadProfile();
-        if (mountedRef.current) setProfile(localProfile);
+        if (result.error) {
+          console.warn("[Profile] subscribe fallback to local profile", result.error);
+        }
       });
     }
 
@@ -190,17 +204,23 @@ export default function ProfileScreen() {
     };
   }, [fadeAnim, loadAll, slideAnim]);
 
-  const displayAvatar = useMemo(() => avatarUri || userDoc?.avatar || DEFAULT_AVATAR, [avatarUri, userDoc]);
+  const displayAvatar = useMemo(
+    () => avatarUri || userDoc?.avatar || profile?.avatar || profile?.photoURL || null,
+    [avatarUri, profile, userDoc]
+  );
 
   const stats = useMemo(() => {
     const p = profile || DEFAULT_PROFILE;
     const xp = safeNumber(p.xp);
     const nextLevelXp = Math.max(1, safeNumber(p.nextLevelXp, DEFAULT_PROFILE.nextLevelXp));
-    const progressPct = Math.min(100, Math.max(0, Math.round((xp / nextLevelXp) * 100)));
+    const progressPct = p.progressToNextLevelPct != null
+      ? Math.min(100, Math.max(0, Math.round(safeNumber(p.progressToNextLevelPct))))
+      : Math.min(100, Math.max(0, Math.round((xp / nextLevelXp) * 100)));
 
     return {
       level: safeNumber(p.level, 1),
       xp,
+      totalXp: safeNumber(p.totalXp),
       nextLevelXp,
       progressPct,
       totalDistance: safeNumber(p.totalDistance),
@@ -211,12 +231,20 @@ export default function ProfileScreen() {
       longestRun: safeNumber(p.longestRun),
       largestZone: safeNumber(p.largestZone),
       bestPace: p.bestPace,
+      averagePace: p.averagePace,
       weeklyPoints: safeNumber(p.weeklyPoints),
       monthlyPoints: safeNumber(p.monthlyPoints),
       globalPoints: safeNumber(p.globalPoints),
       lastUpdate: p.lastUpdate || null,
+      freeRuns: safeNumber(p.freeRuns),
+      zoneRuns: safeNumber(p.zoneRuns),
+      pendingSyncCount: safeNumber(p.pendingSyncCount),
+      failedSyncCount: safeNumber(p.failedSyncCount),
+      source: p.localProfileSource || (p.localFirstProgress ? "local" : "cache"),
+      achievementsUnlocked: achievements.filter((item) => item.unlocked).length,
+      achievementsTotal: achievements.length,
     };
-  }, [profile]);
+  }, [achievements, profile]);
 
   const profileName = userDoc?.name || profile?.displayName || "Usuario";
   const username = userDoc?.username || auth.currentUser?.email?.split("@")[0] || "wayper";
@@ -272,62 +300,86 @@ export default function ProfileScreen() {
 
     setSaving(true);
     try {
-      let remoteAvatarUrl = avatarUri || userDoc?.avatar || DEFAULT_AVATAR;
-      const isRemoteAvatar = /^https?:\/\//i.test(remoteAvatarUrl);
+      const previousAvatar = userDoc?.avatar || profile?.avatar || profile?.photoURL || null;
+      let localAvatarUri = avatarUri || previousAvatar || null;
+      let remoteAvatarUrl = /^https?:\/\//i.test(String(localAvatarUri || ""))
+        ? localAvatarUri
+        : /^https?:\/\//i.test(String(previousAvatar || ""))
+          ? previousAvatar
+          : null;
+      const isRemoteAvatar = /^https?:\/\//i.test(String(localAvatarUri || ""));
+      let avatarUploadFailed = false;
 
       if (avatarUri && !isRemoteAvatar) {
-        try {
-          remoteAvatarUrl = await uploadImageToFirebase(avatarUri, `avatars/${uid}_${Date.now()}.jpg`);
-        } catch (error) {
-          console.warn("[Profile] avatar upload failed", error);
+        const upload = await uploadAvatarImage(avatarUri, `avatars/${uid}_${Date.now()}.jpg`);
+        if (upload.data) {
+          remoteAvatarUrl = upload.data;
+          localAvatarUri = upload.data;
+        } else {
+          avatarUploadFailed = true;
+          console.warn("[Profile] avatar upload failed", upload.error);
           Alert.alert("Aviso", "Nao consegui enviar o avatar. O restante do perfil sera salvo.");
         }
       }
 
-      const patch = {
+      const result = await updateCurrentUserProfile({
         name: trimmedName,
         bio: bio.trim(),
-        avatar: remoteAvatarUrl,
+        avatar: localAvatarUri,
+        avatarLocalUri: localAvatarUri,
+        avatarRemoteUrl: remoteAvatarUrl,
         isPrivate,
         profileVisibility: isPrivate ? "private" : "public",
-        updatedAt: serverTimestamp(),
+      });
+
+      const updatedProfile = result.data?.profile || { ...(profile || DEFAULT_PROFILE), displayName: trimmedName };
+      const updatedUserDoc = result.data?.userDoc || {
+        ...(userDoc || {}),
+        name: trimmedName,
+        bio: bio.trim(),
+        avatar: remoteAvatarUrl || previousAvatar || null,
+        isPrivate,
+        profileVisibility: isPrivate ? "private" : "public",
       };
-
-      setUserDoc((prev) => ({ ...(prev || {}), ...patch }));
-      await updateDoc(doc(db, "users", uid), patch);
-
-      const currentProfile = (await loadProfile()) || DEFAULT_PROFILE;
-      const updatedProfile = { ...currentProfile, displayName: trimmedName };
-      await saveProfile(updatedProfile);
+      setUserDoc((prev) => ({ ...(prev || {}), ...(updatedUserDoc || {}) }));
       setProfile(updatedProfile);
-      setAvatarUri(remoteAvatarUrl);
+      setAvatarUri(localAvatarUri);
       setEditing(false);
-      Alert.alert("Sucesso", "Perfil atualizado.");
+      Alert.alert(
+        result.error || avatarUploadFailed ? "Salvo localmente" : "Sucesso",
+        result.error || avatarUploadFailed
+          ? "Perfil salvo no aparelho. O sync remoto sera tentado novamente depois."
+          : "Perfil atualizado."
+      );
     } catch (error) {
       console.error("[Profile] saveChanges failed", error);
       Alert.alert("Erro", "Falha ao salvar o perfil. Tente novamente.");
     } finally {
       if (mountedRef.current) setSaving(false);
     }
-  }, [avatarUri, bio, isPrivate, name, userDoc]);
+  }, [avatarUri, bio, isPrivate, name, profile, userDoc]);
 
   const cancelEditing = useCallback(() => {
     setEditing(false);
     setName(userDoc?.name || profile?.displayName || "");
     setBio(userDoc?.bio || "");
-    setAvatarUri(userDoc?.avatar || null);
+    setAvatarUri(userDoc?.avatar || profile?.avatar || null);
     setIsPrivate(!!userDoc?.isPrivate || userDoc?.profileVisibility === "private");
   }, [profile, userDoc]);
 
   const handleSyncProfile = useCallback(async () => {
     setSyncing(true);
     try {
-      const remote = await fetchRemoteProfile();
-      if (remote && mountedRef.current) {
-        setProfile(remote);
+      const result = await syncCurrentProfile();
+      const nextProfile = result.data?.profile || null;
+      if (nextProfile && mountedRef.current) {
+        setProfile(nextProfile);
+      }
+
+      if (result.source === "remote" && !result.error) {
         Alert.alert("Sincronizado", "Perfil sincronizado com o servidor.");
       } else {
-        Alert.alert("Sincronizacao", "Nenhuma alteracao remota encontrada.");
+        Alert.alert("Sincronizacao", "Perfil local mantido. Nenhuma atualizacao remota disponivel agora.");
       }
     } catch (error) {
       console.warn("[Profile] sync failed", error);
@@ -388,11 +440,12 @@ export default function ProfileScreen() {
     if (!uid) return;
 
     try {
-      await updateDoc(doc(db, "users", uid), {
-        isPrivate: value,
-        profileVisibility: value ? "private" : "public",
-        updatedAt: serverTimestamp(),
-      });
+      const result = await updateProfilePrivacy(value);
+      const nextProfile = result.data?.profile;
+      const nextUserDoc = result.data?.userDoc;
+      if (nextProfile) setProfile(nextProfile);
+      if (nextUserDoc) setUserDoc((prev) => ({ ...(prev || {}), ...nextUserDoc }));
+      if (result.error) throw result.error;
     } catch (error) {
       console.warn("[Profile] privacy update failed", error);
       Alert.alert("Erro", "Nao foi possivel atualizar a privacidade.");
@@ -433,7 +486,7 @@ export default function ProfileScreen() {
           <View style={styles.heroGlow} />
           <View style={styles.heroTop}>
             <TouchableOpacity activeOpacity={editing ? 0.78 : 1} onPress={editing ? pickImage : undefined} style={styles.avatarShell}>
-              <Image source={{ uri: displayAvatar }} style={styles.avatar} />
+              <HomeAvatar uri={displayAvatar} name={profileName} size={104} />
               <View style={styles.avatarRing} />
               {editing ? (
                 <View style={styles.avatarEditBadge}>
@@ -527,15 +580,16 @@ export default function ProfileScreen() {
         <SectionCard title="Recordes" icon="trophy-outline">
           <RecordRow icon="rocket-outline" label="Maior corrida" value={`${formatKm(stats.longestRun)} km`} />
           <RecordRow icon="speedometer-outline" label="Melhor pace" value={formatPace(stats.bestPace)} />
+          <RecordRow icon="analytics-outline" label="Pace medio" value={formatPace(stats.averagePace)} />
           <RecordRow icon="map-outline" label="Maior zona" value={formatArea(stats.largestZone)} accent="cyan" />
           <RecordRow icon="time-outline" label="Tempo total" value={formatDuration(stats.totalTime)} />
         </SectionCard>
 
         <SectionCard title="Ranking Wayper" icon="podium-outline">
           <View style={styles.pointsRow}>
-            <PointPill label="Semana" value={stats.weeklyPoints} />
-            <PointPill label="Mes" value={stats.monthlyPoints} />
-            <PointPill label="Global" value={stats.globalPoints} accent="cyan" />
+            <PointPill label="XP total" value={stats.totalXp} />
+            <PointPill label="Livre" value={stats.freeRuns} />
+            <PointPill label="Zonas" value={stats.zoneRuns} accent="cyan" />
           </View>
         </SectionCard>
 
@@ -549,7 +603,7 @@ export default function ProfileScreen() {
             >
               <View style={styles.shareTopRow}>
                 <View style={styles.shareAvatarWrap}>
-                  <Image source={{ uri: displayAvatar }} style={styles.shareAvatar} />
+                  <HomeAvatar uri={displayAvatar} name={profileName} size={60} />
                 </View>
                 <View style={styles.shareIdentity}>
                   <Text style={styles.shareBrand}>Wayper</Text>
@@ -598,6 +652,14 @@ export default function ProfileScreen() {
         </SectionCard>
 
         <SectionCard title="Privacidade" icon="shield-checkmark-outline">
+          {stats.source === "local" || stats.source === "cache" ? (
+            <OfflineState
+              compact
+              title={stats.source === "local" ? "Usando progresso local" : "Usando cache local"}
+              description="Se o remoto estiver indisponivel, seu perfil continua com dados preservados no aparelho."
+              style={styles.profileStateCard}
+            />
+          ) : null}
           <View style={styles.privacyRow}>
             <View style={styles.privacyTextWrap}>
               <Text style={styles.privacyTitle}>Perfil privado</Text>
@@ -614,10 +676,24 @@ export default function ProfileScreen() {
           </View>
           <InfoLine label="Email" value={auth.currentUser?.email || "--"} />
           <InfoLine label="Ultima atualizacao" value={formatDate(stats.lastUpdate)} />
+          <InfoLine label="Fonte dos dados" value={stats.source === "local" ? "Local" : "Cache local"} />
+          <InfoLine label="Pendencias de sync" value={String(stats.pendingSyncCount)} />
+          <InfoLine label="Falhas de sync" value={String(stats.failedSyncCount)} />
         </SectionCard>
 
-        <SectionCard title="Medalhas" icon="medal-outline">
-          <MedalsWidget user={userDoc || {}} compact={false} onAward={() => {}} autoSaveToFirestore />
+        <SectionCard title="Conquistas" icon="medal-outline">
+          {achievements.length ? (
+            achievements.map((achievement) => (
+              <AchievementRow key={achievement.id} achievement={achievement} />
+            ))
+          ) : (
+            <EmptyState
+              compact
+              title="Primeiras metas esperando voce"
+              description="Finalize uma corrida valida para começar a desbloquear conquistas locais."
+              style={styles.profileStateCard}
+            />
+          )}
         </SectionCard>
       </Animated.View>
     </ScrollView>
@@ -677,6 +753,35 @@ function RecordRow({ icon, label, value, accent = "green" }) {
       </View>
       <Text style={styles.recordLabel}>{label}</Text>
       <Text style={[styles.recordValue, { color }]}>{value}</Text>
+    </View>
+  );
+}
+
+function AchievementRow({ achievement }) {
+  const unlocked = !!achievement?.unlocked;
+  const target = Math.max(1, safeNumber(achievement?.target, 1));
+  const progress = Math.min(target, safeNumber(achievement?.progress));
+  const pct = Math.max(0, Math.min(100, Math.round((progress / target) * 100)));
+
+  return (
+    <View style={styles.achievementRow}>
+      <View style={[styles.achievementIcon, unlocked && styles.achievementIconUnlocked]}>
+        <Ionicons
+          name={unlocked ? "checkmark-circle" : "lock-closed-outline"}
+          size={18}
+          color={unlocked ? WayperTheme.colors.textInverse : WayperTheme.colors.primary}
+        />
+      </View>
+      <View style={styles.achievementBody}>
+        <View style={styles.achievementHeader}>
+          <Text style={styles.achievementTitle} numberOfLines={1}>{achievement.title}</Text>
+          <Text style={styles.achievementValue}>{Math.round(progress)} / {Math.round(target)}</Text>
+        </View>
+        <Text style={styles.achievementDescription} numberOfLines={2}>{achievement.description}</Text>
+        <View style={styles.achievementTrack}>
+          <View style={[styles.achievementFill, { width: `${pct}%` }]} />
+        </View>
+      </View>
     </View>
   );
 }
@@ -1057,6 +1162,76 @@ const styles = StyleSheet.create({
     color: WayperTheme.colors.text,
     fontSize: 14,
     fontWeight: "900",
+  },
+  achievementRow: {
+    minHeight: 78,
+    flexDirection: "row",
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: WayperTheme.colors.border,
+    paddingVertical: WayperTheme.spacing.sm,
+  },
+  achievementIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: WayperTheme.colors.primaryBorder,
+    marginRight: WayperTheme.spacing.md,
+  },
+  achievementIconUnlocked: {
+    backgroundColor: WayperTheme.colors.primary,
+    borderColor: WayperTheme.colors.primaryLight,
+  },
+  achievementBody: {
+    flex: 1,
+  },
+  achievementHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: WayperTheme.spacing.md,
+  },
+  achievementTitle: {
+    flex: 1,
+    color: WayperTheme.colors.text,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  achievementValue: {
+    color: WayperTheme.colors.primary,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  achievementDescription: {
+    color: WayperTheme.colors.textSubtle,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  achievementTrack: {
+    height: 7,
+    marginTop: WayperTheme.spacing.sm,
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.surfaceSoft,
+    overflow: "hidden",
+  },
+  achievementFill: {
+    height: "100%",
+    borderRadius: WayperTheme.radius.pill,
+    backgroundColor: WayperTheme.colors.primary,
+  },
+  emptyAchievementText: {
+    color: WayperTheme.colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  profileStateCard: {
+    marginHorizontal: 0,
   },
   pointsRow: {
     flexDirection: "row",

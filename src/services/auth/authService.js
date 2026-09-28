@@ -16,7 +16,6 @@ import {
 import * as WebBrowser from "expo-web-browser";
 import * as Google from "expo-auth-session/providers/google";
 import { auth } from "../../firebaseConfig";
-import { googleAuthConfig } from "../../config/env";
 import { createUserIfNotExists } from "../userService";
 
 /* ============================================================
@@ -138,18 +137,9 @@ export async function signUpEmail(email, password, username) {
 ============================================================ */
 export function useGoogleAuth() {
   return Google.useAuthRequest({
-    ...(googleAuthConfig.androidClientId
-      ? { androidClientId: googleAuthConfig.androidClientId }
-      : {}),
-    ...(googleAuthConfig.iosClientId
-      ? { iosClientId: googleAuthConfig.iosClientId }
-      : {}),
-    ...(googleAuthConfig.webClientId
-      ? { webClientId: googleAuthConfig.webClientId }
-      : {}),
-    ...(googleAuthConfig.expoClientId
-      ? { expoClientId: googleAuthConfig.expoClientId }
-      : {}),
+    androidClientId: "<TEU_ANDROID_CLIENT_ID>",
+    iosClientId: "<TEU_IOS_CLIENT_ID>",
+    webClientId: "<TEU_WEB_CLIENT_ID>",
     responseType: "id_token",
     selectAccount: true,
   });

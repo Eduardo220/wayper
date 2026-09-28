@@ -12,7 +12,15 @@ import {
   smoothPathMovingAverage,
 } from "./trackingSmoothing.js";
 
+export const TRACKING_RENDER_PATH_CACHE_MAX_ENTRIES = 2;
+
 const cache = new Map();
+const cacheStats = {
+  hits: 0,
+  misses: 0,
+  bypasses: 0,
+  evictions: 0,
+};
 
 function clonePoint(point) {
   return { ...point };
@@ -25,9 +33,105 @@ function normalizeSegmentPoint(point, segmentIndex) {
   };
 }
 
-function cacheKey(kind, path = [], presetName = "run") {
-  const last = path[path.length - 1] || {};
-  return `${kind}:${presetName}:${path.length}:${last.timestamp || ""}:${last.latitude || ""}:${last.longitude || ""}:${TRACKING_SMOOTHING_VERSION}`;
+function isCacheSafeValue(value, ancestors = new Set()) {
+  if (value == null || typeof value === "string" || typeof value === "boolean") {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) && !Object.is(value, -0);
+  }
+  if (typeof value !== "object" || ancestors.has(value)) return false;
+
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  if (Object.getOwnPropertyDescriptor(value, "toJSON")) return false;
+
+  ancestors.add(value);
+  const entries = Array.isArray(value)
+    ? Array.from({ length: value.length }, (_, index) => [String(index), value[index]])
+    : Object.entries(value);
+  for (const [key, item] of entries) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor?.get || descriptor?.set || !isCacheSafeValue(item, ancestors)) {
+      ancestors.delete(value);
+      return false;
+    }
+  }
+  ancestors.delete(value);
+  return true;
+}
+
+function cloneCacheValue(value) {
+  if (Array.isArray(value)) return value.map(cloneCacheValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, cloneCacheValue(item)])
+    );
+  }
+  return value;
+}
+
+function cacheKey(kind, path = [], preset = "run", maxPoints = "") {
+  // Render calls are already explicit O(n) work. Signing the complete input
+  // avoids stale geometry for paths sharing only first/middle/last samples,
+  // and JSON distinguishes canonical custom preset objects. Inputs that JSON
+  // cannot represent without losing type information bypass the cache.
+  if (!isCacheSafeValue(path) || !isCacheSafeValue(preset)) return null;
+  return JSON.stringify([
+    kind,
+    preset,
+    maxPoints,
+    TRACKING_SMOOTHING_VERSION,
+    path,
+  ]);
+}
+
+function readCachedPath(key) {
+  if (key == null) {
+    cacheStats.bypasses += 1;
+    return null;
+  }
+  const cached = cache.get(key);
+  if (!cached) {
+    cacheStats.misses += 1;
+    return null;
+  }
+
+  cacheStats.hits += 1;
+  cache.delete(key);
+  cache.set(key, cached);
+  return cloneCacheValue(cached);
+}
+
+function cachePath(key, path = []) {
+  if (key == null) return;
+  cache.delete(key);
+  cache.set(key, cloneCacheValue(path));
+
+  while (cache.size > TRACKING_RENDER_PATH_CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    cache.delete(oldestKey);
+    cacheStats.evictions += 1;
+  }
+}
+
+export function clearTrackingRenderPathCache() {
+  cache.clear();
+  cacheStats.hits = 0;
+  cacheStats.misses = 0;
+  cacheStats.bypasses = 0;
+  cacheStats.evictions = 0;
+}
+
+export function __getTrackingRenderPathCacheSizeForTests() {
+  return cache.size;
+}
+
+export function __getTrackingRenderPathCacheStatsForTests() {
+  return { ...cacheStats };
 }
 
 export function removeDuplicateVisualPoints(path = [], minDistanceMeters = 0.85) {
@@ -134,10 +238,23 @@ export function validateRenderPath(renderPath = [], trustedPath = []) {
   return { ok: true, reason: null };
 }
 
+function resolveMaxPoints(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 2
+    ? Math.floor(numeric)
+    : fallback;
+}
+
 function capRenderPoints(points = [], maxPoints = 1800) {
-  if (points.length <= maxPoints) return points;
-  const step = Math.ceil(points.length / maxPoints);
-  return points.filter((_, index) => index === 0 || index === points.length - 1 || index % step === 0);
+  const limit = resolveMaxPoints(maxPoints, 1800);
+  if (points.length <= limit) return points;
+
+  return Array.from({ length: limit }, (_, index) => {
+    if (index === 0) return points[0];
+    if (index === limit - 1) return points[points.length - 1];
+    const sourceIndex = Math.round((index * (points.length - 1)) / (limit - 1));
+    return points[sourceIndex];
+  });
 }
 
 export function buildLiveRenderPath(trustedPath = [], options = {}) {
@@ -145,8 +262,10 @@ export function buildLiveRenderPath(trustedPath = [], options = {}) {
   const points = (Array.isArray(trustedPath) ? trustedPath : []).filter(isValidCoordinate);
   if (points.length < 3) return points.map(clonePoint);
 
-  const key = cacheKey("live", points, options.preset || "run");
-  if (cache.has(key)) return cache.get(key).map(clonePoint);
+  const maxPoints = resolveMaxPoints(options.maxPoints, 2200);
+  const key = cacheKey("live", points, preset, maxPoints);
+  const cached = readCachedPath(key);
+  if (cached) return cached;
 
   const last = points[points.length - 1];
   const deduped = removeDuplicateVisualPoints(points);
@@ -155,13 +274,13 @@ export function buildLiveRenderPath(trustedPath = [], options = {}) {
     ? smoothPathMovingAverage(simplified, { strength: preset.liveSmoothingStrength * 0.45 })
     : smoothPathMovingAverage(simplified, { strength: preset.liveSmoothingStrength });
   const protectedPath = preventCornerOvercut(smoothed, points, preset);
-  const output = capRenderPoints(protectedPath, options.maxPoints || 2200);
+  const output = capRenderPoints(protectedPath, maxPoints);
   if (output.length > 0) {
     output[0] = { ...points[0] };
     output[output.length - 1] = { ...last, source: "render" };
   }
 
-  cache.set(key, output.map(clonePoint));
+  cachePath(key, output);
   return output;
 }
 
@@ -170,8 +289,10 @@ export function buildSummaryRenderPath(trustedPath = [], options = {}) {
   const points = (Array.isArray(trustedPath) ? trustedPath : []).filter(isValidCoordinate);
   if (points.length < 3) return points.map(clonePoint);
 
-  const key = cacheKey("summary", points, options.preset || "run");
-  if (cache.has(key)) return cache.get(key).map(clonePoint);
+  const maxPoints = resolveMaxPoints(options.maxPoints, 1600);
+  const key = cacheKey("summary", points, preset, maxPoints);
+  const cached = readCachedPath(key);
+  if (cached) return cached;
 
   const deduped = removeDuplicateVisualPoints(points);
   const noBacktracks = removeTinyBacktracks(deduped, preset);
@@ -182,7 +303,7 @@ export function buildSummaryRenderPath(trustedPath = [], options = {}) {
     ? smoothPathCatmullRom(chaikin, { samplesPerSegment: 2 })
     : chaikin;
   const protectedPath = preventCornerOvercut(maybeSpline, points, preset);
-  const output = capRenderPoints(protectedPath, options.maxPoints || 1600);
+  const output = capRenderPoints(protectedPath, maxPoints);
   if (output.length > 0) {
     output[0] = { ...points[0] };
     output[output.length - 1] = { ...points[points.length - 1] };
@@ -194,9 +315,9 @@ export function buildSummaryRenderPath(trustedPath = [], options = {}) {
     points,
     preset
   );
-  const finalPath = validation.ok ? output : fallback;
+  const finalPath = validation.ok ? output : capRenderPoints(fallback, maxPoints);
 
-  cache.set(key, finalPath.map(clonePoint));
+  cachePath(key, finalPath);
   return finalPath;
 }
 
@@ -291,6 +412,7 @@ function getBestFlatCandidate(run = {}) {
 export default {
   buildLiveRenderPath,
   buildSummaryRenderPath,
+  clearTrackingRenderPathCache,
   getBestRenderPathForRun,
   getRenderableSegmentsForRun,
   removeDuplicateVisualPoints,

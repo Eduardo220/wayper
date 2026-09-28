@@ -11,13 +11,13 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "../../firebaseConfig";
 import sync from "../../utils/sync";
+import { loadLocalTerritories } from "../territory/territoryStorageService.js";
 import { getMutedFeedAuthorIds } from "./feedPostActionsService";
 
 const FEED_CACHE_KEY = "wayper_home_feed_cache_v1";
 const FRIENDS_CACHE_KEY = "wayper_home_friends_cache_v1";
 const DEFAULT_LIMIT = 20;
 const ACTIVE_WINDOW_MS = 1000 * 60 * 60 * 24;
-const DEFAULT_AVATAR = "https://i.pravatar.cc/160?u=wayper_default";
 
 const DEV_MOCK_FRIENDS = [
   { id: "mock-lucas", friendUid: "mock-lucas", name: "Lucas", avatar: "https://i.pravatar.cc/160?u=lucas-wayper", isActive: true },
@@ -26,57 +26,6 @@ const DEV_MOCK_FRIENDS = [
   { id: "mock-juliana", friendUid: "mock-juliana", name: "Juliana", avatar: "https://i.pravatar.cc/160?u=juliana-wayper", isActive: true },
   { id: "mock-pedro", friendUid: "mock-pedro", name: "Pedro", avatar: "https://i.pravatar.cc/160?u=pedro-wayper", isActive: false },
   { id: "mock-ana", friendUid: "mock-ana", name: "Ana", avatar: "https://i.pravatar.cc/160?u=ana-wayper", isActive: true },
-];
-
-const DEV_MOCK_ACTIVITIES = [
-  {
-    id: "mock-run-1",
-    type: "run",
-    userId: "mock-lucas",
-    userName: "Lucas",
-    userAvatar: "https://i.pravatar.cc/160?u=lucas-wayper",
-    createdAt: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
-    distanceKm: 8.42,
-    durationSeconds: 2672,
-    avgPaceSecondsPerKm: 317,
-    elevationMeters: 64,
-    areaM2: null,
-    path: [
-      { latitude: -23.561, longitude: -46.656 },
-      { latitude: -23.558, longitude: -46.651 },
-      { latitude: -23.555, longitude: -46.653 },
-      { latitude: -23.552, longitude: -46.648 },
-      { latitude: -23.549, longitude: -46.651 },
-    ],
-    polygon: null,
-    likesCount: 18,
-    commentsCount: 4,
-    isRecord: true,
-  },
-  {
-    id: "mock-zone-1",
-    type: "zone",
-    userId: "mock-marina",
-    userName: "Marina",
-    userAvatar: "https://i.pravatar.cc/160?u=marina-wayper",
-    createdAt: new Date(Date.now() - 1000 * 60 * 88).toISOString(),
-    distanceKm: 5.14,
-    durationSeconds: 1945,
-    avgPaceSecondsPerKm: 378,
-    elevationMeters: null,
-    areaM2: 7650,
-    path: null,
-    polygon: [
-      { latitude: -23.559, longitude: -46.662 },
-      { latitude: -23.554, longitude: -46.659 },
-      { latitude: -23.553, longitude: -46.653 },
-      { latitude: -23.558, longitude: -46.650 },
-      { latitude: -23.563, longitude: -46.655 },
-    ],
-    likesCount: 27,
-    commentsCount: 8,
-    isRecord: false,
-  },
 ];
 
 const safeDevWarn = (...args) => {
@@ -92,6 +41,17 @@ const chunk = (list = [], size = 10) => {
 };
 
 const uniq = (list = []) => Array.from(new Set(list.filter(Boolean)));
+
+const isExplicitDemoAllowed = (allowDemo = false) =>
+  allowDemo === true && typeof __DEV__ !== "undefined" && __DEV__;
+
+const isDemoFriend = (friend = {}) => {
+  const id = String(friend.id || friend.friendUid || friend.uid || "");
+  return friend.demo === true || friend.source === "demo" || id.startsWith("mock-");
+};
+
+const withoutDemoFriends = (friends = []) =>
+  (Array.isArray(friends) ? friends : []).filter((friend) => !isDemoFriend(friend));
 
 const toNumber = (value, fallback = null) => {
   const number = Number(value);
@@ -247,7 +207,7 @@ const getDisplayName = (profile = {}, fallback = "Atleta Wayper") =>
   fallback;
 
 const getAvatar = (profile = {}, uid = "wayper") =>
-  profile.photoURL || profile.avatar || profile.userAvatar || `${DEFAULT_AVATAR}_${uid}`;
+  profile.photoURL || profile.avatar || profile.userAvatar || null;
 
 const isRecent = (value) => {
   const date = toDate(value);
@@ -526,10 +486,23 @@ async function loadLocalFallback(maxItems = DEFAULT_LIMIT) {
       photoURL: user?.photoURL || null,
     };
     const profiles = new Map([[profile.uid, profile]]);
-    const [runs, zones] = await Promise.all([sync.loadLocalRuns?.(), sync.loadLocalZones?.()]);
+    const [runs, territories] = await Promise.all([sync.loadLocalRuns?.(), loadLocalTerritories()]);
     const rows = [
       ...(Array.isArray(runs) ? runs.map((item) => ({ ...item, type: "run", __userId: profile.uid })) : []),
-      ...(Array.isArray(zones) ? zones.map((item) => ({ ...item, type: "zone", __userId: profile.uid })) : []),
+      ...(Array.isArray(territories) ? territories.map((item) => {
+        const ownerId = item.ownerId || item.userId || profile.uid;
+        return {
+          ...item,
+          type: "zone",
+          __userId: ownerId,
+          userId: ownerId,
+          areaM2: Number(item.areaM2 ?? item.area ?? 0),
+          area: Number(item.area ?? item.areaM2 ?? 0),
+          polygon: Array.isArray(item.coordsPreview) ? item.coordsPreview : Array.isArray(item.zoneCoords) ? item.zoneCoords : [],
+          zoneCoords: Array.isArray(item.zoneCoords) ? item.zoneCoords : Array.isArray(item.coordsPreview) ? item.coordsPreview : [],
+          createdAt: item.capturedAt || item.createdAt || item.updatedAt,
+        };
+      }) : []),
     ];
     return rows
       .map((item) => normalizeActivity(item, profiles, user))
@@ -618,19 +591,30 @@ async function calculateStreak(uid) {
   return count;
 }
 
-export async function loadActiveFriends(uid) {
+export async function loadActiveFriends(uid, options = {}) {
   if (!uid) return [];
+  const allowDemo = isExplicitDemoAllowed(options.allowDemo);
 
   try {
     const friendIds = await fetchFriendIds(uid);
     const profiles = await fetchProfilesMap(friendIds);
     const friends = friendIds.map((friendUid) => {
       const profile = profiles.get(friendUid) || {};
+      const presenceValue =
+        profile.online ??
+        profile.status?.state ??
+        profile.lastActiveAt ??
+        profile.lastSeen ??
+        profile.lastActivityAt ??
+        profile.lastUpdate ??
+        null;
+      const hasPresence = presenceValue != null;
       return {
         id: friendUid,
         friendUid,
         name: getDisplayName(profile, "Atleta"),
         avatar: getAvatar(profile, friendUid),
+        hasPresence,
         isActive:
           profile.online === true ||
           profile.status?.state === "online" ||
@@ -640,22 +624,23 @@ export async function loadActiveFriends(uid) {
 
     await setJsonCache(FRIENDS_CACHE_KEY, friends);
     if (friends.length) return friends;
-    return typeof __DEV__ !== "undefined" && __DEV__ ? DEV_MOCK_FRIENDS : [];
+    return allowDemo ? DEV_MOCK_FRIENDS.map((friend) => ({ ...friend, demo: true, source: "demo", hasPresence: true })) : [];
   } catch (error) {
     safeDevWarn("friends fallback", error?.message || error);
-    const cached = await getJsonCache(FRIENDS_CACHE_KEY, []);
+    const cached = withoutDemoFriends(await getJsonCache(FRIENDS_CACHE_KEY, []));
     if (cached.length) return cached;
-    return DEV_MOCK_FRIENDS;
+    return allowDemo ? DEV_MOCK_FRIENDS.map((friend) => ({ ...friend, demo: true, source: "demo", hasPresence: true })) : [];
   }
 }
 
-export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
+export async function loadHomeFeedData({ limit = DEFAULT_LIMIT, allowDemo = false } = {}) {
   const currentUser = auth.currentUser;
   const uid = currentUser?.uid || null;
   let activities = [];
   let friends = [];
   let friendIds = [];
   let usedFallback = false;
+  let source = "empty";
   let mutedAuthorIds = new Set();
 
   if (uid) {
@@ -670,7 +655,7 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
   try {
     if (uid) {
       friendIds = await fetchFriendIds(uid);
-      friends = await loadActiveFriends(uid);
+      friends = await loadActiveFriends(uid, { allowDemo });
     }
 
     let rows = friendIds.length ? await fetchActivitiesForUsers(friendIds, limit) : [];
@@ -685,6 +670,7 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
     if (rows.length) {
       activities = filterMutedAuthors(await normalizeRows(rows, limit * 2)).slice(0, limit);
       await setJsonCache(FEED_CACHE_KEY, activities);
+      source = "remote";
     }
   } catch (error) {
     usedFallback = true;
@@ -696,21 +682,18 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
     if (cached.length) {
       activities = filterMutedAuthors(cached).slice(0, limit);
       usedFallback = true;
+      source = "cache";
     }
   }
 
   if (!activities.length) {
     activities = filterMutedAuthors(await loadLocalFallback(limit * 2)).slice(0, limit);
     usedFallback = true;
+    source = activities.length ? "local" : "empty";
   }
 
-  if (!activities.length && typeof __DEV__ !== "undefined" && __DEV__) {
-    activities = filterMutedAuthors(DEV_MOCK_ACTIVITIES).slice(0, limit);
-    usedFallback = true;
-  }
-
-  if (!friends.length && typeof __DEV__ !== "undefined" && __DEV__) {
-    friends = DEV_MOCK_FRIENDS;
+  if (!friends.length && isExplicitDemoAllowed(allowDemo)) {
+    friends = DEV_MOCK_FRIENDS.map((friend) => ({ ...friend, demo: true, source: "demo", hasPresence: true }));
   }
 
   const summary = buildSummary(activities, uid);
@@ -718,9 +701,10 @@ export async function loadHomeFeedData({ limit = DEFAULT_LIMIT } = {}) {
 
   return {
     activities,
-    friends,
+    friends: isExplicitDemoAllowed(allowDemo) ? friends : withoutDemoFriends(friends),
     summary,
     streakDays,
+    source,
     usedFallback,
   };
 }

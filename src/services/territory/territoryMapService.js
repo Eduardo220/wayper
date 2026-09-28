@@ -31,6 +31,72 @@ function toFiniteNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function territoryTimestamp(territory = {}) {
+  const value = territory.updatedAt || territory.capturedAt || territory.createdAt;
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isNewerTerritory(candidate = {}, current = {}) {
+  const candidateVersion = toFiniteNumber(candidate.version, 0);
+  const currentVersion = toFiniteNumber(current.version, 0);
+  if (candidateVersion !== currentVersion) return candidateVersion > currentVersion;
+  return territoryTimestamp(candidate) > territoryTimestamp(current);
+}
+
+export function normalizeTerritoryBbox(bbox) {
+  if (!Array.isArray(bbox) || bbox.length < 4) return null;
+  const values = bbox.slice(0, 4).map((value) => Number(value));
+  if (values.some((value) => !Number.isFinite(value))) return null;
+  return [
+    Math.min(values[0], values[2]),
+    Math.min(values[1], values[3]),
+    Math.max(values[0], values[2]),
+    Math.max(values[1], values[3]),
+  ];
+}
+
+export function buildTerritoryBbox(point, delta = 0.018) {
+  const latitude = toFiniteNumber(point?.latitude ?? point?.lat, null);
+  const longitude = toFiniteNumber(point?.longitude ?? point?.lng ?? point?.lon, null);
+  if (latitude == null || longitude == null) return null;
+  return [longitude - delta, latitude - delta, longitude + delta, latitude + delta];
+}
+
+function intersectsBbox(territory = {}, bbox = null) {
+  const target = normalizeTerritoryBbox(bbox);
+  const source = normalizeTerritoryBbox(territory.bbox);
+  if (!target || !source) return true;
+  return !(
+    source[2] < target[0] ||
+    source[0] > target[2] ||
+    source[3] < target[1] ||
+    source[1] > target[3]
+  );
+}
+
+export function mergeTerritoriesForMap(existing = [], incoming = [], bbox = null) {
+  const territoriesById = new Map();
+  for (const territory of [...existing, ...incoming]) {
+    if (
+      !territory?.id ||
+      (territory.status && territory.status !== "active") ||
+      !intersectsBbox(territory, bbox)
+    ) {
+      continue;
+    }
+    const id = String(territory.id);
+    const current = territoriesById.get(id);
+    if (!current || isNewerTerritory(territory, current)) {
+      territoriesById.set(id, territory);
+    }
+  }
+  return [...territoriesById.values()].sort(
+    (left, right) => territoryTimestamp(right) - territoryTimestamp(left)
+  );
+}
+
 function getOwnerId(input = {}) {
   return input.ownerId || input.userId || input.leaderUserId || input.uid || null;
 }
@@ -150,5 +216,8 @@ export default {
   leaderCellsToFeatureCollection,
   normalizeTerritoryForMap,
   buildTerritoryMapProps,
+  buildTerritoryBbox,
+  mergeTerritoriesForMap,
+  normalizeTerritoryBbox,
 };
 

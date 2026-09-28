@@ -50,35 +50,39 @@ function calculatePathDurationSeconds(path = []) {
   return Math.max(0, (timestamps[timestamps.length - 1] - timestamps[0]) / 1000);
 }
 
-function inspectGpsQuality(rawPath = [], sanitizedPath = [], config) {
+function inspectGpsQuality(rawSegments = [], sanitizedSegments = [], config) {
   let maxJumpM = 0;
   let maxSegmentSpeedMps = 0;
   let maxReportedSpeedMps = 0;
   let badAccuracyCount = 0;
   let accuracyCount = 0;
 
-  for (const point of rawPath) {
-    const accuracy = Number(point?.accuracy);
-    if (Number.isFinite(accuracy)) {
-      accuracyCount += 1;
-      if (accuracy > config.maxAccuracyM) badAccuracyCount += 1;
-    }
+  for (const rawPath of rawSegments) {
+    for (const point of rawPath) {
+      const accuracy = Number(point?.accuracy);
+      if (Number.isFinite(accuracy)) {
+        accuracyCount += 1;
+        if (accuracy > config.maxAccuracyM) badAccuracyCount += 1;
+      }
 
-    const speed = Number(point?.speed);
-    if (Number.isFinite(speed)) maxReportedSpeedMps = Math.max(maxReportedSpeedMps, speed);
+      const speed = Number(point?.speed);
+      if (Number.isFinite(speed)) maxReportedSpeedMps = Math.max(maxReportedSpeedMps, speed);
+    }
   }
 
-  for (let i = 1; i < sanitizedPath.length; i += 1) {
-    const previous = sanitizedPath[i - 1];
-    const current = sanitizedPath[i];
-    const jump = calculateDistanceMeters(previous, current);
-    maxJumpM = Math.max(maxJumpM, jump);
+  for (const sanitizedPath of sanitizedSegments) {
+    for (let i = 1; i < sanitizedPath.length; i += 1) {
+      const previous = sanitizedPath[i - 1];
+      const current = sanitizedPath[i];
+      const jump = calculateDistanceMeters(previous, current);
+      maxJumpM = Math.max(maxJumpM, jump);
 
-    const previousTs = toTimestampMs(previous.timestamp);
-    const currentTs = toTimestampMs(current.timestamp);
-    const deltaSeconds = previousTs != null && currentTs != null ? Math.max(0, (currentTs - previousTs) / 1000) : 0;
-    if (deltaSeconds > 0) {
-      maxSegmentSpeedMps = Math.max(maxSegmentSpeedMps, jump / deltaSeconds);
+      const previousTs = toTimestampMs(previous.timestamp);
+      const currentTs = toTimestampMs(current.timestamp);
+      const deltaSeconds = previousTs != null && currentTs != null ? Math.max(0, (currentTs - previousTs) / 1000) : 0;
+      if (deltaSeconds > 0) {
+        maxSegmentSpeedMps = Math.max(maxSegmentSpeedMps, jump / deltaSeconds);
+      }
     }
   }
 
@@ -112,17 +116,28 @@ export function validateRunForTerritoryCapture(path = [], options = {}) {
   };
 
   const rawPath = Array.isArray(path) ? path : [];
-  const rawValidPath = sanitizePathForTerritory(rawPath, {
+  const rawSegments = Array.isArray(options.segments) && options.segments.length > 0
+    ? options.segments.map((segment) =>
+        Array.isArray(segment)
+          ? segment
+          : segment?.filteredPoints || segment?.trustedPath || segment?.path || segment?.rawPath || []
+      )
+    : [rawPath];
+  const rawValidSegments = rawSegments.map((segment) => sanitizePathForTerritory(segment, {
     ...config,
     maxAccuracyM: Number.POSITIVE_INFINITY,
     maxJumpM: Number.POSITIVE_INFINITY,
     maxSpeedMps: Number.POSITIVE_INFINITY,
-  });
-  const sanitizedPath = sanitizePathForTerritory(rawPath, config);
+  }));
+  const sanitizedSegments = rawSegments.map((segment) => sanitizePathForTerritory(segment, config));
+  const sanitizedPath = sanitizedSegments.flat();
   const pointCount = sanitizedPath.length;
   const durationSeconds = toNumber(options.durationSeconds, calculatePathDurationSeconds(sanitizedPath));
-  const distanceMeters = toNumber(options.distanceMeters, calculatePathDistance(sanitizedPath));
-  const gps = inspectGpsQuality(rawPath, rawValidPath, config);
+  const distanceMeters = toNumber(
+    options.distanceMeters,
+    sanitizedSegments.reduce((total, segment) => total + calculatePathDistance(segment), 0)
+  );
+  const gps = inspectGpsQuality(rawSegments, rawValidSegments, config);
 
   let suspiciousScore = 0;
   if (durationSeconds < config.minDurationSeconds) suspiciousScore += 25;
@@ -181,7 +196,10 @@ export function validateRunForTerritoryCapture(path = [], options = {}) {
     });
   }
 
-  const capture = buildCaptureGeometryFromPath(sanitizedPath, config);
+  const capture = buildCaptureGeometryFromPath(sanitizedPath, {
+    ...config,
+    segments: sanitizedSegments,
+  });
   if (!capture.ok && capture.reason === TERRITORY_CAPTURE_FAILURE.area_too_large) {
     return fail(TERRITORY_CAPTURE_FAILURE.area_too_large, suspiciousScore + 30, {
       ...baseDetails,

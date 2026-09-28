@@ -1,8 +1,12 @@
 # Visão geral
 
+**Status:** atualizado pela direção oficial de 2026-07-24.
+
 ## Conceito
 
-Wayper é um app mobile de corrida e caminhada que transforma deslocamentos reais em conquista de territórios no mapa. O usuário sai para uma atividade, registra a rota com GPS real e vê seu esforço virar progresso visual: áreas exploradas, pontos conquistados, XP, níveis, histórico e, futuramente, competição entre pessoas e clans.
+Wayper é uma plataforma mobile de exercício físico gamificada. Ela registra o
+movimento real com confiabilidade e, depois da atividade, transforma esse esforço
+em desempenho, exploração, território, progressão e competição.
 
 O produto combina três ideias:
 
@@ -35,7 +39,8 @@ O MVP deve priorizar usuários casuais e iniciantes. O app não precisa competir
 
 ## Diferencial
 
-O diferencial da Wayper é a relação direta entre movimento real e território conquistado.
+O diferencial da Wayper é a relação entre movimento real e uma aventura
+persistente revelada principalmente depois da atividade.
 
 Em vez de tratar a rota apenas como histórico, a rota vira ação de jogo. Cada caminhada ou corrida pode gerar:
 
@@ -47,7 +52,9 @@ Em vez de tratar a rota apenas como histórico, a rota vira ação de jogo. Cada
 
 ## Visão de produto
 
-A visão de longo prazo é que a Wayper se torne uma camada de jogo sobre o mundo real, onde caminhar e correr servem para explorar, conquistar e disputar áreas reais no mapa.
+A visão oficial é: “durante a atividade, o usuário apenas corre; depois da
+atividade, descobre tudo o que conquistou”. A corrida é a ação; o pós-corrida é o
+jogo.
 
 O produto deve ser:
 
@@ -60,7 +67,9 @@ O produto deve ser:
 ## Princípios
 
 - O movimento precisa ser real.
-- A experiência no mapa deve ser central.
+- A experiência pós-corrida deve ser central; mapa durante a atividade é opcional.
+- Tracking, salvamento, background, offline e recovery têm prioridade.
+- Territórios são consequência, não obrigação visual.
 - O MVP deve ser simples, validável e tecnicamente sustentável.
 - O app deve explicar conquistas e XP sem exigir leitura de regras complexas.
 - Novas mecânicas devem ser documentadas antes da implementação.
@@ -71,4 +80,3 @@ O produto deve ser:
 - [[03-mecanica-territorios]]
 - [[05-gps-e-validacao]]
 - [[07-telas-e-fluxos]]
-

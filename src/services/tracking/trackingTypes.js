@@ -6,6 +6,9 @@ export const TRACKING_POINT_SOURCE = {
 
 export const TRACKING_REJECT_REASON = {
   invalid_coordinate: "invalid_coordinate",
+  invalid_timestamp: "invalid_timestamp",
+  future_timestamp: "future_timestamp",
+  stale_point: "stale_point",
   bad_accuracy: "bad_accuracy",
   duplicate_point: "duplicate_point",
   too_close: "too_close",
@@ -20,6 +23,12 @@ export const TRACKING_REJECT_REASON = {
   unknown: "unknown",
 };
 
+export const TRACKING_POINT_CLASSIFICATION = {
+  accepted: "accepted",
+  suspicious: "suspicious",
+  discarded: "discarded",
+};
+
 export const TRACKING_FILTER_ACTION = {
   accept: "accept",
   reject: "reject",
@@ -31,6 +40,7 @@ export const TRACKING_FILTER_ACTION = {
 
 export default {
   TRACKING_FILTER_ACTION,
+  TRACKING_POINT_CLASSIFICATION,
   TRACKING_POINT_SOURCE,
   TRACKING_REJECT_REASON,
 };

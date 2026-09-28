@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "gapProfiles": {
+    "PROVEN": {
+      "neededCapability": "specialized external workflow",
+      "whyExistingCapabilitiesAreInsufficient": "task, source, owners, current capabilities, skills, references and tooling were inspected without finding the required workflow",
+      "requiredContext": ["source owner", "external workflow contract"],
+      "requiredWorkflow": ["discover", "vet", "trial", "evaluate"],
+      "requiredValidation": ["targeted eval", "side-effect audit"],
+      "expectedReuse": "repeated workflow with material rediscovery cost",
+      "internalSearch": [
+        "TASK",
+        "SOURCE",
+        "OWNERS",
+        "CAPABILITIES",
+        "SKILLS",
+        "REFERENCES",
+        "TOOLING"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "ESA_A_INTERNAL_SUFFICIENT",
+      "gapProfile": null,
+      "candidate": null,
+      "expected": { "externalDiscovery": false, "routerAuthority": "WAYPER", "decision": null, "persistentPromotionAllowed": false, "vettingLevel": "NONE", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_B_PROVEN_GAP",
+      "gapProfile": "PROVEN",
+      "candidate": null,
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": null, "persistentPromotionAllowed": false, "vettingLevel": "NONE", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_C_POPULAR_TRIGGER_OVERLAP",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["PURE_INSTRUCTION"], "suitable": true, "triggerOverlap": true, "popularityOnly": true },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": "USE_TEMPORARILY", "persistentPromotionAllowed": false, "vettingLevel": "BASELINE", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_D_PURE_INSTRUCTION_TRIAL",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["PURE_INSTRUCTION"], "suitable": true },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": "USE_TEMPORARILY", "persistentPromotionAllowed": false, "vettingLevel": "BASELINE", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_E_EXECUTABLE_STRONG_VETTING",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["PURE_INSTRUCTION", "EXECUTABLE"], "suitable": true, "isolationProven": true },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": "USE_TEMPORARILY", "persistentPromotionAllowed": false, "vettingLevel": "STRONG", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_F_HOOK_INSTALLER_REJECTED",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["HOOK_INSTALLING"], "suitable": true, "isolationProven": false },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": "REJECT", "persistentPromotionAllowed": false, "vettingLevel": "STRONG", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_G_CONFIG_MUTATOR_REJECTED",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["CONFIG_MUTATING"], "suitable": true, "isolationProven": false },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": "REJECT", "persistentPromotionAllowed": false, "vettingLevel": "STRONG", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_H_ARCHITECTURE_CONFLICT",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["PURE_INSTRUCTION"], "suitable": true, "architectureConflict": true, "adaptable": false },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": "REJECT", "persistentPromotionAllowed": false, "vettingLevel": "BASELINE", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_I_ADAPT_TO_WAYPER",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["PURE_INSTRUCTION"], "suitable": true, "needsAdaptation": true, "adaptable": true },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": "ADAPT_TO_WAYPER", "persistentPromotionAllowed": false, "vettingLevel": "BASELINE", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_J_NO_SUITABLE_CANDIDATE",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["PURE_INSTRUCTION"], "suitable": false },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": "BUILD_OUR_OWN", "persistentPromotionAllowed": false, "vettingLevel": "BASELINE", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_K_MATERIAL_UPSTREAM_CHANGE",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["PURE_INSTRUCTION"], "suitable": true, "upstreamMaterialChange": true },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": null, "persistentPromotionAllowed": false, "vettingLevel": "BASELINE", "reVettingRequired": true }
+    },
+    {
+      "id": "ESA_L_FIND_SKILLS_ROUTER_SOVEREIGN",
+      "gapProfile": "PROVEN",
+      "candidate": { "riskClasses": ["PURE_INSTRUCTION", "NETWORKED"], "suitable": true, "triggerOverlap": true, "findSkills": true, "isolationProven": true },
+      "expected": { "externalDiscovery": true, "routerAuthority": "WAYPER", "decision": "USE_TEMPORARILY", "persistentPromotionAllowed": false, "vettingLevel": "STRONG", "reVettingRequired": false }
+    },
+    {
+      "id": "ESA_M_LARGE_INTERNAL_CATALOG_NO_GAP",
+      "gapProfile": null,
+      "internalCatalogSize": 70,
+      "candidate": { "riskClasses": ["PURE_INSTRUCTION"], "suitable": true },
+      "expected": { "externalDiscovery": false, "routerAuthority": "WAYPER", "decision": null, "persistentPromotionAllowed": false, "vettingLevel": "NONE", "reVettingRequired": false }
+    }
+  ]
+}

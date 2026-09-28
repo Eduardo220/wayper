@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "id": "CP01_ZERO_SPECIALIST_TRIVIAL", "taskClass": "TRIVIAL", "repositories": ["wayper"], "capabilities": [], "scenario": "ZERO_SPECIALIST" },
+    { "id": "CP02_LIFECYCLE", "taskClass": "CRITICAL_RUNTIME", "repositories": ["wayper"], "capabilities": ["active-run-lifecycle"], "riskFlags": ["LIFECYCLE"], "dependency": true },
+    { "id": "CP03_GPS", "taskClass": "CRITICAL_RUNTIME", "repositories": ["wayper"], "capabilities": ["live-gps-ingestion"], "riskFlags": ["GPS_GEO"] },
+    { "id": "CP04_PERSISTENCE", "taskClass": "CRITICAL_RUNTIME", "repositories": ["wayper"], "capabilities": ["durable-run-save"], "riskFlags": ["OFFLINE_STORAGE"] },
+    { "id": "CP05_CONCURRENCY", "taskClass": "CRITICAL_RUNTIME", "repositories": ["wayper"], "capabilities": ["active-run-lifecycle", "run-finalization"], "riskFlags": ["CONCURRENCY"] },
+    { "id": "CP06_TERRITORY", "taskClass": "BUG", "repositories": ["wayper"], "capabilities": ["territory-capture", "territory-storage"], "riskFlags": ["TERRITORY_GEO"] },
+    { "id": "CP07_ANDROID_NATIVE", "taskClass": "CRITICAL_RUNTIME", "repositories": ["wayper"], "capabilities": ["android-run-boundary"], "riskFlags": ["NATIVE_ANDROID"], "targetMode": "NATIVE_ROLE" },
+    { "id": "CP08_MOBILE_CROSS_DOMAIN", "taskClass": "CRITICAL_RUNTIME", "repositories": ["wayper"], "capabilities": ["active-run-lifecycle", "durable-run-save", "territory-capture"], "riskFlags": ["LIFECYCLE", "OFFLINE_STORAGE", "TERRITORY_GEO"] },
+    { "id": "CP09_SITE_WEBGL", "taskClass": "BUG", "repositories": ["wayper-site"], "capabilities": ["map-ui"], "riskFlags": ["PERFORMANCE"], "scenario": "MISSING_PROFILE" },
+    { "id": "CP10_SITE_PUBLIC_CONTRACT", "taskClass": "BOUNDED", "repositories": ["wayper-site"], "capabilities": ["product-rules"], "scenario": "MISSING_PROFILE" },
+    { "id": "CP11_CROSS_REPO", "taskClass": "ARCHITECTURAL", "repositories": ["wayper", "wayper-site"], "capabilities": ["screen-ui-accessibility"], "scenario": "CROSS_REPO", "targetMode": "NATIVE_ROLE" },
+    { "id": "CP12_KNOWN_GOOD_REUSE", "taskClass": "BUG", "repositories": ["wayper"], "capabilities": ["active-run-recovery"], "knownGood": true },
+    { "id": "CP13_QUESTIONED_KNOWN_GOOD", "taskClass": "BUG", "repositories": ["wayper"], "capabilities": ["active-run-recovery"], "knownGood": true, "questionKnownGood": true },
+    { "id": "CP14_PROOF_GAP", "taskClass": "INVESTIGATION", "repositories": ["wayper"], "capabilities": ["run-sync-replay"], "proofGap": true },
+    { "id": "CP15_SHARED_EVIDENCE_THREE_PACKETS", "taskClass": "ARCHITECTURAL", "repositories": ["wayper"], "capabilities": ["active-run-lifecycle", "durable-run-save", "territory-capture"], "targetMode": "THREE_CAPABILITY_PACKETS", "sharedEvidence": true },
+    { "id": "CP16_PACKET_OVER_BUDGET", "taskClass": "BUG", "repositories": ["wayper"], "capabilities": ["route-geometry"], "tokenProxyCeiling": 1, "scenario": "OVER_BUDGET" },
+    { "id": "CP17_STALE_PACKET", "taskClass": "BUG", "repositories": ["wayper"], "capabilities": ["run-finalization"], "scenario": "STALE_PACKET" },
+    { "id": "CP18_MISSING_OPERATIONAL_PROFILE", "taskClass": "ARCHITECTURAL", "repositories": ["wayper"], "capabilities": ["context-efficiency"], "scenario": "MISSING_PROFILE" },
+    { "id": "CP19_INDEPENDENT_REVIEW", "taskClass": "ARCHITECTURAL", "repositories": ["wayper"], "capabilities": ["quality-gates"], "targetMode": "INDEPENDENT_REVIEW", "reviewConclusion": true },
+    { "id": "CP20_GRAPHIFY_REFS_AVAILABLE", "taskClass": "INVESTIGATION", "repositories": ["wayper"], "capabilities": ["route-geometry"], "structuralUncertainty": true, "graphify": true }
+  ]
+}

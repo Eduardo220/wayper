@@ -1,126 +1,151 @@
-# Instruções para IA na Wayper
+# Instruções para IA no Projeto Wayper
 
-Este documento define como qualquer assistente de IA deve trabalhar na Wayper. Ele complementa [[00-fontes-do-projeto]], [[15-workflow-obsidian-ia]], `AGENTS.md` e `CLAUDE.md`.
+> **Status:** vigente<br>
+> **Tipo:** workflow operacional detalhado<br>
+> **Escopo:** agentes de IA e fluxos assistidos<br>
+> **Última revisão:** 2026-08-16<br>
+> **Owner relacionado:** [`AGENTS.md`](../AGENTS.md)
 
-## 1. Papel da IA
+`AGENTS.md` contém somente regras permanentes. Este documento explica como
+aplicá-las; o catálogo e o roteamento de leitura pertencem a
+[`docs/00-fontes-do-projeto.md`](00-fontes-do-projeto.md). Não replique esses
+conteúdos em prompts, skills, agents ou hooks.
 
-A IA atua como braço direito de produto e engenharia, não como executora cega.
+## Ownership do Harness
 
-Seu trabalho é:
+| Recurso | Responsabilidade |
+| --- | --- |
+| `AGENTS.md` | comportamento permanente e invariantes universais |
+| `docs/` | estado, direção, decisões e explicações detalhadas |
+| `docs/ai/memory/` | índice/topics técnicos hard-earned, somente sob demanda |
+| `.agents/skills/` | workflow de domínio/transversal carregado por trigger |
+| `.wayper-context/` | Working Context + `CONTEXT_MAP` no mesmo Markdown por Goal; estado local ignorado pelo Git; Context Packets são views derivadas |
+| `docs/ai/capability-registry.json` | metadata canônica on-demand de capabilities e agent profiles |
+| `DESIGN.md` | contrato visual; não duplica runtime tokens nem verdade de produto |
+| `.codex/agents/` | especialização read-only com gatilho concreto |
+| hooks | enforcement determinístico; não substituem documentação |
+| `docs/ai/token-economy.md` | leitura/output/contexto sob demanda; não reduz reasoning ou evidence |
 
-- Entender a solicitação dentro da visão da Wayper.
-- Comparar ideias com o MVP, roadmap, backlog e regras de negócio.
-- Registrar propostas, riscos e decisões antes de mexer no código.
-- Explicar impactos técnicos e de produto.
-- Implementar somente quando a tarefa estiver aprovada e alinhada.
-- Manter documentação e código sincronizados.
+A arquitetura e as fronteiras project/global/generated estão em
+[`docs/ai/harness-v1.md`](ai/harness-v1.md).
+Classificação, flags e seleção mínima pertencem a
+[`docs/ai/task-classification.md`](ai/task-classification.md) e
+[`docs/ai/context-routing.md`](ai/context-routing.md); capability composition e
+Context Closure pertencem a
+[`docs/ai/capability-architecture.md`](ai/capability-architecture.md). Delegação, waves e síntese
+pertencem a [`docs/ai/orchestration.md`](ai/orchestration.md). Gates/review
+adaptativos pertencem a [`docs/ai/quality-gates.md`](ai/quality-gates.md). Metas
+contínuas, autonomia e Human Decision Boundary pertencem a
+[`docs/ai/meta-goal-runtime.md`](ai/meta-goal-runtime.md). Promotion, routing e
+staleness de hard-earned learning pertencem a
+[`docs/ai/memory-policy.md`](ai/memory-policy.md); memory nunca precede source,
+testes ou decisão canônica. Modos de output, leitura progressiva e contabilidade
+de contexto pertencem a
+[`docs/ai/token-economy.md`](ai/token-economy.md).
+Reuse-before-read, diff-before-file, fingerprints e budgets por classe em Goal
+pertencem a [`wayper-context-efficiency`](../.agents/skills/wayper-context-efficiency/SKILL.md)
+e [`docs/ai/working-context.md`](ai/working-context.md).
+Aquisição externa após `CAPABILITY_GAP`, vetting, trial, provenance, update e
+revogação pertencem a
+[`docs/ai/external-skill-acquisition.md`](ai/external-skill-acquisition.md);
+external discovery nunca precede o Router Wayper.
 
-## 2. Fonte de verdade
+## Context Gate
 
-Arquivos principais:
+Antes de escrever, obtenha evidência suficiente para estes campos:
 
-- [[00-fontes-do-projeto]]
-- [[01-visao-do-produto]]
-- [[02-roadmap]]
-- [[03-backlog]]
-- [[04-arquitetura]]
-- [[10-regras-de-negocio]]
-- [[15-workflow-obsidian-ia]]
+| Campo | Evidência mínima |
+| --- | --- |
+| Git | branch, `git status --short` e WIP relevante |
+| Fontes | `AGENTS.md`, catálogo e leituras do domínio |
+| Implementação | owners, consumidores, caminhos legados e alternativa existente |
+| Testes | scripts e suítes reais relacionadas |
+| Restrições | decisões e invariantes aplicáveis |
+| Escopo | o que muda, o que não muda e autorização recebida |
+| Validação | checks proporcionais ao risco |
+| Rollback | reversão sem perda de dados ou compatibilidade |
 
-Fonte canônica de regras de produto:
+Uma tarefa documental não exige carregar código alheio nem executar build sem
+motivo proporcional. Um campo que não se aplica pode ser omitido com motivo.
 
-- [[00-index]]
-- [[02-mvp]]
-- [[03-mecanica-territorios]]
-- [[04-regras-corrida]]
-- [[05-gps-e-validacao]]
-- [[06-xp-nivel-ranking]]
-- [[08-firebase-firestore]]
-- [[09-arquitetura-tecnica]]
-- [[10-decisoes-do-projeto]]
+## Descoberta progressiva
 
-Quando houver conflito, registre a divergência e trate a documentação oficial como referência principal antes de mudar comportamento.
+1. Leia `AGENTS.md` e o catálogo.
+2. Em Goal nativo, refresque Working Context/`CONTEXT_MAP` e reuse proof
+   inalterado antes de reler; artifacts mudados seguem diff-before-file.
+3. Classifique tarefa/flags, leia o diff e selecione gate/review proporcionais.
+4. Leia os documentos mínimos e acione skill apenas quando o gatilho casar.
+5. Localize headings/símbolos/callers e leia ranges suficientes antes de abrir
+   arquivos grandes inteiros.
+6. Use Graphify apenas para reduzir incerteza estrutural; reuse/update pelo
+   fingerprint do scope e confirme no source.
+7. Leia implementação, callers, testes, configuração e bugs relevantes.
+8. Acione especialista somente quando houver risco específico que justifique o
+   contexto adicional.
 
-## 3. Gatilhos oficiais
+Skills não decidem prioridade nem autorizam produto. Specialists não orquestram
+outros agents nem substituem o agente principal; delegação é opt-in e segue o
+protocolo de orchestration. Outputs derivados de Context Packets, Graphify, benchmarks e caches
+são pistas reproduzíveis, nunca autoridade.
 
-Mensagens começando com estes prefixos são entradas formais do projeto:
+## Planejamento e execução
 
-- `Ideia Wayper:`
-- `Melhoria Wayper:`
-- `Problema Wayper:`
-- `Feature Wayper:`
-- `Revisão Wayper:`
-- `Implementar Wayper:`
-- `Sincronizar Wayper:`
+Cada fase explicita objetivo, critérios de aceite, arquivos previstos, riscos,
+compatibilidade, testes, validações externas e rollback. Execute somente o
+escopo autorizado:
 
-## 4. Fluxo obrigatório
+- diagnóstico não autoriza correção;
+- documentação não autoriza alteração de produção;
+- feature restrita não autoriza refatoração ampla;
+- WIP alheio é preservado;
+- o caminho existente é consolidado antes de criar outro;
+- alteração real atualiza seus testes e a fonte documental dona do assunto.
 
-Antes de implementar:
+## Divergências
 
-- Ler a documentação obrigatória.
-- Validar alinhamento com visão, MVP, roadmap, backlog e regras de negócio.
-- Classificar a entrada.
-- Registrar ideia, proposta, bug ou risco no arquivo adequado.
-- Pedir aprovação humana quando a entrada for proposta nova, mudança de escopo ou decisão pendente.
-- Só então implementar.
+1. Descreva arquivos e evidências conflitantes.
+2. Separe estado implementado de direção aprovada.
+3. Classifique a fonte como estado, decisão, planejamento, operação, histórico
+   ou hipótese.
+4. Preserve compatibilidade até existir migração segura.
+5. Atualize ou marque a fonte desatualizada sem apagar história útil.
+6. Registre decisão importante no owner técnico apropriado.
+7. Informe impacto, risco, validação e rollback.
 
-Depois de implementar:
+Decisões aprovadas incompatíveis são bloqueio para decisão humana.
 
-- Atualizar [[18-changelog-produto]].
-- Atualizar [[19-revisoes-de-implementacao]].
-- Atualizar o documento específico afetado.
-- Registrar novas ideias, riscos ou pendências se surgirem durante a implementação.
+## Evidência e validação
 
-## 5. Formato padrão de resposta
+- Não invente arquivo, serviço, teste, log, commit, deploy ou comportamento.
+- Diferencie fato observado, inferência, hipótese e recomendação.
+- Descubra comandos em `package.json`; não presuma lint ou typecheck.
+- Use a menor validação suficiente e amplie conforme o risco.
+- Para Markdown/config, valide diff, links, paths e sintaxe aplicável.
+- Teste automatizado não prova GPS real, background, tela apagada ou aparelho
+  físico. Registre comandos, resultados, falhas e itens não executados.
 
-Use este formato para gatilhos formais:
+## Atualização documental
 
-```md
-# Análise Wayper
+| Mudança | Owner principal |
+| --- | --- |
+| decisão técnica | `docs/08-decisoes-tecnicas.md` ou ADR de arquitetura |
+| arquitetura/estado | `docs/04-arquitetura.md` e documento do domínio |
+| regra de negócio | `docs/10-regras-de-negocio.md` e recorte de produto |
+| bug/risco | `docs/13-bugs-conhecidos.md` |
+| teste | `docs/12-guia-de-testes.md` e checklist físico aplicável |
+| roadmap/backlog | `docs/02-roadmap.md` / `docs/03-backlog.md` |
+| Harness | `docs/ai/harness-v1.md`; auditoria datada só como evidência |
+| identidade/linguagem visual | `DESIGN.md`; valores executáveis em `src/theme/wayperTheme.js` |
 
-## Documentos consultados
+Documento substituído mantém aviso e link para o sucessor. Caminhos persistidos
+em docs versionadas são relativos ao repositório.
 
-## Resumo da solicitação
+## Entrega
 
-## Alinhamento com a visão da Wayper
+Em Goals, usar [Completion Boundary](ai/completion-boundary.md) com a identidade
+e revisão atuais antes de solicitar conclusão ao host. ADMISSIBLE é necessário;
+Validation COMPLETE, Handoff DONE e worktree limpa não o substituem.
 
-## Relação com o MVP
-
-## Impacto técnico
-- GPS
-- Mapa
-- Firestore
-- Performance
-- UX
-- Arquitetura
-
-## Riscos
-
-## Documentação atualizada
-
-## Recomendação da IA
-
-## Próximo passo
-```
-
-## 6. Regras de aprovação
-
-- Proposta não é decisão.
-- Ideia aprovada precisa ser registrada.
-- Ideia rejeitada também deve ser registrada.
-- Ideia adiada deve manter motivo e próximo critério de reavaliação.
-- Implementação só acontece após aprovação explícita quando a mudança ainda for proposta.
-- Decisão técnica relevante deve ser registrada em [[08-decisoes-tecnicas]].
-- Decisão de produto relevante deve respeitar [[10-decisoes-do-projeto]].
-
-## Classificação padrão
-
-Toda entrada formal deve ser classificada como:
-
-- Alinhada com o MVP.
-- Alinhada com a visão, mas fora do MVP.
-- Ideia futura.
-- Melhoria técnica.
-- Bug/problema.
-- Ideia desalinhada.
-- Precisa de decisão humana.
+Informe diagnóstico, fontes, arquivos, decisões, recursos preservados/
+consolidados/removidos, testes reais, divergências, riscos, rollback, commits e
+próximo passo. Commit, push, deploy ou publicação exigem autorização da tarefa.

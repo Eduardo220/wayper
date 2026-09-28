@@ -1,9 +1,18 @@
 import { registerRootComponent } from 'expo';
 import 'react-native-gesture-handler';
+import './src/tasks/activeRunLocationTask.js';
+import { AppRegistry } from 'react-native';
 import App from './App';
+import runNotificationActionTask from './src/services/run/runNotificationActionTask.js';
+import {
+  initializeMonitoring,
+  wrapWithMonitoring,
+} from './src/services/monitoring/sentryService.js';
 
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
 // It also ensures that whether you load the app in Expo Go or in a native build,
 // the environment is set up appropriately
-registerRootComponent(App);
+AppRegistry.registerHeadlessTask('WayperRunNotificationAction', () => runNotificationActionTask);
+initializeMonitoring();
+registerRootComponent(wrapWithMonitoring(App));
