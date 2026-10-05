@@ -1,5 +1,48 @@
 # Diagnostico e Logs do Wayper
 
+## Active Run Flight Recorder (temporario)
+
+O recorder grava um arquivo JSONL por `activeRunId` (a identidade usada como
+`localRunId` da corrida), em `Paths.document/active-run-flight-recorder/<id>.jsonl`.
+Cada linha contem `event`, `wallTime`, `wallMs`, `monotonicMs`, `processId`,
+`localRunId`, `source`, `writer`, `appState`, `runState`, `paused`, `elapsedMs`,
+`distanceMeters` e, quando existem, `point`, `lastRaw`, `lastAccepted`,
+`lastCheckpointAt`, `reason` e `count`. Pontos contem somente timestamp,
+accuracy, speed e bearing; coordenadas e identidade do usuario nao entram.
+`monotonicMs` so e comparavel dentro do mesmo `processId`.
+
+Em lotes headless cumulativos, amostras com timestamp anterior ou igual ao
+ultimo ponto aceito do segmento atual sao ignoradas antes da rota bruta e do
+recorder. `HEADLESS_TASK_START.count` mostra o tamanho recebido do Android;
+`HEADLESS_TASK_REPLAY_SUPPRESSED.count` mostra quantas amostras repetidas foram
+dispensadas. `GPS_RAW` registra as amostras processadas ou descartadas pelo
+lifecycle; o replay suprimido aparece somente no contador.
+Um ponto mais recente rejeitado ainda pode ser reavaliado num lote seguinte.
+
+O writer JS serializa append em lotes de ate 500 ms para GPS e despacha os
+demais eventos imediatamente. A task headless aguarda o flush diagnostico
+por no maximo 750 ms antes de retornar, depois do processamento canonico. Falha do recorder nao
+bloqueia tracking ou checkpoint; a exportacao informa falha de escrita. Sao
+mantidos ate oito arquivos antigos. O modulo nao altera
+`wayper:activeRun:v2` nem o fluxo de finalizacao.
+
+Depois da corrida, abra `Configuracoes > Diagnostico > Exportar Flight Recorder`
+e salve/compartilhe o `.jsonl` mais recente pelo share sheet. O ZIP
+`Exportar logs recentes` inclui os arquivos retidos em `flight-recorder/`.
+Para uma timeline resumida:
+
+```bash
+node scripts/active-run-flight-timeline.mjs /caminho/arquivo.jsonl
+```
+
+O script assinala gaps de GPS e checkpoint acima de 30 s, GPS bruto sem aceite,
+salto de tempo ou do relogio acima de 5 s, intervalos de background
+e gaps entre invocacoes headless. `GPS_RAW_WITHOUT_ACCEPTED` pode representar
+um descarte esperado; confira `GPS_REJECTED.reason`. Falta de evento durante
+processo morto ou suspenso aparece como gap entre os registros adjacentes, nao
+como prova de qual componente parou. Nao use o arquivo para reconstruir rota:
+coordenadas sao deliberadamente omitidas.
+
 O Wayper possui um sistema centralizado de logs para investigar falhas em corrida ativa, GPS, background, recovery, storage local, mapa, notificacoes, permissoes, UI e sync.
 
 ## Logger central

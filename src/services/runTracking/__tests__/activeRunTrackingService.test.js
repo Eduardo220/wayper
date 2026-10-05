@@ -20,6 +20,7 @@ const AsyncStorageMock = {
 
 let locationStarted = false;
 let backgroundTaskHandler = null;
+let appStateListener = null;
 const LocationMock = {
   Accuracy: {
     Balanced: 3,
@@ -63,6 +64,10 @@ jest.unstable_mockModule("@react-native-community/netinfo", () => ({
 jest.unstable_mockModule("react-native", () => ({
   AppState: {
     currentState: "active",
+    addEventListener: jest.fn((_event, listener) => {
+      appStateListener = listener;
+      return { remove: jest.fn() };
+    }),
   },
   NativeModules: {},
   PermissionsAndroid: {
@@ -98,6 +103,7 @@ const {
   getLogs,
   __flushLogWritesForTests,
 } = await import("../../diagnostics/logStorageService.js");
+const flightRecorder = await import("../../diagnostics/activeRunFlightRecorder.js");
 
 const BASE_TIME = 1_700_000_000_000;
 const BASE_POINT = {
@@ -133,6 +139,7 @@ beforeEach(async () => {
   jest.clearAllMocks();
   TaskManagerMock.isTaskDefined.mockReturnValue(false);
   service.__resetActiveRunRuntimeForTests();
+  flightRecorder.__resetFlightRecorderForTests();
   await clearLogs();
 });
 
@@ -141,6 +148,46 @@ afterEach(() => {
 });
 
 describe("activeRunTrackingService lifecycle", () => {
+  test("registra transicao de AppState fora da tela", async () => {
+    await service.startActiveRun({ activeRunId: "run-appstate-flight", startedAtMs: BASE_TIME });
+    appStateListener("background");
+    const events = await flightRecorder.__getFlightEntriesForTests();
+    expect(events.some((entry) => entry.event === "APP_BACKGROUND" && entry.localRunId === "run-appstate-flight")).toBe(true);
+  });
+
+  test("reentrada fria registra AppState pelo meta sem hidratar a sessao", async () => {
+    await service.startActiveRun({ activeRunId: "run-cold-appstate-flight", startedAtMs: BASE_TIME });
+    service.__resetActiveRunRuntimeForTests();
+    appStateListener("active");
+    await new Promise((resolve) => setImmediate(resolve));
+    const entries = await flightRecorder.__getFlightEntriesForTests();
+    expect(entries.some((entry) => entry.event === "APP_FOREGROUND" && entry.localRunId === "run-cold-appstate-flight")).toBe(true);
+    expect(service.getTrackingRuntimeStatus().activeRunId).toBeNull();
+  });
+
+  test("falha do recorder nao impede GPS nem checkpoint canonico", async () => {
+    flightRecorder.__setFlightWriteFailureForTests(true);
+    const started = await service.startActiveRun({ activeRunId: "run-flight-failure", startedAtMs: BASE_TIME });
+    const updated = await service.recordLocation(nextPoint(1), { source: "foreground" });
+    await service.flushPendingActiveRunCheckpoint({ reason: "test", force: true });
+    expect(started.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(updated.trustedPath).toHaveLength(1);
+    expect(getStoredActiveRun().activeRunId).toBe("run-flight-failure");
+    expect((await flightRecorder.flushFlightRecorder()).lastError).toBe("test_flight_write_failure");
+  });
+
+  test("lote headless descartado preserva GPS bruto e motivo no recorder", async () => {
+    await service.startActiveRun({ activeRunId: "run-headless-discard-flight", startedAtMs: BASE_TIME });
+    await service.pauseActiveRun({ endedAtMs: BASE_TIME + 3000 });
+    await service.handleActiveRunLocationTask({
+      data: { locations: [{ coords: nextPoint(2), timestamp: nextPoint(2).timestamp }] },
+    });
+    const entries = (await flightRecorder.__getFlightEntriesForTests())
+      .filter((entry) => entry.localRunId === "run-headless-discard-flight");
+    expect(entries.some((entry) => entry.event === "GPS_RAW" && entry.source === "headless")).toBe(true);
+    expect(entries.some((entry) => entry.event === "GPS_REJECTED" && entry.reason)).toBe(true);
+  });
+
   test("mantem ponto em memoria e persiste checkpoint canonico em lote", async () => {
     const started = await service.startActiveRun({
       activeRunId: "run-local-snapshot",
@@ -1678,6 +1725,80 @@ describe("activeRunTrackingService lifecycle", () => {
     const snapshot = await service.getActiveRunSnapshot();
     expect(snapshot.trustedPath).toHaveLength(1);
     expect(snapshot.rawPath).toHaveLength(1);
+  });
+
+  test("lotes headless cumulativos guardam apenas pontos posteriores ao ultimo aceito", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-cumulative-headless",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    const batch = (indices) => indices.map((index) => ({
+      coords: nextPoint(index),
+      timestamp: nextPoint(index).timestamp,
+    }));
+    await service.handleActiveRunLocationTask({ data: { locations: batch([1, 2]) } });
+    service.__resetActiveRunRuntimeForTests();
+    await service.handleActiveRunLocationTask({ data: { locations: batch([1, 2, 3]) } });
+
+    const snapshot = await service.getActiveRunSnapshot();
+    expect(snapshot.trustedPath).toHaveLength(3);
+    expect(snapshot.rawPath).toHaveLength(3);
+    const events = await flightRecorder.__getFlightEntriesForTests();
+    expect(events.filter((entry) => entry.event === "GPS_RAW" && entry.source === "headless")).toHaveLength(3);
+    expect(events.find((entry) => entry.event === "HEADLESS_TASK_REPLAY_SUPPRESSED")?.count).toBe(2);
+
+    const writes = service.__getActiveRunCheckpointWorkCountersForTests();
+    await service.handleActiveRunLocationTask({ data: { locations: batch([1, 2, 3]) } });
+    expect(service.__getActiveRunCheckpointWorkCountersForTests()).toEqual(writes);
+
+    service.__resetActiveRunRuntimeForTests();
+    expect((await service.restoreActiveRun({ restartTracking: false })).rawPath).toHaveLength(3);
+  });
+
+  test("ponto mais recente rejeitado pode ser corrigido em lote seguinte", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-headless-corrected-point",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    const location = (index, accuracy = 8) => ({
+      coords: { ...nextPoint(index), accuracy },
+      timestamp: nextPoint(index).timestamp,
+    });
+    await service.handleActiveRunLocationTask({
+      data: { locations: [location(1), location(2, 500)] },
+    });
+    await service.handleActiveRunLocationTask({
+      data: { locations: [location(1), location(2)] },
+    });
+
+    const snapshot = await service.getActiveRunSnapshot();
+    expect(snapshot.trustedPath).toHaveLength(2);
+    expect(snapshot.trustedPath.map((point) => point.accuracy)).toEqual([8, 8]);
+    const events = await flightRecorder.__getFlightEntriesForTests();
+    expect(events.filter((entry) => entry.event === "GPS_RAW" && entry.source === "headless")).toHaveLength(3);
+    expect(events.find((entry) => entry.event === "HEADLESS_TASK_REPLAY_SUPPRESSED")?.count).toBe(1);
+  });
+
+  test("novo segmento apos pausa nao usa timestamp aceito no segmento anterior", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-resumed-headless",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.recordLocation(nextPoint(2), { source: "foreground" });
+    await service.__flushActiveRunBackgroundLifecycleForTests();
+    await service.pauseActiveRun({ endedAtMs: BASE_TIME + 5000 });
+    const resumed = await service.resumeActiveRun({ startedAtMs: BASE_TIME + 10_000 });
+    expect(resumed.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    await service.handleActiveRunLocationTask({
+      data: { locations: [{ coords: nextPoint(1), timestamp: nextPoint(1).timestamp }] },
+    });
+
+    const snapshot = await service.getActiveRunSnapshot();
+    expect(snapshot.rawPath).toHaveLength(2);
+    expect(snapshot.segments).toHaveLength(2);
   });
 
   test("task headless recupera storage e persiste lote sem MapScreen montado", async () => {

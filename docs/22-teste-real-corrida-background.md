@@ -46,6 +46,30 @@ Evidência sanitizada:
 - Abrir `Configuracoes > Diagnostico` antes/depois do teste e conferir corrida ativa, GPS, permissoes, notification/background, sync e export ZIP.
 - Em aparelhos com economia agressiva de bateria, orientar o usuario a remover o Wayper da otimizacao de bateria.
 
+## Corrida de diagnostico com Flight Recorder
+
+1. Instalar no Android fisico uma build que inclua o recorder. Para testar sem
+   USB e sem Metro, usar APK release instalado; em Dev Client, manter o Metro
+   acessivel por LAN/tunnel apos desconectar o cabo.
+2. Conceder localizacao precisa em primeiro plano e em segundo plano, e
+   notificacoes. Anotar modelo, Android, build, modo de bateria e hora local.
+3. Abrir o app e iniciar uma corrida nova, anotando o `activeRunId` em
+   `Configuracoes > Diagnostico` se possivel. Caminhar 2 minutos com tela ligada.
+4. Desconectar USB, colocar o app em background, bloquear a tela e caminhar por
+   pelo menos 10 minutos. Anotar hora de bloqueio/desbloqueio sem interagir no app.
+5. Desbloquear, reentrar pelo icone, caminhar 2 minutos, pausar 30 segundos,
+   retomar, bloquear por mais 2 minutos e reentrar pela notificacao.
+6. Finalizar e confirmar uma unica corrida no historico. Abrir
+   `Configuracoes > Diagnostico > Exportar Flight Recorder` e salvar o JSONL.
+7. No computador, executar
+   `node scripts/active-run-flight-timeline.mjs arquivo.jsonl`; guardar arquivo,
+   timeline, modelo/build e horarios juntos. Conferir `RUN_STARTED`,
+   `RUN_FINISHED`, transicoes AppState, `GPS_RAW`, outcomes, headless e checkpoint.
+
+O arquivo nao contem coordenadas. O teste fisico continua pendente ate uma
+corrida nova ser executada e seu JSONL inspecionado; testes automatizados nao
+validam tela apagada, USB desconectado ou restricoes do fabricante.
+
 ## Cenario 1: tela bloqueada
 
 1. Abrir Wayper.

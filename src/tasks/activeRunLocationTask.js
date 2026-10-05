@@ -4,6 +4,7 @@ import {
   handleActiveRunLocationTask,
 } from "../services/runTracking/activeRunTrackingService.js";
 import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
+import { flushFlightRecorder } from "../services/diagnostics/activeRunFlightRecorder.js";
 import { LOG_CATEGORIES } from "../utils/logger.js";
 
 // Expo requires defineTask to run at module scope. This module is imported by
@@ -15,7 +16,17 @@ try {
     TaskManager.isTaskDefined(ACTIVE_RUN_LOCATION_TASK);
 
   if (typeof TaskManager.defineTask === "function" && !alreadyDefined) {
-    TaskManager.defineTask(ACTIVE_RUN_LOCATION_TASK, handleActiveRunLocationTask);
+    TaskManager.defineTask(ACTIVE_RUN_LOCATION_TASK, async (input) => {
+      try {
+        return await handleActiveRunLocationTask(input);
+      } finally {
+        let timeout;
+        await Promise.race([
+          flushFlightRecorder().catch(() => {}),
+          new Promise((resolve) => { timeout = setTimeout(resolve, 750); }),
+        ]).finally(() => clearTimeout(timeout));
+      }
+    });
   }
 
   recordRunEvent("RUN_BACKGROUND_TASK_REGISTERED", {

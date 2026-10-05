@@ -7,6 +7,7 @@ import {
 } from "../services/runTracking/activeRunTrackingService.js";
 import { hydrateActiveRunFromRuntime } from "../services/runTracking/activeRunRuntimeService.js";
 import { checkpointOnLocationError } from "../services/run/runAutoSaveService.js";
+import { recordFlightEvent } from "../services/diagnostics/activeRunFlightRecorder.js";
 import { findRecoverableRunForUser } from "../services/run/runRecoveryService.js";
 import { checkLocationPermission } from "../services/permissions";
 import { recordRunEvent, recordRunSnapshotEvent } from "../services/diagnostics/runDiagnosticsService.js";
@@ -164,6 +165,7 @@ export default async function startRun(context, selectedMode = "free", options =
     });
     try {
       const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest, timeout: 7000 });
+      if (position?.coords) recordFlightEvent("GPS_RAW", { runId: context.currentRunIdRef.current, source: "foreground", point: position, reason: "start_current_position" });
       if (position?.coords) context.handleLocationUpdate({
         ...position.coords,
         timestamp: position.timestamp,
@@ -171,6 +173,7 @@ export default async function startRun(context, selectedMode = "free", options =
         runSessionId: context.currentRunIdRef.current,
       });
     } catch (error) {
+      recordFlightEvent("GPS_ERROR", { runId: context.currentRunIdRef.current, source: "foreground", reason: "start_current_position" });
       checkpointOnLocationError(error, { phase: "start_current_position" }).catch(() => {});
     }
     return { ok: true, runId: context.currentRunIdRef.current };

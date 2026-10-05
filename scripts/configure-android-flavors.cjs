@@ -4,6 +4,7 @@ const path = require("node:path");
 const rootDir = path.resolve(__dirname, "..");
 const androidAppDir = path.join(rootDir, "android", "app");
 const buildGradlePath = path.join(androidAppDir, "build.gradle");
+const gradlePropertiesPath = path.join(rootDir, "android", "gradle.properties");
 const manifestPath = path.join(androidAppDir, "src", "main", "AndroidManifest.xml");
 const sentryGradleApply =
   `apply from: new File(["node", "--print", "require('path').dirname(require.resolve('@sentry/react-native/package.json'))"].execute().text.trim(), "sentry.gradle")`;
@@ -127,6 +128,24 @@ function configureManifest() {
   fs.writeFileSync(manifestPath, content);
 }
 
+function configureAsyncStorageDatabaseSize() {
+  assertFile(gradlePropertiesPath, "Android Gradle properties");
+  const plugin = require("../app.json").expo.plugins.find((entry) =>
+    Array.isArray(entry) && entry[0] === "./plugins/withAsyncStorageDatabaseSize.cjs"
+  );
+  const sizeMB = plugin?.[1]?.sizeMB;
+  if (!Number.isSafeInteger(sizeMB) || sizeMB <= 0) {
+    throw new Error("Invalid AsyncStorage database size in app.json.");
+  }
+
+  const content = fs.readFileSync(gradlePropertiesPath, "utf8");
+  const property = `AsyncStorage_db_size_in_MB=${sizeMB}`;
+  const updated = /^AsyncStorage_db_size_in_MB=.*$/m.test(content)
+    ? content.replace(/^AsyncStorage_db_size_in_MB=.*$/m, property)
+    : `${content.trimEnd()}\n${property}\n`;
+  if (updated !== content) fs.writeFileSync(gradlePropertiesPath, updated);
+}
+
 function writeFlavorString(flavor, appName) {
   const valuesDir = path.join(androidAppDir, "src", flavor, "res", "values");
   fs.mkdirSync(valuesDir, { recursive: true });
@@ -138,7 +157,8 @@ function writeFlavorString(flavor, appName) {
 
 configureBuildGradle();
 configureManifest();
+configureAsyncStorageDatabaseSize();
 writeFlavorString("dev", "Wayper Dev");
 writeFlavorString("prod", "Wayper Prod");
 
-console.log("Configured Android flavors and Sentry source map tasks.");
+console.log("Configured Android flavors, Sentry source map tasks, and AsyncStorage size.");

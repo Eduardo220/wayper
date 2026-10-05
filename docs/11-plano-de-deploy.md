@@ -116,7 +116,7 @@ npm run prod:apk
 npm run prod:aab
 ```
 
-O script `android:flavors` injeta a etapa oficial `sentry.gradle` na pasta Android existente. O plugin `@sentry/react-native/expo` cobre prebuilds limpos. Em build release com credenciais configuradas, o upload de source maps e automatico.
+O script `android:flavors` injeta a etapa oficial `sentry.gradle` e sincroniza o limite do AsyncStorage de `app.json` na pasta Android existente. Os config plugins cobrem prebuilds limpos. Em build release com credenciais configuradas, o upload de source maps e automatico.
 
 Para gerar um release local sem upload, use `npm run prod:apk:no-sourcemaps`. Esse build injeta `SENTRY_DISABLE_AUTO_UPLOAD=true` e nao valida simbolicacao.
 

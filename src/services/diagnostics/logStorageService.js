@@ -128,7 +128,7 @@ function getChannelsForLog(log = {}) {
   return [...channels];
 }
 
-async function getNativeFileSystem() {
+export async function getNativeFileSystem() {
   if (!nativeFileSystemPromise) {
     nativeFileSystemPromise = import("expo-file-system").then((module) => ({
       Directory: module.Directory,
@@ -171,7 +171,7 @@ async function getLogDirectory(runId = null) {
   return runDirectory;
 }
 
-function encodeUtf8(value) {
+export function encodeUtf8(value) {
   if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(value);
   return Uint8Array.from(String(value), (character) => character.charCodeAt(0));
 }

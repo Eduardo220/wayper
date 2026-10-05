@@ -1,5 +1,6 @@
 import * as Location from "expo-location";
 import { Platform } from "react-native";
+import { recordFlightEvent } from "../diagnostics/activeRunFlightRecorder.js";
 import { checkLocationPermission } from "../permissions";
 import {
   enableNetworkProviderForRun,
@@ -36,6 +37,7 @@ export function getForegroundWatcherOwnerRunId() {
 }
 
 export function stopForegroundWatcher() {
+  if (ownerRunId) recordFlightEvent("GPS_WATCH_STOPPED", { runId: ownerRunId, source: "foreground" });
   generation += 1;
   const current = watcher;
   watcher = null;
@@ -63,7 +65,12 @@ export async function startForegroundWatcher(options = {}) {
   const isCurrent = () => requestGeneration === generation &&
     (typeof options.isRunActive !== "function" || options.isRunActive(runId));
   const emit = (location, source) => {
-    if (!isCurrent()) return;
+    const current = isCurrent();
+    recordFlightEvent("GPS_RAW", { runId, source: "foreground", point: location, reason: current ? null : "stale_watcher_callback" });
+    if (!current) {
+      recordFlightEvent("GPS_REJECTED", { runId, source: "foreground", point: location, reason: "stale_watcher_callback" });
+      return;
+    }
     const payload = toLocationPayload(location, source, runId);
     if (payload) options.onLocation?.(payload);
   };
@@ -86,9 +93,11 @@ export async function startForegroundWatcher(options = {}) {
       }
       watcher = subscription;
       ownerRunId = runId;
+      recordFlightEvent("GPS_WATCH_STARTED", { runId, source: "foreground", reason: "watch" });
       return { ok: true, accuracy, mode: "watch" };
     } catch (error) {
       lastError = error;
+      recordFlightEvent("GPS_ERROR", { runId, source: "foreground", reason: "watch_position_accuracy_fallback" });
       options.onError?.(error, { phase: "watch_position_accuracy_fallback", accuracy });
     }
   }
@@ -101,6 +110,7 @@ export async function startForegroundWatcher(options = {}) {
         "fallback"
       );
     } catch (error) {
+      recordFlightEvent("GPS_ERROR", { runId, source: "foreground", reason: "fallback_polling" });
       options.onError?.(error, { phase: "fallback_polling" });
     }
   }, options.pollIntervalMs || POLL_INTERVAL_MS);
@@ -110,6 +120,7 @@ export async function startForegroundWatcher(options = {}) {
   }
   watcher = { pollingInterval };
   ownerRunId = runId;
+  recordFlightEvent("GPS_WATCH_STARTED", { runId, source: "foreground", reason: "polling" });
   return { ok: true, mode: "polling", fallbackError: lastError };
 }
 

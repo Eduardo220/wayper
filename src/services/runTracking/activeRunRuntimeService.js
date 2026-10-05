@@ -23,6 +23,7 @@ import {
   summarizeRunSnapshot,
 } from "../diagnostics/runDiagnosticsService.js";
 import { LOG_CATEGORIES } from "../../utils/logger.js";
+import { recordFlightEvent } from "../diagnostics/activeRunFlightRecorder.js";
 
 export const RUN_RUNTIME_STATUS = {
   IDLE: ACTIVE_RUN_STATUS.IDLE,
@@ -391,6 +392,13 @@ export async function reconcileActiveRunState(reason = "runtime", options = {}) 
 
       if (snapshot?.activeRunId && isLiveSnapshot(snapshot)) {
         lastKnownActiveSnapshot = snapshot;
+        recordFlightEvent("SESSION_RECOVERED", {
+          snapshot,
+          source: "recovery",
+          appState: AppState.currentState,
+          elapsedMs: calculateActiveRunDurationSeconds(snapshot) * 1000,
+          reason: normalizedReason,
+        });
         await ensureTrackingForActiveRun(normalizedReason, { snapshot });
         await ensureNotificationForActiveRun(normalizedReason, {
           snapshot,

@@ -207,19 +207,74 @@ describe("runFinalizationService", () => {
     });
   });
 
-  test("sem evidencia de pausa preserva o maior fallback seguro de duracao", () => {
+  test("timeline canonica sem pausa prevalece sobre UI e snapshot inflados", () => {
     const startedAtMs = 1_700_000_000_000;
     const result = resolveFinalRunTiming({
       startedAt: new Date(startedAtMs).toISOString(),
       finishedAtMs: startedAtMs + 70_000,
-      durationSeconds: 65,
+      durationSeconds: 80,
       trustedPath: [{ timestamp: startedAtMs + 60_000 }],
     }, {
       uiDurationMs: 80_000,
     });
 
-    expect(result.durationSeconds).toBe(80);
+    expect(result.durationSeconds).toBe(70);
     expect(result.usedPauseTimeline).toBe(false);
+  });
+
+  test("congela duracao em FINISHING e FINISHED apesar de UI avancar 22 segundos", () => {
+    const startedAtMs = Date.parse("2026-10-04T00:09:24.107Z");
+    const finishedAtMs = Date.parse("2026-10-04T00:58:48.257Z");
+
+    for (const status of ["FINISHING", "FINISHED"]) {
+      const result = resolveFinalRunTiming({
+        status,
+        startedAtMs,
+        finishedAtMs,
+        totalPausedMs: 0,
+        durationSeconds: 2986,
+      }, {
+        finishedAtMs: finishedAtMs + 22_000,
+        uiDurationMs: 2_986_000,
+      });
+
+      expect(result).toMatchObject({
+        finishedAtMs,
+        durationMs: 2_964_000,
+        durationSeconds: 2964,
+      });
+    }
+  });
+
+  test("desconta a maior pausa canonica mesmo com UI posterior ao finish", () => {
+    const startedAtMs = 1_700_000_000_000;
+    const result = resolveFinalRunTiming({
+      startedAtMs,
+      finishedAtMs: startedAtMs + 120_000,
+      pausedDurationMs: 30_000,
+      totalPausedMs: 45_000,
+      durationSeconds: 130,
+    }, {
+      uiDurationMs: 150_000,
+    });
+
+    expect(result).toMatchObject({
+      durationMs: 75_000,
+      durationSeconds: 75,
+      totalPausedMs: 45_000,
+    });
+  });
+
+  test.each([
+    [{ startedAtMs: 1_700_000_000_000 }, 80],
+    [{ finishedAtMs: 1_700_000_080_000 }, 80],
+    [{ startedAtMs: 0, finishedAtMs: 1_700_000_080_000 }, 80],
+    [{ startedAtMs: "0", finishedAtMs: 1_700_000_080_000 }, 80],
+    [{ startedAtMs: 1_700_000_000_000, finishedAtMs: 1_699_999_999_000 }, 80],
+    [{ startedAtMs: 1_700_000_000_000, finishedAtMs: 1_700_000_020_000, pausedDurationMs: 30_000 }, 80],
+  ])("mantem fallback da UI com timeline incompleta ou invalida: %p", (snapshot, expectedSeconds) => {
+    const result = resolveFinalRunTiming(snapshot, { uiDurationMs: 80_000 });
+    expect(result.durationSeconds).toBe(expectedSeconds);
   });
 
   test("confirma save antes de limpar a corrida ativa", async () => {

@@ -1,5 +1,6 @@
 import NetInfo from "@react-native-community/netinfo";
 import activeRunTrackingService from "../runTracking/activeRunTrackingService.js";
+import { recordFlightEvent } from "../diagnostics/activeRunFlightRecorder.js";
 import { calculateActiveRunDurationSeconds } from "../runTracking/activeRunState.js";
 import {
   ACTIVE_RUN_STATUS as OFFLINE_RUN_STATUS,
@@ -167,7 +168,22 @@ export async function flushActiveRunCheckpoint(context = {}) {
     });
     if (!checkpoint) return null;
 
+    recordFlightEvent("CHECKPOINT_START", {
+      snapshot,
+      source: snapshot.source || "foreground",
+      writer: "legacy",
+      elapsedMs: Number(checkpoint.durationSeconds ?? checkpoint.duration ?? 0) * 1000,
+      reason: context.reason || "manual",
+    });
     const saved = await saveActiveRunSnapshot(checkpoint);
+    recordFlightEvent("CHECKPOINT_SUCCESS", {
+      snapshot,
+      source: snapshot.source || "foreground",
+      writer: "legacy",
+      elapsedMs: Number(checkpoint.durationSeconds ?? checkpoint.duration ?? 0) * 1000,
+      lastCheckpointAt: saved?.checkpointAt || null,
+      reason: context.reason || "manual",
+    });
     log("checkpoint_flushed", {
       localRunId: saved?.localRunId,
       status: saved?.status,
@@ -180,6 +196,14 @@ export async function flushActiveRunCheckpoint(context = {}) {
     });
     return saved;
   } catch (error) {
+    try {
+      recordFlightEvent("CHECKPOINT_FAILED", {
+        runId: activeRunTrackingService.getTrackingRuntimeStatus?.()?.activeRunId,
+        source: "legacy_checkpoint",
+        writer: "legacy",
+        reason: context.reason || "manual",
+      });
+    } catch {}
     log("checkpoint_flush_failed", {
       reason: context.reason || "manual",
       error: error?.message || String(error),

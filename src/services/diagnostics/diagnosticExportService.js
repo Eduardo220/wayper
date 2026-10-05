@@ -13,6 +13,7 @@ import {
   getRecentDiagnosticRunIds,
 } from "./logStorageService.js";
 import { exportDiagnosticsBundle } from "./runDiagnosticsService.js";
+import { getFlightRecorderFile, getRecentFlightRecorderFiles } from "./activeRunFlightRecorder.js";
 
 export const DIAGNOSTIC_EXPORT_SCOPE = Object.freeze({
   LAST_RUN: "last_run",
@@ -214,6 +215,11 @@ async function createDiagnosticsArchiveInternal(options = {}) {
   Object.entries(ndjsonFiles).forEach(([filename, contents]) => {
     zip.file(filename, contents || "");
   });
+  const flightFiles = await (scope === DIAGNOSTIC_EXPORT_SCOPE.RECENT
+    ? getRecentFlightRecorderFiles()
+    : getFlightRecorderFile(context.runId).then((file) => file ? [file] : []))
+    .catch(() => []);
+  for (const file of flightFiles) zip.file(`flight-recorder/${file.name}`, await file.text());
   addJson(zip, "routeChunks-metadata.json", bundle.routeChunks || {});
   addJson(zip, "activeRun-snapshot-light.json", lightActiveRunSnapshot(context.runtime));
   addJson(zip, "storageHealth.json", {

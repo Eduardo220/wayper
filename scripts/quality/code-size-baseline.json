@@ -58,5 +58,10 @@
     "src/utils/sync.js": 2118,
     "src/utils/tracking.js": 357
   },
-  "exceptions": {}
+  "exceptions": {
+    "src/screens/DiagnosticsScreen.js": { "max": 850, "reason": "Temporary Flight Recorder export action" },
+    "src/services/run/runAutoSaveService.js": { "max": 398, "reason": "Temporary legacy checkpoint flight events" },
+    "src/services/runTracking/activeRunRuntimeService.js": { "max": 521, "reason": "Temporary recovery flight event" },
+    "src/services/runTracking/activeRunTrackingService.js": { "max": 4928, "reason": "Temporary Active Run flight events and background GPS replay suppression for physical run testing" }
+  }
 }

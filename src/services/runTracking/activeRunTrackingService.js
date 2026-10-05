@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { NativeModules, Platform } from "react-native";
+import { AppState, NativeModules, Platform } from "react-native";
 import * as Location from "expo-location";
 import { getRunBackgroundLocationOptions } from "./expoLocation.js";
 import {
@@ -26,6 +26,7 @@ import {
   resetGpsShadowRun,
 } from "../diagnostics/gpsDebugShadowService.js";
 import { recoverHeadlessBackgroundOwner } from "./headlessBackgroundOwnerRecovery.js";
+import { recordFlightEvent } from "../diagnostics/activeRunFlightRecorder.js";
 
 export const ACTIVE_RUN_LOCATION_TASK = "WAYPER_ACTIVE_RUN_LOCATION";
 export const ACTIVE_RUN_BACKUP_STORAGE_KEY = `${ACTIVE_RUN_STORAGE_KEY}:backup`;
@@ -88,6 +89,7 @@ let lastPersistedAt = null;
 let lastPersistedAtMs = 0;
 let lastStorageError = null;
 let lastRawPointReceivedAt = null;
+let flightSnapshotTimer = null;
 let checkpointTimer = null;
 let checkpointDirty = false;
 let acceptedPointsSinceCheckpoint = 0;
@@ -198,7 +200,47 @@ function emit(event, payload) {
 }
 
 function emitSnapshot(snapshot, event = "snapshot") {
+  const flightEvents = {
+    run_started: "RUN_STARTED",
+    run_paused: "RUN_PAUSED",
+    run_resumed: "RUN_RESUMED",
+    run_finishing: "RUN_FINISHING",
+    run_finished_snapshot_saved: "RUN_FINISHED",
+    run_hydrated: "SESSION_HYDRATED",
+  };
+  if (flightEvents[event]) flight(flightEvents[event], { snapshot });
+  ensureFlightTimer(snapshot);
+  if (!snapshot || [ACTIVE_RUN_STATUS.FINISHED, ACTIVE_RUN_STATUS.CANCELLED].includes(snapshot.status)) {
+    if (flightSnapshotTimer) clearInterval(flightSnapshotTimer);
+    flightSnapshotTimer = null;
+  }
   emit("snapshot", { event, snapshot });
+}
+
+function ensureFlightTimer(snapshot) {
+  if ([ACTIVE_RUN_STATUS.RUNNING, ACTIVE_RUN_STATUS.PAUSED, ACTIVE_RUN_STATUS.RECOVERING, ACTIVE_RUN_STATUS.FINISHING].includes(snapshot?.status) && !flightSnapshotTimer) {
+    flightSnapshotTimer = setInterval(() => {
+      if (activeSnapshot?.activeRunId) flight("TIME_SNAPSHOT");
+    }, 15000);
+  }
+}
+
+function flight(event, context = {}) {
+  try {
+    const snapshot = context.snapshot || (
+      context.runId && activeSnapshot?.activeRunId !== context.runId ? null : activeSnapshot
+    );
+    recordFlightEvent(event, {
+      ...context,
+      snapshot,
+      source: context.source || snapshot?.source || "foreground",
+      appState: runtimeState.appState,
+      elapsedMs: snapshot ? calculateActiveRunDurationSeconds(snapshot, { nowMs: Date.now() }) * 1000 : null,
+      lastCheckpointAt: lastPersistedAt,
+    });
+  } catch {
+    // A recorder failure cannot affect tracking.
+  }
 }
 
 function emitError(error, context = {}) {
@@ -443,6 +485,11 @@ function recordBackgroundLifecycleQueueReleased(request, result) {
 }
 
 function finishBackgroundLifecycleOperation(request, result) {
+  if (result === true) flight(request.type === "start" ? "TRACKING_START" : "TRACKING_STOP", {
+    runId: request.expectedRunId,
+    source: activeSnapshot?.source || "foreground",
+    reason: request.reason,
+  });
   if (backgroundLifecycleActiveOperation?.operationId === request.operationId) {
     backgroundLifecycleActiveOperation = null;
   }
@@ -1508,6 +1555,7 @@ function shouldPreferBackupSnapshot(current = {}, backup = {}) {
 }
 
 async function writeSnapshotToStorage(snapshot, event, writeRevision) {
+  flight("CHECKPOINT_START", { snapshot, writer: "canonical", reason: event });
   let snapshotForStorage = snapshot;
   await enqueueStorageWrite(async () => {
     try {
@@ -1544,6 +1592,7 @@ async function writeSnapshotToStorage(snapshot, event, writeRevision) {
           ? getRouteChunkIndexStorageKey(snapshot.activeRunId)
           : null,
       }));
+      flight("CHECKPOINT_SUCCESS", { snapshot, writer: "canonical", reason: event, lastCheckpointAt: lastPersistedAt });
       rememberPersistedCheckpoint(snapshotForStorage);
       setStorageHealth({
         status: "ok",
@@ -1577,6 +1626,7 @@ async function writeSnapshotToStorage(snapshot, event, writeRevision) {
         scheduleCheckpointTimer();
       }
     } catch (error) {
+      flight("CHECKPOINT_FAILED", { snapshot, writer: "canonical", reason: event });
       lastStorageError = error;
       setActiveRunError(error, event);
       const storageFull = isStorageFullError(error);
@@ -1919,6 +1969,8 @@ async function loadPersistedSnapshot() {
     }
 
     if (selected && selectedEnvelope && selectedSource) {
+      flight("SESSION_HYDRATED", { snapshot: selected, source: "storage", reason: selectedSource });
+      ensureFlightTimer(selected);
       const selectedBackup = selectedSource === "backup";
       rememberPersistedCheckpoint(selected);
       lastPersistedAt =
@@ -2179,6 +2231,30 @@ export function getTrackingRuntimeStatus() {
 export function setRunRuntimeSurfaceState(patch = {}) {
   return updateRuntimeState(patch);
 }
+
+AppState?.addEventListener?.("change", (state) => {
+  updateRuntimeState({ appState: state });
+  if (!["active", "background", "inactive"].includes(state)) return;
+  const event = state === "active" ? "APP_FOREGROUND" : state === "background" ? "APP_BACKGROUND" : "APP_INACTIVE";
+  if (activeSnapshot?.activeRunId) {
+    flight(event, { appState: state });
+  } else {
+    const wallMs = Date.now();
+    const monotonicMs = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : null;
+    Promise.resolve().then(() => storage.getItem(ACTIVE_RUN_META_STORAGE_KEY)).then((raw) => {
+      const meta = raw ? JSON.parse(raw) : null;
+      if (meta?.activeRunId) recordFlightEvent(event, {
+        runId: meta.activeRunId,
+        source: "lifecycle",
+        appState: state,
+        runState: meta.status,
+        lastCheckpointAt: meta.lastPersistedAt,
+        wallMs,
+        monotonicMs,
+      });
+    }).catch(() => {});
+  }
+});
 
 function releaseBackgroundStatusProbe(probe) {
   if (
@@ -4013,6 +4089,7 @@ async function hydrateActiveRunSnapshotInternal(snapshot = {}, options = {}) {
 
     activeSession = createTrackingSessionFromSnapshot(reconciled);
     const saved = await persistSnapshot(reconciled, options.event || "run_hydrated");
+    flight("SESSION_RECOVERED", { snapshot: saved, source: "recovery", reason: options.event || "run_hydrated" });
 
     log("run_hydrated", {
       activeRunId: saved.activeRunId,
@@ -4047,6 +4124,7 @@ async function recordLocationInternal(location = {}, options = {}) {
   try {
     const session = await getActiveSession();
     if (!session || !activeSnapshot) {
+      recordFlightEvent("GPS_REJECTED", { runId: options.expectedRunId || location.runSessionId, source: options.source || location.source, point: location, reason: "no_active_session" });
       recordRunEvent("RUN_LOCATION_IGNORED_NO_ACTIVE_SESSION", {
         source: options.source || location.source || "unknown",
       }, {
@@ -4058,6 +4136,7 @@ async function recordLocationInternal(location = {}, options = {}) {
       { ...options, transition: "record_location" },
       activeSnapshot
     )) {
+      flight("GPS_REJECTED", { source: options.source || location.source, point: location, reason: "run_id_mismatch" });
       return activeSnapshot;
     }
     if (
@@ -4067,6 +4146,7 @@ async function recordLocationInternal(location = {}, options = {}) {
         activeSnapshot
       )
     ) {
+      flight("GPS_REJECTED", { source: options.source || location.source, point: location, reason: "stale_background_fence" });
       recordBackgroundCallbackFenceMismatch(
         options.backgroundLifecycleFence,
         "before_location_ingestion",
@@ -4081,6 +4161,7 @@ async function recordLocationInternal(location = {}, options = {}) {
         options.backgroundLifecycleFence
       )
     ) {
+      flight("GPS_REJECTED", { source: options.source || location.source, point: location, reason: "before_native_generation" });
       recordBackgroundCallbackFenceMismatch(
         options.backgroundLifecycleFence,
         "location_predates_native_generation",
@@ -4088,7 +4169,10 @@ async function recordLocationInternal(location = {}, options = {}) {
       );
       return activeSnapshot;
     }
-    if (activeSnapshot.status !== ACTIVE_RUN_STATUS.RUNNING) return activeSnapshot;
+    if (activeSnapshot.status !== ACTIVE_RUN_STATUS.RUNNING) {
+      flight("GPS_REJECTED", { source: options.source || location.source, point: location, reason: `run_${String(activeSnapshot.status).toLowerCase()}` });
+      return activeSnapshot;
+    }
 
     const source = options.source || location.source || "foreground";
     lastRawPointReceivedAt = location.timestamp || Date.now();
@@ -4123,6 +4207,14 @@ async function recordLocationInternal(location = {}, options = {}) {
       source === "background" ? "background_point_buffered" : "foreground_point_buffered",
       result
     );
+    flight(result.accepted ? "GPS_ACCEPTED" : "GPS_REJECTED", {
+      snapshot: buffered,
+      source,
+      point: result.rawPoint || location,
+      reason: result.accepted ? null : result.reason || "filtered",
+      lastRaw: result.rawPoint || location,
+      lastAccepted: result.accepted ? result.point : buffered?.currentLocation,
+    });
     const checkpointDue =
       acceptedPointsSinceCheckpoint >= ACTIVE_RUN_CHECKPOINT_ACCEPTED_POINTS ||
       rawPointsSinceCheckpoint >= ACTIVE_RUN_CHECKPOINT_RAW_POINTS ||
@@ -4136,6 +4228,7 @@ async function recordLocationInternal(location = {}, options = {}) {
     }
     return activeSnapshot || buffered;
   } catch (error) {
+    flight("GPS_ERROR", { source: options.source || location.source, reason: error?.code || error?.name || "ingestion_error" });
     setActiveRunError(error, "recordLocation");
     emitError(error, { fn: "recordLocation" });
     return activeSnapshot;
@@ -4734,7 +4827,14 @@ async function handleBackgroundLocations(data = {}) {
       return left - right;
     });
   const snapshot = activeSnapshot || (await loadPersistedSnapshot());
+  const recordRaw = (location) => recordFlightEvent("GPS_RAW", {
+    runId: snapshot?.localRunId || snapshot?.activeRunId || lifecycleFence.ownerRunId,
+    source: "headless",
+    point: location,
+  });
   if (!isBackgroundCallbackFenceCurrent(lifecycleFence, snapshot)) {
+    locations.forEach(recordRaw);
+    locations.forEach((location) => flight("GPS_REJECTED", { snapshot, source: "headless", point: location, reason: "before_background_batch" }));
     recordBackgroundCallbackFenceMismatch(
       lifecycleFence,
       "before_background_batch",
@@ -4762,6 +4862,8 @@ async function handleBackgroundLocations(data = {}) {
     !snapshot?.activeRunId ||
     snapshot.status !== ACTIVE_RUN_STATUS.RUNNING
   ) {
+    locations.forEach(recordRaw);
+    locations.forEach((location) => flight("GPS_REJECTED", { snapshot, source: "headless", point: location, reason: "no_running_session" }));
     recordRunEvent("RUN_BACKGROUND_TASK_NO_ACTIVE_SESSION", {
       taskName: ACTIVE_RUN_LOCATION_TASK,
       locationsCount: locations.length,
@@ -4778,8 +4880,13 @@ async function handleBackgroundLocations(data = {}) {
     return snapshot || null;
   }
   if (locations.length === 0) return snapshot;
-  for (const loc of locations) {
+  const session = await getActiveSession();
+  let replaySuppressed = 0;
+  let ingestedCount = 0;
+  for (const [index, loc] of locations.entries()) {
     if (!isBackgroundCallbackFenceCurrent(lifecycleFence, snapshot)) {
+      locations.slice(index).forEach(recordRaw);
+      locations.slice(index).forEach((location) => flight("GPS_REJECTED", { snapshot, source: "headless", point: location, reason: "during_background_batch" }));
       recordBackgroundCallbackFenceMismatch(
         lifecycleFence,
         "during_background_batch",
@@ -4788,6 +4895,8 @@ async function handleBackgroundLocations(data = {}) {
       break;
     }
     if (!isBackgroundLocationInsideFence(loc, lifecycleFence)) {
+      recordRaw(loc);
+      flight("GPS_REJECTED", { snapshot, source: "headless", point: loc, reason: "before_native_generation" });
       recordBackgroundCallbackFenceMismatch(
         lifecycleFence,
         "location_predates_native_generation",
@@ -4795,6 +4904,20 @@ async function handleBackgroundLocations(data = {}) {
       );
       continue;
     }
+    // Within the current segment the filter cannot accept a timestamp at or
+    // before its last accepted point. Replayed native batches need not grow
+    // rawPath, checkpoints, or the flight recorder with those same points.
+    const segments = session?.getState({ fullRender: false })?.segments;
+    const trustedPath = segments?.[segments.length - 1]?.trustedPath;
+    const lastAcceptedAt = Number(trustedPath?.[trustedPath.length - 1]?.timestamp);
+    const locationAt = Number(loc.timestamp);
+    if (Number.isFinite(locationAt) && locationAt > 0 &&
+        Number.isFinite(lastAcceptedAt) && locationAt <= lastAcceptedAt) {
+      replaySuppressed += 1;
+      continue;
+    }
+    recordRaw(loc);
+    ingestedCount += 1;
     await recordLocation({
       latitude: loc.coords.latitude,
       longitude: loc.coords.longitude,
@@ -4812,9 +4935,17 @@ async function handleBackgroundLocations(data = {}) {
       backgroundLifecycleFence: lifecycleFence,
     });
   }
+  if (replaySuppressed > 0) {
+    recordFlightEvent("HEADLESS_TASK_REPLAY_SUPPRESSED", {
+      runId: snapshot.localRunId || snapshot.activeRunId,
+      source: "headless",
+      count: replaySuppressed,
+    });
+  }
   if (!isBackgroundCallbackFenceCurrent(lifecycleFence, snapshot)) {
     return activeSnapshot || snapshot;
   }
+  if (ingestedCount === 0 && !checkpointDirty) return activeSnapshot || snapshot;
   return flushPendingActiveRunCheckpoint({
     reason: "background_batch",
     force: true,
@@ -4822,7 +4953,10 @@ async function handleBackgroundLocations(data = {}) {
 }
 
 export async function handleActiveRunLocationTask({ data, error } = {}) {
+  const taskRunId = activeSnapshot?.localRunId || activeSnapshot?.activeRunId || backgroundNativeOwnerRunId;
+  recordFlightEvent("HEADLESS_TASK_START", { runId: taskRunId, source: "headless", count: data?.locations?.length || 0 });
   if (error) {
+    recordFlightEvent("HEADLESS_TASK_ERROR", { runId: taskRunId, source: "headless", reason: error?.code || error?.name || "task_error" });
     const lifecycleFence = captureBackgroundCallbackFence(data || {});
     if (!isBackgroundCallbackFenceCurrent(lifecycleFence, activeSnapshot)) {
       recordBackgroundCallbackFenceMismatch(
@@ -4830,6 +4964,7 @@ export async function handleActiveRunLocationTask({ data, error } = {}) {
         "background_task_error",
         activeSnapshot
       );
+      recordFlightEvent("HEADLESS_TASK_END", { runId: taskRunId, source: "headless", reason: "stale_error" });
       return activeSnapshot;
     }
     updateRuntimeState({
@@ -4852,11 +4987,21 @@ export async function handleActiveRunLocationTask({ data, error } = {}) {
       reason: "background_task_error",
       force: true,
     });
+    recordFlightEvent("HEADLESS_TASK_END", { runId: taskRunId, source: "headless", reason: "error" });
     return null;
   }
-  await recoverHeadlessBackgroundOwner({ hasOwner: Boolean(backgroundNativeOwnerRunId), restoreActiveRun,
-    runningStatus: ACTIVE_RUN_STATUS.RUNNING, startBackgroundLocationUpdates });
-  return handleBackgroundLocations(data || {});
+  try {
+    await recoverHeadlessBackgroundOwner({ hasOwner: Boolean(backgroundNativeOwnerRunId), restoreActiveRun,
+      runningStatus: ACTIVE_RUN_STATUS.RUNNING, startBackgroundLocationUpdates });
+    const runId = activeSnapshot?.localRunId || activeSnapshot?.activeRunId || taskRunId;
+    if (!taskRunId) recordFlightEvent("HEADLESS_TASK_START", { runId, source: "headless", count: data?.locations?.length || 0 });
+    return await handleBackgroundLocations(data || {});
+  } catch (taskError) {
+    recordFlightEvent("HEADLESS_TASK_ERROR", { runId: taskRunId, source: "headless", reason: taskError?.code || taskError?.name || "handler_error" });
+    throw taskError;
+  } finally {
+    recordFlightEvent("HEADLESS_TASK_END", { runId: activeSnapshot?.localRunId || activeSnapshot?.activeRunId || taskRunId, source: "headless" });
+  }
 }
 
 export function __setActiveRunStorageForTests(nextStorage) {
@@ -4881,6 +5026,8 @@ export async function __flushActiveRunBackgroundLifecycleForTests() {
 }
 
 export function __resetActiveRunRuntimeForTests() {
+  if (flightSnapshotTimer) clearInterval(flightSnapshotTimer);
+  flightSnapshotTimer = null;
   clearCheckpointTimer();
   if (backgroundLifecycleActiveOperation) {
     backgroundLifecycleActiveOperation.authoritative = false;

@@ -181,7 +181,15 @@ const {
 const {
   enqueueFinishedRun,
 } = await import("../runSyncQueueService.js");
+const { buildFinishedRunData: buildLocalFinishedRunData } = await import("../runFinalizationData.js");
 const {
+  enqueuePostRunProcessing,
+  persistMinimumFinishedRun,
+} = await import("../runFinalizationService.js");
+const { processRunDeferredTaskQueue } = await import("../runDeferredTaskQueueService.js");
+const runDeferredTaskQueueRepository = await import("../../../repositories/runDeferredTaskQueueRepository.js");
+const {
+  findLocalRunById,
   loadLocalRuns,
   saveLocalRun,
   syncRunsToFirestore,
@@ -372,6 +380,66 @@ describe("active run local-first integration", () => {
       syncStatus: "PENDING",
       offlineStatus: "PENDING_SYNC",
     });
+  });
+
+  test("fim demorado preserva duracao canonica no snapshot, historico e fila deferida", async () => {
+    await activeRunTrackingService.startActiveRun({
+      activeRunId: "run-slow-finish",
+      userId: "user-1",
+      mode: "free",
+      startedAtMs: BASE_TIME,
+    });
+    await activeRunTrackingService.recordLocation(point(1, 0, 8), { source: "foreground" });
+    await activeRunTrackingService.recordLocation(point(2, 0, 16), { source: "foreground" });
+
+    const finishedAtMs = BASE_TIME + 30_000;
+    const finishing = await activeRunTrackingService.markActiveRunFinishing({ nowMs: finishedAtMs });
+    const finished = await activeRunTrackingService.finishActiveRun({ finishedAtMs: finishedAtMs + 22_000 });
+    expect(finishing).toMatchObject({ status: CANONICAL_RUN_STATUS.FINISHING, durationSeconds: 30 });
+    expect(finished).toMatchObject({
+      status: CANONICAL_RUN_STATUS.FINISHED,
+      finishedAtMs,
+      durationSeconds: 30,
+    });
+
+    const { runData } = buildLocalFinishedRunData({
+      runId: "run-slow-finish",
+      mode: "free",
+      snapshot: finished,
+      finishedAtMs,
+      uiDurationSeconds: 52,
+    });
+    expect(runData).toMatchObject({
+      durationSeconds: 30,
+      finishedAt: new Date(finishedAtMs).toISOString(),
+    });
+
+    const save = await persistMinimumFinishedRun(runData, {
+      userId: "user-1",
+      saveLocalRun,
+      findLocalRunById,
+      scheduleRunsSync: jest.fn(),
+      persistFinishedRunDraft,
+      markRecoveredRunLocallySaved: (options) => markRecoveredRunLocallySaved({
+        ...options,
+        trackingService: activeRunTrackingService,
+      }),
+    });
+    expect(save.savedLocalRun.durationSeconds).toBe(30);
+    expect((await loadLocalRuns())[0].durationSeconds).toBe(30);
+
+    const queued = await enqueuePostRunProcessing(save.savedLocalRun, {
+      queueRepository: runDeferredTaskQueueRepository,
+    });
+    expect(queued.ok).toBe(true);
+    const processed = await processRunDeferredTaskQueue({
+      runId: "run-slow-finish",
+      limit: 1,
+      trigger: "test",
+    });
+    expect(processed.processed).toHaveLength(1);
+    expect(processed.processed[0].type).toBe("RUN_FULL_SAVE_FINALIZE");
+    expect((await loadLocalRuns())[0].durationSeconds).toBe(30);
   });
 
   test("falha no salvamento final mantem snapshot canonico recuperavel", async () => {

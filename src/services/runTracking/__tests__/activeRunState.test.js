@@ -510,7 +510,10 @@ describe("active run persistence state", () => {
     const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
 
     expect(indexSource.indexOf("./src/tasks/activeRunLocationTask.js")).toBeLessThan(indexSource.indexOf("./App"));
-    expect(taskSource).toContain("TaskManager.defineTask(ACTIVE_RUN_LOCATION_TASK, handleActiveRunLocationTask)");
+    expect(taskSource).toContain("TaskManager.defineTask(ACTIVE_RUN_LOCATION_TASK, async (input)");
+    expect(taskSource).toContain("return await handleActiveRunLocationTask(input)");
+    expect(taskSource).toContain("flushFlightRecorder().catch(() => {})");
+    expect(taskSource).toContain("setTimeout(resolve, 750)");
     expect(serviceSource).not.toContain("TaskManager.defineTask");
     expect(mapScreen).not.toContain("TaskManager.defineTask");
   });

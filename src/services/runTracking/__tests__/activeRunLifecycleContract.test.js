@@ -43,6 +43,7 @@ jest.unstable_mockModule("@react-native-async-storage/async-storage", () => ({
 }));
 
 jest.unstable_mockModule("react-native", () => ({
+  AppState: { currentState: "active", addEventListener: jest.fn(() => ({ remove: jest.fn() })) },
   NativeModules: {},
   Platform: {
     OS: "android",

@@ -79,7 +79,8 @@ function isFinishedLocalRun(run = {}) {
 function toOptionalTimestampMs(value) {
   if (value == null || value === "") return null;
   const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  if (Number.isFinite(numeric)) return numeric > 0 ? numeric : null;
+  if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -109,7 +110,8 @@ function getLatestPointTimestampMs(snapshot = {}) {
 }
 
 function hasPauseEvidence(snapshot = {}) {
-  if (Number(snapshot.pausedDurationMs ?? snapshot.totalPausedMs ?? snapshot.totalPausedTime) > 0) {
+  if ([snapshot.pausedDurationMs, snapshot.totalPausedMs, snapshot.totalPausedTime]
+    .some((value) => Number(value) > 0)) {
     return true;
   }
   if (snapshot.pausedAtMs || snapshot.pausedAt || snapshot.pauseStartedAt) return true;
@@ -130,16 +132,9 @@ export function resolveFinalRunTiming(snapshot = {}, options = {}) {
   const startedAtMs = toOptionalTimestampMs(
     snapshot.startedAtMs ?? snapshot.startedAt ?? options.startedAtMs
   );
-  const totalPausedMs = Math.max(
-    0,
-    Number(
-      snapshot.totalPausedMs ??
-      snapshot.pausedDurationMs ??
-      snapshot.totalPausedTime ??
-      options.totalPausedMs ??
-      0
-    ) || 0
-  );
+  const totalPausedMs = Math.max(0, ...[
+    snapshot.totalPausedMs, snapshot.pausedDurationMs, snapshot.totalPausedTime, options.totalPausedMs,
+  ].map(Number).filter(Number.isFinite));
   const storedDurationMs = Math.max(
     0,
     Number(snapshot.durationMs ?? snapshot.elapsedMs) ||
@@ -163,9 +158,13 @@ export function resolveFinalRunTiming(snapshot = {}, options = {}) {
   const derivedDurationMs = derivedCandidates.length > 0
     ? Math.max(...derivedCandidates)
     : 0;
-  const durationMs = hasPauseEvidence(snapshot) && derivedCandidates.length > 0
-    ? derivedDurationMs
-    : Math.max(storedDurationMs, uiDurationMs, derivedDurationMs);
+  const hasCompleteTimeline = startedAtMs != null && finishedAtMs != null;
+  const hasCanonicalTimeline = hasCompleteTimeline && finishedAtMs >= startedAtMs &&
+    totalPausedMs <= finishedAtMs - startedAtMs;
+  const usedPauseTimeline = hasPauseEvidence(snapshot) && derivedCandidates.length > 0 &&
+    (!hasCompleteTimeline || hasCanonicalTimeline);
+  const durationMs = hasCanonicalTimeline ? finishedAtMs - startedAtMs - totalPausedMs
+    : usedPauseTimeline ? derivedDurationMs : Math.max(storedDurationMs, uiDurationMs, derivedDurationMs);
   const durationSeconds = Math.max(0, Math.round(durationMs / 1000));
 
   return {
@@ -176,7 +175,7 @@ export function resolveFinalRunTiming(snapshot = {}, options = {}) {
     pausedDurationSeconds: Math.round(totalPausedMs / 1000),
     durationMs: durationSeconds * 1000,
     durationSeconds,
-    usedPauseTimeline: hasPauseEvidence(snapshot) && derivedCandidates.length > 0,
+    usedPauseTimeline,
   };
 }
 
