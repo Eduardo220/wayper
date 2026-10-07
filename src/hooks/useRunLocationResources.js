@@ -10,10 +10,8 @@ import {
 import { recordLocation } from "../services/runTracking/activeRunTrackingService.js";
 import {
   isForegroundWatcherActive,
-  startForegroundWatcher,
-  stopForegroundWatcher,
+  syncForegroundWatcherWithActiveRun,
 } from "../services/runTracking/activeRunForegroundWatcher.js";
-import { setRuntimeSurfaceState } from "../services/runTracking/activeRunRuntimeService.js";
 import { checkpointOnLocationError } from "../services/run/runAutoSaveService.js";
 import { routeToZoneGeometry } from "../services/territory";
 import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
@@ -135,17 +133,9 @@ function ingestLocation(context, locObj = {}) {
 
 export default function useRunLocationResources(contextRef) {
   const stopWatcherAndPolling = useCallback(() => {
-    const context = contextRef.current;
-    stopForegroundWatcher();
-    setRuntimeSurfaceState({ foregroundWatcherStatus: "stopped" });
-    recordRunEvent("LOCATION_WATCHER_STOPPED", {
-      runId: context.currentRunIdRef.current,
-      watcherStatus: "foreground_stopped",
-      screen: "MapScreen",
-    });
-    context.recordSnapshot("watcher_stop", { watcherStatus: "foreground_stopped" }, { force: true });
-    debugTracking("watcher_stopped", { runSessionId: context.currentRunIdRef.current });
-  }, [contextRef]);
+    // The coordinator follows the canonical run status; UI cleanup cannot stop tracking.
+    syncForegroundWatcherWithActiveRun().catch(() => {});
+  }, []);
 
   const resetTrackingPipeline = useCallback((options = {}) => {
     const context = contextRef.current;
@@ -180,20 +170,7 @@ export default function useRunLocationResources(contextRef) {
     if (!runId || context.runStatusRef.current !== "active") return false;
     const restarting = isForegroundWatcherActive();
     if (restarting) context.watcherRestartCountRef.current += 1;
-    const result = await startForegroundWatcher({
-      runId,
-      isRunActive: (expected) => context.currentRunIdRef.current === expected &&
-        context.runStatusRef.current === "active",
-      onLocation: handleLocationUpdate,
-      onError: (error, errorContext) => {
-        context.lastRunDiagnosticErrorRef.current = {
-          message: error?.message || String(error),
-          code: error?.code || null,
-          at: new Date().toISOString(),
-        };
-        checkpointOnLocationError(error, errorContext).catch(() => {});
-      },
-    });
+    const result = await syncForegroundWatcherWithActiveRun();
     if (result.reason === "permission_denied") {
       context.setLocationPermission(result.permission);
       context.locationPermissionRef.current = result.permission;
@@ -202,7 +179,7 @@ export default function useRunLocationResources(contextRef) {
       return false;
     }
     if (!result.ok) return false;
-    setRuntimeSurfaceState({ foregroundWatcherStatus: "started" });
+    if (result.alreadyStarted) return true;
     recordRunEvent(restarting ? "LOCATION_WATCHER_RESTARTED" : "LOCATION_WATCHER_STARTED", {
       runId,
       watcherStatus: result.mode === "polling" ? "fallback_polling_started" : "foreground_started",
@@ -211,7 +188,7 @@ export default function useRunLocationResources(contextRef) {
     });
     context.recordSnapshot(restarting ? "watcher_restart" : "watcher_start", {}, { force: restarting });
     return true;
-  }, [contextRef, handleLocationUpdate]);
+  }, [contextRef]);
 
   return {
     handleLocationUpdate,

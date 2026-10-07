@@ -2,12 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import * as Location from "expo-location";
 import { WAYPER_FALLBACK_COORD } from "../components/Map/WayperMapLibre";
-import { stopForegroundWatcher } from "../services/runTracking/activeRunForegroundWatcher.js";
 import { setRuntimeSurfaceState } from "../services/runTracking/activeRunRuntimeService.js";
-import {
-  checkpointOnLocationError,
-  forceCheckpointForAppState,
-} from "../services/run/runAutoSaveService.js";
+import { checkpointOnLocationError } from "../services/run/runAutoSaveService.js";
 import { checkLocationPermission, ensureLocationForRun, openAppSettings } from "../services/permissions";
 import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
 import { listRunHistory } from "../repositories/runRepository.js";
@@ -108,7 +104,6 @@ export default function useMapScreenLifecycle({
           appState: next,
           screen: "MapScreen",
         });
-        forceCheckpointForAppState(next).catch(() => {});
       }
       if (next !== "active") return;
 
@@ -168,7 +163,6 @@ export default function useMapScreenLifecycle({
       cancelled = true;
       mountedRef.current = false;
       recordUnmount({ appStateRef, currentRunIdRef, runStatusRef });
-      stopForegroundWatcher();
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = null;
       appStateSubscription?.remove?.();

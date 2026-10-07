@@ -234,6 +234,30 @@ describe("MapScreen blocker regressions", () => {
     expect(options.resetRunVisuals).toHaveBeenCalledTimes(1);
   });
 
+  test.each([
+    [null, "idle"],
+    ["run-mounted", "active"],
+  ])("unmount libera timer da UI sem parar watcher para runId %s", (runId, status) => {
+    const timer = setInterval(() => {}, 60_000);
+    const timerRef = { current: timer };
+    const clear = jest.spyOn(global, "clearInterval");
+    const lifecycle = renderHooks(() => useMapScreenLifecycle({
+      currentRunIdRef: { current: runId },
+      recordDiagnosticsSnapshotRef: { current: null },
+      restoreActiveRunForReentryRef: { current: null },
+      runningRef: { current: Boolean(runId) },
+      runStatusRef: { current: status },
+      timerRef,
+    }));
+
+    effectCleanups[0]();
+    expect(lifecycle.mountedRef.current).toBe(false);
+    expect(clear).toHaveBeenCalledWith(timer);
+    expect(timerRef.current).toBeNull();
+    expect(stopForegroundWatcher).not.toHaveBeenCalled();
+    clear.mockRestore();
+  });
+
   test("late reentry result cannot reactivate projection resources after lifecycle cleanup", async () => {
     let resolveHydration;
     hydrateActiveRunFromRuntime.mockReturnValueOnce(new Promise((resolve) => {
@@ -304,7 +328,7 @@ describe("MapScreen blocker regressions", () => {
 
     await expect(pendingRestore).resolves.toBe(false);
     expect(lifecycle.mountedRef.current).toBe(false);
-    expect(stopForegroundWatcher).toHaveBeenCalledTimes(1);
+    expect(stopForegroundWatcher).not.toHaveBeenCalled();
     expect(projectActiveRunSnapshot).not.toHaveBeenCalled();
     expect(startElapsedTimer).not.toHaveBeenCalled();
     expect(startLocationWatcher).not.toHaveBeenCalled();

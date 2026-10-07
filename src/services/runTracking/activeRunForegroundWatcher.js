@@ -1,7 +1,14 @@
 import * as Location from "expo-location";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import { recordFlightEvent } from "../diagnostics/activeRunFlightRecorder.js";
 import { checkLocationPermission } from "../permissions";
+import { checkpointOnLocationError } from "../run/runAutoSaveService.js";
+import {
+  getActiveRunSnapshot,
+  onActiveRunSnapshot,
+  recordLocation,
+  setRunRuntimeSurfaceState,
+} from "./activeRunTrackingService.js";
 import {
   enableNetworkProviderForRun,
   getRunWatchPositionOptions,
@@ -11,6 +18,14 @@ const POLL_INTERVAL_MS = 1000;
 let watcher = null;
 let ownerRunId = null;
 let generation = 0;
+let starting = null;
+let unsubscribeSnapshots = null;
+let appStateSubscription = null;
+let activeRunId = null;
+let activeRunStatus = null;
+let appIsActive = !["background", "inactive"].includes(AppState.currentState);
+let snapshotVersion = 0;
+let coordinatorGeneration = 0;
 
 function toLocationPayload(location, source, runSessionId) {
   if (!location?.coords) return null;
@@ -39,6 +54,7 @@ export function getForegroundWatcherOwnerRunId() {
 export function stopForegroundWatcher() {
   if (ownerRunId) recordFlightEvent("GPS_WATCH_STOPPED", { runId: ownerRunId, source: "foreground" });
   generation += 1;
+  starting = null;
   const current = watcher;
   watcher = null;
   ownerRunId = null;
@@ -50,7 +66,7 @@ export function stopForegroundWatcher() {
   }
 }
 
-export async function startForegroundWatcher(options = {}) {
+async function startForegroundWatcherInternal(options = {}) {
   const runId = String(options.runId || "").trim();
   if (!runId) return { ok: false, reason: "missing_run_id" };
   if (watcher && ownerRunId === runId) return { ok: true, alreadyStarted: true };
@@ -124,13 +140,92 @@ export async function startForegroundWatcher(options = {}) {
   return { ok: true, mode: "polling", fallbackError: lastError };
 }
 
-export function __resetForegroundWatcherForTests() {
+export function startForegroundWatcher(options = {}) {
+  const runId = String(options.runId || "").trim();
+  if (starting?.runId === runId) return starting.promise;
+  const promise = startForegroundWatcherInternal(options);
+  starting = { runId, promise };
+  promise.finally(() => {
+    if (starting?.promise === promise) starting = null;
+  }).catch(() => {});
+  return promise;
+}
+
+function applyActiveRunSnapshot(snapshot) {
+  activeRunId = snapshot?.activeRunId || null;
+  activeRunStatus = snapshot?.status || null;
+  if (activeRunStatus !== "RUNNING") {
+    if (isForegroundWatcherActive() || starting) stopForegroundWatcher();
+    setRunRuntimeSurfaceState({ foregroundWatcherStatus: "stopped" });
+    return Promise.resolve({ ok: false, reason: "not_running" });
+  }
+  if (!appIsActive) return Promise.resolve({ ok: false, reason: "app_background" });
+  const runId = activeRunId;
+  return startForegroundWatcher({
+    runId,
+    isRunActive: (expectedRunId) => activeRunId === expectedRunId && activeRunStatus === "RUNNING",
+    onLocation: (location) => {
+      recordLocation(location, { expectedRunId: location.runSessionId, source: "foreground" })
+        .catch((error) => checkpointOnLocationError(error, { phase: "canonical_location_ingestion" }).catch(() => {}));
+    },
+    onError: (error, context) => checkpointOnLocationError(error, context).catch(() => {}),
+  }).then((result) => {
+    if (result.ok && ownerRunId === runId && activeRunStatus === "RUNNING") {
+      setRunRuntimeSurfaceState({ foregroundWatcherStatus: "started" });
+    }
+    return result;
+  });
+}
+
+export async function syncForegroundWatcherWithActiveRun() {
+  const version = snapshotVersion;
+  const generationAtRequest = coordinatorGeneration;
+  const snapshot = await getActiveRunSnapshot();
+  if (version !== snapshotVersion || generationAtRequest !== coordinatorGeneration) {
+    return { ok: false, reason: "stale_sync" };
+  }
+  return applyActiveRunSnapshot(snapshot);
+}
+
+export function startActiveRunForegroundCoordinator() {
+  if (unsubscribeSnapshots) return stopActiveRunForegroundCoordinator;
+  coordinatorGeneration += 1;
+  appIsActive = !["background", "inactive"].includes(AppState.currentState);
+  unsubscribeSnapshots = onActiveRunSnapshot(({ event, snapshot }) => {
+    if (event === "foreground_point_buffered" || event === "background_point_buffered") return;
+    snapshotVersion += 1;
+    applyActiveRunSnapshot(snapshot).catch(() => {});
+  });
+  appStateSubscription = AppState.addEventListener("change", (next) => {
+    appIsActive = next === "active";
+    if (next === "active") syncForegroundWatcherWithActiveRun().catch(() => {});
+  });
+  syncForegroundWatcherWithActiveRun().catch(() => {});
+  return stopActiveRunForegroundCoordinator;
+}
+
+export function stopActiveRunForegroundCoordinator() {
+  coordinatorGeneration += 1;
+  unsubscribeSnapshots?.();
+  unsubscribeSnapshots = null;
+  appStateSubscription?.remove?.();
+  appStateSubscription = null;
+  activeRunId = null;
+  activeRunStatus = null;
   stopForegroundWatcher();
+  setRunRuntimeSurfaceState({ foregroundWatcherStatus: "stopped" });
+}
+
+export function __resetForegroundWatcherForTests() {
+  stopActiveRunForegroundCoordinator();
 }
 
 export default {
   getForegroundWatcherOwnerRunId,
   isForegroundWatcherActive,
+  startActiveRunForegroundCoordinator,
   startForegroundWatcher,
+  stopActiveRunForegroundCoordinator,
   stopForegroundWatcher,
+  syncForegroundWatcherWithActiveRun,
 };

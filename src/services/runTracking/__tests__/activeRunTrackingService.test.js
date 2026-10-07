@@ -20,7 +20,9 @@ const AsyncStorageMock = {
 
 let locationStarted = false;
 let backgroundTaskHandler = null;
-let appStateListener = null;
+const appStateListeners = new Set();
+const appStateListener = (state) => appStateListeners.forEach((listener) => listener(state));
+let foregroundCallback = null;
 const LocationMock = {
   Accuracy: {
     Balanced: 3,
@@ -37,6 +39,10 @@ const LocationMock = {
   }),
   stopLocationUpdatesAsync: jest.fn(async () => {
     locationStarted = false;
+  }),
+  watchPositionAsync: jest.fn(async (_options, callback) => {
+    foregroundCallback = callback;
+    return { remove: jest.fn() };
   }),
 };
 
@@ -65,8 +71,8 @@ jest.unstable_mockModule("react-native", () => ({
   AppState: {
     currentState: "active",
     addEventListener: jest.fn((_event, listener) => {
-      appStateListener = listener;
-      return { remove: jest.fn() };
+      appStateListeners.add(listener);
+      return { remove: jest.fn(() => appStateListeners.delete(listener)) };
     }),
   },
   NativeModules: {},
@@ -90,8 +96,12 @@ jest.unstable_mockModule("react-native", () => ({
 jest.unstable_mockModule("expo-location", () => LocationMock);
 
 jest.unstable_mockModule("expo-task-manager", () => TaskManagerMock);
+jest.unstable_mockModule("../../permissions", () => ({
+  checkLocationPermission: jest.fn(async () => ({ granted: true })),
+}));
 
 const service = await import("../activeRunTrackingService.js");
+const foreground = await import("../activeRunForegroundWatcher.js");
 await import("../../../tasks/activeRunLocationTask.js");
 const runtimeService = await import("../activeRunRuntimeService.js");
 const {
@@ -134,8 +144,10 @@ function getStoredTrustedPointsFromChunks(raw = getStoredActiveRun()) {
 }
 
 beforeEach(async () => {
+  foreground.__resetForegroundWatcherForTests();
   storage.clear();
   locationStarted = false;
+  foregroundCallback = null;
   jest.clearAllMocks();
   TaskManagerMock.isTaskDefined.mockReturnValue(false);
   service.__resetActiveRunRuntimeForTests();
@@ -144,10 +156,127 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  foreground.__resetForegroundWatcherForTests();
   service.__resetActiveRunRuntimeForTests();
 });
 
 describe("activeRunTrackingService lifecycle", () => {
+  test("watcher continua sem MapScreen e reentradas preservam a mesma corrida", async () => {
+    foreground.startActiveRunForegroundCoordinator();
+    const started = await service.startActiveRun({
+      activeRunId: "run-surface-independent",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await foreground.syncForegroundWatcherWithActiveRun();
+    const callbackBeforeUnmount = foregroundCallback;
+    expect(started.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(foreground.getForegroundWatcherOwnerRunId()).toBe(started.activeRunId);
+    expect(LocationMock.watchPositionAsync).toHaveBeenCalledTimes(1);
+
+    // MapScreen has no ownership in this coordinator: its unmount changes no resource.
+    callbackBeforeUnmount({ coords: nextPoint(1), timestamp: nextPoint(1).timestamp });
+    await service.__flushActiveRunBackgroundLifecycleForTests();
+    const beforeReentry = await service.getActiveRunSnapshot();
+    expect(beforeReentry.trustedPath).toHaveLength(1);
+    await service.flushPendingActiveRunCheckpoint({ reason: "surface_unmounted", force: true });
+    expect(getStoredTrustedPointsFromChunks()).toHaveLength(1);
+
+    const [firstRestore, secondRestore] = [
+      await service.restoreActiveRun({ restartTracking: true }),
+      await service.restoreActiveRun({ restartTracking: true }),
+    ];
+    await foreground.syncForegroundWatcherWithActiveRun();
+    expect(firstRestore.activeRunId).toBe(started.activeRunId);
+    expect(secondRestore.activeRunId).toBe(started.activeRunId);
+    expect(secondRestore.distanceMeters).toBeGreaterThanOrEqual(beforeReentry.distanceMeters);
+    expect(LocationMock.watchPositionAsync).toHaveBeenCalledTimes(1);
+    expect(foregroundCallback).toBe(callbackBeforeUnmount);
+  });
+
+  test("pause, resume e finish apos reentrada seguem o mesmo localRunId", async () => {
+    foreground.startActiveRunForegroundCoordinator();
+    const started = await service.startActiveRun({
+      activeRunId: "run-pause-surface",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await foreground.syncForegroundWatcherWithActiveRun();
+    const firstCallback = foregroundCallback;
+    const firstRemove = await LocationMock.watchPositionAsync.mock.results[0].value.then((value) => value.remove);
+    const paused = await service.pauseActiveRun({
+      expectedRunId: started.activeRunId,
+      endedAtMs: BASE_TIME + 10_000,
+    });
+    expect(paused.status).toBe(ACTIVE_RUN_STATUS.PAUSED);
+    expect(foreground.isForegroundWatcherActive()).toBe(false);
+    expect(service.getTrackingRuntimeStatus().foregroundWatcherStatus).toBe("stopped");
+    expect(firstRemove).toHaveBeenCalledTimes(1);
+    const pausedRestore = await service.restoreActiveRun({ restartTracking: true });
+    expect(pausedRestore.status).toBe(ACTIVE_RUN_STATUS.PAUSED);
+    expect(foreground.isForegroundWatcherActive()).toBe(false);
+    firstCallback({ coords: nextPoint(1), timestamp: nextPoint(1).timestamp });
+    await service.__flushActiveRunBackgroundLifecycleForTests();
+    expect((await service.getActiveRunSnapshot()).trustedPath).toHaveLength(0);
+
+    const resumed = await service.resumeActiveRun({
+      expectedRunId: started.activeRunId,
+      startedAtMs: BASE_TIME + 70_000,
+    });
+    await foreground.syncForegroundWatcherWithActiveRun();
+    expect(resumed.status).toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(resumed.localRunId).toBe(started.localRunId);
+    expect(LocationMock.watchPositionAsync).toHaveBeenCalledTimes(2);
+    const resumedRestore = await service.restoreActiveRun({ restartTracking: true });
+    expect(resumedRestore.activeRunId).toBe(started.activeRunId);
+    expect(LocationMock.watchPositionAsync).toHaveBeenCalledTimes(2);
+    const finishing = await service.markActiveRunFinishing({ nowMs: BASE_TIME + 80_000 });
+    expect(finishing.status).toBe(ACTIVE_RUN_STATUS.FINISHING);
+    expect(foreground.isForegroundWatcherActive()).toBe(false);
+    const finishingRestore = await service.restoreActiveRun({ restartTracking: true });
+    expect(finishingRestore.status).toBe(ACTIVE_RUN_STATUS.FINISHING);
+    expect(foreground.isForegroundWatcherActive()).toBe(false);
+    const finished = await service.finishActiveRun({ finishedAtMs: BASE_TIME + 80_000 });
+    expect(finished.activeRunId).toBe(started.activeRunId);
+    expect(finished.localRunId).toBe(started.localRunId);
+    expect(finished.durationSeconds).toBe(20);
+    expect(getStoredActiveRun().status).toBe(ACTIVE_RUN_STATUS.FINISHED);
+  });
+
+  test("coordenador reabre sessao persistida sem duplicar watcher", async () => {
+    const started = await service.startActiveRun({
+      activeRunId: "run-cold-surface",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    service.__resetActiveRunRuntimeForTests();
+    foreground.startActiveRunForegroundCoordinator();
+    await foreground.syncForegroundWatcherWithActiveRun();
+    expect(foreground.getForegroundWatcherOwnerRunId()).toBe(started.activeRunId);
+    const restored = await service.restoreActiveRun({ restartTracking: true });
+    await foreground.syncForegroundWatcherWithActiveRun();
+    expect(restored.activeRunId).toBe(started.activeRunId);
+    expect(LocationMock.watchPositionAsync).toHaveBeenCalledTimes(1);
+  });
+
+  test("retorno do app rearma watcher perdido para o mesmo runId", async () => {
+    foreground.startActiveRunForegroundCoordinator();
+    const started = await service.startActiveRun({
+      activeRunId: "run-app-rearm",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await foreground.syncForegroundWatcherWithActiveRun();
+    foreground.stopForegroundWatcher();
+    expect(foreground.isForegroundWatcherActive()).toBe(false);
+
+    appStateListener("active");
+    await foreground.syncForegroundWatcherWithActiveRun();
+    expect(foreground.getForegroundWatcherOwnerRunId()).toBe(started.activeRunId);
+    expect(LocationMock.watchPositionAsync).toHaveBeenCalledTimes(2);
+    expect((await service.getActiveRunSnapshot()).activeRunId).toBe(started.activeRunId);
+  });
+
   test("registra transicao de AppState fora da tela", async () => {
     await service.startActiveRun({ activeRunId: "run-appstate-flight", startedAtMs: BASE_TIME });
     appStateListener("background");
