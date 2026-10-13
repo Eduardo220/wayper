@@ -150,3 +150,6 @@ docs/wayper/.trash/
 /wayper-*.zip
 /wayper_zone_*.geojson
 /wayper_zone_coords_*.txt
+
+# External conversation exports; lifecycle: docs/ai/harness-v1.md
+/codex-session-*.md
