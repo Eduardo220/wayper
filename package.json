@@ -31,7 +31,7 @@
     "benchmark:report:historical": "node scripts/wayper-harness-benchmark-report.mjs",
     "benchmark:full": "npm run benchmark:tier-b && npm run benchmark:report",
     "benchmark:full:historical": "npm run benchmark:tier-a && npm run benchmark:tier-b:historical && npm run benchmark:tier-c && npm run benchmark:report:historical",
-    "quality:evidence": "node --test scripts/quality/check-evidence-receipts.test.mjs",
+    "quality:evidence": "node --test scripts/quality/check-evidence-receipts.test.mjs scripts/quality/check-evidence-android.test.mjs",
     "evidence:observe": "node scripts/wayper-evidence-observer.mjs",
     "quality:context": "node --test scripts/quality/check-goal-identity.test.mjs scripts/quality/check-context-efficiency.test.mjs && npm run quality:context-economy && node scripts/wayper-context.mjs benchmark && npm run quality:packets",
     "quality:context-economy": "node --test scripts/quality/check-context-economy.test.mjs scripts/quality/check-context-adversarial.test.mjs",

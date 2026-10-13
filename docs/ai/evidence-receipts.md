@@ -65,7 +65,7 @@ Objetos e observations rejeitam campos desconhecidos; payload máximo: 12 KiB.
 | `repositoryReference` | Snapshot observado: repositoryId, checkoutFingerprint, branch, HEAD, dirty, contentFingerprint |
 | `kind`, `origin` | Enums abaixo; combinações inválidas são rejeitadas |
 | `subject` | path/range opcionais, target, fingerprint do conteúdo ou estado testado |
-| `observation` | Union fechada: FILE, EXECUTION, DERIVATION, ASSERTION, GRAPH_REFERENCE, GRAPH_QUERY_EXECUTION |
+| `observation` | Union fechada: FILE, EXECUTION, DERIVATION, ASSERTION, GRAPH_REFERENCE, GRAPH_QUERY_EXECUTION, ANDROID_ARTIFACTS |
 | `result` | OBSERVED, PASS, FAIL ou UNKNOWN, condicionado ao tipo de observation |
 | `producedAt`, `producer` | Timestamp ISO, nome/version do produtor |
 | `contentFingerprint` | SHA-256 do conteúdo canônico; keys ordenadas recursivamente, arrays preservados |
@@ -77,8 +77,8 @@ Kinds: `SOURCE`, `DOCUMENT`, `COMMAND`, `TEST`, `QUALITY_GATE`, `RUNTIME`,
 
 Origins: `SOURCE_OBSERVED`, `RUNNER_OBSERVED`, `HOST_OBSERVED`,
 `HANDOFF_ASSERTED`, `MODEL_ASSERTED`, `HUMAN_ASSERTED`, `IMPORTED_LEGACY`.
-HOST_OBSERVED é vocabulário reservado; nenhum adapter de runtime físico é
-implementado. A schema não permite usar esse origin para inventar uma execução.
+HOST_OBSERVED permanece reservado. O adapter Android abaixo usa RUNNER_OBSERVED;
+a schema não permite usar origins para inventar uma execução.
 
 - FILE identifica path, range, bytes e fingerprint. DOCUMENT usa o mesmo
   observer e preserva provenance sem carregar documento para o Map/Packet.
@@ -88,8 +88,8 @@ implementado. A schema não permite usar esse origin para inventar uma execuçã
 - DERIVATION referencia o COMMAND observado. Kind, target, executionId, repo,
   estado, resultado e counts precisam corresponder ao pai. Não existe API pública
   para criar TEST apenas fornecendo `result: PASS`.
-- RUNTIME, REVIEW e HUMAN_DECISION são assertions nesta fase. Ambiente manual,
-  browser, emulador ou Android físico permanece UNVERIFIED. HUMAN_DECISION
+- RUNTIME pode usar ANDROID_ARTIFACTS observado pelo adapter abaixo. Os demais
+  relatos manuais, browser e emulador permanecem UNVERIFIED. REVIEW e HUMAN_DECISION são assertions. HUMAN_DECISION
   registra decisão/constraint; não comprova teste, build ou correctness.
 - GRAPH_REFERENCE conserva graph/corpus/query/result fingerprints e freshness.
   A consulta informada não é promovida a execução observada. Cache stale nunca
@@ -119,6 +119,92 @@ Observed Runner -> execução observada -> receipt verificável
 Direct shell    -> investigação -> nenhum receipt automático
 Specialist      -> assertion -> owner/source/runner validation
 ```
+
+## Android físico: captura e admissão por artifacts
+
+Owner: `scripts/wayper-evidence-android.mjs`, integrado ao observer/store existentes.
+`ANDROID_ARTIFACTS` é uma alternativa fechada da observation V1; receipts antigos
+continuam imutáveis. Não existe API que recebe `result: PASS` do participante.
+
+O owner aprova um profile JSON por **path + SHA-256**, na policy do requirement
+(`androidProfile`) e nos inputs do Planner. Exemplo mínimo de formato, não prova
+de finalização nem profile aprovado para uma investigação:
+
+```json
+{
+  "schemaVersion": 1,
+  "package": "com.wayper.app",
+  "apkFingerprint": "sha256:<hash real do APK esperado>",
+  "sourceSubjects": [{"path": "<source relevante>", "fingerprint": "sha256:<hash real>"}],
+  "steps": [{
+    "id": "diagnosis",
+    "args": ["exec-out", "run-as", "com.wayper.app", "cat", "files/diagnosis.json"],
+    "checks": [
+      {"type": "JSON_EQUALS", "pointer": ["status"], "expected": "IDLE"},
+      {"type": "JSON_TIMESTAMP_IN_WINDOW", "pointer": ["at"], "expected": null}
+    ]
+  }]
+}
+```
+
+`android-begin --serial SERIAL --profile PATH --profile-fingerprint SHA --mutability READ_ONLY`
+captura identidade física e APK antes do cenário e retorna `sessionPath`.
+Depois da execução real, `android-finish --session PATH --target TARGET` captura
+os artifacts, reobserva identidade/APK e calcula os checks. Ambos usam o seletor
+`--thread-id`, `--goal-run-id`, `--revision` de `evidence:observe`.
+O adapter **somente lê** via ADB; iniciar/finalizar atividade e ações de UI
+continuam no runbook/operador. Não instala APK, escreve storage nem executa shell arbitrário.
+
+Allowlist: `adb -s SERIAL get-state`, propriedades de identidade, package/pm path
+e leitura do APK, mais steps `exec-out run-as PACKAGE cat RELATIVE_PATH`,
+`exec-out cat /sdcard/PATH`, `logcat -d -v threadtime` e `dumpsys activity activities`.
+Sem dispositivo autorizado, flag qemu diferente de 0, package inacessível,
+APK divergente ou instalação split, o setup falha fechado. Nenhum FAIL vira PASS.
+
+O bundle privado em `.wayper-context/android/<UUID>/` conserva serial, modelo,
+fingerprint do Android, package/versionCode/versionName, hash do APK antes/depois,
+argv reproduzível, timestamps, exit codes, stdout/stderr e hashes dos artifacts.
+O receipt bounded referencia o bundle/profile e seus hashes; o store verifica
+novamente os bytes, a sequência de comandos, a identidade e os checks no consumo.
+JSON_EQUALS e TEXT_INCLUDES/EXCLUDES não aceitam resultado fornecido pelo agente.
+Ao menos um check temporal é obrigatório. NDJSON_EVENT_SEQUENCE exige eventos
+ordenados, do mesmo runId, dentro da captura: `expected` contém
+`eventKey`, `timeKey`, `runIdKey`, `events`; `pointer` é `[]`. Permite verificar
+Flight Recorder/diagnóstico sem incorporar suas coordenadas no receipt/Context Map.
+
+Se finish produziu FAIL por artifact ainda indisponível, uma chamada explícita
+com o mesmo sessionPath pode repetir somente as leituras de artifacts e a
+identidade final. O producer verifica a captura FAIL íntegra, conserva o begin
+observado, Goal/revisão/profile e timestamps originais, e grava a tentativa em
+outro diretório. Bundle e receipt anteriores permanecem imutáveis. Não executa
+cenários, não troca profile/source e não altera identidade de Goal. Captura PASS
+não permite esse retry; adulteração ou mudança de source/profile falha fechado.
+
+`android-verify --bundle PATH --target TARGET` revalida um bundle já capturado;
+produz **nova observação** vinculada à identidade/revisão atual e preserva no
+bundle a identidade e timestamps originais. Não copia/reassina/rebinda receipts.
+Reuse exige profile idêntico, mesmo APK aprovado, artifacts íntegros e todos os
+sourceSubjects aprovados inalterados. Mudanças fora desses subjects não reexecutam
+prova física. Gate/test receipts de comando mantêm seu contrato de repo inteiro.
+Archives anteriores sem esse envelope não ganham proveniência retroativa: podem
+ser DOCUMENT/SOURCE/auditoria observada, não uma captura Android fabricada.
+
+A aprovação do profile exige cobertura do claim e de suas dependências. Uma
+identidade de APK não prova start/finish/history/deep link. Um export recente não
+prova que um cenário antigo foi executado com o APK atual; os checks devem exigir
+eventos do cenário dentro da captura. Build/source e bundle Metro continuam
+obrigações separadas: SHA do APK não autentica o JS servido por Metro. ADB e store
+local são trusted infrastructure, sem attestation contra um host/writer malicioso.
+Saídas privadas podem conter GPS/logs: não publicar bundles brutos. Limites atuais:
+64 source subjects, 16 steps, 32 checks/step, 128 MiB/output e 60 s/comando; não há
+truncamento admitido como PASS, retries ou suporte a split APK nesta versão.
+
+Policy sem `androidProfile` não admite ANDROID_ARTIFACTS, mesmo com target igual.
+No Planner, critério Android pode declarar `androidProfile`; o campo opcional no
+repo cobre somente cenários Android/shared sem criterionId. L3/L5/L6 mantêm seus
+requirements e environments. Sem profile, o observer continua UNAVAILABLE; com
+profile aprovado e sem execução, permanece MISSING. Tests/builds não substituem
+RUNTIME, e aprovação do profile não satisfaz build, assurances ou quality gates.
 
 Receipts preservam FAIL inclusive em timeout ou executável indisponível. Uma
 execução que muda o estado do repo fica stale para prova atual, mesmo com exit
@@ -179,7 +265,8 @@ node scripts/wayper-context.mjs record --thread-id <threadId> \
   --data '{"receiptId":"ER-<sha256>"}'
 ```
 
-Modes do observer CLI: source, document, command, test, gate. Os helpers também
+Modes do observer CLI: source, document, command, test, gate, android-begin,
+android-finish, android-verify. Os helpers também
 aceitam `{ root, execution, repositories, repository, ... }`. Store root é o
 owner do Working Context; roots operacionais não são expostos no receipt.
 No CLI, `--repository-id wayper-site` escolhe o subject repo; as definições

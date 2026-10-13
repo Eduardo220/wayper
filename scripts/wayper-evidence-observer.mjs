@@ -7,6 +7,7 @@ import { assertGoalExecution, contextStatePath, repositorySnapshot, stable } fro
 import { evidenceHash, evidenceText, safeEvidencePath, sealReceipt, sourceFingerprint, validateReceiptSchema, receiptIntegrityValid } from './wayper-evidence-receipts.mjs';
 import { evidenceRepositories, receiptPath, readReceipt } from './wayper-evidence-store.mjs';
 import { inspectGraphFreshness, freshGraph } from './wayper-graph.mjs';
+import { beginAndroidObservation, finishAndroidObservation, inspectAndroidBundle } from './wayper-evidence-android.mjs';
 
 const producer = Object.freeze({ name: 'wayper-evidence-observer', version: 1 });
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -154,6 +155,17 @@ async function runDerived(options, kind) {
 export const runObservedTest = (options) => runDerived(options, 'TEST');
 export const runObservedQualityGate = (options) => runDerived(options, 'QUALITY_GATE');
 
+// Reusing captured artifacts creates a new verification, never changes an old receipt's identity.
+export async function observeAndroidArtifacts(options) {
+  const observed = context(options);
+  if (options.repository !== 'wayper') throw new Error('Android observer requires wayper repository');
+  const checked = options.bundlePath ? inspectAndroidBundle(observed.definition.root, options.bundlePath) :
+    await finishAndroidObservation({ ...options, root: observed.definition.root });
+  return receipt(options, observed, { kind: 'RUNTIME', origin: 'RUNNER_OBSERVED', result: checked.result,
+    subject: { path: checked.observation.bundlePath, range: null, target: evidenceText(options.target), fingerprint: checked.observation.bundleFingerprint },
+    observation: checked.observation });
+}
+
 export function recordAssertion(options) {
   if (!['HANDOFF_ASSERTED', 'MODEL_ASSERTED', 'HUMAN_ASSERTED', 'IMPORTED_LEGACY'].includes(options.origin)) {
     throw new Error('Assertion cannot claim an observed origin');
@@ -222,12 +234,21 @@ async function main() {
   const options = { root: PROJECT_ROOT, execution: state.execution, repositories,
     repository: input['repository-id'] ?? 'wayper', target: input.target, path: input.path, range: input.range,
     command: args[split + 1], args: args.slice(split + 2), mutability: input.mutability };
+  if (mode === 'android-begin') {
+    if (input.mutability !== 'READ_ONLY') throw new Error('Android capture requires READ_ONLY');
+    console.log(JSON.stringify(await beginAndroidObservation({ ...options, serial: input.serial,
+      androidProfile: { path: input.profile, fingerprint: input['profile-fingerprint'] } })));
+    return;
+  }
+  options.sessionPath = input.session; options.bundlePath = input.bundle;
+  if (mode === 'android-finish' && !input.session || mode === 'android-verify' && !input.bundle) throw new Error('Android session/bundle argument missing');
   if (input['grant-id'] && input['permit-id']) options.dispatchAuthorization = { grantId: input['grant-id'],
     permitId: input['permit-id'], actorId: input['actor-id'], action: { kind: 'COMMAND', command: options.command,
       args: options.args, target: options.target, mutability: options.mutability,
       evidenceKind: { command: 'COMMAND', test: 'TEST', gate: 'QUALITY_GATE' }[mode] } };
   const execute = { source: observeFile, document: (o) => observeFile({ ...o, kind: 'DOCUMENT' }),
-    command: runObservedCommand, test: runObservedTest, gate: runObservedQualityGate }[mode];
+    command: runObservedCommand, test: runObservedTest, gate: runObservedQualityGate,
+    'android-finish': observeAndroidArtifacts, 'android-verify': observeAndroidArtifacts }[mode];
   if (!execute || ['command', 'test', 'gate'].includes(mode) && split < 0) throw new Error('Usage: observer source|document|command|test|gate --thread-id ID --goal-run-id ID --revision N ... [-- executable args]');
   const observed = await execute(options); const value = observed.receipt ?? observed;
   console.log(JSON.stringify({ receiptId: value.receiptId, kind: value.kind, result: value.result,

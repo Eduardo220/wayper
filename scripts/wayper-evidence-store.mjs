@@ -4,6 +4,7 @@ import { assertGoalExecution, repositorySnapshot, stable } from './wayper-contex
 import { RECEIPT_ID, receiptIntegrityValid, validateEvidenceRequirement, canonicalEvidenceRange,
   sourceFingerprint, validateReceiptSchema } from './wayper-evidence-receipts.mjs';
 import { inspectGraphFreshness, freshGraph } from './wayper-graph.mjs';
+import { inspectAndroidBundle } from './wayper-evidence-android.mjs';
 
 export function evidenceRepositories(options) {
   return options.repositories ?? options.repositoryDefinitions ?? [{ id: 'wayper', root: options.root }];
@@ -86,6 +87,11 @@ export function validateReceipt(receipt, options = {}) {
         try { observed = sourceFingerprint(definition.root, value.subject.path, value.subject.range); }
         catch { /* A moved/shortened/unsafe source cannot retain proof. */ }
         if (!observed || observed.hash !== value.subject.fingerprint || observed.bytes !== o.bytes) fail('STALE_SUBJECT');
+      } else if (o.type === 'ANDROID_ARTIFACTS') {
+        try {
+          const checked = inspectAndroidBundle(definition.root, o.bundlePath);
+          if (stable(checked.observation) !== stable(o) || checked.result !== value.result) fail('ANDROID_OBSERVATION_MISMATCH');
+        } catch { fail('ANDROID_ARTIFACTS_UNAVAILABLE_OR_CHANGED'); }
       } else if (['EXECUTION', 'DERIVATION'].includes(o.type)) {
         if (current.contentFingerprint !== value.repositoryReference.contentFingerprint ||
           value.subject.fingerprint !== current.contentFingerprint) fail('STALE_REPOSITORY');
@@ -140,8 +146,11 @@ export function evaluateEvidenceRequirement(requirement, receiptIds, options = {
       (!requirement.target || receipt.subject.target === requirement.target) &&
       (!requirement.path || receipt.subject.path === requirement.path && canonicalEvidenceRange(requirement.range) === canonicalEvidenceRange(receipt.subject.range)) &&
       (!requirement.fingerprint || receipt.subject.fingerprint === requirement.fingerprint);
-    if (!compatible) checked.reasons.push('INCOMPATIBLE_SUBJECT_OR_RESULT');
-    if (checked.status === 'VALID' && compatible) acceptedReceiptIds.push(id);
+    const profileCompatible = requirement.androidProfile ? receipt.observation.type === 'ANDROID_ARTIFACTS' &&
+      receipt.observation.profilePath === requirement.androidProfile.path && receipt.observation.profileFingerprint === requirement.androidProfile.fingerprint :
+      receipt.observation.type !== 'ANDROID_ARTIFACTS';
+    if (!compatible || !profileCompatible) checked.reasons.push('INCOMPATIBLE_SUBJECT_OR_RESULT');
+    if (checked.status === 'VALID' && compatible && profileCompatible) acceptedReceiptIds.push(id);
     receipts.push(checked);
   }
   return { status: acceptedReceiptIds.length ? 'SATISFIED' : 'UNSATISFIED', acceptedReceiptIds, receipts,
