@@ -7,8 +7,7 @@ export const RUN_MINIMUM_SAVE_SCHEMA_VERSION = 1;
 export const EXPEDITION_PROCESSING_SCHEMA_VERSION = 1;
 
 export const RUN_FINALIZATION_TIMEOUTS = Object.freeze({
-  CHECKPOINT_MS: 2000,
-  SNAPSHOT_MS: 2500,
+  FREEZE_MS: 20000,
   LOCAL_SAVE_MS: 3500,
   DRAFT_SAVE_MS: 1500,
   CLEANUP_MS: 1500,
@@ -233,8 +232,7 @@ function resolveFreezeDependencies(options = {}) {
   const trackingService = options.trackingService || null;
   const flushCheckpoint = options.flushCheckpoint || null;
   if (
-    typeof trackingService?.markActiveRunFinishing !== "function" ||
-    typeof trackingService?.finishActiveRun !== "function" ||
+    typeof trackingService?.freezeActiveRunSnapshot !== "function" ||
     typeof flushCheckpoint !== "function"
   ) {
     throw makeFinalizationError("RUN_FINALIZATION_DEPENDENCIES_MISSING", {
@@ -254,72 +252,26 @@ export async function freezeActiveRunForFinalization(options = {}) {
   const issues = [];
   const { trackingService, flushCheckpoint } = await resolveFreezeDependencies(options);
 
-  try {
-    await withTimeout(
-      () => trackingService?.markActiveRunFinishing?.({
-        nowMs: finishedAtMs,
-        reason: options.reason || "finish_requested",
-        source,
-      }),
-      timeouts.CHECKPOINT_MS,
-      "finish_mark_finishing_timeout"
-    );
-  } catch (error) {
-    issues.push({ stage: "mark_finishing", error });
-    recordRunEvent("RUN_FINISH_ERROR_RECOVERABLE", {
-      runId,
-      stage: "mark_finishing",
-      error,
-      timeoutMs: timeouts.CHECKPOINT_MS,
-      source,
-      screen,
-      level: "warn",
-    });
-  }
-
-  recordRunEvent("RUN_FINISH_LOCAL_MIN_SAVE_STARTED", {
-    runId,
-    checkpointAtMs: finishedAtMs,
-    source,
-    screen,
-  });
-
-  try {
-    await withTimeout(
-      () => flushCheckpoint?.({
-        reason: "before_finish",
-        checkpointAtMs: finishedAtMs,
-      }),
-      timeouts.CHECKPOINT_MS,
-      "finish_checkpoint_timeout"
-    );
-  } catch (error) {
-    issues.push({ stage: "before_finish_checkpoint", error });
-    recordRunEvent("RUN_FINISH_TIMEOUT_FALLBACK", {
-      runId,
-      stage: "before_finish_checkpoint",
-      error,
-      timeoutMs: timeouts.CHECKPOINT_MS,
-      source,
-      screen,
-      level: "warn",
-    });
-  }
-
   let snapshot = null;
   try {
     snapshot = await withTimeout(
-      () => trackingService?.finishActiveRun?.({ finishedAtMs, source }),
-      timeouts.SNAPSHOT_MS,
-      "finish_active_snapshot_timeout"
+      () => trackingService.freezeActiveRunSnapshot({
+        finishedAtMs,
+        nowMs: finishedAtMs,
+        reason: options.reason || "finish_requested",
+        source,
+        flushCheckpoint,
+      }),
+      timeouts.FREEZE_MS,
+      "finish_active_freeze_timeout"
     );
   } catch (error) {
-    issues.push({ stage: "active_run_finish_snapshot", error });
+    issues.push({ stage: "active_run_freeze", error });
     recordRunEvent("RUN_FINISH_TIMEOUT_FALLBACK", {
       runId,
-      stage: "active_run_finish_snapshot",
+      stage: "active_run_freeze",
       error,
-      timeoutMs: timeouts.SNAPSHOT_MS,
+      timeoutMs: timeouts.FREEZE_MS,
       source,
       screen,
       level: "warn",
@@ -338,6 +290,13 @@ export async function freezeActiveRunForFinalization(options = {}) {
       });
     }
   }
+
+  recordRunEvent("RUN_FINISH_LOCAL_MIN_SAVE_STARTED", {
+    runId,
+    checkpointAtMs: finishedAtMs,
+    source,
+    screen,
+  });
 
   return {
     snapshot,

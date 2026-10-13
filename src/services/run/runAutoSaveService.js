@@ -149,6 +149,7 @@ export async function flushActiveRunCheckpoint(context = {}) {
     const snapshot = await activeRunTrackingService.flushPendingActiveRunCheckpoint?.({
       reason: context.reason || context.event || "legacy_checkpoint",
       force: context.forceCanonical === true,
+      insideIngestionQueue: context.insideIngestionQueue === true,
     }) || await activeRunTrackingService.getActiveRunSnapshot?.();
     if (!snapshot?.activeRunId) return null;
     if (isTerminalTrackingStatus(snapshot.status) && !canCheckpointTerminalSnapshot(context)) {

@@ -424,10 +424,9 @@ describe("runFinalizationService", () => {
     const order = [];
     const snapshot = { activeRunId: "run-freeze", status: "FINISHED" };
     const trackingService = {
-      markActiveRunFinishing: jest.fn(async () => {
+      freezeActiveRunSnapshot: jest.fn(async ({ flushCheckpoint }) => {
         order.push("mark_finishing");
-      }),
-      finishActiveRun: jest.fn(async () => {
+        await flushCheckpoint({ reason: "before_finish", insideIngestionQueue: true });
         order.push("finish_snapshot");
         return snapshot;
       }),
@@ -443,13 +442,36 @@ describe("runFinalizationService", () => {
       trackingService,
       flushCheckpoint,
       timeouts: {
-        CHECKPOINT_MS: 1000,
-        SNAPSHOT_MS: 1000,
+        FREEZE_MS: 1000,
       },
     });
 
     expect(result.snapshot).toBe(snapshot);
+    expect(result.issues).toEqual([]);
+    expect(flushCheckpoint).toHaveBeenCalledWith({ reason: "before_finish", insideIngestionQueue: true });
     expect(order).toEqual(["mark_finishing", "checkpoint", "finish_snapshot"]);
+  });
+
+  test("um freeze lento nao cria timeouts em cascata", async () => {
+    const snapshot = { activeRunId: "run-slow", status: "FINISHED" };
+    const trackingService = {
+      freezeActiveRunSnapshot: jest.fn(async ({ flushCheckpoint }) => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await flushCheckpoint({ reason: "before_finish", insideIngestionQueue: true });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return snapshot;
+      }),
+    };
+    const flushCheckpoint = jest.fn(async () => {});
+
+    const result = await freezeActiveRunForFinalization({
+      runId: "run-slow", trackingService, flushCheckpoint,
+      timeouts: { FREEZE_MS: 100 },
+    });
+
+    expect(result.snapshot).toBe(snapshot);
+    expect(result.issues).toEqual([]);
+    expect(flushCheckpoint).toHaveBeenCalledTimes(1);
   });
 
   test("enqueue derivado e falha neutra ficam fora do save minimo", async () => {

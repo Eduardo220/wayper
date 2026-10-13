@@ -4707,6 +4707,18 @@ export function finishActiveRun(options = {}) {
   return enqueueLocationIngestion(() => finishActiveRunInternal(options));
 }
 
+export function freezeActiveRunSnapshot(options = {}) {
+  return enqueueLocationIngestion(async () => {
+    await markActiveRunFinishingInternal(options);
+    await options.flushCheckpoint?.({
+      reason: "before_finish",
+      checkpointAtMs: options.finishedAtMs,
+      insideIngestionQueue: true,
+    });
+    return finishActiveRunInternal(options);
+  });
+}
+
 export async function buildFinishedRunData(overrides = {}) {
   await waitForLocationIngestion();
   const snapshot = activeSnapshot || (await loadPersistedSnapshot());
@@ -5116,6 +5128,7 @@ export default {
   buildFinishedRunData,
   cancelActiveRun,
   finishActiveRun,
+  freezeActiveRunSnapshot,
   flushPendingActiveRunCheckpoint,
   getBackgroundLocationTaskStatus,
   getActiveRunSnapshot,

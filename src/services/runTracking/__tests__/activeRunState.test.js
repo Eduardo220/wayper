@@ -430,6 +430,10 @@ describe("active run persistence state", () => {
       path.join(process.cwd(), "src/services/run/runFinalizationService.js"),
       "utf8"
     );
+    const trackingService = fs.readFileSync(
+      path.join(process.cwd(), "src/services/runTracking/activeRunTrackingService.js"),
+      "utf8"
+    );
     const finalizationHook = fs.readFileSync(
       path.join(process.cwd(), "src/hooks/useRunFinalization.js"),
       "utf8"
@@ -471,7 +475,9 @@ describe("active run persistence state", () => {
     expect(mapRunResources).toContain("useActiveRunReentry");
     expect(lifecycle).toContain("checkpointOnLocationError");
     expect(finalizationHook).toContain("freezeActiveRunForFinalization");
-    expect(finalizationService).toContain('reason: "before_finish"');
+    expect(finalizationService).toContain("freezeActiveRunSnapshot");
+    expect(trackingService).toContain('reason: "before_finish"');
+    expect(trackingService).toContain("insideIngestionQueue: true");
     expect(finishFailureRecovery).toContain("RUN_FINISH_FAILURE_STATE_RESTORED");
     expect(finishFailureRecovery).toContain("context.applyActiveRunSnapshotToUi(snapshot");
     expect(finishFailureRecovery).toContain('"finish_failure_snapshot_timeout"');

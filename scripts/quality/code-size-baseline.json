@@ -60,8 +60,8 @@
   },
   "exceptions": {
     "src/screens/DiagnosticsScreen.js": { "max": 850, "reason": "Temporary Flight Recorder export action" },
-    "src/services/run/runAutoSaveService.js": { "max": 398, "reason": "Temporary legacy checkpoint flight events" },
+    "src/services/run/runAutoSaveService.js": { "max": 399, "reason": "Temporary legacy checkpoint flight events plus the single insideIngestionQueue handoff required to avoid queue reentry during serialized finish; bounded by lifecycle and local-first integration regressions" },
     "src/services/runTracking/activeRunRuntimeService.js": { "max": 521, "reason": "Temporary recovery flight event" },
-    "src/services/runTracking/activeRunTrackingService.js": { "max": 4928, "reason": "Temporary Active Run flight events and background GPS replay suppression for physical run testing" }
+    "src/services/runTracking/activeRunTrackingService.js": { "max": 4940, "reason": "Temporary Active Run flight events and background GPS replay suppression plus the 12-line serialized freeze operation at the existing ingestion owner; native 1h/2h/4h and persisted-route comparisons reproduce old deadlines and verify route, duration and local-first preservation" }
   }
 }
