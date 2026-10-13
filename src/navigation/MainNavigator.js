@@ -15,7 +15,7 @@ import { signOut } from "firebase/auth";
 // SCREENS
 import MapScreen from "../screens/MapScreen";
 import HomeScreen from "../screens/HomeScreen";
-import RankingScreen from "../screens/RankingScreen";
+import RankingStack from "./RankingStack";
 import ProfileScreen from "../screens/ProfileScreen";
 import DiagnosticsScreen from "../screens/DiagnosticsScreen";
 import SettingsScreen from "../screens/SettingsScreen";
@@ -443,7 +443,7 @@ export default function MainNavigator() {
       <Drawer.Screen name="Corridas" component={RunsStack} options={{ title: "Corridas" }} />
       <Drawer.Screen name="Dashboard" component={DashboardScreen} options={{ title: "Dashboard" }} />
       <Drawer.Screen name="Perfil" component={ProfileScreen} options={{ title: "Meu Perfil" }} />
-      <Drawer.Screen name="Ranking" component={RankingScreen} options={{ title: "Ranking" }} />
+      <Drawer.Screen name="Ranking" component={RankingStack} options={{ title: "Ranking" }} />
       <Drawer.Screen name="Amigos" component={FriendsStack} options={{ title: "Amigos" }} />
       <Drawer.Screen name="Grupos" component={GroupStack} options={{ title: "Grupos" }} />
       <Drawer.Screen name="Configuracoes" component={SettingsStack} options={{ title: "Configuracoes" }} />

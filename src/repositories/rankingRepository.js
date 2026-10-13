@@ -46,6 +46,7 @@ function cacheKey(params = {}) {
     neighborhood: params.neighborhood || null,
     criterion: params.criterion || "area",
     period: params.period || "all",
+    rankingMonth: params.period === "monthly" ? getRankingMonthKey() : null,
     mode: params.mode || params.criterion || "area",
   };
   return `${RANKING_CACHE_KEY_PREFIX}:${JSON.stringify(stable)}`;

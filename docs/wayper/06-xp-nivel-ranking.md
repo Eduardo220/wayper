@@ -130,6 +130,18 @@ Regra local-first atual:
 - Se nao houver dado real suficiente para o criterio/periodo, o retorno deve ser `empty`.
 - `demo` so pode aparecer por opt-in explicito em ambiente dev e nunca como fallback silencioso de erro remoto.
 
+### Tela principal do Ranking — Fase 1
+
+- A tela principal usa uma seleção única: `mode` (`km`/`zones`), `scope` (`global`/`regional`) e `period` (`monthly`/`allTime`). O padrão é KM, Global, Mensal.
+- `km` consulta `distance`; `zones` consulta a área territorial existente (`area`). Global e Regional usam o `RankingRepository`; Regional usa a cidade real do perfil. Sem cidade, a tela declara o ranking regional indisponível e não consulta Global como substituto.
+- O resumo e a posição usam a mesma seleção. A lista remota tem limite de 300 perfis; a quantidade e a posição exibidas se referem apenas aos atletas carregados com valor positivo para a métrica. Cache e dado apenas local mostram a métrica, mas não alegam posição atual competitiva.
+- O cache mensal é separado por mês. A tela identifica cache e dados locais; documento remoto sem `rankingMonth` atual ou sem campo mensal explícito não entra na classificação mensal. Dados locais mensais vêm de corridas finalizadas no mês atual.
+- A tela principal não grava novos previews de posição/medalha: o limite de perfis consultados não prova classificação global. Os campos históricos e a métrica permanecem, pendentes de uma fonte de posição confiável na Fase 2.
+- Na Fase 2 visual, `VER RANKING` abre a classificação completa no fluxo da própria tela. Ela reaproveita a seleção e a lista reais da Fase 1, mostra até 300 atletas carregados e mantém a posição pessoal como indisponível sem fonte autoritativa. O Android Back e o botão de voltar retornam à Home do Ranking.
+- Home e lista detalhada usam o mesmo preview visual somente em `__DEV__` e quando a seleção real retorna vazia. O fixture fica em `src/screens/ranking/__fixtures__/`, não passa por repository/cache/backend e nunca se mistura a atletas reais. A prévia é marcada na UI e pode usar Santa Maria, RS e posições fictícias apenas no ambiente DEV.
+- Cada linha da classificação abre `PlayerProfile` pelo `playerId`; a pilha do Ranking preserva seleção e scroll ao voltar. O perfil competitivo lê um único documento público agregado por ID. A linha local usa apenas um pequeno snapshot dos agregados reais já calculados pelo Ranking; sem essa linha, o próprio atleta pode ler os agregados locais persistidos, sem varrer histórico na abertura. Dados ausentes ficam indisponíveis, não viram zero. A prévia de perfil é restrita a IDs de fixture e `__DEV__`, sem escrita remota. Conquistas ficam em estado vazio até existir contrato público agregado; a métrica de retomadas exige um contador com essa semântica explícita.
+- Líderes locais, retomada, regiões, XP, corridas e área continuam no domínio e nos serviços existentes, fora dos controles principais da tela.
+
 ## Cuidados
 
 - Não recompensar GPS ruim.
@@ -153,4 +165,3 @@ Regra local-first atual:
 - [[03-mecanica-territorios]]
 - [[05-gps-e-validacao]]
 - [[08-firebase-firestore]]
-
