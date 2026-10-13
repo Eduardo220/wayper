@@ -45,6 +45,9 @@ expo-env.d.ts
 !/android/app/src/main/java/com/wayper/app/MainApplication.kt
 !/android/app/src/main/java/com/wayper/app/run/
 !/android/app/src/main/java/com/wayper/app/run/**
+!/android/app/src/main/java/com/wayper/app/storage/
+!/android/app/src/main/java/com/wayper/app/storage/WayperAsyncStorageReadModule.kt
+!/android/app/src/main/java/com/wayper/app/storage/WayperAsyncStorageReadPackage.kt
 
 # iOS / Xcode
 /ios/

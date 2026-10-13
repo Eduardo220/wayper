@@ -106,6 +106,12 @@ import direto de Firestore.
 
 ### AsyncStorage e caminhos locais expostos à UI
 
+`src/utils/localRunsStorage.js` serializa a mesma chave `runs` pertencente a
+`src/utils/sync.js`: array legado ou manifesto v3 com chunks. O helper não cria
+outro histórico nem escreve remoto. Publica o manifesto depois dos chunks e
+preserva Unicode na boundary UTF-8; a bridge Android lê somente a row legacy
+`runs` em fatias quando o CursorWindow não comporta seu valor inteiro.
+
 | Arquivo | Layer/domínio | Purpose | Canonical owner | Classificação |
 | --- | --- | --- | --- | --- |
 | `src/components/MedalsWidget.js` | UI/progression | medals legado + chamada a sync | `ProgressionRepository`/`AchievementRepository` | `MIGRATION_PENDING` |

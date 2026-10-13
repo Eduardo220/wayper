@@ -38,14 +38,14 @@ import {
 
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundFetch from "expo-background-fetch";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import logger, { LOG_CATEGORIES } from "./logger.js";
 import createSerializedExecutor from "./createSerializedExecutor.js";
+import { readStoredRuns, writeStoredRuns } from "./localRunsStorage.js";
 import { getRunIdentityCandidates, hasSharedRunIdentity } from "./runIdentity.js";
 import { recordRunEvent } from "../services/diagnostics/runDiagnosticsService.js";
 
 // ----------------- Keys / Constants -----------------
-const RUNS_KEY = "runs";
 const LOCAL_RUN_STORAGE_FORMAT_VERSION = 2;
 const ZONES_KEY = "zones";
 const MEDALS_KEY = "medals"; // NEW
@@ -736,10 +736,17 @@ async function _setRetryMeta(key, meta) {
 }
 
 // ----------------- Local CRUD - Runs -----------------
+async function readStoredLocalRuns() {
+  return normalizeLocalRunsForHistory(await readStoredRuns());
+}
+
+async function writeStoredLocalRuns(runs) {
+  return writeStoredRuns(compactLocalRunsForStorage(runs));
+}
+
 export async function loadLocalRuns() {
   try {
-    const raw = await AsyncStorage.getItem(RUNS_KEY);
-    return normalizeLocalRunsForHistory(safeParse(raw));
+    return await enqueueRunHistoryWrite(readStoredLocalRuns);
   } catch (err) {
     logError(err, { fn: "loadLocalRuns" });
     return [];
@@ -768,7 +775,7 @@ async function saveLocalRunInternal(run = {}) {
     segmentsCount: run.routeSegments?.length || run.segments?.length || 0,
   });
   try {
-    const existing = await loadLocalRuns();
+    const existing = await readStoredLocalRuns();
     const now = new Date().toISOString();
     const normalized = normalizeLocalRunRecord(
       {
@@ -799,7 +806,7 @@ async function saveLocalRunInternal(run = {}) {
         : [savedRecord, ...existing];
 
     const deduped = normalizeLocalRunsForHistory(uniqueById(next));
-    await AsyncStorage.setItem(RUNS_KEY, safeStringify(compactLocalRunsForStorage(deduped)));
+    await writeStoredLocalRuns(deduped);
     recordRunEvent("RUN_SAVED_LOCAL", {
       runId: savedRecord.id,
       localRunId: savedRecord.localRunId || savedRecord.id,
@@ -838,11 +845,11 @@ export async function deleteLocalRun(runId, options = {}) {
     if (!id) return { deleted: false, remoteDeleted: false };
 
     await enqueueRunHistoryWrite(async () => {
-      const existing = await loadLocalRuns();
+      const existing = await readStoredLocalRuns();
       const next = (Array.isArray(existing) ? existing : []).filter((run) =>
         !getRunIdentityCandidates(run).includes(id)
       );
-      await AsyncStorage.setItem(RUNS_KEY, safeStringify(compactLocalRunsForStorage(next)));
+      await writeStoredLocalRuns(next);
     });
 
     let remoteDeleted = false;

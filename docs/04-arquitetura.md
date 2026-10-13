@@ -183,6 +183,15 @@ operacional, não autorização para payload duplicado nem escrita por ponto.
 SQLite/Expo SQLite deve ser reavaliado se históricos longos ainda causarem custo
 perceptível de parse, I/O ou volume.
 
+Em Android, o tamanho de uma única row também pode exceder o `CursorWindow`
+antes de atingir o limite total do banco. O histórico mantém o conteúdo v2
+compacto, mas publica em `runs` um manifesto v3 quando o JSON passa de 250 mil
+caracteres; os valores `runs:v3:<geração>:<índice>` são gravados antes do
+manifesto. A leitura aceita o array legado e o manifesto. Para migrar uma row
+legada grande, a leitura nativa consulta `runs` em trechos SQLite sem abrir o
+valor inteiro no `CursorWindow`. Se a leitura ou a publicação falhar, o writer
+preserva o índice anterior e o save mínimo mantém o rascunho recuperável.
+
 ## Diagnostico local e observabilidade
 
 O diagnostico local e parte da arquitetura local-first e nao depende obrigatoriamente de Firestore:

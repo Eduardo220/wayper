@@ -117,6 +117,7 @@
         "src/services/territory/territoryMigrationService.js": 1,
         "src/services/territory/territoryStorageService.js": 1,
         "src/utils/fileSystemLegacy.js": 1,
+        "src/utils/localRunsStorage.js": 1,
         "src/utils/sync.js": 1
       },
       "exceptions": []
