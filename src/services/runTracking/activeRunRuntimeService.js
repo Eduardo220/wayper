@@ -48,7 +48,6 @@ let reconcileInFlight = null;
 let lastDeepLinkReceived = null;
 let lastNotificationActionReceived = null;
 let lastReconcileReason = null;
-let lastKnownActiveSnapshot = null;
 
 function normalizeReason(reason = "runtime") {
   return String(reason || "runtime");
@@ -58,31 +57,22 @@ function isLiveSnapshot(snapshot = {}) {
   return LIVE_STATUSES.has(String(snapshot?.status || "").toUpperCase());
 }
 
-function hasRecentEvidence(value = null, maxAgeMs = 120000) {
-  const receivedAt = value?.receivedAt ? Date.parse(value.receivedAt) : 0;
-  return Number.isFinite(receivedAt) && receivedAt > 0 && Date.now() - receivedAt <= maxAgeMs;
-}
-
 function isNativeNotificationActive(state = {}) {
   return Boolean(state?.isActive || state?.hasForegroundService);
 }
 
+function activeEvidenceRunId(runtime = {}) {
+  if (runtime.activeRunId && LIVE_STATUSES.has(runtime.status)) return runtime.activeRunId;
+  return null;
+}
+
 function isRuntimeActiveEvidence(runtime = {}) {
-  const status = String(runtime?.status || "").toUpperCase();
   return (
-    LIVE_STATUSES.has(status) ||
-    (
-      Boolean(runtime?.activeRunId || runtime?.runId) &&
-      status !== ACTIVE_RUN_STATUS.IDLE &&
-      status !== ACTIVE_RUN_STATUS.FINISHED
-    ) ||
-    runtime?.backgroundTaskStatus === "started" ||
-    runtime?.backgroundStarted === true ||
-    runtime?.notificationStatus === "active" ||
-    isNativeNotificationActive(runtime?.nativeNotificationState) ||
-    Boolean(runtime?.offlineRun && !["FINISHED", "COMPLETED", "CANCELLED"].includes(String(runtime.offlineRun.status || "").toUpperCase())) ||
-    hasRecentEvidence(lastDeepLinkReceived) ||
-    hasRecentEvidence(lastNotificationActionReceived)
+    Boolean(activeEvidenceRunId(runtime)) ||
+    Boolean(runtime.offlineRun?.localRunId && ["RUNNING", "PAUSED"].includes(runtime.offlineRun.status)) ||
+    runtime.backgroundTaskProbe?.started === true ||
+    runtime.backgroundTaskProbe?.status === "probe_failed" ||
+    isNativeNotificationActive(runtime.nativeNotificationState)
   );
 }
 
@@ -236,41 +226,58 @@ export async function getActiveRunRuntimeSnapshot(reason = "runtime") {
 }
 
 function buildRecoverableEvidenceSnapshot(before = {}, error = null) {
-  const runId =
-    before.activeRunId ||
-    before.runId ||
-    before.offlineRun?.localRunId ||
-    lastKnownActiveSnapshot?.activeRunId ||
-    `recoverable_${Date.now().toString(36)}`;
-  const startedAtMs = lastKnownActiveSnapshot?.startedAtMs || Date.now();
+  const runId = activeEvidenceRunId(before);
+  if (!runId) return null;
+  const startedAtMs = Date.parse(before.startedAt || "") || Date.now();
   return {
-    ...(lastKnownActiveSnapshot || {}),
     activeRunId: runId,
     id: runId,
-    localRunId: before.localRunId || before.offlineRun?.localRunId || lastKnownActiveSnapshot?.localRunId || runId,
-    userId: lastKnownActiveSnapshot?.userId || "offline",
-    mode: lastKnownActiveSnapshot?.mode || "free",
+    localRunId: before.localRunId || before.offlineRun?.localRunId || runId,
+    userId: before.userId || "offline",
+    mode: "free",
     status: ACTIVE_RUN_STATUS.ERROR_RECOVERABLE,
     startedAtMs,
-    startedAt: lastKnownActiveSnapshot?.startedAt || new Date(startedAtMs).toISOString(),
+    startedAt: before.startedAt || new Date(startedAtMs).toISOString(),
     lastUpdatedAtMs: Date.now(),
     lastUpdatedAt: new Date().toISOString(),
-    distanceMeters: Number(before.distanceMeters ?? lastKnownActiveSnapshot?.distanceMeters ?? 0) || 0,
-    distance: Number(before.distanceMeters ?? lastKnownActiveSnapshot?.distanceMeters ?? 0) || 0,
-    trustedPath: lastKnownActiveSnapshot?.trustedPath || [],
-    path: lastKnownActiveSnapshot?.trustedPath || [],
-    rawPath: lastKnownActiveSnapshot?.rawPath || [],
-    rawPoints: lastKnownActiveSnapshot?.rawPath || [],
-    routeSegments: lastKnownActiveSnapshot?.routeSegments || lastKnownActiveSnapshot?.segments || [],
-    segments: lastKnownActiveSnapshot?.segments || lastKnownActiveSnapshot?.routeSegments || [],
+    distanceMeters: Number(before.distanceMeters || 0) || 0,
+    distance: Number(before.distanceMeters || 0) || 0,
     meta: {
-      ...(lastKnownActiveSnapshot?.meta || {}),
       evidenceOnly: true,
       errorRecoverable: true,
       recoveryReason: before.recoveryReason || lastReconcileReason || "reconcile_failed",
       nativeNotificationActive: isNativeNotificationActive(before.nativeNotificationState),
       error: error?.message || String(error || ""),
     },
+  };
+}
+
+function preserveActiveEvidence(current, reason, error = null) {
+  const snapshot = buildRecoverableEvidenceSnapshot(current, error);
+  if (error) activeRunTrackingService.setRunRuntimeSurfaceState?.({ recoveryReason: reason });
+  if (snapshot) {
+    const details = {
+      reason,
+      canShowStartButton: false,
+      nativeNotificationActive: isNativeNotificationActive(current.nativeNotificationState),
+    };
+    recordRunSnapshotEvent("RUN_RECONCILE_PRESERVED_ACTIVE_EVIDENCE", snapshot, details);
+    recordRunSnapshotEvent("RUN_ERROR_RECOVERABLE_ACTIVE_RUN", snapshot, details);
+  }
+  return {
+    snapshot,
+    source: error ? "preserved_active_evidence" : "active_evidence",
+    ...(error ? { error } : {}),
+    canShowStartButton: false,
+    runtime: snapshot
+      ? buildRuntimeSnapshot({
+          snapshot,
+          offlineRun: current.offlineRun,
+          nativeNotificationState: current.nativeNotificationState,
+          reason,
+          reconciliationStatus: "error_recoverable",
+        })
+      : { ...current, reconciliationStatus: "error_recoverable", canShowStartButton: false },
   };
 }
 
@@ -352,7 +359,6 @@ export async function reconcileActiveRunState(reason = "runtime", options = {}) 
         options.userId ||
         before.userId ||
         before.offlineRun?.userId ||
-        lastKnownActiveSnapshot?.userId ||
         "offline";
       const recovery = await findRecoverableRunForUser(userId, {
         reason: normalizedReason,
@@ -391,7 +397,13 @@ export async function reconcileActiveRunState(reason = "runtime", options = {}) 
       }
 
       if (snapshot?.activeRunId && isLiveSnapshot(snapshot)) {
-        lastKnownActiveSnapshot = snapshot;
+        const current = await activeRunTrackingService.getActiveRunSnapshot?.();
+        if (!current?.activeRunId || current.activeRunId !== snapshot.activeRunId || !isLiveSnapshot(current)) {
+          snapshot = null;
+        }
+      }
+
+      if (snapshot?.activeRunId && isLiveSnapshot(snapshot)) {
         recordFlightEvent("SESSION_RECOVERED", {
           snapshot,
           source: "recovery",
@@ -420,30 +432,8 @@ export async function reconcileActiveRunState(reason = "runtime", options = {}) 
         };
       }
 
-      if (isRuntimeActiveEvidence(before)) {
-        const preserved = buildRecoverableEvidenceSnapshot(before, null);
-        recordRunSnapshotEvent("RUN_RECONCILE_PRESERVED_ACTIVE_EVIDENCE", preserved, {
-          reason: normalizedReason,
-          canShowStartButton: false,
-          nativeNotificationActive: isNativeNotificationActive(before.nativeNotificationState),
-        });
-        recordRunSnapshotEvent("RUN_ERROR_RECOVERABLE_ACTIVE_RUN", preserved, {
-          reason: normalizedReason,
-          canShowStartButton: false,
-        });
-        return {
-          snapshot: preserved,
-          source: "active_evidence",
-          canShowStartButton: false,
-          runtime: buildRuntimeSnapshot({
-            snapshot: preserved,
-            offlineRun: before.offlineRun,
-            nativeNotificationState: before.nativeNotificationState,
-            reason: normalizedReason,
-            reconciliationStatus: "error_recoverable",
-          }),
-        };
-      }
+      const current = await getActiveRunRuntimeSnapshot(normalizedReason);
+      if (isRuntimeActiveEvidence(current)) return preserveActiveEvidence(current, normalizedReason);
 
       recordRunEvent("RUN_RECONCILE_RECOVERED", {
         reason: normalizedReason,
@@ -455,7 +445,7 @@ export async function reconcileActiveRunState(reason = "runtime", options = {}) 
         source: null,
         runtime: buildRuntimeSnapshot({
           snapshot: null,
-          offlineRun: before.offlineRun,
+          offlineRun: current.offlineRun,
           reason: normalizedReason,
           reconciliationStatus: "idle",
         }),
@@ -465,34 +455,15 @@ export async function reconcileActiveRunState(reason = "runtime", options = {}) 
         reason: normalizedReason,
         error,
       });
-      if (isRuntimeActiveEvidence(before)) {
-        const preserved = buildRecoverableEvidenceSnapshot(before, error);
-        activeRunTrackingService.setRunRuntimeSurfaceState?.({
-          recoveryReason: normalizedReason,
-        });
-        recordRunSnapshotEvent("RUN_RECONCILE_PRESERVED_ACTIVE_EVIDENCE", preserved, {
-          reason: normalizedReason,
-          canShowStartButton: false,
-          nativeNotificationActive: isNativeNotificationActive(before.nativeNotificationState),
-        });
-        recordRunSnapshotEvent("RUN_ERROR_RECOVERABLE_ACTIVE_RUN", preserved, {
-          reason: normalizedReason,
-          canShowStartButton: false,
-        });
-        return {
-          snapshot: preserved,
-          source: "preserved_active_evidence",
-          error,
-          canShowStartButton: false,
-          runtime: buildRuntimeSnapshot({
-            snapshot: preserved,
-            offlineRun: before.offlineRun,
-            nativeNotificationState: before.nativeNotificationState,
-            reason: normalizedReason,
-            reconciliationStatus: "error_recoverable",
-          }),
-        };
-      }
+      const current = await getActiveRunRuntimeSnapshot(normalizedReason).catch(() => null);
+      if (!current) return {
+        snapshot: null,
+        source: null,
+        error,
+        canShowStartButton: false,
+        runtime: { ...before, reconciliationStatus: "error_recoverable", canShowStartButton: false },
+      };
+      if (isRuntimeActiveEvidence(current)) return preserveActiveEvidence(current, normalizedReason, error);
       return {
         snapshot: null,
         source: null,
@@ -516,6 +487,27 @@ export async function hydrateActiveRunFromRuntime(reason = "runtime", options = 
   try {
     const result = await reconcileActiveRunState(normalizedReason, options);
     if (result?.snapshot?.activeRunId) {
+      const current = await getActiveRunRuntimeSnapshot(normalizedReason);
+      if (activeEvidenceRunId(current) !== result.snapshot.activeRunId) {
+        const uncertain = isRuntimeActiveEvidence(current);
+        recordRunEvent("RUN_RECONCILE_INCONSISTENT_STATE", {
+          reason: normalizedReason,
+          selectedRunId: result.snapshot.activeRunId,
+          currentRunId: activeEvidenceRunId(current),
+          previousStatus: result.snapshot.status,
+          currentStatus: current.status,
+        });
+        return {
+          snapshot: null,
+          source: null,
+          canShowStartButton: !uncertain,
+          runtime: {
+            ...current,
+            reconciliationStatus: uncertain ? "error_recoverable" : "idle",
+            canShowStartButton: !uncertain,
+          },
+        };
+      }
       recordRunSnapshotEvent("RUN_REHYDRATE_SUCCESS", result.snapshot, {
         reason: normalizedReason,
         source: result.source,

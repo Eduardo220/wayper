@@ -40,6 +40,15 @@ async function existingRunGuard(context, selectedMode) {
     });
     return { ok: false, reason: "existing_active_run_recovered", snapshot };
   }
+  if (!snapshot?.activeRunId && runtime?.canShowStartButton === false) {
+    recordRunEvent("RUN_START_FAILED", {
+      mode: selectedMode,
+      reason: "active_run_state_uncertain",
+      level: "warn",
+      screen: "MapScreen",
+    });
+    return { ok: false, reason: "active_run_state_uncertain" };
+  }
   if (!snapshot?.activeRunId) return null;
   const recovery = await findRecoverableRunForUser(auth.currentUser?.uid || "offline", {
     activeSnapshot: snapshot,

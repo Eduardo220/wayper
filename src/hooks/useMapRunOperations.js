@@ -100,6 +100,8 @@ export default function useMapRunOperations({
   } = run;
 
   const resetRunVisuals = useCallback(() => {
+    run.runningRef.current = false;
+    run.setRunning(false);
     distanceRef.current = 0;
     setDistanceState(0);
     resetTrackingPipeline({ segmentId: 0 });
@@ -121,6 +123,8 @@ export default function useMapRunOperations({
     modeRef,
     resetTrackingPipeline,
     runStatusRef,
+    run.runningRef,
+    run.setRunning,
     setCompletedZonePreview,
     setDistanceState,
     setGpsQualityWarning,

@@ -301,6 +301,7 @@ Comportamento esperado:
 - Ao retomar, a notificacao volta para `Correndo` e mantem os segmentos existentes.
 - Ao finalizar/cancelar/limpar o snapshot ativo, a notificacao e removida para evitar notificacao orfa.
 - Toque no corpo da notificacao reabre a tela de corrida ativa por deep link, sem empilhar nova rota.
+- `wayper://run/active` apenas solicita navegacao: sem snapshot ativo canonico ou legado vivo, timestamps de abertura e caches nao reconstituem corrida finalizada. Se o servico nativo indicar estado incerto sem identidade de corrida, um novo start fica bloqueado sem fabricar uma sessao na UI.
 - Updates JS para o native module sao limitados por throttle; o foreground service continua atualizando visualmente o tempo enquanto a corrida esta rodando.
 - O ticker nativo é responsável pelos segundos. A chave de atualização JS muda
   somente com status ou distância arredondada, e starts concorrentes são
@@ -573,4 +574,3 @@ Antes de adicionar ou ampliar dependência geográfica, avaliar:
 - [[05-gps-e-validacao]]
 - [[08-firebase-firestore]]
 - [[10-decisoes-do-projeto]]
-

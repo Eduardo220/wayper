@@ -132,6 +132,10 @@ Logs esperados:
 - `RUN_NOTIFICATION_OPEN_RESTORE_COMPLETED`
 - `RUN_UI_STATE_APPLIED`
 
+### Deep link depois da finalizacao
+
+Depois de confirmar save local, limpeza da sessao ativa e notificacao removida, abrir `wayper://run/active` repetidas vezes. O Mapa pode abrir, mas deve permanecer sem Pausar/Finalizar da corrida encerrada; diagnostico continua `IDLE` e o historico conserva uma entrada. Em seguida, iniciar nova corrida e confirmar que o mesmo link reabre somente o novo `localRunId`.
+
 ## Cenario 5: Pausar e retomar
 
 1. Iniciar corrida.

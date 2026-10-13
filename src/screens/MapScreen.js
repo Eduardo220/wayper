@@ -131,6 +131,7 @@ const MapScreen = ({ navigation, route }) => {
     run,
     territory,
   });
+  run.reentryContextRef.current.resetRunVisuals = operations.resetRunVisuals;
 
   useMapReplayOrchestration({
     clearTerritoryFocus: territory.clearTerritoryFocus,

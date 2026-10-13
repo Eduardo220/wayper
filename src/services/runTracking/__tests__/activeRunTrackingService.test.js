@@ -1308,8 +1308,9 @@ describe("activeRunTrackingService lifecycle", () => {
 
     service.__resetActiveRunRuntimeForTests();
     locationStarted = true;
+    runtimeService.recordDeepLinkReceived("wayper://run/active");
 
-    const result = await runtimeService.hydrateActiveRunFromRuntime("test_reentry", {
+    const result = await runtimeService.hydrateActiveRunFromRuntime("notification_open", {
       userId: "user-1",
       restartTracking: true,
     });
@@ -1342,7 +1343,113 @@ describe("activeRunTrackingService lifecycle", () => {
     });
   });
 
-  test("runtime nao retorna IDLE quando ha evidencia ativa sem snapshot legivel", async () => {
+  test("deep link restaura a mesma corrida RUNNING ou PAUSED", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-deep-link-live",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    runtimeService.recordDeepLinkReceived("wayper://run/active");
+    const running = await runtimeService.hydrateActiveRunFromRuntime("notification_open", {
+      userId: "user-1",
+    });
+    expect(running.snapshot).toMatchObject({
+      activeRunId: "run-deep-link-live",
+      status: ACTIVE_RUN_STATUS.RUNNING,
+    });
+
+    await service.pauseActiveRun({ expectedRunId: "run-deep-link-live" });
+    runtimeService.recordDeepLinkReceived("wayper://run/active");
+    const paused = await runtimeService.hydrateActiveRunFromRuntime("notification_open", {
+      userId: "user-1",
+    });
+    expect(paused.snapshot).toMatchObject({
+      activeRunId: "run-deep-link-live",
+      status: ACTIVE_RUN_STATUS.PAUSED,
+    });
+  });
+
+  test("deep links repetidos nao ressuscitam corrida finalizada e limpa", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-deep-link-finished",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await runtimeService.reconcileActiveRunState("seed_last_known", { userId: "user-1" });
+    await service.finishActiveRun({ finishedAtMs: BASE_TIME + 10_000 });
+    expect(await service.markActiveRunLocallySaved({
+      expectedRunId: "run-deep-link-finished",
+    })).toBe(true);
+
+    for (let i = 0; i < 3; i += 1) {
+      runtimeService.recordDeepLinkReceived("wayper://run/active");
+      runtimeService.recordNotificationOpen({ source: "test" });
+      const result = await runtimeService.hydrateActiveRunFromRuntime("notification_open", {
+        userId: "user-1",
+      });
+      expect(result.snapshot).toBeNull();
+      expect(result.runtime.status).toBe(ACTIVE_RUN_STATUS.IDLE);
+    }
+    expect(await service.getActiveRunSnapshot()).toBeNull();
+    expect(storage.has(ACTIVE_RUN_STORAGE_KEY)).toBe(false);
+  });
+
+  test("deep link em IDLE ignora marcadores e estado de superficie antigos", async () => {
+    service.setRunRuntimeSurfaceState({
+      backgroundTaskStatus: "started",
+      notificationStatus: "active",
+    });
+    runtimeService.recordDeepLinkReceived("wayper://run/active");
+    runtimeService.recordNotificationOpen({ source: "test" });
+
+    const result = await runtimeService.hydrateActiveRunFromRuntime("notification_open", {
+      userId: "user-1",
+    });
+
+    expect(result.snapshot).toBeNull();
+    expect(result.runtime.status).toBe(ACTIVE_RUN_STATUS.IDLE);
+    expect(result.runtime.canShowStartButton).toBe(true);
+  });
+
+  test("legado RUNNING invalido bloqueia start sem fabricar snapshot", async () => {
+    storage.set("wayper_active_offline_run_v1", JSON.stringify({
+      localRunId: "legacy-invalid",
+      userId: "user-1",
+      status: "RUNNING",
+      schemaVersion: 1,
+    }));
+    runtimeService.recordDeepLinkReceived("wayper://run/active");
+
+    const result = await runtimeService.hydrateActiveRunFromRuntime("notification_open", {
+      userId: "user-1",
+    });
+
+    expect(result.snapshot).toBeNull();
+    expect(result.canShowStartButton).toBe(false);
+    expect(await service.getActiveRunSnapshot()).toBeNull();
+  });
+
+  test("FINISHING nao vira corrida ativa pelo deep link e segue recuperavel no storage", async () => {
+    await service.startActiveRun({
+      activeRunId: "run-deep-link-finishing",
+      userId: "user-1",
+      startedAtMs: BASE_TIME,
+    });
+    await service.markActiveRunFinishing({ nowMs: BASE_TIME + 10_000 });
+    runtimeService.recordDeepLinkReceived("wayper://run/active");
+
+    const result = await runtimeService.hydrateActiveRunFromRuntime("notification_open", {
+      userId: "user-1",
+    });
+
+    expect(result.snapshot?.status).not.toBe(ACTIVE_RUN_STATUS.RUNNING);
+    expect(result.snapshot?.status).not.toBe(ACTIVE_RUN_STATUS.PAUSED);
+    expect((await service.restoreActiveRun({ restartTracking: false })).status)
+      .toBe(ACTIVE_RUN_STATUS.FINISHING);
+  });
+
+  test("task nativa ativa sem snapshot bloqueia novo start sem inventar corrida", async () => {
+    locationStarted = true;
     service.setRunRuntimeSurfaceState({
       backgroundTaskStatus: "started",
       notificationStatus: "active",
@@ -1352,11 +1459,10 @@ describe("activeRunTrackingService lifecycle", () => {
       restartTracking: false,
     });
 
-    expect(result.snapshot).toMatchObject({
-      status: ACTIVE_RUN_STATUS.ERROR_RECOVERABLE,
-    });
+    expect(result.snapshot).toBeNull();
     expect(result.canShowStartButton).toBe(false);
     expect(result.runtime.canShowStartButton).toBe(false);
+    expect(result.runtime.reconciliationStatus).toBe("error_recoverable");
   });
 
   test("startActiveRun nao substitui uma corrida viva existente", async () => {

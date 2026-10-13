@@ -73,11 +73,14 @@ jest.unstable_mockModule("../../components/Map/WayperMapLibre.js", () => ({
 
 const stopForegroundWatcher = jest.fn();
 const onActiveRunSnapshot = jest.fn(() => jest.fn());
+const getActiveRunSnapshot = jest.fn(async () => null);
 jest.unstable_mockModule("../../services/runTracking/activeRunForegroundWatcher.js", () => ({
   stopForegroundWatcher,
 }));
 jest.unstable_mockModule("../../services/runTracking/activeRunTrackingService.js", () => ({
+  getActiveRunSnapshot,
   onActiveRunSnapshot,
+  startActiveRun: jest.fn(),
 }));
 
 const hydrateActiveRunFromRuntime = jest.fn();
@@ -99,6 +102,7 @@ const ACTIVE_RUN_STATUS = {
 jest.unstable_mockModule("../../services/runTracking/index.js", () => ({
   ACTIVE_RUN_STATUS,
   calculateActiveRunDurationSeconds: jest.fn(() => 0),
+  debugTracking: jest.fn(),
   limitPathForRendering: jest.fn((path) => path),
 }));
 
@@ -174,6 +178,7 @@ const { default: useRunRecoveryFlow } = await import("../useRunRecoveryFlow.js")
 const { default: useMapScreenLifecycle } = await import("../useMapScreenLifecycle.js");
 const { default: useActiveRunProjection } = await import("../useActiveRunProjection.js");
 const { default: useActiveRunReentry } = await import("../useActiveRunReentry.js");
+const { default: startRun } = await import("../runStartExecutor.js");
 
 function recoveryOptions() {
   return {
@@ -336,5 +341,52 @@ describe("MapScreen blocker regressions", () => {
     expect(projectionSetters.setRunning).not.toHaveBeenCalled();
     expect(recoveringSetter).toHaveBeenCalledTimes(1);
     expect(recoveringSetter).toHaveBeenCalledWith(true);
+  });
+
+  test("reentry sem sessao canonica limpa controles stale sem aplicar snapshot", async () => {
+    hydrateActiveRunFromRuntime.mockResolvedValue({
+      snapshot: null,
+      runtime: { reconciliationStatus: "idle" },
+    });
+    const resetRunVisuals = jest.fn();
+    const applySnapshot = jest.fn();
+    const contextRef = { current: {
+      runningRef: { current: true },
+      currentRunIdRef: { current: "run-finished" },
+      runStatusRef: { current: "recovering" },
+      appStateRef: { current: "active" },
+      mountedRef: { current: true },
+      closeBlockingOverlays: jest.fn(),
+      resetRunVisuals,
+      applySnapshot,
+    } };
+    const { restore } = renderHooks(() => useActiveRunReentry({
+      navigation: null,
+      route: null,
+      contextRef,
+      restoreRef: { current: null },
+    }));
+
+    await expect(restore({ reason: "notification_open" })).resolves.toBe(false);
+    expect(resetRunVisuals).toHaveBeenCalledTimes(1);
+    expect(applySnapshot).not.toHaveBeenCalled();
+  });
+
+  test("start bloqueia estado nativo incerto sem snapshot", async () => {
+    hydrateActiveRunFromRuntime.mockResolvedValue({
+      snapshot: null,
+      canShowStartButton: false,
+    });
+    const context = {
+      appStateRef: { current: "active" },
+      runningRef: { current: false },
+      running: false,
+    };
+
+    await expect(startRun(context, "free")).resolves.toEqual({
+      ok: false,
+      reason: "active_run_state_uncertain",
+    });
+    expect(getActiveRunSnapshot).toHaveBeenCalledTimes(1);
   });
 });
