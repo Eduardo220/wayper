@@ -3,7 +3,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { addWorktree, deterministicFalseCompletion, digest, productFingerprint, readProfileSuite, readSuite, removeWorktree, reportSanity, ROOT,
   resultFingerprint, significance, suiteFingerprint, validateResult, validateSuite } from '../wayper-harness-benchmark.mjs';
@@ -12,6 +11,8 @@ import { classifyAttempt, isUsageLimit, OUTPUT_SCHEMA, parseCandidateOutput, run
 import { estimatedCost, generateOperationalReport } from '../wayper-harness-benchmark-operational-report.mjs';
 
 const suite = readSuite();
+// Phase 9.3 tuned candidate; its product matches the frozen suite (proportionality-report.md).
+const TUNED_FIXTURE_SHA = 'cb33e3000f6d8bd4a8af59e61b77cd1281ccd865';
 
 test('BM1 BM2 BM3 candidates use isolated worktrees, equal product source and isolated runtime', () => {
   const first = addWorktree(suite.candidates.V1.sha, 'v1');
@@ -56,7 +57,7 @@ test('operational profile changes only execution identity and cannot validate as
 });
 
 test('PT benchmark tuned profile freezes one V2 SHA and rejects baseline reuse', () => {
-  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const sha = TUNED_FIXTURE_SHA;
   const runtime = readProfileSuite('operational').model.runtime;
   const tuned = readProfileSuite('operational-tuned', runtime, sha);
   assert.equal(validateSuite(tuned).status, 'PASS');
@@ -64,12 +65,13 @@ test('PT benchmark tuned profile freezes one V2 SHA and rejects baseline reuse',
   assert.deepEqual(tuned.groundTruthTemplates, suite.groundTruthTemplates);
   assert.deepEqual(tuned.scoring, suite.scoring);
   assert.equal(tuned.candidates.V2.sha, sha);
+  assert.notEqual(sha, suite.candidates.V2.sha);
   assert.notEqual(tuned.fingerprint, readProfileSuite('operational', runtime).fingerprint);
   assert.throws(() => readProfileSuite('operational-tuned', runtime), /TUNED_CANDIDATE_SHA_REQUIRED/);
 });
 
 test('PT tuned runner executes V2 only and checkpoints the candidate fingerprint', async () => {
-  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const sha = TUNED_FIXTURE_SHA;
   const tuned = readProfileSuite('operational-tuned', null, sha);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wayper-tuned-runner-')); const calls = [];
   try {
@@ -91,7 +93,7 @@ test('PT tuned runner executes V2 only and checkpoints the candidate fingerprint
 });
 
 test('surgical trial filter runs exactly one requested repetition', async () => {
-  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const sha = TUNED_FIXTURE_SHA;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wayper-benchmark-surgical-')); const calls = [];
   try {
     await runAgentic({ profile: 'operational-tuned', tunedSha: sha, persist: false, trialId: 'B7-T2', artifactsRoot: root,
@@ -106,6 +108,21 @@ test('surgical trial filter runs exactly one requested repetition', async () => 
     assert.equal(checkpoint.trialId, 'B7-T2');
     await assert.rejects(runAgentic({ profile: 'operational-tuned', tunedSha: sha, persist: false,
       trialId: 'B7-T1', artifactsRoot: root, resumeRunId: runId }), /RESUME_CHECKPOINT_MISMATCH/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('BM3 tuned validation rejects real committed product drift before trials or artifacts', async () => {
+  // This descendant adds Flight Recorder and changes final timing; it is not Harness-only tuning.
+  const sha = '88601da8b38dfe2815fc94eed1af083518ce23c0';
+  const tuned = readProfileSuite('operational-tuned', 'codex-cli 0.155.1', sha);
+  assert.notEqual(productFingerprint(sha), productFingerprint(suite.candidates.V1.sha));
+  assert.throws(() => validateSuite(tuned), /product source differs/);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wayper-product-drift-'));
+  try {
+    await assert.rejects(runAgentic({ profile: 'operational-tuned', tunedSha: sha, persist: false,
+      only: ['B1'], artifactsRoot: root, trialRunner: async () => assert.fail('incompatible product reached a trial') }),
+    /product source differs/);
+    assert.deepEqual(fs.readdirSync(root), []);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
