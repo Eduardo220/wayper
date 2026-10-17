@@ -55,6 +55,13 @@ const getLocalProfileStats = jest.fn(async () => ({
 }));
 
 const FirestoreMock = {
+  collection: jest.fn((...parts) => ({ path: parts.join("/") })),
+  query: jest.fn((...parts) => parts),
+  where: jest.fn((...parts) => parts),
+  orderBy: jest.fn((...parts) => parts),
+  limit: jest.fn((count) => count),
+  startAfter: jest.fn((cursor) => cursor),
+  getDocs: jest.fn(async () => ({ docs: [], empty: true })),
   doc: jest.fn((...parts) => ({ path: parts.join("/") })),
   getDoc: jest.fn(async () => {
     if (getDocShouldThrow) throw new Error("firestore offline");
@@ -109,12 +116,50 @@ jest.unstable_mockModule("../profileStats.js", () => ({
 
 const repository = await import("../userProfileRepository.js");
 
+test("profile history uses date ordering and opaque pagination cursor in the existing Firestore owner", async () => {
+  const docs = Array.from({ length: 12 }, (_, i) => ({ id: `run-${i}`, data: () => ({ distance: 1000, userId: "wrong" }) }));
+  FirestoreMock.getDocs.mockResolvedValueOnce({ docs, size: 12 });
+  const first = await repository.listProfileRuns("public-user");
+  expect(first.items[0].userId).toBe("public-user"); expect(first.nextCursor).toBe(docs[11]);
+  FirestoreMock.getDocs.mockResolvedValueOnce({ docs: [], size: 0 });
+  expect((await repository.listProfileRuns("public-user", first.nextCursor)).nextCursor).toBeNull();
+  expect(FirestoreMock.startAfter).toHaveBeenLastCalledWith(docs[11]);
+  expect(FirestoreMock.orderBy).toHaveBeenCalledWith("date", "desc");
+});
+
+test("bilateral friendship query matches friendId rather than assuming document id", async () => {
+  FirestoreMock.getDocs.mockResolvedValueOnce({ empty: false });
+  expect(await repository.hasProfileFriendship("viewer", "other")).toBe(true);
+  expect(FirestoreMock.where).toHaveBeenCalledWith("friendId", "==", "other");
+});
+
 describe("userProfileRepository", () => {
   beforeEach(() => {
     remoteDoc = null;
     getDocShouldThrow = false;
     setDocShouldThrow = false;
     jest.clearAllMocks();
+  });
+
+  test("assinatura pública observa privacidade, remoção e falha sem reter o documento anterior", () => {
+    remoteDoc = { name: "Remote User" };
+    const callback = jest.fn(); const stop = repository.subscribePublicProfile("user-1", callback);
+    const [, next, error] = FirestoreMock.onSnapshot.mock.lastCall;
+    expect(callback.mock.lastCall[0].data.name).toBe("Remote User");
+    next({ exists: () => true, id: "user-1", data: () => ({ isPrivate: true }) });
+    expect(callback.mock.lastCall[0].data.isPrivate).toBe(true);
+    next({ exists: () => false }); expect(callback.mock.lastCall[0].data).toBeNull();
+    const denied = new Error("permission denied"); error(denied);
+    expect(callback.mock.lastCall[0]).toMatchObject({ data: null, error: denied });
+    stop(); expect(FirestoreMock.onSnapshot.mock.results.at(-1).value).toHaveBeenCalledTimes(1);
+  });
+
+  test("falha síncrona ao assinar perfil público não quebra a tela", () => {
+    const error = new Error("invalid Firestore state");
+    FirestoreMock.onSnapshot.mockImplementationOnce(() => { throw error; });
+    const callback = jest.fn(); const stop = repository.subscribePublicProfile("user-1", callback);
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ data: null, error }));
+    expect(() => stop()).not.toThrow();
   });
 
   test("retorna perfil remoto quando Firestore responde", async () => {

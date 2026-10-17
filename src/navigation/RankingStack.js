@@ -1,7 +1,7 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import RankingScreen from "../screens/RankingScreen";
-import PlayerProfileScreen from "../screens/ranking/PlayerProfileScreen";
+import PlayerProfileScreen from "./ProfileStack";
 
 const Stack = createNativeStackNavigator();
 

@@ -7,7 +7,7 @@ import { MAIN_TABS, openRunEntry } from "./mainTabsRoutes.js";
 
 export default function MainTabs({ children, navigation, state }) {
   const insets = useSafeAreaInsets();
-  const current = state.routes[state.index]?.name;
+  const current = state.routes[state.index]?.name === "PublicProfile" ? "Perfil" : state.routes[state.index]?.name;
   return <View style={styles.shell}>
     <View style={styles.content}>{children}</View>
     <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 8),

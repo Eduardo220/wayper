@@ -42,3 +42,24 @@ test("deep link aguarda Main quando mapa ainda nao montou", () => {
   expect(navigate).toHaveBeenCalledTimes(1);
   expect(navigate).toHaveBeenCalledWith("Main", expect.objectContaining({ screen: "Mapa" }));
 });
+
+test.each(["wayper", "wayper-dev"])("%s profile link opens canonical public route without touching run runtime", (scheme) => {
+  expect(navigation.handleNavigationUrl(`${scheme}://profile/real-user`)).toBe(true);
+  expect(navigate).toHaveBeenCalledWith("Main", { screen: "PublicProfile", params: {
+    screen: "ProfileHome", params: { userId: "real-user", profileEntry: "PublicProfile" },
+  } });
+  expect(recordDeepLinkReceived).not.toHaveBeenCalled();
+});
+
+test("profile link waits for navigation readiness and resumes the same identity", () => {
+  ready = false;
+  expect(navigation.handleNavigationUrl("wayper-dev://profile/other")).toBe(true);
+  expect(navigate).not.toHaveBeenCalled();
+  ready = true; navigation.flushPendingNavigation();
+  expect(navigate).toHaveBeenCalledWith("Main", expect.objectContaining({ screen: "PublicProfile" }));
+});
+
+test("invalid profile links do not navigate", () => {
+  expect(navigation.handleNavigationUrl("wayper://profile/a%2Fb")).toBe(false);
+  expect(navigate).not.toHaveBeenCalled();
+});

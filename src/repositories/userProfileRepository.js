@@ -1,5 +1,5 @@
 import { auth, db, storage } from "../firebaseConfig.js";
-import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, startAfter, where } from "firebase/firestore";
 import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import {
   DEFAULT_PROFILE,
@@ -347,6 +347,28 @@ export async function getPublicProfile(uid) {
   } catch (error) {
     return fail(error, null, { source: USER_PROFILE_SOURCE.LOCAL });
   }
+}
+
+export function subscribePublicProfile(uid, callback) {
+  try {
+    return onSnapshot(doc(db, "users", uid),
+      (snap) => callback(ok(snap.exists() ? normalizeUserDoc(snap.id || uid, snap.data()) : null, { source: USER_PROFILE_SOURCE.REMOTE })),
+      (error) => callback(fail(error, null, { source: USER_PROFILE_SOURCE.REMOTE })));
+  } catch (error) {
+    callback(fail(error, null, { source: USER_PROFILE_SOURCE.REMOTE }));
+    return () => {};
+  }
+}
+
+export async function listProfileRuns(userId, after = null) {
+  const snapshot = await getDocs(query(collection(db, "users", userId, "runs"), orderBy("date", "desc"), ...(after ? [startAfter(after)] : []), limit(12)));
+  return { items: snapshot.docs.map((item) => ({ ...item.data(), id: item.id, userId })), nextCursor: snapshot.size === 12 ? snapshot.docs.at(-1) : null };
+}
+
+export async function hasProfileFriendship(viewerId, userId) {
+  if (!viewerId) return false;
+  const snapshot = await getDocs(query(collection(db, "users", viewerId, "friends"), where("friendId", "==", userId), limit(1)));
+  return !snapshot.empty;
 }
 
 export default {
