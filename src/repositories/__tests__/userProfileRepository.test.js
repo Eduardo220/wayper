@@ -110,6 +110,10 @@ jest.unstable_mockModule("../../services/profile/profileService.js", () => ({
   saveProfile,
 }));
 
+jest.unstable_mockModule("../../utils/fileSystemLegacy.js", () => ({ FileSystemLegacy: {
+  documentDirectory: "file://documents/", makeDirectoryAsync: jest.fn(async () => {}), copyAsync: jest.fn(async () => {}),
+} }));
+
 jest.unstable_mockModule("../profileStats.js", () => ({
   getLocalProfileStats,
 }));
@@ -182,9 +186,15 @@ describe("userProfileRepository", () => {
       achievementsUnlocked: 1,
     });
     expect(result.data.userDoc).toMatchObject({
-      name: "Remote User",
+      name: "Local User",
       avatar: "https://cdn/remote.jpg",
     });
+  });
+
+  test("remote profile without username never invents identity from email", async () => {
+    remoteDoc = { email: "legacy@example.com", name: "Legacy" };
+    const result = await repository.loadCurrentProfile();
+    expect(result.data.userDoc.username).toBe("");
   });
 
   test("Firestore falhando retorna cache local controlado", async () => {
@@ -213,17 +223,14 @@ describe("userProfileRepository", () => {
     expect(saveProfile).toHaveBeenCalledWith(expect.objectContaining({
       displayName: "Novo Nome",
       bio: "offline bio",
-      avatar: "file://avatar.jpg",
+      avatar: expect.stringMatching(/^file:\/\/documents\/avatars\//),
       isPrivate: true,
       profileVisibility: "private",
-    }));
-    expect(FirestoreMock.setDoc).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.not.objectContaining({ avatar: "file://avatar.jpg" }),
-      { merge: true }
-    );
+    }), { localOnly: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(FirestoreMock.setDoc.mock.calls.every(([, patch]) => !String(patch.avatar || "").startsWith("file://"))).toBe(true);
     expect(result.source).toBe("local");
-    expect(result.syncStatus).toBe("SYNC_FAILED");
+    expect(result.syncStatus).toBe("SYNC_PENDING");
     expect(result.data.userDoc).toMatchObject({
       name: "Novo Nome",
       profileVisibility: "private",
@@ -247,4 +254,36 @@ describe("userProfileRepository", () => {
       },
     });
   });
+});
+
+test("common mutation rejects username, ignores external metrics and persists only approved fields", async () => {
+  jest.clearAllMocks();
+  await expect(repository.updateCurrentUserProfile({ username: "changed" })).rejects.toThrow("username_immutable");
+  await expect(repository.updateCurrentUserProfile({ "username.value": "changed" })).rejects.toThrow("username_immutable");
+  expect(saveProfile).not.toHaveBeenCalled();
+  await repository.updateCurrentUserProfile({ name: "Nome", city: "Cidade", bio: "linha 1\nlinha 2", xp: 900, level: 99, totalRuns: 500, totalArea: 999, ranking: 1, achievements: ["fake"] });
+  expect(saveProfile).toHaveBeenCalledWith({ displayName: "Nome", city: "Cidade", bio: "linha 1\nlinha 2" }, { localOnly: true });
+  const remote = FirestoreMock.setDoc.mock.lastCall[1];
+  expect(remote).toMatchObject({ name: "Nome", city: "Cidade", bio: "linha 1\nlinha 2" });
+  for (const field of ["username", "xp", "level", "totalRuns", "totalArea", "ranking", "achievements"]) expect(remote).not.toHaveProperty(field);
+});
+
+test.each([true, false])("visibility uses the current paired contract: %p", async (value) => {
+  jest.clearAllMocks();
+  await repository.updatePrivacy(value);
+  expect(saveProfile).toHaveBeenCalledWith({ isPrivate: value, profileVisibility: value ? "private" : "public" }, { localOnly: true });
+});
+
+test.each([{ name: " " }, { name: "a".repeat(51) }, { city: "a".repeat(51) }, { bio: "a".repeat(161) }])("invalid profile field fails before persistence %p", async (patch) => {
+  jest.clearAllMocks();
+  await expect(repository.updateCurrentUserProfile(patch)).rejects.toThrow("invalid_profile_");
+  expect(saveProfile).not.toHaveBeenCalled();
+});
+
+test("cover persistence keeps a durable image and never mutates avatar or external metrics", async () => {
+  jest.clearAllMocks();
+  const result = await repository.updateCurrentUserProfile({ coverLocalUri: "file://picker-cover.jpg", xp: 999, totalRuns: 400 });
+  expect(saveProfile).toHaveBeenCalledWith({ cover: expect.stringMatching(/^file:\/\/documents\/covers\//) }, { localOnly: true });
+  expect(result.data.profile.cover).toMatch(/^file:\/\/documents\/covers\//);
+  expect(saveProfile.mock.lastCall[0]).not.toHaveProperty("avatar");
 });

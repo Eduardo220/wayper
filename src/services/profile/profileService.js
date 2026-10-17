@@ -182,25 +182,14 @@ export async function loadProfile() {
     // ensure we always return a full profile
     const merged = { ...DEFAULT_PROFILE, ...local };
     // keep numeric stability
-    merged.xp = Number(merged.xp || 0);
     merged.level = Number(merged.level || 1);
     merged.nextLevelXp = Number(merged.nextLevelXp || DEFAULT_PROFILE.nextLevelXp);
-    merged.totalDistance = Number(merged.totalDistance || 0);
-    merged.totalArea = Number(merged.totalArea || 0);
-    merged.totalTime = Number(merged.totalTime || 0);
-    merged.totalRuns = Number(merged.totalRuns || 0);
-    merged.totalZones = Number(merged.totalZones || 0);
-    merged.weeklyPoints = Number(merged.weeklyPoints || 0);
-    merged.monthlyPoints = Number(merged.monthlyPoints || 0);
-    merged.globalPoints = Number(merged.globalPoints || 0);
-    merged.monthlyDistance = Number(merged.monthlyDistance || 0);
-    merged.monthlyArea = Number(merged.monthlyArea || 0);
-    merged.totalStolenAreaM2 = Number(merged.totalStolenAreaM2 || 0);
-    merged.totalLostAreaM2 = Number(merged.totalLostAreaM2 || 0);
-    merged.cellsLedCount = Number(merged.cellsLedCount || 0);
-    merged.territoryCapturesCount = Number(merged.territoryCapturesCount || 0);
-    merged.territoryStealsCount = Number(merged.territoryStealsCount || 0);
-    merged.territoryConqueredCount = Number(merged.territoryConqueredCount || 0);
+    for (const field of [
+      "xp", "totalDistance", "totalArea", "totalTime", "totalRuns",
+      "totalZones", "weeklyPoints", "monthlyPoints", "globalPoints", "monthlyDistance",
+      "monthlyArea", "totalStolenAreaM2", "totalLostAreaM2", "cellsLedCount", "territoryCapturesCount",
+      "territoryStealsCount", "territoryConqueredCount",
+    ]) merged[field] = Number(merged[field] || 0);
     return merged;
   } catch (e) {
     console.warn("profileService.loadProfile error:", e);
@@ -208,12 +197,11 @@ export async function loadProfile() {
   }
 }
 
-async function saveLocal(profile) {
-  try {
-    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-  } catch (e) {
-    console.warn("profileService.saveLocal error:", e);
-  }
+let localWriteQueue = Promise.resolve();
+function saveLocal(write) {
+  const result = localWriteQueue.then(write);
+  localWriteQueue = result.catch(() => {});
+  return result;
 }
 
 // -----------------------------------------------------------
@@ -299,7 +287,19 @@ let scheduledTimer = null;
  * - merges patch into local profile immediately, schedules local+remote save (debounced)
  * - returns merged profile (not necessarily flushed to Firestore yet)
  */
-export async function saveProfile(patch = {}) {
+export async function saveProfile(patch = {}, { localOnly = false } = {}) {
+  if (Object.keys(patch).some((key) => key === "username" || key.startsWith("username."))) {
+    const current = pendingProfile || await loadProfile();
+    if (Object.keys(patch).some((key) => key !== "username" && key.startsWith("username.")) || patch.username !== current.username) throw new Error("username_immutable");
+  }
+  // Profile edits must be durable before navigation and must not trigger progression writes.
+  if (localOnly) return saveLocal(async () => {
+    const merged = { ...(pendingProfile || await loadProfile()), ...patch, lastUpdate: nowIso() };
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(merged));
+    if (pendingProfile) pendingProfile = { ...pendingProfile, ...patch, lastUpdate: merged.lastUpdate };
+    emit(merged);
+    return merged;
+  });
   try {
     // load base profile from storage (fast)
     const base = pendingProfile ? { ...pendingProfile } : await loadProfile();
@@ -351,9 +351,11 @@ async function flushPendingProfile() {
   if (!pendingProfile) return;
   saveMutex = true;
   try {
-    const toWrite = { ...pendingProfile };
-    // local write first (fast)
-    await saveLocal(toWrite);
+    const toWrite = await saveLocal(async () => {
+      const snapshot = { ...(pendingProfile || await loadProfile()) };
+      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(snapshot));
+      return snapshot;
+    });
 
     // attempt firestore write (best-effort)
     try {
@@ -363,11 +365,9 @@ async function flushPendingProfile() {
       console.warn("profileService.saveFirestore warning:", e);
     }
     // clear pendingProfile only if no new changes arrived while writing
-    if (pendingProfile && pendingProfile.lastUpdate === toWrite.lastUpdate) {
-      pendingProfile = null;
-    }
+    if (pendingProfile?.lastUpdate === toWrite.lastUpdate) pendingProfile = null;
     // emit final
-    emit(toWrite);
+    emit(pendingProfile || toWrite);
     return toWrite;
   } finally {
     saveMutex = false;
