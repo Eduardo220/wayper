@@ -13,7 +13,6 @@
 import { db } from "../firebaseConfig";
 import {
   doc,
-  setDoc,
   getDoc,
   updateDoc,
   collection,
@@ -21,7 +20,7 @@ import {
   where,
   getDocs,
   serverTimestamp,
-  writeBatch,
+  runTransaction,
 } from "firebase/firestore";
 
 // ==========================================================
@@ -57,7 +56,7 @@ async function usernameExists(username) {
     const snap = await getDocs(q);
 
     const exists = !snap.empty;
-    usernameCache.set(username, exists);
+    if (exists) usernameCache.set(username, true);
 
     return exists;
   } catch (err) {
@@ -82,7 +81,7 @@ async function generateUniqueUsername(base) {
     if (idx !== -1) return candidates[idx];
   }
 
-  return `user_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  throw new Error("username_unavailable");
 }
 
 // ==========================================================
@@ -159,34 +158,27 @@ export async function createUserIfNotExists(user, forcedUsername) {
     },
   };
 
-  try {
-    const batch = writeBatch(db);
-
-    batch.set(ref, payload);
-
-    // subcoleções base
-    batch.set(doc(db, `users/${user.uid}/stats/_init`), {
-      createdAt: serverTimestamp(),
-    });
-
-    batch.set(doc(db, `users/${user.uid}/runs/_init`), {
-      createdAt: serverTimestamp(),
-    });
-
-    batch.set(doc(db, `users/${user.uid}/friends/_init`), {
-      createdAt: serverTimestamp(),
-    });
-
-    await batch.commit();
-
-    usernameCache.set(username, true);
-
-    log("Usuário criado:", username);
-    return payload;
-  } catch (err) {
-    log("batch createUser error:", err);
-    return null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const result = await runTransaction(db, async (transaction) => {
+        const current = await transaction.get(ref);
+        if (current.exists()) return current.data();
+        const reservation = doc(db, "usernames", payload.username);
+        if ((await transaction.get(reservation)).exists()) throw new Error("username_taken");
+        transaction.set(reservation, { uid: user.uid });
+        transaction.set(ref, payload);
+        for (const name of ["stats", "runs", "friends"]) transaction.set(doc(db, `users/${user.uid}/${name}/_init`), { createdAt: serverTimestamp() });
+        return payload;
+      });
+      usernameCache.set(result.username, true);
+      return result;
+    } catch (err) {
+      if (err.message !== "username_taken") { log("createUser error:", err); return null; }
+      usernameCache.set(payload.username, true);
+      payload.username = await generateUniqueUsername(base);
+    }
   }
+  return null;
 }
 
 // ==========================================================
@@ -207,7 +199,8 @@ export async function getUserData(uid) {
 // updateUser — Atualização
 // ==========================================================
 export async function updateUser(uid, data = {}) {
-  if (!uid || typeof data !== "object") return;
+  if (!uid || !data || typeof data !== "object") return;
+  if (Object.keys(data).some((key) => key === "username" || key.startsWith("username."))) throw new Error("username_immutable");
 
   try {
     await updateDoc(doc(db, "users", uid), {
