@@ -164,7 +164,9 @@ const MapScreen = ({ navigation, route }) => {
   });
   const actions = useMapScreenActions({
     closeSelectedTerritory: territory.closeSelectedTerritory,
-    isRunStartBusy: operations.isRunStartBusy,
+    isRunStartBusy: operations.isRunStartBusy || run.paused || replay.replaying,
+    route,
+    runEntryReady: !lifecycle.loading && !resources.runtimeRecovering,
     lastSavedRun: run.lastSavedRun,
     navigation,
     selectedTerritory: territory.selectedTerritory,

@@ -43,6 +43,26 @@ principal começa depois do salvamento, no Relatório da Expedição.
 9. Se nao houver stories, amigos ou feed, a tela mostra estados vazios honestos sem inventar dados.
 10. Estatisticas pessoais, XP, territorio, ranking e sync ficam em `Perfil`/`Dashboard`, nao como foco principal de `Inicio`.
 
+## 3.1 MainTabs — Parte 3
+
+O shell inferior mantém Home | Mapa | Correr | Ranking | Perfil sobre o layout
+canônico do Drawer. Home usa a rota legada Inicio. Correr é uma ação para Mapa,
+sem registrar outra tela ou runtime. Correr foca Mapa imediatamente; o handler
+da tela consulta o snapshot após a hidratação. Com corrida ativa, solicita a reentrada existente; sem corrida,
+abre a seleção de modo existente. Sair do Mapa cancela a intenção pendente,
+sem redirecionamento tardio ao trocar de tab. Tabs não criam sessões nem
+controlam tracking.
+
+Drawer e suas rotas permanecem acessíveis pelo menu. Cada tela/stack conserva
+sua identidade; Ranking mantém filtros ao abrir PlayerProfile e voltar. Perfil
+continua exibindo o usuário autenticado. O contrato wayper://run/active segue
+Main → Mapa. Back primeiro fecha modais/Drawer ou volta na stack; o shell não
+percorre histórico de tabs (backBehavior=none). Na raiz Android, o fallback
+nativo move a task para background sem finalizar a Activity, inclusive quando aberta por deep link. Stacks e modais tratam Back
+antes desse fallback.
+Rollback: retirar o layout MainTabs do Drawer e a entrada runEntryRequestId;
+nenhuma migração de dados é necessária.
+
 ## 4. Permissão de localização
 
 1. Usuário acessa tela de corrida/mapa.

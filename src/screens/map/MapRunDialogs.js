@@ -25,7 +25,7 @@ export default function MapRunDialogs({ model }) {
         onSave={saveRunSummary}
       />
 
-      <Modal visible={selectModeVisible} transparent animationType="fade">
+      <Modal visible={selectModeVisible} transparent animationType="fade" onRequestClose={closeMode}>
         <View style={styles.modeOverlay}>
           <View style={styles.modeBox}>
             <View style={styles.modeHandle} />

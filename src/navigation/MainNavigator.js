@@ -14,8 +14,9 @@ import { signOut } from "firebase/auth";
 
 // SCREENS
 import MapScreen from "../screens/MapScreen";
-import HomeScreen from "../screens/HomeScreen";
+import HomeStack from "./HomeStack";
 import RankingStack from "./RankingStack";
+import MainTabs from "./MainTabs";
 import ProfileScreen from "../screens/ProfileScreen";
 import DiagnosticsScreen from "../screens/DiagnosticsScreen";
 import SettingsScreen from "../screens/SettingsScreen";
@@ -209,28 +210,6 @@ function RunsStack() {
   );
 }
 
-/* ===========================
-   HOME STACK
-   =========================== */
-function HomeStack() {
-  return (
-    <Stack.Navigator
-      screenOptions={{
-        headerStyle: { backgroundColor: WayperTheme.colors.background },
-        headerTintColor: WayperTheme.colors.text,
-        headerTitleStyle: { fontWeight: "900", fontSize: 20 },
-      }}
-    >
-      <Stack.Screen name="InicioHome" component={HomeScreen} options={{ headerShown: false }} />
-      <Stack.Screen
-        name="ActivityDetail"
-        component={RunDetailScreen}
-        options={{ title: "Detalhes da atividade" }}
-      />
-    </Stack.Navigator>
-  );
-}
-
 function SettingsStack() {
   return (
     <Stack.Navigator
@@ -411,8 +390,11 @@ export default function MainNavigator() {
   return (
     <Drawer.Navigator
       initialRouteName={initialRouteName}
+      backBehavior="none"
+      layout={(props) => <MainTabs {...props} />}
       screenOptions={({ navigation }) => ({
         headerShown: true,
+        sceneStyle: { backgroundColor: WayperTheme.colors.background },
         headerStyle: { backgroundColor: WayperTheme.colors.background, height: 102 },
         headerShadowVisible: false,
         headerBackground: () => (
