@@ -68,6 +68,7 @@
       "args": [],
       "paths": [
         "src/services/run/__tests__/activeRunLocalFirst.integration.test.js",
+        "src/repositories/__tests__/profileScreenAdapter.integration.test.js",
         "scripts/quality/check-context-efficiency.test.mjs",
         "scripts/quality/check-goal-identity.test.mjs",
         "scripts/quality/check-evidence-receipts.test.mjs",
