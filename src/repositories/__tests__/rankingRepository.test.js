@@ -38,6 +38,7 @@ const getLocalProfileStats = jest.fn(async () => ({
   progress: { userId: "user-1", totalXp: 0, xp: 0, level: 1 },
 }));
 const setDoc = jest.fn(async () => {});
+const getRankingMonthKey = jest.fn(() => "2026-06");
 
 jest.unstable_mockModule("@react-native-async-storage/async-storage", () => ({
   default: {
@@ -66,7 +67,7 @@ jest.unstable_mockModule("../../services/ranking/index.js", () => ({
 }));
 
 jest.unstable_mockModule("../../services/ranking/constants.js", () => ({
-  getRankingMonthKey: jest.fn(() => "2026-06"),
+  getRankingMonthKey,
 }));
 
 jest.unstable_mockModule("../../services/ranking/ranking.localLeaders.js", () => ({
@@ -98,6 +99,7 @@ describe("rankingRepository", () => {
     fetchLocalLeadersRanking.mockResolvedValue([]);
     loadLocalTerritoryLeaderboards.mockResolvedValue([]);
     setDoc.mockResolvedValue(undefined);
+    getRankingMonthKey.mockReturnValue("2026-06");
     loadProfile.mockResolvedValue({
       uid: "user-1",
       displayName: "Local User",
@@ -150,6 +152,18 @@ describe("rankingRepository", () => {
     expect(result.source).toBe("cache");
     expect(result.data).toEqual([{ id: "cached-user", monthlyArea: 90 }]);
     expect(result.updatedAt).toBeTruthy();
+  });
+
+  test("não reutiliza cache mensal de outro mês", async () => {
+    fetchMonthlyRanking.mockResolvedValue([{ id: "cached-user", monthlyArea: 90 }]);
+    await repository.listRanking({ period: "monthly", mode: "area", criterion: "area" });
+    fetchMonthlyRanking.mockResolvedValue([]);
+    getRankingMonthKey.mockReturnValue("2026-07");
+
+    const result = await repository.listRanking({ period: "monthly", mode: "area", criterion: "area" });
+
+    expect(result.source).toBe("empty");
+    expect(result.data).toEqual([]);
   });
 
   test("nao retorna demo/mock como ranking real", async () => {

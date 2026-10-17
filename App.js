@@ -7,12 +7,13 @@ import {
 } from "react-native-reanimated";
 
 import React, { useEffect, useState } from "react";
-import { View, ActivityIndicator, Image, StyleSheet, Text, Linking } from "react-native";
+import { View, ActivityIndicator, Image, StyleSheet, Text, Linking, AppState } from "react-native";
 import ErrorBoundary from "./src/components/ErrorBoundary";
 import {
   installGlobalRunErrorHandlers,
   startActiveRunAutoCheckpointing,
   stopActiveRunAutoCheckpointing,
+  forceCheckpointForAppState,
 } from "./src/services/run/runAutoSaveService.js";
 import { installGlobalErrorReporter } from "./src/services/diagnostics/errorReporter.js";
 import {
@@ -33,6 +34,11 @@ import {
   startRunNotificationCoordinator,
   stopRunNotificationCoordinator,
 } from "./src/services/run/runNotificationService.js";
+import {
+  startActiveRunForegroundCoordinator,
+  stopActiveRunForegroundCoordinator,
+} from "./src/services/runTracking/activeRunForegroundWatcher.js";
+import { reconcileActiveRunState } from "./src/services/runTracking/activeRunRuntimeService.js";
 import {
   flushPendingNavigation,
   handleNavigationUrl,
@@ -135,7 +141,13 @@ function App() {
     startPerformanceDiagnostics();
     startActiveRunAutoCheckpointing();
     startRunNotificationCoordinator();
+    startActiveRunForegroundCoordinator();
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") forceCheckpointForAppState(state).catch(() => {});
+    });
     return () => {
+      appStateSubscription.remove();
+      stopActiveRunForegroundCoordinator();
       stopRunNotificationCoordinator();
       stopActiveRunAutoCheckpointing();
       stopPerformanceDiagnostics();
@@ -162,6 +174,7 @@ function App() {
 
   useEffect(() => {
     if (!authChecked || !user) return;
+    reconcileActiveRunState("app_boot", { userId: user.uid, restartTracking: true }).catch(() => {});
     const handle = setTimeout(flushPendingNavigation, 0);
     return () => clearTimeout(handle);
   }, [authChecked, user]);

@@ -7,6 +7,16 @@
 
 ## Boundary
 
+O adapter [Android artifact-backed](evidence-receipts.md#android-físico-captura-e-admissão-por-artifacts)
+permite `androidProfile: {path, fingerprint}` opcional no critério Android
+e no repo wayper para cenários sem criterionId. O Planner fixa esse profile na
+receipt policy e verifica seu conteúdo/sourceSubjects. Apenas RUNTIME
+ANDROID_ARTIFACTS íntegro, com target, profile e ambiente compatíveis, satisfaz
+o cenário. Unit/build/auditoria genérica não recebem essa autoridade.
+Ausência de profile permanece UNAVAILABLE; ausência de receipt para um profile
+aprovado é MISSING. Acrescentar profile a uma obrigação existente requer amendment
+material explícito; receipts da revisão anterior permanecem históricos.
+
 O principal confirma fatos estruturados. O planner deriva requisitos, consulta
 receipts e avalia suficiência conforme a policy versionada. Não interpreta texto
 livre, escolhe agents, executa checks, abre aparelho nem chama completion.

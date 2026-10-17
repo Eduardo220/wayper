@@ -1,4 +1,5 @@
 import { describe, expect, test } from "@jest/globals";
+import { normalizeTrackSegment } from "../trackSegments.js";
 import {
   buildSummaryRenderPath,
   buildRunLineGeoJson,
@@ -42,6 +43,21 @@ function maxTurn(points = []) {
 }
 
 describe("runTracking central pipeline", () => {
+  test("normaliza segmentos sem mutar pontos recebidos ou compartilhar suas copias", () => {
+    const point = Object.freeze({ latitude: -23.56, longitude: -46.64, accuracy: 8 });
+    const path = Object.freeze([point, { latitude: 100, longitude: -46.64 }]);
+    const normalized = normalizeTrackSegment({ index: 3, rawPath: path, trustedPath: path });
+
+    expect(normalized.rawPath).toEqual([{
+      latitude: -23.56, longitude: -46.64, accuracy: 8, timestamp: null, index: 0, segmentId: 3,
+    }]);
+    expect(normalized.trustedPath).toEqual(normalized.rawPath);
+    expect(normalized.trustedPath[0]).not.toBe(normalized.rawPath[0]);
+    normalized.rawPath[0].segmentId = 7;
+    expect(normalized.trustedPath[0].segmentId).toBe(3);
+    expect(point.segmentId).toBeUndefined();
+  });
+
   test("aceita pontos bons em linha reta", () => {
     const previous = p(0, 0, 0);
     const candidate = p(1, 0, 8);

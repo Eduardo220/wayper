@@ -36,6 +36,7 @@ jest.unstable_mockModule("../../../utils/pace.js", () => ({
 }));
 
 const {
+  saveProfile,
   clearProfileState,
   updateTerritoryProfileStats,
 } = await import("../profileService.js");
@@ -105,4 +106,36 @@ describe("profileService.updateTerritoryProfileStats", () => {
     expect(result.territoryCapturesCount).toBe(3);
     expect(result.territoryConqueredCount).toBe(1);
   });
+});
+
+test("local profile edit is durable before resolve, keeps username and progression, and propagates storage failure", async () => {
+  await clearProfileState();
+  seedProfile({ username: "original", xp: 20, level: 3, nextLevelXp: 150, totalRuns: 9, totalDistance: 1234, totalArea: 456, globalPoints: 789 });
+  const result = await saveProfile({ displayName: "Novo", city: "Cidade", bio: "A\nB", isPrivate: true, profileVisibility: "private" }, { localOnly: true });
+  expect(JSON.parse(storage.get(PROFILE_KEY))).toEqual(result);
+  expect(result).toMatchObject({ username: "original", xp: 20, level: 3, totalRuns: 9, totalDistance: 1234, totalArea: 456, globalPoints: 789, city: "Cidade", bio: "A\nB" });
+  await expect(saveProfile({ username: "other" })).rejects.toThrow("username_immutable");
+  AsyncStorageMock.setItem.mockRejectedValueOnce(new Error("disk full"));
+  await expect(saveProfile({ displayName: "Failure" }, { localOnly: true })).rejects.toThrow("disk full");
+  expect(JSON.parse(storage.get(PROFILE_KEY)).displayName).toBe("Novo");
+});
+
+test("a queued progress flush cannot overwrite an edit awaiting its local write acknowledgement", async () => {
+  await clearProfileState();
+  jest.clearAllTimers();
+  seedProfile({ displayName: "Original", totalRuns: 9 });
+  await saveProfile({ totalRuns: 10 });
+  let acknowledge;
+  AsyncStorageMock.setItem.mockImplementationOnce((key, value) => {
+    storage.set(key, value);
+    return new Promise((resolve) => { acknowledge = resolve; });
+  });
+  const editing = saveProfile({ displayName: "Alterado" }, { localOnly: true });
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+  expect(acknowledge).toBeDefined();
+  await jest.advanceTimersByTimeAsync(301);
+  acknowledge();
+  await editing;
+  await jest.runOnlyPendingTimersAsync();
+  expect(JSON.parse(storage.get(PROFILE_KEY))).toMatchObject({ displayName: "Alterado", totalRuns: 10 });
 });

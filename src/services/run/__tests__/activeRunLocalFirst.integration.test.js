@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "@jest/globals";
+import { Buffer } from "node:buffer";
 
 const storage = new Map();
 const firestoreSets = [];
@@ -181,7 +182,16 @@ const {
 const {
   enqueueFinishedRun,
 } = await import("../runSyncQueueService.js");
+const { buildFinishedRunData: buildLocalFinishedRunData } = await import("../runFinalizationData.js");
 const {
+  enqueuePostRunProcessing,
+  freezeActiveRunForFinalization,
+  persistMinimumFinishedRun,
+} = await import("../runFinalizationService.js");
+const { processRunDeferredTaskQueue } = await import("../runDeferredTaskQueueService.js");
+const runDeferredTaskQueueRepository = await import("../../../repositories/runDeferredTaskQueueRepository.js");
+const {
+  findLocalRunById,
   loadLocalRuns,
   saveLocalRun,
   syncRunsToFirestore,
@@ -374,6 +384,176 @@ describe("active run local-first integration", () => {
     });
   });
 
+  test("fim demorado preserva duracao canonica no snapshot, historico e fila deferida", async () => {
+    await activeRunTrackingService.startActiveRun({
+      activeRunId: "run-slow-finish",
+      userId: "user-1",
+      mode: "free",
+      startedAtMs: BASE_TIME,
+    });
+    await activeRunTrackingService.recordLocation(point(1, 0, 8), { source: "foreground" });
+    await activeRunTrackingService.recordLocation(point(2, 0, 16), { source: "foreground" });
+
+    const finishedAtMs = BASE_TIME + 30_000;
+    const finishing = await activeRunTrackingService.markActiveRunFinishing({ nowMs: finishedAtMs });
+    const finished = await activeRunTrackingService.finishActiveRun({ finishedAtMs: finishedAtMs + 22_000 });
+    expect(finishing).toMatchObject({ status: CANONICAL_RUN_STATUS.FINISHING, durationSeconds: 30 });
+    expect(finished).toMatchObject({
+      status: CANONICAL_RUN_STATUS.FINISHED,
+      finishedAtMs,
+      durationSeconds: 30,
+    });
+
+    const { runData } = buildLocalFinishedRunData({
+      runId: "run-slow-finish",
+      mode: "free",
+      snapshot: finished,
+      finishedAtMs,
+      uiDurationSeconds: 52,
+    });
+    expect(runData).toMatchObject({
+      durationSeconds: 30,
+      finishedAt: new Date(finishedAtMs).toISOString(),
+    });
+
+    const save = await persistMinimumFinishedRun(runData, {
+      userId: "user-1",
+      saveLocalRun,
+      findLocalRunById,
+      scheduleRunsSync: jest.fn(),
+      persistFinishedRunDraft,
+      markRecoveredRunLocallySaved: (options) => markRecoveredRunLocallySaved({
+        ...options,
+        trackingService: activeRunTrackingService,
+      }),
+    });
+    expect(save.savedLocalRun.durationSeconds).toBe(30);
+    expect((await loadLocalRuns())[0].durationSeconds).toBe(30);
+
+    const queued = await enqueuePostRunProcessing(save.savedLocalRun, {
+      queueRepository: runDeferredTaskQueueRepository,
+    });
+    expect(queued.ok).toBe(true);
+    const processed = await processRunDeferredTaskQueue({
+      runId: "run-slow-finish",
+      limit: 1,
+      trigger: "test",
+    });
+    expect(processed.processed).toHaveLength(1);
+    expect(processed.processed[0].type).toBe("RUN_FULL_SAVE_FINALIZE");
+    expect((await loadLocalRuns())[0].durationSeconds).toBe(30);
+  });
+
+  test("freeze serializado salva checkpoint legado e snapshot final sem deadlock", async () => {
+    await activeRunTrackingService.startActiveRun({
+      activeRunId: "run-queued-freeze", userId: "user-1", mode: "free", startedAtMs: BASE_TIME,
+    });
+    await activeRunTrackingService.recordLocation(point(1, 0, 8), { source: "foreground" });
+    await activeRunTrackingService.recordLocation(point(2, 0, 8), { source: "foreground" });
+
+    const result = await freezeActiveRunForFinalization({
+      runId: "run-queued-freeze", finishedAtMs: BASE_TIME + 5000,
+      trackingService: activeRunTrackingService, flushCheckpoint: flushActiveRunCheckpoint,
+      timeouts: { FREEZE_MS: 3000 },
+    });
+
+    expect(result.issues).toEqual([]);
+    expect(result.snapshot).toMatchObject({
+      activeRunId: "run-queued-freeze", status: CANONICAL_RUN_STATUS.FINISHED,
+      finishedAtMs: BASE_TIME + 5000,
+    });
+    expect(JSON.parse(storage.get(LEGACY_ACTIVE_RUN_STORAGE_KEY))).toMatchObject({
+      localRunId: "run-queued-freeze", status: "FINISHED",
+    });
+  });
+
+  test("mede checkpoint, snapshot e save local em volumes de 1h, 2h e 4h", async () => {
+    jest.setTimeout(180_000);
+    const rowSizes = () => Object.fromEntries([...storage].map(([key, value]) => [key, Buffer.byteLength(value)]));
+    const observedSeconds = 2 * 3600 + 22 * 60 + 44;
+    const profiles = [1, 2, 4].map((hours) => ({
+      hours,
+      accepted: Math.round(1381 * hours * 3600 / observedSeconds),
+      raw: Math.round(2462 * hours * 3600 / observedSeconds),
+    }));
+
+    for (const { hours, accepted, raw } of profiles) {
+      storage.clear();
+      activeRunTrackingService.__resetActiveRunRuntimeForTests();
+      const runId = `run-scale-${hours}h`;
+      const rawPath = Array.from({ length: raw }, (_, index) =>
+        point(index + 1, index * 1.5, 0, { timestamp: BASE_TIME + Math.floor(index * hours * 3_600_000 / raw) })
+      );
+      const trustedPath = Array.from({ length: accepted }, (_, index) =>
+        rawPath[Math.floor(index * raw / accepted)]
+      );
+      const segment = { index: 0, startedAt: BASE_TIME, trustedPath, rawPath };
+      const started = performance.now();
+      const hydrated = await activeRunTrackingService.hydrateActiveRunSnapshot({
+        activeRunId: runId,
+        userId: "user-1",
+        mode: "free",
+        status: CANONICAL_RUN_STATUS.RUNNING,
+        startedAtMs: BASE_TIME,
+        lastUpdatedAtMs: BASE_TIME + hours * 3_600_000,
+        trustedPath,
+        rawPath,
+        segments: [segment],
+        routeSegments: [segment],
+        distanceMeters: hours * 2400,
+      }, { restartTracking: false });
+      const hydrateMs = performance.now() - started;
+      expect(hydrated?.activeRunId).toBe(runId);
+      const hydratedSizes = rowSizes();
+
+      const checkpointStart = performance.now();
+      await flushActiveRunCheckpoint({ reason: "before_finish", checkpointAtMs: BASE_TIME + hours * 3_600_000 });
+      const checkpointMs = performance.now() - checkpointStart;
+      const checkpointSizes = rowSizes();
+      const freezeStart = performance.now();
+      const { snapshot: finished, issues } = await freezeActiveRunForFinalization({
+        runId,
+        finishedAtMs: BASE_TIME + hours * 3_600_000,
+        trackingService: activeRunTrackingService,
+        flushCheckpoint: flushActiveRunCheckpoint,
+      });
+      const freezeMs = performance.now() - freezeStart;
+      const finishedSizes = rowSizes();
+      expect(issues).toEqual([]);
+      expect(finished?.status).toBe(CANONICAL_RUN_STATUS.FINISHED);
+      expect(finished.trustedPath).toHaveLength(accepted);
+      expect(finished.rawPath).toHaveLength(raw);
+      const routeChunks = [...storage].filter(([key]) => key.startsWith(`wayper:activeRun:v2:routeChunk:${runId}:`));
+      const maxRouteChunkBytes = Math.max(...routeChunks.map(([, value]) => Buffer.byteLength(value)));
+
+      const { runData } = buildLocalFinishedRunData({ runId, mode: "free", snapshot: finished, finishedAtMs: BASE_TIME + hours * 3_600_000 });
+      const saveStart = performance.now();
+      const saved = await persistMinimumFinishedRun(runData, {
+        userId: "user-1",
+        saveLocalRun,
+        findLocalRunById,
+        scheduleRunsSync: jest.fn(),
+        persistFinishedRunDraft,
+        markRecoveredRunLocallySaved: (options) => markRecoveredRunLocallySaved({ ...options, trackingService: activeRunTrackingService }),
+      });
+      const saveMs = performance.now() - saveStart;
+      expect(saved.savedLocalRun?.localRunId).toBe(runId);
+      expect((await loadLocalRuns())[0].trustedPath).toHaveLength(accepted);
+      expect((await loadLocalRuns())[0].rawPath).toHaveLength(raw);
+      const savedSizes = rowSizes();
+      const historyRows = Object.entries(savedSizes).filter(([key]) => key === "runs" || key.startsWith("runs:v3:"));
+      const maxHistoryBytes = Math.max(...historyRows.map(([, bytes]) => bytes));
+      expect(maxHistoryBytes).toBeLessThanOrEqual(250_000);
+      console.log("RUN_SCALE", JSON.stringify({
+        hours, accepted, raw, hydrateMs, checkpointMs, freezeMs, saveMs,
+        canonicalBytes: hydratedSizes[ACTIVE_RUN_STORAGE_KEY],
+        legacyCheckpointBytes: checkpointSizes[LEGACY_ACTIVE_RUN_STORAGE_KEY],
+        finishedSnapshotBytes: finishedSizes[ACTIVE_RUN_STORAGE_KEY],
+        historyRows: historyRows.length, maxHistoryBytes, routeChunks: routeChunks.length, maxRouteChunkBytes,
+      }));
+    }
+  }, 180_000);
+
   test("falha no salvamento final mantem snapshot canonico recuperavel", async () => {
     await activeRunTrackingService.startActiveRun({
       activeRunId: "run-final-save-failure",
@@ -426,6 +606,36 @@ describe("active run local-first integration", () => {
       AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
         storage.set(key, value);
       });
+    }
+  });
+
+  test("save local nao sobrescreve historico legacy ilegivel por CursorWindow", async () => {
+    const oversizedHistory = JSON.stringify([{
+      id: "older-run",
+      localRunId: "older-run",
+      status: "completed",
+      date: new Date(BASE_TIME).toISOString(),
+      notes: "x".repeat(5_000_000),
+    }]);
+    storage.set("runs", oversizedHistory);
+    AsyncStorageMock.getItem.mockImplementation(async (key) => {
+      if (key === "runs" && Buffer.byteLength(storage.get(key) || "") > 4_500_000) {
+        throw new Error("SQLiteBlobTooBigException: Row too big to fit into CursorWindow");
+      }
+      return storage.get(key) ?? null;
+    });
+    try {
+      await saveLocalRun({
+        id: "new-run",
+        localRunId: "new-run",
+        status: "completed",
+        date: new Date(BASE_TIME + 60_000).toISOString(),
+        distanceMeters: 100,
+        durationSeconds: 60,
+      });
+      expect(Buffer.byteLength(storage.get("runs"))).toBe(Buffer.byteLength(oversizedHistory));
+    } finally {
+      AsyncStorageMock.getItem.mockImplementation(async (key) => storage.get(key) ?? null);
     }
   });
 

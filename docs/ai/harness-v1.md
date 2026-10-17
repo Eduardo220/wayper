@@ -282,3 +282,20 @@ ou configuração. Meta Goal e seu Completion Judge são contratos declarativos 
 associado executa somente evals. Promotion, staleness e supersession pertencem a
 [`memory-policy.md`](memory-policy.md); Learning Delta pode persistir no Working
 Context do Goal, mas só vira repo memory após candidate e policy executável.
+
+## Artifacts locais de sessão
+
+Transcripts brutos exportados por ferramentas externas de conversa são artifacts
+locais de handoff, não source do produto nem documentação aprovada. Novos exports
+devem viver em `.wayper-context/sessions/`, já ignorado. O namespace de export
+legado na raiz `codex-session-*.md` fica reservado a esses transcripts e ignorado
+pelo Git; não colocar source ou decisões aprovadas nesse namespace. Preservar
+bytes e conteúdo dos exports existentes, inclusive arquivos protegidos.
+
+O backstop continua verificando todos os arquivos não rastreados não ignorados
+via `git ls-files --others --exclude-standard`; não possui exceção por filename.
+Para admitir um transcript como prova, observá-lo explicitamente por path/hash
+com a identidade correta; estar ignorado não cria receipt nem prova física.
+Decisões duráveis extraídas do transcript pertencem aos owners versionados em
+`docs/`; os receipts imutáveis continuam em `.wayper-context/evidence/`. O gerador
+externo e seu diretório de exportação não são controlados pelo Harness mobile.

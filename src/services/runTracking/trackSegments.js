@@ -22,10 +22,11 @@ export function sanitizeRunPath(path = []) {
 }
 
 function withSegmentId(path = [], segmentIndex = 0) {
-  return sanitizeRunPath(path).map((point) => ({
-    ...point,
-    segmentId: Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : segmentIndex,
-  }));
+  const points = sanitizeRunPath(path);
+  for (const point of points) {
+    point.segmentId = Number.isFinite(Number(point.segmentId)) ? Number(point.segmentId) : segmentIndex;
+  }
+  return points;
 }
 
 export function normalizeTrackSegment(segment = {}, index = 0) {

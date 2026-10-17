@@ -13,6 +13,7 @@ import com.facebook.react.common.ReleaseLevel
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.wayper.app.run.WayperRunNotificationPackage
+import com.wayper.app.storage.WayperAsyncStorageReadPackage
 
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
@@ -27,6 +28,7 @@ class MainApplication : Application(), ReactApplication {
               // Packages that cannot be autolinked yet can be added manually here, for example:
               // add(MyReactNativePackage())
               add(WayperRunNotificationPackage())
+              add(WayperAsyncStorageReadPackage())
             }
 
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"

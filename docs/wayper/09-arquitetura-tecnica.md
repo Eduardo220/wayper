@@ -173,7 +173,7 @@ Regra atual:
 
 A arquitetura da corrida ativa segue esta separação:
 
-- `MapScreen` controla interacao, watcher foreground complementar, timer visual e renderizacao; ingestao, validacao e persistencia de GPS pertencem ao service canonico e a task headless.
+- `MapScreen` controla interacao, timer visual e renderizacao. `App` reconcilia a corrida persistida no bootstrap; o coordenador de `activeRunForegroundWatcher` acompanha o snapshot canonico e alimenta `activeRunTrackingService` mesmo sem a tela montada. Pause/finish encerram o watcher pela transicao canonica. A task headless continua alimentando o mesmo service em background.
 - `runTracking` filtra pontos, calcula distância, segmentos e qualidade.
 - `runOfflineStorageService` persiste a corrida ativa localmente com pontos aceitos, segmentos, duração, distância e status.
 - `sync.js` salva a corrida finalizada no histórico local e sincroniza com Firestore por fila, status e retry.
@@ -194,7 +194,7 @@ Papel de cada camada:
 - `activeRunTrackingService` / `activeRunState`: estado ativo canonico, lifecycle start/pause/resume/finish, path confiavel, rawPath, renderPath, segmentos, distancia, duracao e pace.
 - `activeRunLocationTask`: `TaskManager.defineTask` global importado no bootstrap; processa lotes mesmo sem React/`MapScreen` e faz flush do lote no snapshot canonico.
 - `trackingPathService`: filtro de GPS, criacao de segmentos, distancia, render path e qualidade da rota.
-- `runAutoSaveService`: escuta snapshots canonicos e gera checkpoint local de compatibilidade.
+- `runAutoSaveService`: escuta snapshots canonicos e gera checkpoint local de compatibilidade; `App` encaminha AppState para o mesmo service mesmo sem `MapScreen`.
 - `runOfflineStorageService`: checkpoint legado/compatibilidade em `wayper_active_offline_run_v1` e rascunho final caso o app feche entre finish e save local.
 - `runRecoveryService`: unica camada que decide entre snapshot canonico e legado, migra legado vivo para o canonico e limpa os dois storages depois que a corrida finalizada entra no historico/fila.
 - `runSyncQueueService` / `sync.js`: historico local, fila pendente e sincronizacao posterior com Firestore.
@@ -301,6 +301,7 @@ Comportamento esperado:
 - Ao retomar, a notificacao volta para `Correndo` e mantem os segmentos existentes.
 - Ao finalizar/cancelar/limpar o snapshot ativo, a notificacao e removida para evitar notificacao orfa.
 - Toque no corpo da notificacao reabre a tela de corrida ativa por deep link, sem empilhar nova rota.
+- `wayper://run/active` apenas solicita navegacao: sem snapshot ativo canonico ou legado vivo, timestamps de abertura e caches nao reconstituem corrida finalizada. Se o servico nativo indicar estado incerto sem identidade de corrida, um novo start fica bloqueado sem fabricar uma sessao na UI.
 - Updates JS para o native module sao limitados por throttle; o foreground service continua atualizando visualmente o tempo enquanto a corrida esta rodando.
 - O ticker nativo é responsável pelos segundos. A chave de atualização JS muda
   somente com status ou distância arredondada, e starts concorrentes são
@@ -573,4 +574,3 @@ Antes de adicionar ou ampliar dependência geográfica, avaliar:
 - [[05-gps-e-validacao]]
 - [[08-firebase-firestore]]
 - [[10-decisoes-do-projeto]]
-

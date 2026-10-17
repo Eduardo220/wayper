@@ -15,6 +15,7 @@ import * as Sharing from "expo-sharing";
 import { Ionicons } from "@expo/vector-icons";
 import { WayperTheme } from "../theme/wayperTheme";
 import activeRunTrackingService from "../services/runTracking/activeRunTrackingService.js";
+import { getLastFlightRecorderFile } from "../services/diagnostics/activeRunFlightRecorder.js";
 import {
   clearOldLogs,
   flushLogs,
@@ -210,6 +211,23 @@ export default function DiagnosticsScreen() {
       }
     } catch (error) {
       Alert.alert("Diagnostico", `Nao foi possivel exportar os logs.\n${error?.message || ""}`);
+    } finally {
+      setBusyAction(null);
+    }
+  }, []);
+
+  const exportFlightRecorder = useCallback(async () => {
+    setBusyAction("flight");
+    try {
+      const file = await getLastFlightRecorderFile();
+      if (!file) throw new Error("Nenhum arquivo de corrida encontrado.");
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, { mimeType: "application/x-ndjson", dialogTitle: "Active Run Flight Recorder" });
+      } else {
+        Alert.alert("Flight Recorder salvo", file.uri);
+      }
+    } catch (error) {
+      Alert.alert("Flight Recorder", error?.message || "Nao foi possivel exportar o arquivo.");
     } finally {
       setBusyAction(null);
     }
@@ -577,6 +595,10 @@ export default function DiagnosticsScreen() {
       </View>
 
       <View style={styles.actions}>
+        <TouchableOpacity style={styles.actionButton} onPress={exportFlightRecorder} disabled={Boolean(busyAction)}>
+          <Ionicons name="share-outline" size={18} color={WayperTheme.colors.textInverse} />
+          <Text style={styles.actionText}>{busyAction === "flight" ? "Exportando" : "Exportar Flight Recorder"}</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           style={styles.actionButton}
           onPress={copyTechnicalSummary}

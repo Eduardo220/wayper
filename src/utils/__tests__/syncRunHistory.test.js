@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, jest, test } from "@jest/globals";
+import { Buffer } from "node:buffer";
 
 const storage = new Map();
+const NativeModulesMock = {
+  WayperAsyncStorageRead: {
+    readOversizedRuns: jest.fn(async () => storage.get("runs")),
+  },
+};
 const firestoreSets = [];
 let firestoreDocShouldThrow = false;
 let firestoreCommitShouldThrow = false;
@@ -84,6 +90,7 @@ jest.unstable_mockModule("react-native", () => ({
   AppState: {
     addEventListener: jest.fn(() => ({ remove: jest.fn() })),
   },
+  NativeModules: NativeModulesMock,
   Platform: { OS: "android", Version: 33 },
 }));
 
@@ -159,6 +166,8 @@ describe("local run history source", () => {
     firestoreGetDocsDocs = [];
     jest.clearAllMocks();
     jest.useRealTimers();
+    AsyncStorageMock.getItem.mockImplementation(async (key) => storage.get(key) ?? null);
+    AsyncStorageMock.setItem.mockImplementation(async (key, value) => { storage.set(key, value); });
   });
 
   test("lista corridas finalizadas locais e ignora estados ativos ou finishing", async () => {
@@ -283,7 +292,10 @@ describe("local run history source", () => {
       }],
     });
 
-    const rawStored = storage.get("runs");
+    const manifest = JSON.parse(storage.get("runs"));
+    const rawStored = Array.isArray(manifest)
+      ? storage.get("runs")
+      : Array.from({ length: manifest.chunks }, (_, index) => storage.get(`runs:v3:${manifest.generation}:${index}`)).join("");
     const [storedRun] = JSON.parse(rawStored);
     expect(storedRun).toMatchObject({
       id: "compact-run",
@@ -304,6 +316,86 @@ describe("local run history source", () => {
     expect(loaded.rawPath).toHaveLength(121);
     expect(loaded.segments).toHaveLength(1);
     expect(loaded.segments[0].trustedPath).toHaveLength(120);
+  });
+
+  test("preserva Unicode quando um par surrogate atravessa o limite dos chunks", async () => {
+    const prefixLength = JSON.stringify([{ notes: "" }]).indexOf('""') + 1;
+    const notes = "x".repeat(250_000 - prefixLength - 1) + "😀" + "y".repeat(500);
+    AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+      storage.set(key, Buffer.from(value, "utf8").toString("utf8"));
+    });
+
+    await saveLocalRun({
+      notes, id: "unicode-run", localRunId: "unicode-run", status: "completed",
+      date: "2026-06-05T10:00:00Z",
+    });
+
+    expect((await loadLocalRuns())[0].notes).toBe(notes);
+  });
+
+  test("migra historico legado maior que CursorWindow sem perder corrida", async () => {
+    const oldRuns = JSON.stringify([{
+      id: "legacy-large", localRunId: "legacy-large", status: "completed",
+      date: "2026-06-05T10:00:00Z", notes: "x".repeat(5_000_000),
+    }]);
+    storage.set("runs", oldRuns);
+    AsyncStorageMock.getItem.mockImplementation(async (key) => {
+      if (key === "runs" && storage.get(key)?.length > 4_500_000) {
+        throw new Error("SQLiteBlobTooBigException: Row too big to fit into CursorWindow");
+      }
+      return storage.get(key) ?? null;
+    });
+
+    const saved = await saveLocalRun({
+      id: "new-run", localRunId: "new-run", status: "completed", date: "2026-06-05T11:00:00Z",
+    });
+
+    expect(saved.id).toBe("new-run");
+    expect(NativeModulesMock.WayperAsyncStorageRead.readOversizedRuns).toHaveBeenCalled();
+    const manifest = JSON.parse(storage.get("runs"));
+    expect(manifest.formatVersion).toBe(3);
+    expect(Math.max(...[...storage.values()].map((value) => value.length))).toBeLessThanOrEqual(250_000);
+    expect((await loadLocalRuns()).map((run) => run.id)).toEqual(["new-run", "legacy-large"]);
+  });
+
+  test("falha de leitura da linha legada nao substitui historico", async () => {
+    const oldRuns = JSON.stringify([{
+      id: "legacy-large", status: "completed", date: "2026-06-05T10:00:00Z",
+      notes: "x".repeat(5_000_000),
+    }]);
+    storage.set("runs", oldRuns);
+    AsyncStorageMock.getItem.mockImplementation(async (key) => {
+      if (key === "runs") throw new Error("SQLiteBlobTooBigException");
+      return storage.get(key) ?? null;
+    });
+    NativeModulesMock.WayperAsyncStorageRead.readOversizedRuns.mockRejectedValueOnce(new Error("native read unavailable"));
+
+    const saved = await saveLocalRun({
+      id: "new-run", localRunId: "new-run", status: "completed", date: "2026-06-05T11:00:00Z",
+    });
+
+    expect(saved.id).not.toBe("new-run");
+    expect(storage.get("runs")).toBe(oldRuns);
+  });
+
+  test("falha ao publicar novo indice preserva geracao anterior", async () => {
+    await saveLocalRun({
+      id: "old-run", localRunId: "old-run", status: "completed",
+      date: "2026-06-05T10:00:00Z", notes: "x".repeat(300_000),
+    });
+    const previous = storage.get("runs");
+    AsyncStorageMock.setItem.mockImplementation(async (key, value) => {
+      if (key === "runs") throw new Error("index write failed");
+      storage.set(key, value);
+    });
+
+    const saved = await saveLocalRun({
+      id: "new-run", localRunId: "new-run", status: "completed", date: "2026-06-05T11:00:00Z",
+    });
+
+    expect(saved.id).not.toBe("new-run");
+    expect(storage.get("runs")).toBe(previous);
+    expect((await loadLocalRuns()).map((run) => run.id)).toEqual(["old-run"]);
   });
 
   test("abre corrida local por id, localRunId, remoteRunId e id legado", async () => {

@@ -81,6 +81,10 @@ No app, a fonte local do historico usa a chave `runs` do AsyncStorage via `sync.
 | `area`/`areaM2` | number | Area territorial quando `mode=zones`. |
 | `zoneCoords`/`geometry` | array/object | Dados territoriais quando existirem. |
 
+Na finalizacao, quando inicio, fim congelado e pausa acumulada formam uma timeline
+valida, `durationSeconds` e derivado desses valores. O tempo exibido pela UI so
+serve de fallback quando a timeline necessaria esta incompleta ou invalida.
+
 Regras locais:
 
 - Firestore nao e necessario para listar ou abrir detalhes de corrida salva localmente.

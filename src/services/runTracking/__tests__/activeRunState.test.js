@@ -430,6 +430,10 @@ describe("active run persistence state", () => {
       path.join(process.cwd(), "src/services/run/runFinalizationService.js"),
       "utf8"
     );
+    const trackingService = fs.readFileSync(
+      path.join(process.cwd(), "src/services/runTracking/activeRunTrackingService.js"),
+      "utf8"
+    );
     const finalizationHook = fs.readFileSync(
       path.join(process.cwd(), "src/hooks/useRunFinalization.js"),
       "utf8"
@@ -471,7 +475,9 @@ describe("active run persistence state", () => {
     expect(mapRunResources).toContain("useActiveRunReentry");
     expect(lifecycle).toContain("checkpointOnLocationError");
     expect(finalizationHook).toContain("freezeActiveRunForFinalization");
-    expect(finalizationService).toContain('reason: "before_finish"');
+    expect(finalizationService).toContain("freezeActiveRunSnapshot");
+    expect(trackingService).toContain('reason: "before_finish"');
+    expect(trackingService).toContain("insideIngestionQueue: true");
     expect(finishFailureRecovery).toContain("RUN_FINISH_FAILURE_STATE_RESTORED");
     expect(finishFailureRecovery).toContain("context.applyActiveRunSnapshotToUi(snapshot");
     expect(finishFailureRecovery).toContain('"finish_failure_snapshot_timeout"');
@@ -510,7 +516,10 @@ describe("active run persistence state", () => {
     const mapScreen = fs.readFileSync(path.join(process.cwd(), "src/screens/MapScreen.js"), "utf8");
 
     expect(indexSource.indexOf("./src/tasks/activeRunLocationTask.js")).toBeLessThan(indexSource.indexOf("./App"));
-    expect(taskSource).toContain("TaskManager.defineTask(ACTIVE_RUN_LOCATION_TASK, handleActiveRunLocationTask)");
+    expect(taskSource).toContain("TaskManager.defineTask(ACTIVE_RUN_LOCATION_TASK, async (input)");
+    expect(taskSource).toContain("return await handleActiveRunLocationTask(input)");
+    expect(taskSource).toContain("flushFlightRecorder().catch(() => {})");
+    expect(taskSource).toContain("setTimeout(resolve, 750)");
     expect(serviceSource).not.toContain("TaskManager.defineTask");
     expect(mapScreen).not.toContain("TaskManager.defineTask");
   });

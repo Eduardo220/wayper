@@ -68,6 +68,11 @@ function validObservation(receipt) {
   if (o.type === 'FILE') return exact(o, 'type bytes') && integer(o.bytes) &&
     ['SOURCE', 'DOCUMENT'].includes(receipt.kind) && receipt.origin === 'SOURCE_OBSERVED' && receipt.result === 'OBSERVED' &&
     safeEvidencePath(receipt.subject.path);
+  if (o.type === 'ANDROID_ARTIFACTS') return exact(o, 'type bundlePath bundleFingerprint profilePath profileFingerprint environment startedAt finishedAt') &&
+    receipt.kind === 'RUNTIME' && receipt.origin === 'RUNNER_OBSERVED' && ['PASS', 'FAIL'].includes(receipt.result) &&
+    [o.bundlePath, o.profilePath].every(safeEvidencePath) && [o.bundleFingerprint, o.profileFingerprint].every((v) => HASH.test(v)) &&
+    o.environment === 'PHYSICAL_DEVICE' && date(o.startedAt) && date(o.finishedAt) && o.startedAt <= o.finishedAt &&
+    receipt.subject.path === o.bundlePath && receipt.subject.fingerprint === o.bundleFingerprint && receipt.subject.range === null;
   if (o.type === 'EXECUTION') return exact(o, 'type executionId command commandFingerprint cwd startedAt finishedAt exitCode signal stdoutFingerprint stderrFingerprint stdoutBytes stderrBytes outputPolicy stateBefore stateAfter counts') &&
     receipt.kind === 'COMMAND' && receipt.origin === 'RUNNER_OBSERVED' &&
     /^[a-f0-9-]{36}$/.test(o.executionId) && text(o.command) && HASH.test(o.commandFingerprint) &&
@@ -141,7 +146,7 @@ export function receiptIntegrityValid(receipt) {
 }
 
 export function validateEvidenceRequirement(policy) {
-  const keys = ['kinds', 'repository', 'target', 'path', 'range', 'fingerprint', 'result'];
+  const keys = ['kinds', 'repository', 'target', 'path', 'range', 'fingerprint', 'result', 'androidProfile'];
   const valid = policy && typeof policy === 'object' && !Array.isArray(policy) &&
     Object.keys(policy).every((key) => keys.includes(key)) && Array.isArray(policy.kinds) &&
     policy.kinds.length > 0 && policy.kinds.length <= EVIDENCE_KINDS.length &&
@@ -149,9 +154,12 @@ export function validateEvidenceRequirement(policy) {
     ['wayper', 'wayper-site'].includes(policy.repository) && ['PASS', 'OBSERVED'].includes(policy.result) &&
     (policy.target === undefined || text(policy.target)) && (policy.path === undefined || safeEvidencePath(policy.path)) &&
     (policy.range == null || safeEvidencePath(policy.path) && range(policy.range)) &&
-    (policy.fingerprint === undefined || HASH.test(policy.fingerprint)) && (policy.target || policy.path);
+    (policy.fingerprint === undefined || HASH.test(policy.fingerprint)) && (policy.target || policy.path) &&
+    (policy.androidProfile === undefined || policy.kinds.includes('RUNTIME') && validAndroidProfileReference(policy.androidProfile));
   return { status: valid ? 'VALID' : 'INVALID_REQUIREMENT' };
 }
+
+export const validAndroidProfileReference = (p) => exact(p, 'path fingerprint') && safeEvidencePath(p.path) && HASH.test(p.fingerprint);
 
 export function requirementPolicy(item) {
   const separator = item.id.indexOf(':');

@@ -18,6 +18,7 @@ const QUALITY_TESTS = {
   graph: 'scripts/quality/check-graph-context.test.mjs',
   handoff: 'scripts/wayper-structured-handoff.test.mjs',
   evidence: 'scripts/quality/check-evidence-receipts.test.mjs',
+  evidenceAndroid: 'scripts/quality/check-evidence-android.test.mjs',
   validation: 'scripts/quality/check-validation-planner.test.mjs',
   feedback: 'scripts/quality/check-feedback-loop.test.mjs',
   feedbackAdversarial: 'scripts/quality/check-feedback-adversarial.test.mjs',
@@ -149,7 +150,7 @@ export function relevantQualityTests(files) {
     if (file.includes('feedback') || file.startsWith('scripts/wayper-context') || file.includes('structured-handoff') || file.includes('completion-store')) {
       tests.add(QUALITY_TESTS.feedback); tests.add(QUALITY_TESTS.feedbackAdversarial);
     }
-    if (isEvidence(file)) tests.add(QUALITY_TESTS.evidence);
+    if (isEvidence(file)) { tests.add(QUALITY_TESTS.evidence); tests.add(QUALITY_TESTS.evidenceAndroid); }
     if (isValidation(file)) tests.add(QUALITY_TESTS.validation);
     if (isStructuredHandoff(file)) tests.add(QUALITY_TESTS.handoff);
     if (isContextEfficiency(file) || file.includes('context-efficiency')) {

@@ -1,4 +1,7 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
+import { useIsFocused } from "@react-navigation/native";
+import { hasActiveRunSnapshot } from "../services/runTracking/activeRunTrackingService.js";
+import { logger, LOG_CATEGORIES } from "../utils/logger.js";
 import { getCellIdForLocation } from "../services/territory";
 
 function getPrimaryTerritoryCellId(territory) {
@@ -11,6 +14,8 @@ export default function useMapScreenActions({
   isRunStartBusy,
   lastSavedRun,
   navigation,
+  route,
+  runEntryReady,
   selectedTerritory,
   setCompletedZonePreview,
   setSavedShareVisible,
@@ -21,6 +26,7 @@ export default function useMapScreenActions({
   startReplay,
   startWithCountdown,
 }) {
+  const focused = useIsFocused();
   const closeRunsModal = useCallback(() => setShowRunsModal(false), [setShowRunsModal]);
   const openRunDetails = useCallback((run) => {
     if (!run) return;
@@ -38,6 +44,28 @@ export default function useMapScreenActions({
   const openStartModal = useCallback(() => {
     if (!isRunStartBusy) setSelectModeVisible(true);
   }, [isRunStartBusy, setSelectModeVisible]);
+  useEffect(() => {
+    const requestId = route?.params?.runEntryRequestId;
+    if (!requestId || !focused) return;
+    let cancelled = false;
+    if (runEntryReady) hasActiveRunSnapshot().then((active) => {
+      if (cancelled) return;
+      if (active) navigation.setParams({ runEntryRequestId: undefined,
+        activeRunOpenRequestId: requestId, fromRunNotification: false, fromDeepLink: false });
+      else {
+        navigation.setParams({ runEntryRequestId: undefined });
+        openStartModal();
+      }
+    }).catch((error) => {
+      logger.warn(LOG_CATEGORIES.RUN_SESSION, "RUN_TAB_OPEN_FAILED", { error });
+      if (!cancelled) navigation.setParams({ runEntryRequestId: undefined });
+    });
+    return () => {
+      cancelled = true;
+      if (!navigation.isFocused()) navigation.setParams({ runEntryRequestId: undefined });
+    };
+  }, [focused, navigation, openStartModal, route?.params?.runEntryRequestId, runEntryReady]);
+
   const runFromSelectedTerritory = useCallback(() => {
     closeSelectedTerritory();
     startWithCountdown("zones");

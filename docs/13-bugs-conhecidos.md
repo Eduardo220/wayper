@@ -149,6 +149,31 @@ parcial.
 - Decisao/observacao: commit `c3acc03`; SQLite continua opção condicionada a
   medição, não correção automática.
 
+### BUG-20261008-001 - CursorWindow e timeouts em finalização longa
+
+- Status: PRECISA_TESTE_REAL
+- Severidade: critica
+- Area: finalização, histórico local, Android
+- Evidencia: corrida física de 2h22m44s no SM-A546E; os três timeouts ocorreram
+  enquanto operações anteriores ainda avançavam na fila de ingestão. O snapshot
+  `FINISHED` e o save mínimo foram confirmados. Duas leituras `SELECT key, value`
+  do AsyncStorage falharam com `SQLiteBlobTooBigException` durante o save posterior.
+  A row original já não está disponível: a atribuição exata à chave `runs` vem
+  da ordem dos callers e é uma inferência, não uma medida histórica direta.
+- Causa: deadlines independentes iniciados antes da execução na mesma fila;
+  `loadLocalRuns()` devolvia `[]` após falha de leitura e um writer podia
+  substituir o histórico antigo. No aparelho, uma row sintética de 4 MB foi
+  lida e uma de 5 MB falhou no `CursorWindow`; a row `runs` atual mede 1.124.164
+  bytes e não reproduz o erro original.
+- Correção aplicada: freeze único serializado com limite total; histórico
+  compatível com array legado e chunks v3; migração Android por leitura nativa
+  em trechos; writer recusa sobrescrever histórico ilegível.
+- Teste necessário: validar no APK release uma corrida curta, histórico, IDLE,
+  deep link pós-finish e ausência dos erros na janela observada. A migração de
+  uma row legada grande já passou em teste sintético; sua execução nativa no
+  aparelho ainda precisa de prova específica.
+- Data: 2026-10-08
+
 ### BUG-20260724-003 - Toque duplicado e recovery corrompem o resultado final
 
 - ID: BUG-20260724-003

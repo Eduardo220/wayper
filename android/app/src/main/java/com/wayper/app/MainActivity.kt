@@ -1,7 +1,6 @@
 package com.wayper.app
 
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 
 import com.facebook.react.ReactActivity
@@ -46,22 +45,8 @@ class MainActivity : ReactActivity() {
           ){})
   }
 
-  /**
-    * Align the back button behavior with Android S
-    * where moving root activities to background instead of finishing activities.
-    * @see <a href="https://developer.android.com/reference/android/app/Activity#onBackPressed()">onBackPressed</a>
-    */
+  // Keep deep-link root activities alive when Android Back backgrounds the app.
   override fun invokeDefaultOnBackPressed() {
-      if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
-          if (!moveTaskToBack(false)) {
-              // For non-root activities, use the default implementation to finish them.
-              super.invokeDefaultOnBackPressed()
-          }
-          return
-      }
-
-      // Use the default back button implementation on Android S
-      // because it's doing more than [Activity.moveTaskToBack] in fact.
-      super.invokeDefaultOnBackPressed()
+    if (!moveTaskToBack(false)) super.invokeDefaultOnBackPressed()
   }
 }

@@ -1,12 +1,13 @@
-import { auth, db, storage } from "../firebaseConfig.js";
-import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
-import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
+import { auth, db } from "../firebaseConfig.js";
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, startAfter, where } from "firebase/firestore";
 import {
   DEFAULT_PROFILE,
   fetchRemoteProfile,
   loadProfile,
   saveProfile,
 } from "../services/profile/profileService.js";
+import { persistProfileImage, uploadAvatarImage } from "../services/profile/profileAvatar.js";
+export { uploadAvatarImage } from "../services/profile/profileAvatar.js";
 import { getLocalProfileStats } from "./profileStats.js";
 
 export const USER_PROFILE_SOURCE = {
@@ -51,7 +52,7 @@ function normalizeUserDoc(uid, data = {}) {
     bio: data.bio || "",
     avatar: data.avatar || data.photoURL || null,
     photoURL: data.photoURL || data.avatar || null,
-    username: data.username || data.email?.split("@")?.[0] || "",
+    username: data.username || "",
     isPrivate: data.isPrivate === true || data.profileVisibility === "private",
     profileVisibility: data.profileVisibility || (data.isPrivate ? "private" : "public"),
   };
@@ -135,10 +136,12 @@ function mergeProgressIntoUserDoc(userDoc, progress = {}, localStats = {}) {
 }
 
 function buildData(profile, userDoc) {
-  return {
-    profile: profile || { ...DEFAULT_PROFILE },
-    userDoc: userDoc || null,
-  };
+  const localIdentity = {};
+  for (const key of ["displayName", "city", "bio", "avatar", "cover", "isPrivate", "profileVisibility"]) {
+    if (Object.hasOwn(profile || {}, key)) localIdentity[key] = profile[key];
+  }
+  if (Object.hasOwn(localIdentity, "displayName")) localIdentity.name = localIdentity.displayName;
+  return { profile: profile || { ...DEFAULT_PROFILE }, userDoc: userDoc ? { ...userDoc, ...localIdentity } : null };
 }
 
 async function getRemoteUserDoc(uid) {
@@ -239,32 +242,41 @@ export function subscribeCurrentUserProfile(callback) {
 }
 
 export async function updateCurrentUserProfile(patch = {}) {
+  if (Object.keys(patch).some((key) => key === "username" || key.startsWith("username."))) throw new Error("username_immutable");
   const user = auth.currentUser;
   const displayName = patch.displayName ?? patch.name;
-  const avatarCandidate = patch.avatarLocalUri ?? patch.avatar;
+  if (displayName !== undefined && (typeof displayName !== "string" || !displayName.trim() || displayName.length > 50)) throw new Error("invalid_profile_name");
+  if (patch.city !== undefined && (typeof patch.city !== "string" || patch.city.length > 50)) throw new Error("invalid_profile_city");
+  if (patch.bio !== undefined && (typeof patch.bio !== "string" || patch.bio.length > 160)) throw new Error("invalid_profile_bio");
+  const avatarCandidate = await persistProfileImage(patch.avatarLocalUri ?? patch.avatar);
+  const coverCandidate = await persistProfileImage(patch.coverLocalUri ?? patch.cover, "covers");
+  const remoteCoverCandidate = patch.coverRemoteUrl ?? (/^https?:\/\//i.test(String(patch.cover || "")) ? patch.cover : undefined);
   const remoteAvatarCandidate = patch.avatarRemoteUrl ?? (
     /^https?:\/\//i.test(String(patch.avatar || "")) ? patch.avatar : undefined
   );
-  const localPatch = compactObject({
+  const editable = compactObject({
     displayName,
+    city: patch.city,
     bio: patch.bio,
-    avatar: avatarCandidate,
-    photoURL: remoteAvatarCandidate,
     isPrivate: patch.isPrivate,
     profileVisibility: patch.profileVisibility,
   });
+  const localPatch = compactObject({
+    ...editable,
+    avatar: avatarCandidate,
+    cover: coverCandidate,
+    photoURL: remoteAvatarCandidate,
+  });
 
-  const profile = await saveProfile(localPatch);
+  const profile = await saveProfile(localPatch, { localOnly: true });
   const uid = user?.uid || profile?.uid || null;
   const remotePatch = compactObject({
+    ...editable,
     uid,
     name: patch.name ?? displayName,
-    displayName,
-    bio: patch.bio,
     avatar: remoteAvatarCandidate,
+    cover: remoteCoverCandidate,
     photoURL: remoteAvatarCandidate,
-    isPrivate: patch.isPrivate,
-    profileVisibility: patch.profileVisibility,
     updatedAt: serverTimestamp(),
   });
 
@@ -275,18 +287,19 @@ export async function updateCurrentUserProfile(patch = {}) {
     });
   }
 
-  try {
+  async function sync() {
+    for (const [uri, field, folder] of [[avatarCandidate, "avatar", "avatars"], [coverCandidate, "cover", "covers"]]) {
+      if (!uri || /^https?:\/\//i.test(uri)) continue;
+      const upload = await uploadAvatarImage(uri, `${folder}/${user.uid}_${Date.now()}.jpg`);
+      if (upload.data) { remotePatch[field] = upload.data; if (field === "avatar") remotePatch.photoURL = upload.data; }
+    }
     await setDoc(doc(db, "users", user.uid), remotePatch, { merge: true });
-    return ok(buildData(profile, normalizeUserDoc(user.uid, remotePatch)), {
-      source: USER_PROFILE_SOURCE.REMOTE,
-      syncStatus: "SYNCED",
-    });
-  } catch (error) {
-    return fail(error, buildData(profile, normalizeUserDoc(user.uid, remotePatch)), {
-      source: USER_PROFILE_SOURCE.LOCAL,
-      syncStatus: "SYNC_FAILED",
-    });
   }
+  sync().catch((error) => console.warn("[Profile] remote update unavailable; local edit preserved", error));
+  return ok(buildData(profile, normalizeUserDoc(user.uid, remotePatch)), {
+    source: USER_PROFILE_SOURCE.LOCAL,
+    syncStatus: "SYNC_PENDING",
+  });
 }
 
 export async function updatePrivacy(isPrivate) {
@@ -296,19 +309,6 @@ export async function updatePrivacy(isPrivate) {
   });
 }
 
-export async function uploadAvatarImage(uri, storagePath) {
-  if (!uri) return fail(new Error("missing_image_uri"), null, { source: USER_PROFILE_SOURCE.REMOTE });
-
-  try {
-    const response = await fetch(uri);
-    const blob = await response.blob();
-    const ref = storageRef(storage, storagePath);
-    const snap = await uploadBytes(ref, blob, { contentType: blob.type || "image/jpeg" });
-    return ok(await getDownloadURL(snap.ref), { source: USER_PROFILE_SOURCE.REMOTE });
-  } catch (error) {
-    return fail(error, null, { source: USER_PROFILE_SOURCE.REMOTE });
-  }
-}
 
 export async function syncCurrentProfile() {
   try {
@@ -347,6 +347,28 @@ export async function getPublicProfile(uid) {
   } catch (error) {
     return fail(error, null, { source: USER_PROFILE_SOURCE.LOCAL });
   }
+}
+
+export function subscribePublicProfile(uid, callback) {
+  try {
+    return onSnapshot(doc(db, "users", uid),
+      (snap) => callback(ok(snap.exists() ? normalizeUserDoc(snap.id || uid, snap.data()) : null, { source: USER_PROFILE_SOURCE.REMOTE })),
+      (error) => callback(fail(error, null, { source: USER_PROFILE_SOURCE.REMOTE })));
+  } catch (error) {
+    callback(fail(error, null, { source: USER_PROFILE_SOURCE.REMOTE }));
+    return () => {};
+  }
+}
+
+export async function listProfileRuns(userId, after = null) {
+  const snapshot = await getDocs(query(collection(db, "users", userId, "runs"), orderBy("date", "desc"), ...(after ? [startAfter(after)] : []), limit(12)));
+  return { items: snapshot.docs.map((item) => ({ ...item.data(), id: item.id, userId })), nextCursor: snapshot.size === 12 ? snapshot.docs.at(-1) : null };
+}
+
+export async function hasProfileFriendship(viewerId, userId) {
+  if (!viewerId) return false;
+  const snapshot = await getDocs(query(collection(db, "users", viewerId, "friends"), where("friendId", "==", userId), limit(1)));
+  return !snapshot.empty;
 }
 
 export default {

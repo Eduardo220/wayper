@@ -14,15 +14,16 @@ import { signOut } from "firebase/auth";
 
 // SCREENS
 import MapScreen from "../screens/MapScreen";
-import HomeScreen from "../screens/HomeScreen";
-import RankingScreen from "../screens/RankingScreen";
-import ProfileScreen from "../screens/ProfileScreen";
+import HomeStack from "./HomeStack";
+import RankingStack from "./RankingStack";
+import MainTabs from "./MainTabs";
+import ProfileScreen from "./ProfileStack";
 import DiagnosticsScreen from "../screens/DiagnosticsScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 
 // FRIENDS
 import FriendsScreen from "../screens/Friends/FriendsScreen";
-import FriendProfileScreen from "../screens/Friends/FriendProfileScreen";
+import FriendProfileScreen from "./ProfileStack";
 import FriendRunsScreen from "../screens/Friends/FriendRunsScreen";
 
 // GROUPS
@@ -167,7 +168,7 @@ function FriendsStack() {
       }}
     >
       <Stack.Screen name="FriendsHome" component={FriendsScreen} options={{ title: "Amigos" }} />
-      <Stack.Screen name="FriendProfile" component={FriendProfileScreen} options={{ title: "Perfil" }} />
+      <Stack.Screen name="FriendProfile" component={FriendProfileScreen} options={{ title: "Perfil", headerShown: false }} />
       <Stack.Screen name="FriendRuns" component={FriendRunsScreen} options={{ title: "Atividades" }} />
     </Stack.Navigator>
   );
@@ -205,28 +206,6 @@ function RunsStack() {
       <Stack.Screen name="CorridasHome" component={CorridasScreen} options={{ title: "Corridas" }} />
       <Stack.Screen name="RunDetail" component={RunDetailScreen} options={{ title: "Detalhes da Corrida" }} />
       <Stack.Screen name="ZoneDetail" component={ZoneDetailScreen} options={{ title: "Detalhes da Zona" }} />
-    </Stack.Navigator>
-  );
-}
-
-/* ===========================
-   HOME STACK
-   =========================== */
-function HomeStack() {
-  return (
-    <Stack.Navigator
-      screenOptions={{
-        headerStyle: { backgroundColor: WayperTheme.colors.background },
-        headerTintColor: WayperTheme.colors.text,
-        headerTitleStyle: { fontWeight: "900", fontSize: 20 },
-      }}
-    >
-      <Stack.Screen name="InicioHome" component={HomeScreen} options={{ headerShown: false }} />
-      <Stack.Screen
-        name="ActivityDetail"
-        component={RunDetailScreen}
-        options={{ title: "Detalhes da atividade" }}
-      />
     </Stack.Navigator>
   );
 }
@@ -411,8 +390,11 @@ export default function MainNavigator() {
   return (
     <Drawer.Navigator
       initialRouteName={initialRouteName}
+      backBehavior="none"
+      layout={(props) => <MainTabs {...props} />}
       screenOptions={({ navigation }) => ({
         headerShown: true,
+        sceneStyle: { backgroundColor: WayperTheme.colors.background },
         headerStyle: { backgroundColor: WayperTheme.colors.background, height: 102 },
         headerShadowVisible: false,
         headerBackground: () => (
@@ -442,8 +424,9 @@ export default function MainNavigator() {
       <Drawer.Screen name="Mapa" component={MapScreen} options={{ title: "Mapa" }} />
       <Drawer.Screen name="Corridas" component={RunsStack} options={{ title: "Corridas" }} />
       <Drawer.Screen name="Dashboard" component={DashboardScreen} options={{ title: "Dashboard" }} />
-      <Drawer.Screen name="Perfil" component={ProfileScreen} options={{ title: "Meu Perfil" }} />
-      <Drawer.Screen name="Ranking" component={RankingScreen} options={{ title: "Ranking" }} />
+      <Drawer.Screen name="Perfil" component={ProfileScreen} options={{ title: "Meu Perfil", headerShown: false }} />
+      <Drawer.Screen name="PublicProfile" component={ProfileScreen} options={{ headerShown: false, drawerItemStyle: { display: "none" } }} />
+      <Drawer.Screen name="Ranking" component={RankingStack} options={{ title: "Ranking" }} />
       <Drawer.Screen name="Amigos" component={FriendsStack} options={{ title: "Amigos" }} />
       <Drawer.Screen name="Grupos" component={GroupStack} options={{ title: "Grupos" }} />
       <Drawer.Screen name="Configuracoes" component={SettingsStack} options={{ title: "Configuracoes" }} />

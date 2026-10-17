@@ -50,3 +50,39 @@ npm run benchmark:tier-b:tuned -- --tuned-sha=<V2_TUNED> --resume=<run-id>
 Raw logs use `.wayper-context/benchmark-runs/operational-tuned/<run-id>/`;
 completed results use `results/operational/tier-b-tuned.json`. Never point a
 tuned run at an existing baseline or historical result path.
+
+## Candidate equivalence and daily gate fixtures
+
+A candidate is an exact committed checkout of the Harness and product, not the
+current working tree. Historical V1 (`2db95d4`) and V2 baseline (`4f429df`) are
+pinned in `suite.json`. Operational preserves both SHAs; operational-tuned
+replaces only V2 with the explicit full `--tuned-sha`. All profiles require V1
+ancestry and identical product source before any trial or checkpoint is created.
+
+`productFingerprint` hashes the full recursive `git ls-tree` output under
+`App.js`, `index.js`, `app.json`, `android/`, `src/` and `tests/`, including
+paths, modes, object types and blob IDs. Product tests and diagnostics remain
+relevant. Uncommitted changes and untracked files are outside this commit-tree
+comparison. The suite fingerprint covers the definition, including corpus,
+GroundTruth, scoring, candidate SHAs and execution identity; each result binds
+that suite fingerprint, its exact candidate SHA and its own body fingerprint.
+Resume requires the matching suite/profile and trial filter.
+
+The daily gate tests the benchmark infrastructure using the already evaluated
+Phase 9.3 tuned commit `cb33e3000f6d8bd4a8af59e61b77cd1281ccd865`, whose product
+is equal to V1/V2. See [the recorded candidate](proportionality-report.md).
+The three positive tuned tests originally used `HEAD` as a convenient
+Harness-only tuning checkout. Once product commits landed, that moving fixture
+violated their PASS precondition. The gate now uses the pinned tuned fixture
+and also rejects real product drift from `88601da8b38dfe2815fc94eed1af083518ce23c0`
+before trials or artifacts. This negative case runs in `quality:gate` itself.
+
+`HEAD` remains eligible as an explicitly selected benchmark candidate when it
+satisfies the same equivalence contract. Product evolution does not authorize
+updating the frozen experiment, excluding product paths or accepting drift.
+A new product baseline would require a separately versioned experiment.
+
+`node scripts/wayper-harness-benchmark.mjs validate` checks the frozen suite.
+`npm run quality:benchmark -- validate` also runs the infrastructure tests:
+the trailing argument does not select or validate `HEAD`. `quality:gate` runs
+`check-harness-benchmark.test.mjs`, including the explicit tuned fixtures.

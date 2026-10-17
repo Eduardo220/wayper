@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { evidenceHash, safeEvidencePath } from './wayper-evidence-receipts.mjs';
+import { evidenceHash, safeEvidencePath, validAndroidProfileReference } from './wayper-evidence-receipts.mjs';
 import { stable } from './wayper-context-identity.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -85,7 +85,8 @@ export function normalizeValidationInputs(input, registry) {
     !Array.isArray(input.criteria) || input.criteria.length > 32) fail();
   const normalized = structuredClone(input);
   for (const repo of normalized.repositories) {
-    if (!exact(repo, 'repository platforms changedPaths capabilities risks testTargets') || !repos.includes(repo.repository) ||
+    if (!exact(repo, `repository platforms changedPaths capabilities risks testTargets${repo.androidProfile === undefined ? '' : ' androidProfile'}`) || !repos.includes(repo.repository) ||
+      repo.androidProfile !== undefined && (repo.repository !== 'wayper' || !repo.platforms.includes('android') || !validAndroidProfileReference(repo.androidProfile)) ||
       !unique(repo.platforms, PLATFORMS, 4) || !repo.platforms.length || !unique(repo.changedPaths, null, 128) ||
       !repo.changedPaths.length || repo.changedPaths.some((p) => !safeEvidencePath(p)) ||
       !unique(repo.capabilities, catalog.capabilities.map((c) => c.id)) ||
@@ -107,7 +108,9 @@ export function normalizeValidationInputs(input, registry) {
   const ids = new Set();
   for (const c of normalized.criteria) {
     const repo = normalized.repositories.find((r) => r.repository === c.repository);
-    if (!exact(c, 'id repository platform claim required blocking') || !bounded(c.id, 80) || ids.has(c.id) ||
+    if (!exact(c, `id repository platform claim required blocking${c.androidProfile === undefined ? '' : ' androidProfile'}`) || !bounded(c.id, 80) || ids.has(c.id) ||
+      c.androidProfile !== undefined && (c.repository !== 'wayper' || c.platform !== 'android' ||
+        !['RUNTIME', 'PHYSICAL_DEVICE', 'REAL_SCENARIO', 'PROCESS_DEATH'].includes(c.claim) || !validAndroidProfileReference(c.androidProfile)) ||
       !repo || !repo.platforms.includes(c.platform) || !CLAIMS.includes(c.claim) ||
       typeof c.required !== 'boolean' || typeof c.blocking !== 'boolean' || c.blocking && !c.required ||
       c.claim === 'WEBGL' && (c.repository !== 'wayper-site' || c.platform !== 'web') ||

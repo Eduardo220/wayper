@@ -2,6 +2,7 @@ import { assertGoalExecution, repositorySnapshot, stable } from './wayper-contex
 import { evaluateEvidenceRequirement, listReceipts, readReceipt } from './wayper-evidence-store.mjs';
 import { loadValidationRegistry, validateValidationRegistry, normalizeValidationInputs, matchValidationRule,
   candidateCheck, digest, sorted, canonical, exact, REQUIREMENT_ID } from './wayper-validation-policy.mjs';
+import { loadAndroidProfile } from './wayper-evidence-android.mjs';
 
 const seal = (content) => { const fingerprint = digest(content); return { ...content, fingerprint, planId: `VP-${fingerprint.slice(7)}` }; };
 const optionsRegistry = (options) => options.registry ?? loadValidationRegistry();
@@ -41,6 +42,9 @@ export function buildValidationPlan(options) {
           if (prior) { prior.reason.push(reason); continue; }
           const applicable = platform === 'shared' || repo.platforms.includes(platform);
           const command = candidate.type === 'COMMAND';
+          const androidProfile = !command && candidate.type !== 'OWNER_TESTS' && repo.repository === 'wayper' &&
+            ['android', 'shared'].includes(platform) ? criterion ? criterion.androidProfile : repo.androidProfile : undefined;
+          if (androidProfile) loadAndroidProfile(options.repositories.find((r) => r.id === repo.repository).root, androidProfile);
           const target = `validation:${repo.repository}:${platform}:${id}:${digest({ repo, criterion }).slice(7, 23)}`;
           requirements.set(validationRequirementId, { validationRequirementId, level: check.level,
             kind: command || candidate.type === 'OWNER_TESTS' ? 'CHECK' : 'OBSERVED_SCENARIO',
@@ -50,7 +54,7 @@ export function buildValidationPlan(options) {
               reason: applicable ? 'RULE_MATCHED' : 'PLATFORM_OUT_OF_SCOPE', platformsInScope: repo.platforms },
             evidencePolicy: { receiptRequirement: { kinds: command || candidate.type === 'OWNER_TESTS' ?
               check.level === 'L0' || check.level === 'L4' ? ['COMMAND', 'QUALITY_GATE'] : ['TEST', 'QUALITY_GATE'] : ['RUNTIME'],
-            repository: repo.repository, target, result: 'PASS' },
+            repository: repo.repository, target, result: 'PASS', ...(androidProfile ? { androidProfile } : {}) },
             commandFingerprints: command ? [digest({ command: candidate.command, args: candidate.args })] : [],
             cwd: '.', environment: check.level === 'L5' ? 'PHYSICAL_DEVICE' : check.level === 'L6' ? 'REAL_SCENARIO' :
               criterion?.claim === 'REMOTE_SERVICE' ? 'REMOTE_SERVICE' : platform },
@@ -99,6 +103,15 @@ function approvedCommand(receipt, policy, options) {
   } catch { return false; }
 }
 
+function approvedObservation(receipt, requirement) {
+  const profile = requirement.evidencePolicy.receiptRequirement.androidProfile;
+  const o = receipt?.observation;
+  return requirement.kind === 'OBSERVED_SCENARIO' && profile && receipt.kind === 'RUNTIME' &&
+    o?.type === 'ANDROID_ARTIFACTS' && o.environment === 'PHYSICAL_DEVICE' &&
+    o.profilePath === profile.path && o.profileFingerprint === profile.fingerprint &&
+    ['android', 'shared', 'PHYSICAL_DEVICE', 'REAL_SCENARIO'].includes(requirement.evidencePolicy.environment);
+}
+
 function assessRequirement(requirement, ids, options, availability) {
   const base = { validationRequirementId: requirement.validationRequirementId, repository: requirement.repository,
     platform: requirement.platform, level: requirement.level, required: requirement.required, blocking: requirement.blocking,
@@ -121,7 +134,7 @@ function assessRequirement(requirement, ids, options, availability) {
     let receipt;
     try { receipt = readReceipt(checked.receiptId, options); } catch { /* Missing/corrupt references stay rejected. */ }
     const compatible = groups.some((group) => group.acceptedReceiptIds.includes(checked.receiptId));
-    const approved = checked.status === 'VALID' && approvedCommand(receipt, policy, options);
+    const approved = checked.status === 'VALID' && (approvedCommand(receipt, policy, options) || approvedObservation(receipt, requirement));
     if (compatible && approved) accepted.push(checked.receiptId);
     else {
       rejected.push(checked.receiptId); reasons.push(...checked.reasons);
@@ -130,8 +143,8 @@ function assessRequirement(requirement, ids, options, availability) {
       failed ||= approved && receipt?.result === 'FAIL' && policy.receiptRequirement.kinds.includes(receipt.kind);
     }
   }
-  const missingObserver = requirement.kind === 'OBSERVED_SCENARIO';
-  const missingCheck = !requirement.candidateChecks.some((c) => c.type === 'COMMAND' && c.available);
+  const missingObserver = requirement.kind === 'OBSERVED_SCENARIO' && !policy.receiptRequirement.androidProfile;
+  const missingCheck = requirement.kind === 'CHECK' && !requirement.candidateChecks.some((c) => c.type === 'COMMAND' && c.available);
   const unavailable = availability?.status === 'UNAVAILABLE' || missingObserver || missingCheck;
   const status = accepted.length ? 'SATISFIED' : failed ? 'BLOCKED' : availability ? 'UNAVAILABLE' : stale ? 'STALE' : unverified ? 'UNVERIFIED' :
     unavailable ? 'UNAVAILABLE' : 'MISSING';

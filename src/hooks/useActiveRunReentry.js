@@ -47,7 +47,13 @@ export default function useActiveRunReentry({ navigation, route, contextRef, res
         ACTIVE_RUN_STATUS.RECOVERING,
         ACTIVE_RUN_STATUS.ERROR_RECOVERABLE,
       ].includes(String(snapshot.status || "").toUpperCase());
-      if (!live) return false;
+      if (!live) {
+        if (context.runStatusRef.current !== "finishing" &&
+          (context.currentRunIdRef.current || context.runningRef.current)) {
+          context.resetRunVisuals?.();
+        }
+        return false;
+      }
       context.applySnapshot(snapshot, {
         recovered: options.recovered,
         forceSyncControls: options.forceSyncControls !== false,

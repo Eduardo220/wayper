@@ -1,5 +1,6 @@
 import { createNavigationContainerRef } from "@react-navigation/native";
 import { recordDeepLinkReceived } from "../services/runTracking/activeRunRuntimeService.js";
+import { parseProfileLink } from "../utils/profileModel.js";
 
 export const ACTIVE_RUN_DEEP_LINK = "wayper://run/active";
 
@@ -7,6 +8,20 @@ export const navigationRef = createNavigationContainerRef();
 
 let pendingActiveRunOpen = false;
 let pendingActiveRunOpenOptions = null;
+let pendingProfileUserId = null;
+
+export function requestOpenProfile(userId) {
+  const routeNames = navigationRef.getRootState?.()?.routeNames || [];
+  if (!navigationRef.isReady() || !routeNames.includes("Main")) {
+    pendingProfileUserId = userId;
+    return false;
+  }
+  pendingProfileUserId = null;
+  navigationRef.navigate("Main", { screen: "PublicProfile", params: {
+    screen: "ProfileHome", params: { userId, profileEntry: "PublicProfile" },
+  } });
+  return true;
+}
 
 function buildOpenActiveRunParams(options = {}) {
   return {
@@ -44,6 +59,7 @@ export function flushPendingNavigation() {
   if (pendingActiveRunOpen) {
     requestOpenActiveRun(pendingActiveRunOpenOptions || {});
   }
+  if (pendingProfileUserId) requestOpenProfile(pendingProfileUserId);
 }
 
 export function isActiveRunUrl(url) {
@@ -53,6 +69,8 @@ export function isActiveRunUrl(url) {
 }
 
 export function handleNavigationUrl(url) {
+  const userId = parseProfileLink(url);
+  if (userId) { requestOpenProfile(userId); return true; }
   if (!isActiveRunUrl(url)) return false;
   recordDeepLinkReceived(url, {
     source: "linking",

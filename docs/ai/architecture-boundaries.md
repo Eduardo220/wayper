@@ -106,6 +106,19 @@ import direto de Firestore.
 
 ### AsyncStorage e caminhos locais expostos à UI
 
+`src/utils/localRunsStorage.js` serializa a mesma chave `runs` pertencente a
+`src/utils/sync.js`: array legado ou manifesto v3 com chunks. O helper não cria
+outro histórico nem escreve remoto. Publica o manifesto depois dos chunks e
+preserva Unicode na boundary UTF-8; a bridge Android lê somente a row legacy
+`runs` em fatias quando o CursorWindow não comporta seu valor inteiro.
+
+Na finalização, o crescimento limitado do owner existente é a operação
+`freezeActiveRunSnapshot` na fila de ingestão e seu handoff
+`insideIngestionQueue` ao checkpoint legado. As exceções de tamanho cobrem
+somente esse footprint adicional (12 linhas e uma linha); não ampliam owners
+nem permitem crescimento posterior. A comparação nativa com a rota persistida
+e os testes de local-first/idempotência são a validação dessa decisão.
+
 | Arquivo | Layer/domínio | Purpose | Canonical owner | Classificação |
 | --- | --- | --- | --- | --- |
 | `src/components/MedalsWidget.js` | UI/progression | medals legado + chamada a sync | `ProgressionRepository`/`AchievementRepository` | `MIGRATION_PENDING` |

@@ -7,6 +7,7 @@ import {
 } from "../services/runTracking/activeRunTrackingService.js";
 import { hydrateActiveRunFromRuntime } from "../services/runTracking/activeRunRuntimeService.js";
 import { checkpointOnLocationError } from "../services/run/runAutoSaveService.js";
+import { recordFlightEvent } from "../services/diagnostics/activeRunFlightRecorder.js";
 import { findRecoverableRunForUser } from "../services/run/runRecoveryService.js";
 import { checkLocationPermission } from "../services/permissions";
 import { recordRunEvent, recordRunSnapshotEvent } from "../services/diagnostics/runDiagnosticsService.js";
@@ -38,6 +39,15 @@ async function existingRunGuard(context, selectedMode) {
       screen: "MapScreen",
     });
     return { ok: false, reason: "existing_active_run_recovered", snapshot };
+  }
+  if (!snapshot?.activeRunId && runtime?.canShowStartButton === false) {
+    recordRunEvent("RUN_START_FAILED", {
+      mode: selectedMode,
+      reason: "active_run_state_uncertain",
+      level: "warn",
+      screen: "MapScreen",
+    });
+    return { ok: false, reason: "active_run_state_uncertain" };
   }
   if (!snapshot?.activeRunId) return null;
   const recovery = await findRecoverableRunForUser(auth.currentUser?.uid || "offline", {
@@ -164,6 +174,7 @@ export default async function startRun(context, selectedMode = "free", options =
     });
     try {
       const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest, timeout: 7000 });
+      if (position?.coords) recordFlightEvent("GPS_RAW", { runId: context.currentRunIdRef.current, source: "foreground", point: position, reason: "start_current_position" });
       if (position?.coords) context.handleLocationUpdate({
         ...position.coords,
         timestamp: position.timestamp,
@@ -171,6 +182,7 @@ export default async function startRun(context, selectedMode = "free", options =
         runSessionId: context.currentRunIdRef.current,
       });
     } catch (error) {
+      recordFlightEvent("GPS_ERROR", { runId: context.currentRunIdRef.current, source: "foreground", reason: "start_current_position" });
       checkpointOnLocationError(error, { phase: "start_current_position" }).catch(() => {});
     }
     return { ok: true, runId: context.currentRunIdRef.current };
